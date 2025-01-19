@@ -1,6 +1,6 @@
 
 import Database from "../../src/manager";
-import SequelizeAdapter from "@vostro/gqlize-adapter-sequelize";
+import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
 
 import TaskModel from "./models/task";
 import TaskItemModel from "./models/task-item";

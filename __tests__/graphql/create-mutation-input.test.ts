@@ -1,5 +1,5 @@
 import Database from "../../src/manager";
-import SequelizeAdapter from "@vostro/gqlize-adapter-sequelize";
+import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
 import Sequelize from "sequelize";
 import createMutationInput from "../../src/graphql/create-mutation-input";
 import createSchemaCache from "../../src/graphql/create-schema-cache";

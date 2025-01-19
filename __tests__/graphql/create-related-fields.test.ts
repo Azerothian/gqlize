@@ -1,5 +1,5 @@
 import Database from "../../src/manager";
-import SequelizeAdapter from "@vostro/gqlize-adapter-sequelize";
+import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
 import createRelatedFieldsFunc from "../../src/graphql/create-related-fields";
 import {GraphQLObjectType} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";

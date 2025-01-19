@@ -1,4 +1,4 @@
-import SequelizeAdapter from "@vostro/gqlize-adapter-sequelize";
+import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
 import Database from "../../src/manager";
 import createModelType from "../../src/graphql/create-model-type";
 import createSchemaCache from "../../src/graphql/create-schema-cache";

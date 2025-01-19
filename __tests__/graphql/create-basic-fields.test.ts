@@ -1,6 +1,6 @@
 import Database from "../../src/manager";
 import createBasicFieldsFunc from "../../src/graphql/create-basic-fields";
-import SequelizeAdapter from "@vostro/gqlize-adapter-sequelize";
+import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
 
 import {
   GraphQLID,
