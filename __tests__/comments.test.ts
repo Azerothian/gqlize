@@ -1,6 +1,7 @@
 import {createInstance} from "./helper";
 import {createSchema} from "../src/graphql/index";
 import { GraphQLObjectType } from 'graphql';
+import {describe, it, expect} from "@jest/globals";
 describe("comments", () => {
   it("classMethod", async() => {
     const instance = await createInstance();

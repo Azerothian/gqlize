@@ -5,6 +5,7 @@ import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
 import TaskDef from "./helper/models/task";
 import { GqlizeAdapter } from "../src/types";
 // import TaskItemDef from "./models/task-item";
+import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
 
 test("manager - registerAdapter", () => {

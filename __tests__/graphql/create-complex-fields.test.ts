@@ -4,6 +4,7 @@ import createComplexFieldsFunc from "../../src/graphql/create-complex-fields";
 import {GraphQLObjectType, GraphQLInt} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import { Definition, GqlizeAdapter } from '../../src/types';
+import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 test("createComplexFieldsFunc - empty define", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {

@@ -175,7 +175,7 @@ export type DefinitionField = {
 export type DefinitionFields = {
   [name: string]: DefinitionField
 }
-export type WhereOperator = (whereObject: any, options: any) => Promise<any> | any
+export type WhereOperator = (whereObject: any, options: any, value: any) => Promise<any> | any
 export type WhereOperators = {
   [name: string]: WhereOperator
 }

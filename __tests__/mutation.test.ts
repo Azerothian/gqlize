@@ -1,4 +1,3 @@
-import expect from "expect";
 import {createInstance, validateResult} from "./helper";
 import {graphql} from "graphql";
 // import {createSchema} from "../src/graphql/index";
@@ -9,6 +8,7 @@ import Database from "../src/manager";
 import {createSchema} from "../src/graphql/index";
 import { GqlizeAdapter } from "../src/types";
 import { Definition } from '../src/types/index';
+import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
 // Sequelize.Promise = global.Promise;
 

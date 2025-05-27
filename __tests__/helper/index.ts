@@ -7,6 +7,7 @@ import TaskItemModel from "./models/task-item";
 import Item from "./models/item";
 import Sequelize from "sequelize";
 import { GqlizeAdapter } from "../../src/types";
+import {expect} from "@jest/globals";
 
 export async function createInstance() {
   const db = new Database();

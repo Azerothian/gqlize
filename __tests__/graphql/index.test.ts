@@ -3,6 +3,7 @@ import Database from "../../src/manager";
 import createModelType from "../../src/graphql/create-model-type";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import { GqlizeAdapter } from "../../src/types";
+import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
 test("createModelType", async() => {
   const db = new Database();
