@@ -162,7 +162,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `classMethods` / `instanceMethods` | The implementations behind `expose` (in the Sequelize adapter these are placed under `options.classMethods` / `options.instanceMethods`). |
 | `before` / `after` | gqlize-level transforms discriminated by the `Events` enum (see §8). |
 | `hooks` | Sequelize-style lifecycle `HookMap`. |
-| `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). |
+| `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
 
 ### Example (trimmed from `task.ts`)
 
@@ -307,6 +307,42 @@ mutation {
 }
 ```
 
+### Query resolution & eager loading
+
+For a top-level list query, `resolveFindAll` (`packages/gqlize/src/manager.ts`) resolves the
+requested relationships **at the root level** rather than lazily per parent. It builds a
+combined include tree from the GraphQL **selection set** — merged with any explicit `include`
+argument — via `packages/gqlize/src/graphql/utils/build-include-from-selection.ts`, then issues
+the query through the adapter. Key properties:
+
+- **Selection-driven, not `include`-driven.** The include tree is derived from which
+  relationships are actually selected (and their per-field args: `where`, `orderBy`, `first`,
+  `last`, `after`, `before`, nested `include`). It does **not** require an `include` argument to
+  be supplied. Inline fragments (`... on Type`) and named fragment spreads (`...Frag`) are
+  expanded, so fragment-selected relationships are eager-loaded too.
+- **Merge, not override.** The selection-derived tree and any explicit `include` args (parent
+  level and nested) are merged by relation name and path (`where` → AND, `required` → OR,
+  orderBy/pagination precedence) — a parent `include` and a nested `include` for the same
+  section combine rather than clobber each other.
+- **Adapter-aware.** Only relationships whose target is on the **same adapter** as the parent
+  are folded into the parent query. Cross-adapter relationships (a different adapter — no shared
+  database to JOIN) are left to their own resolvers, which run them as separate root queries.
+- **Same-adapter strategy (Sequelize adapter, `processIncludeStatement`):**
+  - `hasMany` → Sequelize `separate: true` — a **batched** root-level child query
+    (`WHERE fk IN (parentIds)`) that applies per-parent `limit`/`offset` (from `first`/`last`/
+    cursors) and fires the child model's find hooks natively.
+  - `belongsTo` / `hasOne` / `belongsToMany` → inline JOIN.
+  - A `required` include always stays an INNER JOIN (it filters parent rows, which a separate
+    query cannot do) — `required` wins over `separate`.
+- **Accurate totals.** When a per-parent limit is applied, the nested connection's `total` is
+  fetched with a `count` (firing `beforeCount`) rather than reported as the page length.
+- **Opt-out.** Set `options.autoInclude = false` on a `Definition` to disable root-level eager
+  resolution for that model and fall back to per-relation resolution.
+
+This replaces the previous behaviour where an eager-loaded relation short-circuited the nested
+resolver — dropping the nested field's arguments and skipping its find hooks. See also the hook
+implications in §8.
+
 ---
 
 ## 6. Relay Connections & Global IDs
@@ -405,6 +441,15 @@ Defined in `packages/gqlize-shared/src/events.ts`:
 | `3` | `MUTATION_UPDATE` |
 | `4` | `MUTATION_DELETE` |
 | `5` | `OUTPUT` |
+
+### Hooks under root-level eager loading
+
+Because relationships are resolved at the root level (§5), a child model's find hooks fire on
+the query that actually loads it: `hasMany` relations load via a `separate: true` child
+`findAll` (so `beforeFind`/`afterFind`/`beforeCount` fire natively, and a `beforeFind` that
+mutates `options.where` filters the eager-loaded rows), and cross-adapter relations fire hooks
+through their own root query. Inline-JOIN relations (`belongsTo`/`hasOne`/`belongsToMany`) are
+loaded within the parent query, where Sequelize does not fire the child's find hooks.
 
 ---
 
@@ -507,11 +552,14 @@ for completeness — they do not describe current behavior:
 
 - Validate submitted definitions against JSON Schema v7.
 - Reimplement subscriptions.
-- Cross-adapter relationships (e.g. a Postgres model's `hasMany` targeting a SQLite model).
-- Fuller `include` support and a typed where/filter object for the Sequelize adapter.
 - Middleware/caching options.
 - Additional adapters (Elasticsearch, HTTP GraphQL Relay).
 - CI/CD for deployment; expanded documentation and unit-test coverage.
+
+Partially addressed since the READMEs were written (see §5): root-level eager loading now
+generates a combined `where`/`include` from the selection set, and cross-adapter relationships
+are read as separate root queries. Remaining here: a fully typed where/filter object for the
+Sequelize adapter, cross-adapter **writes**, and batching of cross-adapter reads by foreign key.
 
 ---
 
