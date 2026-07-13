@@ -1,8 +1,17 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "composite": false,
     "outDir": "./lib",
     "declaration": true,
-    "emitDeclarationOnly": true
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    // Publish-time declaration emit: resolve sibling workspace packages from
+    // their built declarations (turbo `^build` builds them first) rather than
+    // source, so their .ts files are not pulled under this package's rootDir.
+    "paths": {
+      "@azerothian/gqlize-shared": ["packages/gqlize-shared/publish/types/index.d.ts"],
+      "@azerothian/gqlize-shared/*": ["packages/gqlize-shared/publish/types/*"]
+    }
   }
 }

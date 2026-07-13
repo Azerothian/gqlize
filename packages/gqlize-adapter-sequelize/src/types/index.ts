@@ -1,4 +1,4 @@
-import { Definition, DefinitionOptions } from '@azerothian/gqlize/types/index';
+import { Definition, DefinitionOptions } from '@azerothian/gqlize-shared/types/index';
 export interface SequelizeDefinitionOptions extends DefinitionOptions {
   tableName?: string;
 }

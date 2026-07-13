@@ -1,0 +1,7 @@
+src
+scripts
+tsconfig*.json
+.swcrc
+.swcrc-cjs
+jest.config.*
+__tests__

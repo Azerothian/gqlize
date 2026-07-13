@@ -1,6 +1,6 @@
 
 import {fromGlobalId} from "graphql-relay";
-import waterfall from "./waterfall";
+import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
 import {Op} from "sequelize";
 
 import { OKind, objVisit, BREAK } from "@vostro/object-visit";

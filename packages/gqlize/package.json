@@ -25,12 +25,7 @@
   "bugs": {
     "url": "https://github.com/azerothian/gqlize/issues"
   },
-  "resolutions": {
-    "graphql": "npm:@vostro/graphql16",
-    "unicorn-magic": "0.2.0"
-  },
   "devDependencies": {
-    "@azerothian/gqlize-adapter-sequelize": "^5.4.1",
     "@graphql-yoga/node": "^3.9.1",
     "@jest/globals": "^29.7.0",
     "@swc/cli": "^0.6.0",
@@ -64,7 +59,6 @@
     "source-map-support": "^0.5.21",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
-    "ts-jest": "^29.3.4",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
@@ -77,6 +71,7 @@
     "sequelize": "^6.35.1"
   },
   "dependencies": {
+    "@azerothian/gqlize-shared": "workspace:*",
     "@vostro/graphql16": "^16.8.1",
     "@vostro/object-visit": "^1.1.0",
     "deepmerge": "^4.3.1",

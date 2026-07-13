@@ -2,7 +2,7 @@ import SequelizeAdapter from "../src";
 import ItemModel from "./helper/models/item";
 import TaskModel from "./helper/models/task";
 import TaskItemModel from "./helper/models/task-item";
-import waterfall from "../src/utils/waterfall";
+import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
 import Sequelize from "sequelize";
 
 

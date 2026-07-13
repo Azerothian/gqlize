@@ -4,10 +4,6 @@
     "rootDir": "src",
     "outDir": ".tsbuild"
   },
-  "references": [
-    { "path": "../gqlize" },
-    { "path": "../gqlize-shared" }
-  ],
   "include": ["src/**/*"],
   "exclude": ["node_modules", ".tsbuild", "lib", "cjs", "publish", "**/*.spec.ts"]
 }

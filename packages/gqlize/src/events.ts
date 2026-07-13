@@ -1,9 +1,4 @@
-
-export enum Events {
-  "QUERY" = 1,
-  "MUTATION_CREATE" = 2,
-  "MUTATION_UPDATE" = 3,
-  "MUTATION_DELETE" = 4,
-  "OUTPUT" = 5,
-};
-export default Events;
+// Re-export barrel: the Events enum now lives in @azerothian/gqlize-shared.
+// Kept here to preserve the public `@azerothian/gqlize/events` subpath and
+// internal `../events` imports across the core package.
+export { default, Events } from "@azerothian/gqlize-shared/events";

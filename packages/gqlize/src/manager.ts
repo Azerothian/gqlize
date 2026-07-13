@@ -1,9 +1,9 @@
-import waterfall from "./utils/waterfall";
+import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
 import {fromGlobalId} from "graphql-relay";
 import Cache from "./utils/cache";
 import pluralize from "pluralize";
 import replaceIdDeep from "./utils/replace-id-deep";
-import {capitalize} from "./utils/word";
+import {capitalize} from "@azerothian/gqlize-shared/utils/word";
 import events from "./events";
 import { Definitions, GqlizeAdapter, GqlizeOptions, Definition, HookMap, Relationship, Model, Association } from './types';
 import Events from "./events";

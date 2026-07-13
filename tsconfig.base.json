@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "module": "Preserve",
+    "target": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": false,
+    "strict": false,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "importHelpers": true,
+    "types": ["@types/node"],
+    "sourceMap": true,
+
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@azerothian/gqlize-shared": ["packages/gqlize-shared/src/index.ts"],
+      "@azerothian/gqlize-shared/*": ["packages/gqlize-shared/src/*"],
+      "@azerothian/gqlize": ["packages/gqlize/src/index.ts"],
+      "@azerothian/gqlize/*": ["packages/gqlize/src/*"],
+      "@azerothian/gqlize-adapter-sequelize": ["packages/gqlize-adapter-sequelize/src/index.ts"],
+      "@azerothian/gqlize-adapter-sequelize/*": ["packages/gqlize-adapter-sequelize/src/*"]
+    }
+  }
+}

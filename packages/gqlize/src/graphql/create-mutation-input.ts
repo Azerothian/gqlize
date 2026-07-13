@@ -4,8 +4,8 @@ import {
 } from "graphql";
 
 import createGQLInputObject from "./create-gql-input-object";
-import {capitalize} from "../utils/word";
-import {waterfallSync} from "../utils/waterfall";
+import {capitalize} from "@azerothian/gqlize-shared/utils/word";
+import {waterfallSync} from "@azerothian/gqlize-shared/utils/waterfall";
 import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
 import { Relationship } from '../types/index';

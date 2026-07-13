@@ -11,5 +11,11 @@
   "devDependencies": {
     "turbo": "^2.10.4",
     "typescript": "^5.8.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "graphql": "npm:@vostro/graphql16@^16.8.1",
+      "unicorn-magic": "0.2.0"
+    }
   }
 }
