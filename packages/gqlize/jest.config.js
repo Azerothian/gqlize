@@ -15,6 +15,8 @@ module.exports = {
     '^@azerothian/gqlize-adapter-sequelize/(.*)$': '<rootDir>/../gqlize-adapter-sequelize/src/$1',
     '^@azerothian/gqlize-shared$': '<rootDir>/../gqlize-shared/src/index.ts',
     '^@azerothian/gqlize-shared/(.*)$': '<rootDir>/../gqlize-shared/src/$1',
+    '^@azerothian/graphql-types$': '<rootDir>/../graphql-types/src/index.ts',
+    '^@azerothian/graphql-types/(.*)$': '<rootDir>/../graphql-types/src/$1',
   },
   collectCoverage: true,
   collectCoverageFrom: [

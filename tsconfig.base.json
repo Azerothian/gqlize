@@ -25,6 +25,8 @@
     "paths": {
       "@azerothian/gqlize-shared": ["packages/gqlize-shared/src/index.ts"],
       "@azerothian/gqlize-shared/*": ["packages/gqlize-shared/src/*"],
+      "@azerothian/graphql-types": ["packages/graphql-types/src/index.ts"],
+      "@azerothian/graphql-types/*": ["packages/graphql-types/src/*"],
       "@azerothian/gqlize": ["packages/gqlize/src/index.ts"],
       "@azerothian/gqlize/*": ["packages/gqlize/src/*"],
       "@azerothian/gqlize-adapter-sequelize": ["packages/gqlize-adapter-sequelize/src/index.ts"],

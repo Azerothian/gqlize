@@ -17,6 +17,8 @@ module.exports = {
     '^@azerothian/gqlize/(.*)$': '<rootDir>/../gqlize/src/$1',
     '^@azerothian/gqlize-shared$': '<rootDir>/../gqlize-shared/src/index.ts',
     '^@azerothian/gqlize-shared/(.*)$': '<rootDir>/../gqlize-shared/src/$1',
+    '^@azerothian/graphql-types$': '<rootDir>/../graphql-types/src/index.ts',
+    '^@azerothian/graphql-types/(.*)$': '<rootDir>/../graphql-types/src/$1',
   },
   collectCoverage: false,
   testMatch: ['**/__tests__/**/*.test.[jt]s?(x)'],

@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "packages/graphql-types" },
     { "path": "packages/gqlize-shared" },
     { "path": "packages/gqlize" },
     { "path": "packages/gqlize-adapter-sequelize" }

@@ -28,19 +28,25 @@ Until [Proposal #252](https://github.com/graphql/graphql-spec/issues/252) is int
 
 ### Solution
 
-We keep up to date a copy of graphql that will execute all mutations syncronously, this is non breaking change, it will work with any graphql library. The only issue is the way graphql insists that only one copy must exist in the entire node_modules folder.
+`graphql` executes a mutation's **top-level** fields serially, but nested sub-fields run
+asynchronously. gqlize needs nested mutation sub-fields to run serially too. This is a small,
+non-breaking change to `completeObjectValue` in graphql's `execution/execute` module (route nested
+mutation fields through `executeFieldsSerially`).
 
-*Requires yarn as your package manager*
+`graphql` is a **peer dependency** (`^16.8.1`); gqlize does not bundle a graphql fork. This monorepo
+applies the change as a committed [pnpm patch](https://pnpm.io/cli/patch),
+`patches/graphql@16.8.1.patch`, wired up in the root `package.json`:
 
+```jsonc
+"pnpm": {
+  "overrides": { "graphql": "16.8.1" },
+  "patchedDependencies": { "graphql@16.8.1": "patches/graphql@16.8.1.patch" }
+}
 ```
-yarn add graphql@npm:@vostro/graphql
-```
-add the following to your package.json, clear out your node_modules and run `yarn` again, this will ensure that this is the only copy of graphql to exist
-```
-  "resolutions": {
-    "graphql": "npm:@vostro/graphql",
-  }
-```
+
+Downstream consumers who need serial nested mutations can reuse the same patch file (pnpm patches
+do not travel with a published package). graphql still insists on a single copy in `node_modules`;
+the `overrides` entry pins the whole tree to one patched `graphql@16.8.1`.
 
 ## Adapters
 

@@ -1,0 +1,78 @@
+diff --git a/execution/execute.js b/execution/execute.js
+index cab41cf19aad474967470994b4b85b835c409d0b..70c7c8c5ec23b163ca4ad44433fa57adead41392 100644
+--- a/execution/execute.js
++++ b/execution/execute.js
+@@ -907,6 +907,18 @@ function completeObjectValue(
+           throw invalidReturnTypeError(returnType, result, fieldNodes);
+         }
+ 
++        if (
++          exeContext.operation.operation === _ast.OperationTypeNode.MUTATION
++        ) {
++          return executeFieldsSerially(
++            exeContext,
++            returnType,
++            result,
++            path,
++            subFieldNodes,
++          );
++        }
++
+         return executeFields(
+           exeContext,
+           returnType,
+@@ -922,6 +934,16 @@ function completeObjectValue(
+     }
+   }
+ 
++  if (exeContext.operation.operation === _ast.OperationTypeNode.MUTATION) {
++    return executeFieldsSerially(
++      exeContext,
++      returnType,
++      result,
++      path,
++      subFieldNodes,
++    );
++  }
++
+   return executeFields(exeContext, returnType, result, path, subFieldNodes);
+ }
+ 
+diff --git a/execution/execute.mjs b/execution/execute.mjs
+index bc084be25bc75b6506cbf07eb7355c0e3b951d0d..2ae71a511391f3769061bd2a2265b89bc096c162 100644
+--- a/execution/execute.mjs
++++ b/execution/execute.mjs
+@@ -877,6 +877,16 @@ function completeObjectValue(
+           throw invalidReturnTypeError(returnType, result, fieldNodes);
+         }
+ 
++        if (exeContext.operation.operation === OperationTypeNode.MUTATION) {
++          return executeFieldsSerially(
++            exeContext,
++            returnType,
++            result,
++            path,
++            subFieldNodes,
++          );
++        }
++
+         return executeFields(
+           exeContext,
+           returnType,
+@@ -892,6 +902,16 @@ function completeObjectValue(
+     }
+   }
+ 
++  if (exeContext.operation.operation === OperationTypeNode.MUTATION) {
++    return executeFieldsSerially(
++      exeContext,
++      returnType,
++      result,
++      path,
++      subFieldNodes,
++    );
++  }
++
+   return executeFields(exeContext, returnType, result, path, subFieldNodes);
+ }
+ 

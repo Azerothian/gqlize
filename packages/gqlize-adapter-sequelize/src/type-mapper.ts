@@ -33,9 +33,9 @@ import {
   GraphQLList,
 } from "graphql";
 
-import jsonType from "@vostro/graphql-types/lib/json";
-import dateType from "@vostro/graphql-types/lib/date";
-import uploadType from "@vostro/graphql-types/lib/upload";
+import jsonType from "@azerothian/graphql-types/json";
+import dateType from "@azerothian/graphql-types/date";
+import uploadType from "@azerothian/graphql-types/upload";
 
 import {capitalize} from "@azerothian/gqlize-shared/utils/word";
 

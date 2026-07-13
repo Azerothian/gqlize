@@ -14,8 +14,11 @@
   },
   "pnpm": {
     "overrides": {
-      "graphql": "npm:@vostro/graphql16@^16.8.1",
+      "graphql": "16.8.1",
       "unicorn-magic": "0.2.0"
+    },
+    "patchedDependencies": {
+      "graphql@16.8.1": "patches/graphql@16.8.1.patch"
     }
   }
 }

@@ -13,7 +13,9 @@
       "@azerothian/gqlize-shared": ["packages/gqlize-shared/publish/types/index.d.ts"],
       "@azerothian/gqlize-shared/*": ["packages/gqlize-shared/publish/types/*"],
       "@azerothian/gqlize": ["packages/gqlize/publish/types/index.d.ts"],
-      "@azerothian/gqlize/*": ["packages/gqlize/publish/types/*"]
+      "@azerothian/gqlize/*": ["packages/gqlize/publish/types/*"],
+      "@azerothian/graphql-types": ["packages/graphql-types/publish/types/index.d.ts"],
+      "@azerothian/graphql-types/*": ["packages/graphql-types/publish/types/*"]
     }
   }
 }

@@ -14,8 +14,8 @@ import replaceIdDeep, {
 } from "./utils/replace-id-deep";
 const log = logger("gqlize::adapter::sequelize::");
 
-// import jsonType from "@vostro/graphql-types/lib/json";
-import createQueryType from "@vostro/graphql-types/lib/query";
+// import jsonType from "@azerothian/graphql-types/json";
+import createQueryType from "@azerothian/graphql-types/query";
 
 import {
   GraphQLBoolean,
