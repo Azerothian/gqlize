@@ -14,10 +14,9 @@
     "build:readme": "cp ./README.md ./publish/README.md",
     "build:src": "copyfiles -u 1 \"src/**/*\" publish/src",
     "build:package": "tsx ./scripts/prepare-package.ts",
-    "build:main": "swc src --out-dir publish/lib --strip-leading-paths -s",
+    "build:main": "swc src --out-dir publish/lib --out-file-extension mjs --strip-leading-paths -s --ignore \"**/*.d.ts\" && tsx ./scripts/fix-esm-extensions.ts",
     "build:types": "tsc -p tsconfig.types.json --outDir publish/types",
-    "build:copy-dts": "copyfiles -u 1 \"src/**/*.d.ts\" publish/lib",
-    "build:cjs": "swc src --out-dir publish/cjs --config-file=.swcrc-cjs --strip-leading-paths -s"
+    "build:cjs": "swc src --out-dir publish/cjs --config-file=.swcrc-cjs --strip-leading-paths -s --ignore \"**/*.d.ts\""
   },
   "author": "VostroNet",
   "license": "GPL-3.0",
@@ -31,7 +30,6 @@
     "@swc/cli": "^0.6.0",
     "@swc/core": "^1.11.24",
     "@swc/jest": "^0.2.38",
-    "@swc/plugin-transform-imports": "^7.2.0",
     "@tsconfig/node20": "^20.1.5",
     "@tsconfig/recommended": "^1.0.8",
     "@types/debug": "^4.1.12",

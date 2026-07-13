@@ -2,11 +2,11 @@ import { globby } from 'globby';
 import fs from "node:fs/promises";
 import path from "node:path";
 
-/// create a function that uses globby to find all files in the src directory and updates the package.json file
-/// to add import and require statements for each file found to the exports section of the package.json file
+/// Generate publish/package.json: build the `exports` map (one entry per src
+/// file) with dual ESM/CJS output plus a `bun` condition that resolves to the
+/// TypeScript source, fix the top-level main/module/types fields, resolve
+/// workspace: dependency ranges to concrete versions, and strip dev-only fields.
 
-/// Build a name -> version map of every package in the monorepo so we can
-/// replace `workspace:*` style ranges with real, publishable versions.
 async function loadWorkspaceVersions() {
   const workspaceDir = path.resolve(process.cwd(), '..');
   const manifests = await globby(['*/package.json'], { cwd: workspaceDir, absolute: true });
@@ -49,16 +49,17 @@ async function updatePackageJson() {
   const packageJsonPath = path.join(process.cwd(), './package.json');
   const packagePublishJsonPath = path.join(process.cwd(), './publish/package.json');
   const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
-  const exports = {
+
+  const exports: Record<string, Record<string, string>> = {
     ".": {
+      "types": "./types/index.d.ts",
+      "bun": "./src/index.ts",
       "import": "./lib/index.mjs",
       "require": "./cjs/index.js",
-      "types": "./types/index.d.ts",
-    }
+    },
   };
   for (const file of files) {
     let fileName = path.basename(file, '.ts');
-
     let dir = path.dirname(file);
     if (dir === '.') {
       dir = '';
@@ -66,19 +67,27 @@ async function updatePackageJson() {
       dir += '/';
     }
     if (fileName.match(/\.d$/)) {
+      // ambient declaration file: types only, no runtime output
       fileName = fileName.replace(/\.d$/, '');
       exports[`./${dir}${fileName}`] = {
         "types": `./types/${dir}${fileName}.d.ts`,
       };
     } else {
       exports[`./${dir}${fileName}`] = {
+        "types": `./types/${dir}${fileName}.d.ts`,
+        "bun": `./src/${dir}${fileName}.ts`,
         "import": `./lib/${dir}${fileName}.mjs`,
         "require": `./cjs/${dir}${fileName}.js`,
-        "types": `./types/${dir}${fileName}.d.ts`,
       };
     }
   }
   packageJson.exports = exports;
+
+  // Fix the top-level entry points (the checked-in values pointed at a broken
+  // ESM lib build).
+  packageJson.main = "cjs/index.js";
+  packageJson.module = "lib/index.mjs";
+  packageJson.types = "types/index.d.ts";
 
   // Replace workspace: protocol ranges with concrete versions so the published
   // package is installable outside the monorepo.

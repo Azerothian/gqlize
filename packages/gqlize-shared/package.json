@@ -13,10 +13,9 @@
     "build:readme": "cp ./README.md ./publish/README.md",
     "build:src": "copyfiles -u 1 \"src/**/*\" publish/src",
     "build:package": "tsx ./scripts/prepare-package.ts",
-    "build:main": "swc src --out-dir publish/lib --strip-leading-paths -s",
+    "build:main": "swc src --out-dir publish/lib --out-file-extension mjs --strip-leading-paths -s --ignore \"**/*.d.ts\" && tsx ./scripts/fix-esm-extensions.ts",
     "build:types": "tsc -p tsconfig.types.json --outDir publish/types",
-    "build:copy-dts": "copyfiles -u 1 \"src/**/*.d.ts\" publish/lib",
-    "build:cjs": "swc src --out-dir publish/cjs --config-file=.swcrc-cjs --strip-leading-paths -s"
+    "build:cjs": "swc src --out-dir publish/cjs --config-file=.swcrc-cjs --strip-leading-paths -s --ignore \"**/*.d.ts\""
   },
   "author": "VostroNet",
   "license": "GPL-3.0",
