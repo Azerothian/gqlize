@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [ {
+    "name": "Launch Express Debug",
+    "type": "node",
+    "request": "launch",
+    "args": ["--trace-deprecation", "-r", "@babel/register", "./__tests__/helper/express.js"],
+    "env": {
+      "NODE_ENV": "development",
+      "DEBUG": "sql*"
+    },
+    "console": "integratedTerminal"
+  }]
+}
