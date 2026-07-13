@@ -1,12 +1,20 @@
 # gqlize-adapter-sequelize
 
-This is a sequelize adapter for the graphql relational databinder [gqlize](https://github.com/VostroNet/gqlize) 
+This is a sequelize adapter for the graphql relational databinder [gqlize](https://github.com/azerothian/gqlize)
 
 ## Install
 
+```sh
+pnpm add @azerothian/gqlize @azerothian/gqlize-adapter-sequelize
 ```
-yarn add @vostro/gqlize @vostro/gqlize-adapter-sequelize @vostro/graphql-types graphql-sequelize
+
+Provide the peer dependencies in your project:
+
+```sh
+pnpm add graphql@^16.8.1 graphql-relay@^0.10.0 sequelize@^6.35.1
 ```
+
+(`@azerothian/graphql-types` is pulled in automatically. See the [gqlize README](../gqlize/README.md#caveats) for the required `graphql` mutation patch.)
 
 ## License
 

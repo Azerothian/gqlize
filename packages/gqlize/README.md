@@ -4,9 +4,20 @@ A relational databinder for generating graphql schemas to connect and work with 
 
 ## Install
 
+```sh
+pnpm add @azerothian/gqlize @azerothian/gqlize-adapter-sequelize
 ```
-yarn add @vostro/gqlize @vostro/gqlize-adapter-sequelize @vostro/graphql-types graphql-sequelize
+
+`gqlize` and the Sequelize adapter expect these peer dependencies in your project:
+
+```sh
+pnpm add graphql@^16.8.1 graphql-relay@^0.10.0 sequelize@^6.35.1
 ```
+
+(`@azerothian/gqlize-shared` and `@azerothian/graphql-types` are pulled in automatically.)
+
+> gqlize needs a small patch to `graphql` so nested mutation fields execute serially — see
+> [Caveats](#caveats) below.
 
 ## License
 
