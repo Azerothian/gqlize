@@ -1,0 +1,74 @@
+{
+  "name": "@azerothian/gqlize-adapter-sequelize",
+  "version": "6.0.0",
+  "description": "Sequelize adapter for the data binding library - gqlize",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "watch": "tsc --watch",
+    "test": "jest",
+    "package:yalc": "pnpm run build && cd publish && yalc publish",
+    "package:npm": "pnpm run build && cd publish && npm publish",
+    "build": "rm -Rf ./publish || true; mkdir ./publish && run-p build:*",
+    "build:readme": "cp ./README.md ./publish/README.md",
+    "build:src": "copyfiles -u 1 \"src/**/*\" publish/src",
+    "build:package": "tsx ./scripts/prepare-package.ts",
+    "build:main": "swc src --out-dir publish/lib --strip-leading-paths -s",
+    "build:types": "tsc -p tsconfig.types.json --outDir publish/types",
+    "build:copy-dts": "copyfiles -u 1 \"src/**/*.d.ts\" publish/lib",
+    "build:cjs": "swc src --out-dir publish/cjs --config-file=.swcrc-cjs --strip-leading-paths -s"
+  },
+  "author": "VostroNet",
+  "homepage": "https://github.com/azerothian/gqlize-adapter-sequelize",
+  "bugs": {
+    "url": "https://github.com/azerothian/gqlize-adapter-sequelize/issues"
+  },
+  "resolutions": {
+    "graphql": "npm:@vostro/graphql16",
+    "unicorn-magic": "0.2.0"
+  },
+  "devDependencies": {
+    "@azerothian/gqlize": "^6.0.0",
+    "@jest/globals": "^29.7.0",
+    "@swc/cli": "^0.4.0",
+    "@swc/core": "^1.11.24",
+    "@tsconfig/node20": "^20.1.5",
+    "@tsconfig/recommended": "^1.0.8",
+    "@types/debug": "^4.1.12",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.15.18",
+    "@vostro/graphql-types": "^2.0.0",
+    "apollo-server-express": "^3.13.0",
+    "body-parser": "^1.20.3",
+    "copyfiles": "^2.4.1",
+    "deep-freeze": "0.0.1",
+    "del": "^7.1.0",
+    "eslint": "^9.27.0",
+    "eslint-plugin-jest": "^28.11.0",
+    "globby": "^14.1.0",
+    "graphql": "npm:@vostro/graphql16@^16.8.1",
+    "graphql-relay": "^0.10.2",
+    "jest": "^29.7.0",
+    "jest-cli": "^29.7.0",
+    "npm-run-all2": "^6.2.6",
+    "sequelize": "^6.37.7",
+    "source-map-support": "^0.5.21",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "ts-jest": "^29.3.4",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "uuid": "^10.0.0"
+  },
+  "peerDependencies": {
+    "@azerothian/gqlize": "^6.0.0",
+    "@vostro/graphql-types": "^2.0.0",
+    "graphql-relay": "^0.10.0",
+    "sequelize": "^6.19.0"
+  },
+  "dependencies": {
+    "@vostro/object-visit": "^1.1.0",
+    "debug": "^4.4.1"
+  }
+}
