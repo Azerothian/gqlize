@@ -1,0 +1,12 @@
+node_modules/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# build outputs
+/packages/*/publish/
+/packages/*/lib/
+/packages/*/cjs/
+
+# tooling / local state
+.omc/

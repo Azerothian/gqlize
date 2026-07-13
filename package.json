@@ -1,0 +1,15 @@
+{
+  "name": "gqlize-monorepo",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "tsc -b",
+    "watch": "turbo run watch"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.4",
+    "typescript": "^5.8.3"
+  }
+}
