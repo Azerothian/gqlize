@@ -10,7 +10,7 @@ yarn add @vostro/gqlize @vostro/gqlize-adapter-sequelize @vostro/graphql-types g
 
 ## License
 
-This repository generally is covered by GPL-3.0 unless specified
+This repository generally is covered by MIT unless specified
 
 
 ## TODO

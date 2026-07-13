@@ -18,4 +18,4 @@ Subpath exports (import the piece you need):
 
 ## License
 
-GPL-3.0
+MIT

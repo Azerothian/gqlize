@@ -15,4 +15,4 @@ duplicated. It is published so those packages remain installable standalone.
 
 ## License
 
-GPL-3.0
+MIT

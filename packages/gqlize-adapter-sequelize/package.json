@@ -18,7 +18,7 @@
     "build:cjs": "swc src --out-dir publish/cjs --config-file=.swcrc-cjs --strip-leading-paths -s --ignore \"**/*.d.ts\""
   },
   "author": "VostroNet",
-  "license": "GPL-3.0",
+  "license": "MIT",
   "homepage": "https://github.com/azerothian/gqlize-adapter-sequelize",
   "bugs": {
     "url": "https://github.com/azerothian/gqlize-adapter-sequelize/issues"

@@ -78,4 +78,4 @@ From a package directory, `pnpm build` populates `publish/`, then publish from t
 
 ## License
 
-GPL-3.0
+MIT
