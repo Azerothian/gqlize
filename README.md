@@ -4,9 +4,38 @@ A relational data binder that generates GraphQL schemas over multiple data sourc
 pluggable adapters. This is a [pnpm](https://pnpm.io/) + [Turborepo](https://turborepo.com/)
 monorepo.
 
-📄 See [**docs/specifications.md**](docs/specifications.md) for the full technical
-specification — architecture, public API, model definition schema, permissions, hooks, and
-the adapter contract.
+## Documentation
+
+- 📘 [**docs/guide.md**](docs/guide.md) — **usage guide**: how to define models, serve the
+  schema, and write queries & mutations for every feature, with copy-pasteable examples.
+- 📄 [**docs/specifications.md**](docs/specifications.md) — **reference**: architecture, public
+  API, model definition schema, permissions, hooks, and the adapter contract.
+
+## Quick start
+
+```ts
+import { Database, createSchema } from "@azerothian/gqlize";
+import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import Sequelize from "sequelize";
+import { graphql } from "graphql";
+
+const db = new Database();
+db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }), "sqlite");
+db.addDefinition({ name: "Author", define: { name: { type: Sequelize.STRING, allowNull: false } } });
+await db.initialise();
+await db.sync();
+
+const schema = await createSchema(db);
+await db.models.Author.create({ name: "Ada" });
+
+const result = await graphql({
+  schema,
+  source: `query { models { Author { edges { node { id name } } } } }`,
+});
+```
+
+See the [usage guide](docs/guide.md) for models, relationships, filtering, pagination, nested
+mutations, permissions, hooks, and more.
 
 ## Packages
 

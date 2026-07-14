@@ -5,6 +5,9 @@
 > unimplemented ideas are collected in [§13 Known Gaps / Roadmap](#13-known-gaps--roadmap).
 > Source of truth is `packages/*/src`; file paths are given throughout so every claim can
 > be checked against the code.
+>
+> **Looking for how-to examples?** See the [**Usage Guide**](guide.md) — this document is the
+> reference; the guide is the tutorial/cookbook.
 
 ---
 
