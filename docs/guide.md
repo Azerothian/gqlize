@@ -602,7 +602,6 @@ gqlize-level `afterCount(total)` (which may transform the returned count).
 import DateType from "@azerothian/graphql-types/date";     // ISO string <-> Date  (GQLTDate)
 import JSONType from "@azerothian/graphql-types/json";     // arbitrary JSON        (GQLTJson)
 import BigIntType from "@azerothian/graphql-types/bigint";
-import FloatType from "@azerothian/graphql-types/float";
 import IPType from "@azerothian/graphql-types/ip";
 import UploadType from "@azerothian/graphql-types/upload"; // multipart uploads     (GQLTUpload)
 ```

@@ -71,7 +71,7 @@ gqlize-shared (leaf) ──► gqlize (core) ──► gqlize-adapter-sequelize 
 | [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | Core databinder: schema generation, Relay connections, field/model permissions, lifecycle hooks. Key files: `src/manager.ts` (`GQLManager`), `src/graphql/*` (builders), `src/permission-helper.ts`. |
 | [`@azerothian/gqlize-adapter-sequelize`](../packages/gqlize-adapter-sequelize) | `packages/gqlize-adapter-sequelize` | Reference `GqlizeAdapter` implementation over Sequelize 6. Entry: `src/index.ts`; `src/type-mapper.ts`, `src/utils/where-ops.ts`, `src/utils/replace-id-deep.ts`. |
 | [`@azerothian/gqlize-shared`](../packages/gqlize-shared) | `packages/gqlize-shared` | Shared type surface (`GqlizeAdapter`, `Definition`, `DefinitionField*`, `Association`, `Relationship`, `WhereOperators`, options/cache types), the `Events` enum, and utilities (`logger`, `unique`, `word`, `waterfall`). |
-| [`@azerothian/graphql-types`](../packages/graphql-types) | `packages/graphql-types` | Custom GraphQL scalars (`json`, `date`, `bigint`, `float`, `ip`, `upload`) and `createQueryType`. A local copy of `@vostro/graphql-types`. |
+| [`@azerothian/graphql-types`](../packages/graphql-types) | `packages/graphql-types` | Custom GraphQL scalars (`json`, `date`, `bigint`, `ip`, `upload`) and `createQueryType`. A local copy of `@vostro/graphql-types`. |
 
 > **Note:** the root `README.md` package table lists only the first three; `graphql-types`
 > is a fourth workspace package and is documented here for completeness.
@@ -535,7 +535,6 @@ each with its own subpath export:
 | --- | --- | --- |
 | `BigIntType` | `.../bigint` | 64-bit integers. |
 | `DateType` | `.../date` | Date/time values. |
-| `FloatType` | `.../float` | Float handling. |
 | `IPType` | `.../ip` | IP addresses. |
 | `JSONType` | `.../json` | Arbitrary JSON. |
 | `UploadType` | `.../upload` | File uploads. |

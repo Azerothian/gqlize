@@ -9,10 +9,11 @@ Subpath exports (import the piece you need):
 - `@azerothian/graphql-types/json` — a `JSON` scalar
 - `@azerothian/graphql-types/date` — a `Date` scalar
 - `@azerothian/graphql-types/bigint` — a `BigInt` scalar
-- `@azerothian/graphql-types/float` — the `Float` scalar
 - `@azerothian/graphql-types/ip` — an `IP` scalar
 - `@azerothian/graphql-types/upload` — an `Upload` scalar
 - `@azerothian/graphql-types/query` — `createQueryType(config)` + `defaultConfig`
+
+For `Float`, use graphql's own `GraphQLFloat` — this package deliberately does not wrap it.
 
 `graphql` is a peer dependency (`^17.0.0`).
 
