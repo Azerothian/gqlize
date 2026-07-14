@@ -33,10 +33,8 @@ import {
   ValueNode,
 } from "graphql";
 
-import property from "./utils/property";
 
-
-const astToJson = {
+const astToJson: { [kind: string]: (ast: any, variables?: any) => any } = {
   [Kind.INT](ast: ValueNode) {
     return GraphQLInt.parseLiteral(ast);
   },
@@ -52,29 +50,24 @@ const astToJson = {
   [Kind.ENUM](ast: { value: any; }) {
     return String(ast.value);
   },
-  [Kind.LIST](ast: { values: any[]; }): any {
+  [Kind.LIST](ast: { values: any[]; }, variables?: any): any {
     return ast.values.map((astItem: ValueNode) => {
-      return JSONType.parseLiteral(astItem);
+      return JSONType.parseLiteral(astItem, variables);
     });
   },
-  [Kind.OBJECT](ast: { fields: any[]; }) {
+  [Kind.OBJECT](ast: { fields: any[]; }, variables?: any) {
     let obj: any = {};
     ast.fields.forEach((field: { name: { value: any; }; value: ValueNode; }) => {
-      obj[field.name.value] = JSONType.parseLiteral(field.value);
+      obj[field.name.value] = JSONType.parseLiteral(field.value, variables);
     });
     return obj;
   },
-  [Kind.VARIABLE](ast: { name: { value: any; }; }) {
-    /*
-    this way converted query variables would be easily
-    converted to actual values in the resolver.js by just
-    passing the query variables object in to function below.
-    We can`t convert them just in here because query variables
-    are not accessible from GraphQLScalarType"s parseLiteral method
-    */
-    return property(ast.name.value);
+  [Kind.VARIABLE](ast: { name: { value: any; }; }, variables?: any) {
+    // graphql-js passes the query variables as parseLiteral's second argument,
+    // so a variable nested inside a JSON literal is resolved to its value here.
+    return variables ? variables[ast.name.value] : undefined;
   },
-  [Kind.NULL](ast: { name: { value: any; }; }) {
+  [Kind.NULL]() {
     return null;
   }
 };
@@ -85,9 +78,9 @@ const JSONType = new GraphQLScalarType({
   description: "The `JSON` scalar type represents raw JSON as values.",
   serialize: value => value,
   parseValue: value => typeof value === "string" ? JSON.parse(value) : value,
-  parseLiteral: ast => {
-    const parser = astToJson[ast.kind] as any;
-    return parser ? parser.call(this, ast) : null;
+  parseLiteral: (ast, variables) => {
+    const parser = astToJson[ast.kind];
+    return parser ? parser(ast, variables) : null;
   }
 });
 
