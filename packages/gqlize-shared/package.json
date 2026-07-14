@@ -2,6 +2,14 @@
   "name": "@azerothian/gqlize-shared",
   "version": "6.0.0",
   "description": "Shared utilities and type definitions for the gqlize data binding library",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Azerothian/gqlize.git",
+    "directory": "packages/gqlize-shared"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "scripts": {

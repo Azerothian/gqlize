@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+*" # bare semver, incl. pre-release (e.g. 7.0.0-beta.0)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 7.0.0-beta.0)"
+        required: true
+
+permissions:
+  contents: write # create the GitHub Release
+  packages: write # publish to GitHub Packages
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "${VERSION#*-}" != "$VERSION" ]; then
+            echo "npm_tag=beta" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Publishing version $VERSION"
+
+      - name: Ensure the tag is on the production branch (main)
+        if: github.event_name == 'push'
+        run: |
+          git fetch --no-tags origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tag ${GITHUB_REF_NAME} is on main."
+          else
+            echo "::error::Tag ${GITHUB_REF_NAME} is not on the production branch (main); refusing to publish."
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+          scope: "@azerothian"
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Set package versions to ${{ steps.version.outputs.version }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const version = process.argv[1];
+            for (const pkg of fs.readdirSync("packages")) {
+              const file = `packages/${pkg}/package.json`;
+              if (!fs.existsSync(file)) continue;
+              const json = JSON.parse(fs.readFileSync(file, "utf8"));
+              json.version = version;
+              fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
+              console.log(`${json.name} -> ${version}`);
+            }
+          ' "${{ steps.version.outputs.version }}"
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          for pkg in gqlize-shared graphql-types gqlize gqlize-adapter-sequelize; do
+            echo "Publishing @azerothian/${pkg}@${{ steps.version.outputs.version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+            pnpm publish "packages/${pkg}/publish" \
+              --no-git-checks --access public --tag "${{ steps.version.outputs.npm_tag }}"
+          done
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; skipping."
+          else
+            FLAGS="--generate-notes"
+            if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then
+              FLAGS="$FLAGS --prerelease"
+            fi
+            gh release create "$GITHUB_REF_NAME" $FLAGS
+          fi
