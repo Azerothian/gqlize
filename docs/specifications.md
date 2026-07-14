@@ -43,7 +43,8 @@ Distinguishing characteristics:
   per-class-method gates, plus a role-based helper.
 - **Lifecycle hooks** — both Sequelize-style lifecycle hooks and gqlize-level `before`/`after`
   transforms keyed by an `Events` enum.
-- **Deep nested mutations** — create/update/delete/add/remove across relationships in a
+- **Deep nested mutations** — create/update/delete/add/remove/set/restore (+ belongsToMany
+  `through` attributes) across relationships in a
   single mutation.
 - **Relay global IDs & connections** — opaque IDs on primary/foreign keys with automatic
   translation, and a custom connection shape that carries a `total`.
@@ -268,10 +269,18 @@ supported via `options.subscriptions`.
 
 `create-mutation-input.ts` generates `{Def}RequiredInput` (create), `{Def}OptionalInput`
 (update), `{Def}UpdateInput` (`where`/`limit`/`input`), and delete filter inputs. For each
-association it also emits nested `create` / `update` / `add` / `remove` / `delete`
-sub-fields, enabling deep writes. `processRelationshipMutation`
-(`packages/gqlize/src/manager.ts`) walks associations and applies each sub-input using the
-adapter's association accessors. This recursion depends on the graphql patch (see §12).
+association it also emits nested sub-fields, enabling deep writes, applied by
+`processRelationshipMutation` (`packages/gqlize/src/manager.ts`) via the Sequelize association
+accessors (recursion depends on the graphql patch, see §12). The sub-fields per association type:
+
+- **hasMany / belongsToMany:** `create` (new records), `update` (`where`+`input` pairs),
+  `add` (associate existing by where), `set` (replace the entire set with matching existing
+  records), `remove` (disassociate matching), `delete` (delete matching), `restore` (undelete
+  soft-deleted matching, paranoid models). For **belongsToMany**, `add`/`set` entries are
+  `{ where, through }` where `through` (a JSON payload) writes join-table column values.
+- **belongsTo / hasOne:** `create`, `update`, `set` (associate an existing record found by a
+  where filter → `accessors.set`), `remove` (`Boolean` → disassociate via `set(null)`),
+  `delete`, `restore`.
 
 ### Example query
 
