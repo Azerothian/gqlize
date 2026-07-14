@@ -2,6 +2,14 @@
   "name": "@azerothian/graphql-types",
   "version": "6.0.0",
   "description": "Custom GraphQL scalar types (JSON, Date, BigInt, Float, IP, Upload) and a query-type helper used by gqlize",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Azerothian/gqlize.git",
+    "directory": "packages/graphql-types"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "main": "cjs/index.js",
   "module": "lib/index.mjs",
   "types": "types/index.d.ts",

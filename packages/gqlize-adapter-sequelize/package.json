@@ -2,6 +2,14 @@
   "name": "@azerothian/gqlize-adapter-sequelize",
   "version": "6.0.0",
   "description": "Sequelize adapter for the data binding library - gqlize",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Azerothian/gqlize.git",
+    "directory": "packages/gqlize-adapter-sequelize"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "scripts": {
