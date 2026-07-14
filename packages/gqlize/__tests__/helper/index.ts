@@ -1,19 +1,18 @@
 
 import Database from "../../src/manager";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
 
 import TaskModel from "./models/task";
 import TaskItemModel from "./models/task-item";
 import Item from "./models/item";
 import Sequelize from "sequelize";
-import { GqlizeAdapter } from "../../src/types";
 import {expect} from "@jest/globals";
+import { createAdapterForDialect, registerTeardown } from "./dialect";
 
 export async function createInstance() {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  const { adapter, name, teardown } = await createAdapterForDialect();
+  registerTeardown(teardown);
+  db.registerAdapter(adapter, name);
   const parentDef = {
     name: "Parent",
     define: {

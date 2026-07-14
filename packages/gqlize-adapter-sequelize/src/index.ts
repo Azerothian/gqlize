@@ -559,6 +559,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
                   required: {
                     type: GraphQLBoolean,
                   },
+                  separate: {
+                    type: GraphQLBoolean,
+                  },
                   where: {
                     type: this.getFilterGraphQLType(
                       targetModel.name,
@@ -632,7 +635,8 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     info?: any,
     whereOperators?: any,
     defaultOptions: any = {},
-    selectedFields?: string | string[] | undefined
+    selectedFields?: string | string[] | undefined,
+    runHook?: (defName: string, hookName: string, value: any, ...args: any) => Promise<any>
   ) => {
     let limit,
       include = [],
@@ -710,7 +714,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         defName,
         args.include,
         order,
-        defaultOptions
+        defaultOptions,
+        [],
+        runHook
       );
       order = result.order;
       include = result.include;
@@ -764,6 +770,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     order: any,
     options: any,
     parentRelsForOrder: any = [],
+    runHook?: (defName: string, hookName: string, value: any, ...args: any) => Promise<any>
   ) {
     let orders = order;
     const incs = await waterfall(
@@ -775,9 +782,16 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             const inc = i[relName];
             const rel = this.getAssociation(defName, relName);
             const TargetModel = this.sequelize.models[rel.target];
+            const targetDefName = (TargetModel as any).definition.name;
             const { whereOperators } = (TargetModel as any).definition;
             const orderAssocPrefix = { model: TargetModel, as: relName };
-            if ((inc.orderBy || []).length > 0) {
+            // A `separate` include runs as its own batched root query, so its
+            // ordering/limit/offset live on the include entry itself rather than
+            // being hoisted onto the parent query's order. A `required` include
+            // must stay an INNER JOIN (it filters the parent rows), which a
+            // separate query cannot do — so `required` always wins over separate.
+            const separate = Boolean(inc.separate) && !inc.required && rel.associationType === "hasMany";
+            if (!separate && (inc.orderBy || []).length > 0) {
               orders = [
                 ...orders,
                 ...inc.orderBy.map((ob: any) => {
@@ -795,16 +809,46 @@ export default class SequelizeAdapter implements GqlizeAdapter {
                 options
               ),
             } as any;
+            if (separate) {
+              retVal.separate = true;
+              if ((inc.orderBy || []).length > 0) {
+                retVal.order = inc.orderBy;
+              }
+              if (inc.limit != null) {
+                retVal.limit = inc.limit;
+              }
+              if (inc.offset != null) {
+                retVal.offset = inc.offset;
+              }
+              // propagate the GraphQL args accessor so the child model's native
+              // find hooks (fired by the separate query) can read rootValue/args.
+              if (options && options.getGraphQLArgs) {
+                retVal.getGraphQLArgs = options.getGraphQLArgs;
+              }
+            } else if (runHook) {
+              // JOIN-loaded relation: Sequelize does not fire the child model's
+              // beforeFind for a JOIN include, so fire it manually with only this
+              // relation's `where` and merge any change back into the include's
+              // where (keeping the filter part of the single combined query).
+              const hookOptions: any = { where: retVal.where, getGraphQLArgs: options?.getGraphQLArgs };
+              const res = await runHook(targetDefName, "beforeFind", hookOptions);
+              if (res && res.where !== undefined) {
+                retVal.where = res.where;
+              }
+            }
             if (inc.include) {
               const v = await this.processIncludeStatement(
-                (TargetModel as any).definition.name,
+                targetDefName,
                 inc.include,
                 order,
                 options,
-                [...parentRelsForOrder, orderAssocPrefix]
+                separate ? [] : [...parentRelsForOrder, orderAssocPrefix],
+                runHook
               );
               retVal.include = v.include;
-              orders = [...orders, ...(v.order || [])];
+              if (!separate) {
+                orders = [...orders, ...(v.order || [])];
+              }
             }
             return [...oo, retVal];
           },
@@ -943,12 +987,17 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         where: await this.processFilterArgument(where, whereOperators, options),
         ...options,
       });
-      return items.map(async (i: { destroy: (arg0: any) => any }) => {
-        i = await before(i);
-        await i.destroy(options);
-        i = await after(i);
-        return i;
-      });
+      // Destroy serially and await each one before resolving — returning the array
+      // of un-awaited promises previously let callers (and subsequent queries) run
+      // before the deletes completed, which was both a correctness bug and a flake.
+      const results = [];
+      for (let item of items as { destroy: (arg0: any) => any }[]) {
+        item = await before(item);
+        await item.destroy(options);
+        item = await after(item);
+        results.push(item);
+      }
+      return results;
     };
   };
   mergeFilterStatement(
@@ -965,12 +1014,45 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return source[relationship.accessors.get](options);
   };
-  resolveManyRelationship = async (defName: string, relationship: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, info: any, options: any) => {
-    if (source[relationship.name]) {
+  // Count a relationship for its `total`. For hasMany, count the target directly
+  // with the foreign-key filter so the child's beforeCount hook fires (Sequelize's
+  // hasMany count accessor runs via findAll, which would fire beforeFind instead).
+  // belongsToMany and others use the through-table-aware association accessor.
+  countRelationship = async (relationship: Association, source: any, where: any, options: any) => {
+    if (relationship.associationType === "hasMany") {
+      const TargetModel = this.sequelize.models[relationship.target];
+      const sourceKey = relationship.sourceKey || (source.constructor as any).primaryKeyAttribute;
+      const countWhere = Object.assign({}, where, { [relationship.foreignKey]: source.get(sourceKey) });
+      return TargetModel.count({ where: countWhere, getGraphQLArgs: options?.getGraphQLArgs } as any);
+    }
+    return source[relationship.accessors.count]({ where, getGraphQLArgs: options?.getGraphQLArgs });
+  };
+  resolveManyRelationship = async (defName: string, relationship: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, info: any, options: any, countOnly?: boolean) => {
+    if (countOnly && !(source[relationship.name] !== undefined && source[relationship.name] !== null)) {
+      // Only `total` requested: run a count instead of fetching rows.
+      const where = await this.processFilterArgument(args.where || {}, whereOperators, options);
+      const total = await this.countRelationship(relationship, source, where, options);
+      return { total, models: [] };
+    }
+    if (source[relationship.name] !== undefined && source[relationship.name] !== null) {
+      // Eager-loaded at the root level (JOIN or `separate:true`). The rows are
+      // already filtered/sorted/limited, so return them — but when a per-parent
+      // limit was applied the loaded length is the page size, not the true total,
+      // so fetch an accurate count (fires the child's beforeCount natively).
       const val = source[relationship.name];
+      const models = Array.isArray(val) ? val : [val];
+      let total = models.length;
+      if (args && (args.first != null || args.last != null)) {
+        try {
+          const where = await this.processFilterArgument(args.where || {}, whereOperators, options);
+          total = await this.countRelationship(relationship, source, where, options);
+        } catch (e) {
+          total = models.length;
+        }
+      }
       return {
-        total: val.length,
-        models: val,
+        total,
+        models,
       };
     }
     const { getOptions, countOptions } = await this.processListArgsToOptions(

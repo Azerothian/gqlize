@@ -7,7 +7,9 @@ import {capitalize} from "@azerothian/gqlize-shared/utils/word";
 import events from "./events";
 import { Definitions, GqlizeAdapter, GqlizeOptions, Definition, HookMap, Relationship, Model, Association } from './types';
 import Events from "./events";
-import { GraphQLResolveInfo, visit } from "graphql";
+import { GraphQLResolveInfo } from "graphql";
+import logger from "@azerothian/gqlize-shared/utils/logger";
+import buildIncludeFromSelection, { mergeIncludeMaps, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
 
 const hookList = [
   "beforeValidate",
@@ -52,6 +54,13 @@ const hookList = [
   "afterBulkSync",
   "beforeQuery",
   "afterQuery",
+];
+
+// gqlize-level hooks that Sequelize has no notion of — they are composed into the
+// per-definition hook map (so `runHook` can fire them) but are NOT registered on
+// the Sequelize model (passing an unknown hook name to `sequelize.define` throws).
+const gqlizeHookList = [
+  "afterCount",
 ];
 
 export default class GQLManager {
@@ -134,12 +143,18 @@ export default class GQLManager {
     
     // this.hookmap[def.name] = this.generateHookMap(def.name);
 
-    this.hooks[def.name] = hookList.reduce((o, hookName) => {
+    // Native Sequelize hooks are registered on the model; gqlize-only hooks
+    // (e.g. afterCount) are composed for `runHook` but withheld from the adapter.
+    const nativeHooks = hookList.reduce((o, hookName) => {
       o[hookName] = this.createHook(hookName, def);
       return o;
     }, {} as HookMap);
+    this.hooks[def.name] = gqlizeHookList.reduce((o, hookName) => {
+      o[hookName] = this.createHook(hookName, def);
+      return o;
+    }, { ...nativeHooks } as HookMap);
 
-    this.models[def.name] = await adapter.createModel(def, this.hooks[def.name]);
+    this.models[def.name] = await adapter.createModel(def, nativeHooks);
   }
 
   createHook(hookName: string, def: Definition) {
@@ -171,6 +186,64 @@ export default class GQLManager {
       }
       return v;
     };
+  }
+
+  /**
+   * Run a composed lifecycle hook (definition + global) by name and return the
+   * transformed value. Used to manually fire find/count hooks that Sequelize does
+   * not fire itself — e.g. a child model's beforeFind/afterFind for JOIN-loaded
+   * relations, or afterCount. A no-op (returns `value`) when no such hook exists.
+   */
+  runHook = async(defName: string, hookName: string, value: any, ...args: any) => {
+    const hooks = this.hooks[defName];
+    if (hooks && hooks[hookName]) {
+      return (hooks[hookName] as (...a: any) => any)(value, ...args);
+    }
+    return value;
+  }
+
+  /**
+   * Fire the child model's afterFind for JOIN-loaded relations in an include plan.
+   * Sequelize does not run a JOIN-included model's find hooks, so this emulates
+   * them on the eager-loaded values. `separate` entries are skipped (they fired
+   * natively via their own query). Recurses into nested JOIN includes.
+   */
+  applyEagerAfterFind = async(planMap: any, instances: any[], options: any): Promise<void> => {
+    if (!planMap || !Array.isArray(instances) || instances.length === 0) {
+      return;
+    }
+    for (const relName of Object.keys(planMap)) {
+      const desc = planMap[relName];
+      if (!desc || desc.separate || !desc.target) {
+        continue;
+      }
+      const nested = desc.include && desc.include[0];
+      for (const inst of instances) {
+        if (!inst) {
+          continue;
+        }
+        let val = inst[relName];
+        if (val === undefined && typeof inst.get === "function") {
+          val = inst.get(relName);
+        }
+        if (val === undefined || val === null) {
+          continue;
+        }
+        const transformed = await this.runHook(desc.target, "afterFind", val, options);
+        const finalVal = transformed === undefined ? val : transformed;
+        if (finalVal !== val) {
+          try {
+            inst[relName] = finalVal;
+            if (inst.dataValues) {
+              inst.dataValues[relName] = finalVal;
+            }
+          } catch (e) { /* getter-only association; in-place mutations still apply */ }
+        }
+        if (nested) {
+          await this.applyEagerAfterFind(nested, Array.isArray(finalVal) ? finalVal : [finalVal], options);
+        }
+      }
+    }
   }
   getModel = (modelName: string) => {
     return this.getModelAdapter(modelName).getModel(modelName);
@@ -333,55 +406,60 @@ export default class GQLManager {
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
     const a = await adapter.replaceIdInArgs(args, defName, info.variableValues);
-    // const argNames = adapter.getAllArgsToReplaceId();
-    // const globalKeys = this.getGlobalKeys(defName);
-    // const a = Object.keys(args).reduce((o, key) => {
-    //   if (argNames.indexOf(key) > -1) {
-    //     o[key] = replaceIdDeep(args[key], globalKeys, info.variableValues);
-    //   } else {
-    //     o[key] = args[key];
-    //   }
-    //   return o;
-    // }, {});
-
-    let offset;
-    if (args.after) {
-      offset = args.after.index + 1;
-    } else if (args.before) {
-      offset = args.before.index + 1;
-      if (args.limit) {
-        offset -= Number(args.limit);
-      }
+    const offset = cursorOffset(args);
+    // Count-only: the nested connection selects `total` but not `edges`/rows — the
+    // adapter runs a count instead of a findAll (fires beforeCount natively); fire
+    // afterCount here.
+    const countOnly = wantsCountOnly(info);
+    const result = await adapter.resolveManyRelationship(defName, association, source, a, offset, definition.whereOperators, info, options, countOnly);
+    if (countOnly && result) {
+      result.total = await this.runHook(defName, "afterCount", result.total, options);
     }
-    return adapter.resolveManyRelationship(defName, association, source, a, offset, definition.whereOperators, info, options);
+    // afterFind for JOIN-eager loads is fired centrally by resolveFindAll's
+    // post-pass (which knows JOIN vs separate authoritatively). A fresh accessor
+    // query and the separate path both fire it natively.
+    return result;
   }
   resolveSingleRelationship = async(defName: string, association: Association, source: any, args: any, context: any, info: any) => {
     const adapter = this.getModelAdapter(defName);
     const options = createGetGraphQLArgsFunc(context, info, source);
+    // afterFind for JOIN-eager single relations is fired by resolveFindAll's post-pass.
     return adapter.resolveSingleRelationship(defName, association, source, args, context, info, options);
   }
   resolveFindAll = async(defName: any, source: any, args: { after: { index: number; }; before: { index: number; }; limit: any; }, context: any, info:  GraphQLResolveInfo) => {
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
+    const options = createGetGraphQLArgsFunc(context, info, source);
     const a = await adapter.replaceIdInArgs(args, defName, info.variableValues);
-    // const argNames = adapter.getAllArgsToReplaceId();
 
     let selectedFields = [];
     if (info) {
       if (Array.isArray(info.fieldNodes)) {
-        selectedFields = getSelectionFields(info.fieldNodes[0]);
+        selectedFields = getSelectionFields(info.fieldNodes[0], info);
       }
     }
-    let offset;
-    if (args.after) {
-      offset = args.after.index + 1;
-    } else if (args.before) {
-      offset = args.before.index + 1;
-      if (args.limit) {
-        offset -= Number(args.limit);
+    // Auto-generate a combined include tree from the GraphQL selection set (merged
+    // with any explicit `include` arg) so same-adapter relations are pulled at the
+    // root level in a single query. Cross-adapter relations are skipped here and
+    // resolved as their own root queries by the nested field resolvers.
+    if (info && Array.isArray(info.fieldNodes) && (definition.options?.autoInclude !== false)) {
+      try {
+        let astInclude = buildIncludeFromSelection(this, defName, info.fieldNodes[0], info);
+        if (astInclude) {
+          astInclude = (adapter as any).replaceIdInInclude(astInclude, defName, info.variableValues);
+        }
+        const explicit = (a as any).include;
+        if (astInclude && explicit) {
+          (a as any).include = [mergeIncludeMaps(explicit[0] || {}, astInclude[0] || {})];
+        } else if (astInclude) {
+          (a as any).include = astInclude;
+        }
+      } catch (e) {
+        logger("gqlize::manager").warn("auto-include build failed, falling back to per-relation resolution", e);
       }
     }
-    const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, a, offset, info, definition.whereOperators, createGetGraphQLArgsFunc(context, info, source), selectedFields);
+    const offset = cursorOffset(args);
+    const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, a, offset, info, definition.whereOperators, options, selectedFields, this.runHook);
     if (definition.before) {
       await definition.before({
         params: getOptions, args, context, info,
@@ -389,39 +467,29 @@ export default class GQLManager {
         type: Events.QUERY,
       });
     }
-    // const {returnType} = info;
-    // console.log("rr", returnType)
-    let include = {};
-    
-    visit(info.fieldNodes[0], {
-      Field: {
-        enter(node: any) {
-          return node;
-        },
-        leave(node: any) {
-          return node;
-        },
-      },
-      Argument: {
-        enter(node: any) {
-          return node;
-        },
-        leave(node: any) {
-          return node;
-        },
-      },
-    });
-
+    // Count-only: the connection selects `total` but not `edges`/rows — skip the
+    // findAll and run a count (fires beforeCount natively + afterCount manually).
+    if (wantsCountOnly(info)) {
+      const countOnlyOptions = countOptions || {
+        where: getOptions.where,
+        include: (getOptions.include || []).filter((i: any) => i.required && !i.separate),
+        getGraphQLArgs: getOptions.getGraphQLArgs,
+      };
+      let total = await adapter.count(defName, countOnlyOptions);
+      total = await this.runHook(defName, "afterCount", total, countOnlyOptions);
+      return { total, models: [] };
+    }
     let models = (await adapter.findAll(defName, getOptions)).filter((m: any) => (m !== undefined && m !== null));
 
-    // if (definition.after) {
-    //   const afterFunc = definition.after;
-    //   models = await Promise.all(models.map((m: any) => afterFunc({
-    //     result: m, args, context, info,
-    //     modelDefinition: definition,
-    //     type: events.QUERY,
-    //   })).filter((m: any) => (m !== undefined && m !== null)));
-    // }
+    // Sequelize does not fire a child model's afterFind for JOIN-loaded includes.
+    // Walk the built include plan and fire afterFind for each JOIN (non-separate)
+    // relation on the loaded instances before the nested field resolvers read them;
+    // separate/cross-adapter relations fire it natively via their own query.
+    const plan = (a as any).include && (a as any).include[0];
+    if (plan) {
+      await this.applyEagerAfterFind(plan, models, options);
+    }
+
     let total;
     if (adapter.hasInlineCountFeature()) {
       total = await adapter.getInlineCount(models);
@@ -730,40 +798,39 @@ function createGetGraphQLArgsFunc(context: any, info: any, source: any, options 
   }, options);
 }
 
-function getSelectionFields(startNode: any, targetName?: string) {
-  const targetNode = getSelectionSet(startNode, targetName);
-  if (targetNode) {
-    if (targetNode.selectionSet) {
-      return targetNode.selectionSet.selections.reduce((o: any[], k: { name: { value: any; }; }) => {
-        o.push(k.name.value);
-        return o;
-      }, []);
+function getSelectionFields(startNode: any, info?: GraphQLResolveInfo) {
+  if (!startNode || !info) {
+    return undefined;
+  }
+  // Descend the relay connection (edges { node { … } }) to the node selection set,
+  // then collect the requested field names — expanding inline/named fragments.
+  const nodeSelectionSet = getChildSelectionSet(startNode.selectionSet, true, info);
+  if (!nodeSelectionSet) {
+    return undefined;
+  }
+  return flattenFieldNodes(nodeSelectionSet, info).map((f: any) => f.name.value);
+}
+
+// Cursor-based offset from decoded `after`/`before` args (shared by the top-level
+// list resolver and the relationship resolver).
+function cursorOffset(args: any) {
+  if (args.after) {
+    return args.after.index + 1;
+  }
+  if (args.before) {
+    let offset = args.before.index + 1;
+    if (args.limit) {
+      offset -= Number(args.limit);
     }
+    return offset;
   }
   return undefined;
 }
 
-
-function getSelectionSet(node:any, selectionSet: any, targetName:string = "node"): any {
-  if (!node) {
-    return undefined;
-  }
-  if (node.name.value === targetName) {
-    return node;
-  }
-  if (!node.selectionSet) {
-    return undefined;
-  }
-  if (!Array.isArray(node.selectionSet.selections)) {
-    return undefined;
-  }
-  for (let i = 0; i < node.selectionSet.selections.length; i++) {
-    const result = getSelectionSet(node.selectionSet.selections[i], targetName);
-    if (result) {
-      return result;
-    }
-  }
-  return undefined;
+// A relay connection field that selects `total` but not `edges`/rows can be
+// served by a count instead of a findAll.
+function wantsCountOnly(info: GraphQLResolveInfo) {
+  return Boolean(info && Array.isArray(info.fieldNodes) && !isConnectionRowsSelected(info.fieldNodes[0], info));
 }
 
 

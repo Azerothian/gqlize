@@ -3,7 +3,7 @@ import createListObject from "./create-list-object";
 import {capitalize} from "@azerothian/gqlize-shared/utils/word";
 import { SchemaCache, GqlizeOptions, Definition, DefinitionFields, HookMap, Relationship, WhereOperators, Association } from '../types';
 import GQLManager from '../manager';
-import { GraphQLType, GraphQLArgs } from "graphql";
+import { GraphQLType, GraphQLArgs, GraphQLBoolean } from "graphql";
 import Events from "../events";
 import { processAfter } from "./utils/after";
 
@@ -49,6 +49,12 @@ export default function createRelatedFieldsFunc(
               f[relName] = {
                 type: targetObject,
                 description: ((definition.comments || {}).fields || {})[relName],
+                args: {
+                  required: {
+                    type: GraphQLBoolean,
+                    description: "When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.",
+                  },
+                },
                 async resolve(source: any, args: any, context: any, info: any) {
                   const node = await instance.resolveSingleRelationship(
                     targetDef.name || "",
