@@ -38,7 +38,8 @@ module.exports = {
   // Each postgres test file spins up an in-process PGlite (WASM) instance; too
   // many concurrent instances exhaust resources on high-core machines, so cap
   // worker concurrency. sqlite-only runs are fast enough that this is a non-issue.
-  maxWorkers: 4,
+  // On CI (few cores, slower) run fewer workers to avoid oversubscription.
+  maxWorkers: process.env.CI ? 2 : 4,
   collectCoverage: true,
   collectCoverageFrom: [
     "**/*.{ts,js}",
@@ -63,6 +64,10 @@ module.exports = {
       ...base,
       displayName: 'postgres',
       testMatch: POSTGRES_SUITES,
+      // PGlite (in-process WASM Postgres) is slower than sqlite — especially the
+      // first test in a file which lazily boots the WASM instance — so allow more
+      // headroom than the 5s default, which otherwise flakes on CI.
+      testTimeout: 30000,
       setupFiles: ['<rootDir>/__tests__/setup/dialect-postgres.ts'],
       setupFilesAfterEnv: ['<rootDir>/__tests__/setup/teardown.ts'],
     },
