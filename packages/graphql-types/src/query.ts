@@ -9,9 +9,12 @@ import {
   GraphQLInputFieldConfig,
   Kind,
 } from "graphql";
-import type { ObjMap } from "graphql/jsutils/ObjMap";
-
 import property from "./utils/property";
+
+// Local equivalent of graphql's internal `jsutils/ObjMap` type. graphql v17
+// tightened its package `exports`, so the deep subpath is no longer importable;
+// the shape is simply a string-keyed map.
+type ObjMap<T> = { [key: string]: T };
 
 // To generate an strict model for query types instead of blank json types
 // this should fix apollo's variable cache issue

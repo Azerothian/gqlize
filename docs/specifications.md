@@ -79,7 +79,7 @@ gqlize-shared (leaf) ──► gqlize (core) ──► gqlize-adapter-sequelize 
 Root configuration files: `package.json` (scripts, `pnpm@9.15.9`, graphql override/patch),
 `pnpm-workspace.yaml` (`packages/*`), `turbo.json` (task pipeline), `tsconfig.base.json`
 (shared compiler options + `@azerothian/*` → `src/` path aliases), `tsconfig.json`
-(`tsc -b` project references), and `patches/graphql@16.8.1.patch`.
+(`tsc -b` project references), and `patches/graphql@17.0.2.patch`.
 
 ---
 
@@ -567,14 +567,15 @@ each with its own subpath export:
 
 ## 12. The graphql Patch
 
-`graphql@16.8.1` is a **pinned peer dependency**. gqlize requires a mutation's *nested*
+`graphql@17.0.2` is a **pinned peer dependency**. gqlize requires a mutation's *nested*
 sub-fields to execute serially, but stock graphql only serializes *top-level* mutation
 fields — nested sub-fields run asynchronously. Because gqlize's deep relationship mutations
 (create/update/delete/add/remove) rely on serial nested execution, the repository applies a
 committed pnpm patch:
 
-- `patches/graphql@16.8.1.patch` — patches `completeObjectValue` in graphql's
-  `execution/execute` module.
+- `patches/graphql@17.0.2.patch` — patches `executeCollectedSubfields` in graphql's
+  `execution` module (`ExecutorThrowingOnIncremental`, the class the standard `execute()`
+  path uses), routing nested mutation fields through `executeFieldsSerially`.
 - Wired via `pnpm.overrides` (pins the whole dependency tree to one patched copy) and
   `pnpm.patchedDependencies` in the root `package.json`.
 

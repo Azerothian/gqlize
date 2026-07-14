@@ -14,7 +14,7 @@ Subpath exports (import the piece you need):
 - `@azerothian/graphql-types/upload` — an `Upload` scalar
 - `@azerothian/graphql-types/query` — `createQueryType(config)` + `defaultConfig`
 
-`graphql` is a peer dependency (`^16.8.1`).
+`graphql` is a peer dependency (`^17.0.0`).
 
 ## License
 

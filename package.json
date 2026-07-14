@@ -14,11 +14,16 @@
   },
   "pnpm": {
     "overrides": {
-      "graphql": "16.8.1",
+      "graphql": "17.0.2",
       "unicorn-magic": "0.2.0"
     },
     "patchedDependencies": {
-      "graphql@16.8.1": "patches/graphql@16.8.1.patch"
+      "graphql@17.0.2": "patches/graphql@17.0.2.patch"
+    },
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "graphql-relay>graphql": "17"
+      }
     }
   }
 }

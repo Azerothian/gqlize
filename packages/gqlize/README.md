@@ -11,7 +11,7 @@ pnpm add @azerothian/gqlize @azerothian/gqlize-adapter-sequelize
 `gqlize` and the Sequelize adapter expect these peer dependencies in your project:
 
 ```sh
-pnpm add graphql@^16.8.1 graphql-relay@^0.10.0 sequelize@^6.35.1
+pnpm add graphql@^17.0.0 graphql-relay@^0.10.0 sequelize@^6.35.1
 ```
 
 (`@azerothian/gqlize-shared` and `@azerothian/graphql-types` are pulled in automatically.)
@@ -41,23 +41,23 @@ Until [Proposal #252](https://github.com/graphql/graphql-spec/issues/252) is int
 
 `graphql` executes a mutation's **top-level** fields serially, but nested sub-fields run
 asynchronously. gqlize needs nested mutation sub-fields to run serially too. This is a small,
-non-breaking change to `completeObjectValue` in graphql's `execution/execute` module (route nested
+non-breaking change to `executeCollectedSubfields` in graphql's `execution` module (route nested
 mutation fields through `executeFieldsSerially`).
 
-`graphql` is a **peer dependency** (`^16.8.1`); gqlize does not bundle a graphql fork. This monorepo
+`graphql` is a **peer dependency** (`^17.0.0`); gqlize does not bundle a graphql fork. This monorepo
 applies the change as a committed [pnpm patch](https://pnpm.io/cli/patch),
-`patches/graphql@16.8.1.patch`, wired up in the root `package.json`:
+`patches/graphql@17.0.2.patch`, wired up in the root `package.json`:
 
 ```jsonc
 "pnpm": {
-  "overrides": { "graphql": "16.8.1" },
-  "patchedDependencies": { "graphql@16.8.1": "patches/graphql@16.8.1.patch" }
+  "overrides": { "graphql": "17.0.2" },
+  "patchedDependencies": { "graphql@17.0.2": "patches/graphql@17.0.2.patch" }
 }
 ```
 
 Downstream consumers who need serial nested mutations can reuse the same patch file (pnpm patches
 do not travel with a published package). graphql still insists on a single copy in `node_modules`;
-the `overrides` entry pins the whole tree to one patched `graphql@16.8.1`.
+the `overrides` entry pins the whole tree to one patched `graphql@17.0.2`.
 
 ## Adapters
 

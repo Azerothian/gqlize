@@ -32,6 +32,7 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/permission.test.ts',
   '<rootDir>/__tests__/comments.test.ts',
   '<rootDir>/__tests__/include-leaf-model.test.ts',
+  '<rootDir>/__tests__/where-variables.test.ts',
 ];
 
 module.exports = {

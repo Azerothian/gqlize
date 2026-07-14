@@ -11,7 +11,7 @@ pnpm add @azerothian/gqlize @azerothian/gqlize-adapter-sequelize
 Provide the peer dependencies in your project:
 
 ```sh
-pnpm add graphql@^16.8.1 graphql-relay@^0.10.0 sequelize@^6.35.1
+pnpm add graphql@^17.0.0 graphql-relay@^0.10.0 sequelize@^6.35.1
 ```
 
 (`@azerothian/graphql-types` is pulled in automatically. See the [gqlize README](../gqlize/README.md#caveats) for the required `graphql` mutation patch.)

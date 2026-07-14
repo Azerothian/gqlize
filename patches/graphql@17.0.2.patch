@@ -1,0 +1,32 @@
+diff --git a/execution/ExecutorThrowingOnIncremental.js b/execution/ExecutorThrowingOnIncremental.js
+index e863e99d8274e4a59397d4d02b49892968884dc9..c2464c39ca127f8ce0e8e83bcf054eba6bf4a64a 100644
+--- a/execution/ExecutorThrowingOnIncremental.js
++++ b/execution/ExecutorThrowingOnIncremental.js
+@@ -26,6 +26,11 @@ class ExecutorThrowingOnIncremental extends Executor_ts_1.Executor {
+             this.abort(reason);
+             throw reason;
+         }
++        // gqlize patch: serialize nested mutation fields (graphql-spec #252) so
++        // ordered relationship mutations (create -> add/remove) run sequentially.
++        if (this.validatedExecutionArgs.operation.operation === ast_ts_1.OperationTypeNode.MUTATION) {
++            return this.executeFieldsSerially(parentType, sourceValue, path, originalGroupedFieldSet, undefined);
++        }
+         return this.executeFields(parentType, sourceValue, path, originalGroupedFieldSet, undefined);
+     }
+     completeListValue(returnType, fieldDetailsList, info, path, result, positionContext) {
+diff --git a/execution/ExecutorThrowingOnIncremental.mjs b/execution/ExecutorThrowingOnIncremental.mjs
+index 7c2660cd496bd8ea17af9bba7f189fcbac3ccc6d..601128d8fa9add36a6bf774f9e49aa8dfbb334f4 100644
+--- a/execution/ExecutorThrowingOnIncremental.mjs
++++ b/execution/ExecutorThrowingOnIncremental.mjs
+@@ -23,6 +23,11 @@ export class ExecutorThrowingOnIncremental extends Executor {
+             this.abort(reason);
+             throw reason;
+         }
++        // gqlize patch: serialize nested mutation fields (graphql-spec #252) so
++        // ordered relationship mutations (create -> add/remove) run sequentially.
++        if (this.validatedExecutionArgs.operation.operation === OperationTypeNode.MUTATION) {
++            return this.executeFieldsSerially(parentType, sourceValue, path, originalGroupedFieldSet, undefined);
++        }
+         return this.executeFields(parentType, sourceValue, path, originalGroupedFieldSet, undefined);
+     }
+     completeListValue(returnType, fieldDetailsList, info, path, result, positionContext) {
