@@ -94,6 +94,37 @@ describe("variables inside a where object", () => {
     expect(await Widget.count({where: {name: "updated"}})).toEqual(1);
   });
 
+  it("string field: variable as the field-filter object inside an inline where", async () => {
+    const db = await build();
+    const {Widget} = db.models as any;
+    await Widget.create({name: "alpha"});
+    await Widget.create({name: "beta"});
+    const schema = await createSchema(db);
+    // the `name` field's filter object is supplied as a variable
+    const result = (await graphql({
+      schema,
+      source: `query ($nf: GQLTQueryWidgetWherename) { models { Widget(where: { name: $nf }) { edges { node { name } } } } }`,
+      variableValues: {nf: {eq: "alpha"}},
+    })) as any;
+    validateResult(result);
+    expect(result.data.models.Widget.edges.map((e: any) => e.node.name)).toEqual(["alpha"]);
+  });
+
+  it("string field: the whole where supplied as a variable", async () => {
+    const db = await build();
+    const {Widget} = db.models as any;
+    await Widget.create({name: "alpha"});
+    await Widget.create({name: "beta"});
+    const schema = await createSchema(db);
+    const result = (await graphql({
+      schema,
+      source: `query ($w: GQLTQueryWidgetWhere) { models { Widget(where: $w) { edges { node { name } } } } }`,
+      variableValues: {w: {name: {eq: "beta"}}},
+    })) as any;
+    validateResult(result);
+    expect(result.data.models.Widget.edges.map((e: any) => e.node.name)).toEqual(["beta"]);
+  });
+
   it("JSON field: variable nested inside a where literal", async () => {
     const db = await build();
     const {Widget} = db.models as any;
