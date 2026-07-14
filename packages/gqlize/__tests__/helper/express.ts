@@ -1,23 +1,22 @@
-import express from "express";
-import {ApolloServer} from "apollo-server-express";
+import {createServer} from "node:http";
+import {createYoga} from "graphql-yoga";
 
 import {createInstance} from "./index";
 import {createSchema} from "../../src/graphql/index";
 
 const PORT = 3005;
-const app = express();
+
 (async() => {
   const instance = await createInstance();
   const schema = await createSchema(instance);
-  const server = new ApolloServer({schema,
-    context: () => {
-      return {instance};
-    }
+  const yoga = createYoga({
+    schema,
+    context: () => ({instance}),
   });
-  server.applyMiddleware({app});
-  app.listen(PORT);
-})().then(() => {
-  console.log("success", PORT);
-}, (err) => {
+  const server = createServer(yoga);
+  server.listen(PORT, () => {
+    console.log("success", PORT, `http://localhost:${PORT}${yoga.graphqlEndpoint}`);
+  });
+})().catch((err) => {
   console.log("ERR", err);
 });

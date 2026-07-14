@@ -168,21 +168,18 @@ Definition keys you'll commonly use:
 ## 4. Serving the schema
 
 `createSchema` returns a standard `graphql` `GraphQLSchema`; serve it with any GraphQL server.
-Apollo + Express:
+graphql-yoga (on Node's built-in http server):
 
 ```ts
-import express from "express";
-import { ApolloServer } from "apollo-server-express";
+import { createServer } from "node:http";
+import { createYoga } from "graphql-yoga";
 
-const app = express();
 const schema = await createSchema(db);
-const server = new ApolloServer({
+const yoga = createYoga({
   schema,
   context: () => ({ instance: db }),   // available to resolvers/hooks
 });
-await server.start();
-server.applyMiddleware({ app });
-app.listen(3005);
+createServer(yoga).listen(3005);
 ```
 
 Dump the generated SDL to inspect the type/argument names:
