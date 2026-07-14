@@ -1,6 +1,9 @@
 {
   "name": "@azerothian/gqlize-adapter-sequelize",
   "version": "6.0.0",
+  "engines": {
+    "node": ">=24"
+  },
   "description": "Sequelize adapter for the data binding library - gqlize",
   "repository": {
     "type": "git",
@@ -41,7 +44,7 @@
     "@tsconfig/recommended": "^1.0.8",
     "@types/debug": "^4.1.12",
     "@types/jest": "^29.5.14",
-    "@types/node": "^22.15.18",
+    "@types/node": "^24.13.3",
     "apollo-server-express": "^3.13.0",
     "body-parser": "^1.20.3",
     "copyfiles": "^2.4.1",

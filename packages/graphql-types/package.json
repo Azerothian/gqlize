@@ -1,6 +1,9 @@
 {
   "name": "@azerothian/graphql-types",
   "version": "6.0.0",
+  "engines": {
+    "node": ">=24"
+  },
   "description": "Custom GraphQL scalar types (JSON, Date, BigInt, Float, IP, Upload) and a query-type helper used by gqlize",
   "repository": {
     "type": "git",
@@ -39,7 +42,7 @@
     "@swc/jest": "^0.2.38",
     "@tsconfig/node20": "^20.1.5",
     "@types/jest": "^29.5.14",
-    "@types/node": "^22.15.18",
+    "@types/node": "^24.13.3",
     "copyfiles": "^2.4.1",
     "globby": "^14.1.0",
     "graphql": "16.8.1",

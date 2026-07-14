@@ -1,6 +1,9 @@
 {
   "name": "@azerothian/gqlize-shared",
   "version": "6.0.0",
+  "engines": {
+    "node": ">=24"
+  },
   "description": "Shared utilities and type definitions for the gqlize data binding library",
   "repository": {
     "type": "git",
@@ -39,7 +42,7 @@
     "@tsconfig/node20": "^20.1.5",
     "@types/debug": "^4.1.12",
     "@types/jest": "^29.5.14",
-    "@types/node": "^22.15.18",
+    "@types/node": "^24.13.3",
     "copyfiles": "^2.4.1",
     "globby": "^14.1.0",
     "graphql": "16.8.1",

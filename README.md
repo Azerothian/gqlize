@@ -49,7 +49,7 @@ Dependency graph (acyclic): `gqlize-shared` ← `gqlize` ← `gqlize-adapter-seq
 
 ## Prerequisites
 
-- **Node.js** ≥ 20
+- **Node.js** ≥ 24
 - **pnpm** 9 (`corepack enable` will pick up the pinned version in `package.json`)
 - **Bun** (optional) — supported at runtime via a `bun` export condition (see below)
 
