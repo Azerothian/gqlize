@@ -1,5 +1,4 @@
-import { globby } from 'globby';
-import fs from "node:fs/promises";
+import fs, { glob } from "node:fs/promises";
 import path from "node:path";
 
 /// Generate publish/package.json: build the `exports` map (one entry per src
@@ -9,7 +8,10 @@ import path from "node:path";
 
 async function loadWorkspaceVersions() {
   const workspaceDir = path.resolve(process.cwd(), '..');
-  const manifests = await globby(['*/package.json'], { cwd: workspaceDir, absolute: true });
+  const manifests: string[] = [];
+  for await (const match of glob('*/package.json', { cwd: workspaceDir })) {
+    manifests.push(path.resolve(workspaceDir, match));
+  }
   const versions: Record<string, string> = {};
   for (const manifest of manifests) {
     try {
@@ -41,11 +43,13 @@ function resolveWorkspaceRange(range: string, name: string, versions: Record<str
 
 async function updatePackageJson() {
   await fs.mkdir(path.join(process.cwd(), './publish'), { recursive: true });
-  const files = await globby(['**/*'], {
-    onlyDirectories: false,
-    onlyFiles: true,
-    cwd: path.resolve(process.cwd(), 'src'),
-  });
+  const srcDir = path.resolve(process.cwd(), 'src');
+  const files: string[] = [];
+  for await (const entry of glob('**/*', { cwd: srcDir, withFileTypes: true })) {
+    if (entry.isFile()) {
+      files.push(path.relative(srcDir, path.join(entry.parentPath, entry.name)));
+    }
+  }
   const packageJsonPath = path.join(process.cwd(), './package.json');
   const packagePublishJsonPath = path.join(process.cwd(), './publish/package.json');
   const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));

@@ -5,7 +5,6 @@ import TaskModel from "./models/task";
 import TaskItemModel from "./models/task-item";
 import Item from "./models/item";
 import Sequelize from "sequelize";
-import {expect} from "@jest/globals";
 import { createAdapterForDialect, registerTeardown } from "./dialect";
 
 export async function createInstance() {
@@ -67,5 +66,4 @@ export function validateResult(result: any) {
     console.log("Graphql Error", result.errors); //eslint-disable-line
     throw result.errors[0];
   }
-  expect(((result || {}).errors || []).length).toEqual(0);
 }

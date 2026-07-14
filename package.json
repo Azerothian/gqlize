@@ -9,13 +9,13 @@
     "watch": "turbo run watch"
   },
   "devDependencies": {
-    "turbo": "^2.10.4",
-    "typescript": "^5.8.3"
+    "turbo": "^2.10.5",
+    "typescript": "^7.0.2"
   },
   "pnpm": {
     "overrides": {
       "graphql": "17.0.2",
-      "unicorn-magic": "0.2.0"
+      "unicorn-magic": "0.4.0"
     },
     "patchedDependencies": {
       "graphql@17.0.2": "patches/graphql@17.0.2.patch"

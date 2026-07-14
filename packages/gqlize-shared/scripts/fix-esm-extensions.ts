@@ -1,5 +1,5 @@
-import { globby } from 'globby';
 import fs from 'node:fs';
+import { glob } from 'node:fs/promises';
 import path from 'node:path';
 
 /// Post-process the SWC ESM output (publish/lib/**/*.mjs). SWC's
@@ -36,7 +36,10 @@ const patterns: RegExp[] = [
 ];
 
 async function run() {
-  const files = await globby(['**/*.mjs'], { cwd: libDir, absolute: true });
+  const files: string[] = [];
+  for await (const match of glob('**/*.mjs', { cwd: libDir })) {
+    files.push(path.resolve(libDir, match));
+  }
   for (const file of files) {
     let src = fs.readFileSync(file, 'utf8');
     let changed = false;
