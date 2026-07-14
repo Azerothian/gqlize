@@ -4,6 +4,10 @@ A relational data binder that generates GraphQL schemas over multiple data sourc
 pluggable adapters. This is a [pnpm](https://pnpm.io/) + [Turborepo](https://turborepo.com/)
 monorepo.
 
+📄 See [**docs/specifications.md**](docs/specifications.md) for the full technical
+specification — architecture, public API, model definition schema, permissions, hooks, and
+the adapter contract.
+
 ## Packages
 
 | Package | Description |

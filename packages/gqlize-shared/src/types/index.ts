@@ -24,13 +24,13 @@ export interface GqlizeAdapter {
   getOrderByGraphQLType: (defName: string, definition: Definition) => GraphQLInputType;
   getFilterGraphQLType: (defName: string, definition: Definition) => GraphQLInputType;
   replaceIdInArgs: (args: any, defName: string, variableValues: any) => any;
-  resolveManyRelationship: (defName: string, association: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, info: any, options: any) => Promise<any>;
+  resolveManyRelationship: (defName: string, association: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, info: any, options: any, countOnly?: boolean) => Promise<any>;
   resolveSingleRelationship: (defName: string, association: Association, source: any, args: any, context: any, info: any, options: any) => Promise<any>;
   processListArgsToOptions: (defName: string, args: any, offset: any, info: any, whereOperators: WhereOperators | undefined, graphQLArgs: {getGraphQLArgs: () => {
       context: any;
       info: any;
       source: any;
-  }}, selectedFields: any) => any;
+  }}, selectedFields: any, runHook?: (defName: string, hookName: string, value: any, ...args: any) => Promise<any>) => any;
   hasInlineCountFeature: () => boolean;
   findAll: (defName: string, options: any) => Promise<any>
   getInlineCount: (models: any) => Promise<number>;
@@ -252,6 +252,11 @@ export type Definition = {
 
 export interface DefinitionOptions {
   hooks?: HookMap;
+  /**
+   * When false, disables root-level eager resolution (auto-generated include tree)
+   * for this model, falling back to per-relation resolution. Defaults to enabled.
+   */
+  autoInclude?: boolean;
   instanceMethods?: {
     [name: string]: (this: any, args?: any, context?: any) => any;
   }

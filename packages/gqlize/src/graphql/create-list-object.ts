@@ -5,6 +5,7 @@ import {
   GraphQLList,
   GraphQLInt,
   GraphQLString,
+  GraphQLBoolean,
 } from "graphql";
 
 import { fromCursor, toCursor } from "./objects/cursor";
@@ -89,6 +90,10 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
       orderBy: {
         type: orderBy,
         description: "If provided this will sort the results by the supplied column and direction",
+      },
+      required: {
+        type: GraphQLBoolean,
+        description: "When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.",
       }
     }, instance.getDefaultListArgs(targetDefName)),
     async resolve(source: any, args: { after: any; before: any; first: any; last: any; }, context: any, info: any) {
