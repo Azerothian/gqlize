@@ -35,17 +35,17 @@ import {
 
 
 const astToJson: { [kind: string]: (ast: any, variables?: any) => any } = {
-  [Kind.INT](ast: ValueNode) {
-    return GraphQLInt.parseLiteral(ast);
+  [Kind.INT](ast: ValueNode, variables?: any) {
+    return GraphQLInt.parseLiteral(ast, variables);
   },
-  [Kind.FLOAT](ast: ValueNode) {
-    return GraphQLFloat.parseLiteral(ast);
+  [Kind.FLOAT](ast: ValueNode, variables?: any) {
+    return GraphQLFloat.parseLiteral(ast, variables);
   },
-  [Kind.BOOLEAN](ast: ValueNode) {
-    return GraphQLBoolean.parseLiteral(ast);
+  [Kind.BOOLEAN](ast: ValueNode, variables?: any) {
+    return GraphQLBoolean.parseLiteral(ast, variables);
   },
-  [Kind.STRING](ast: ValueNode) {
-    return GraphQLString.parseLiteral(ast);
+  [Kind.STRING](ast: ValueNode, variables?: any) {
+    return GraphQLString.parseLiteral(ast, variables);
   },
   [Kind.ENUM](ast: { value: any; }) {
     return String(ast.value);

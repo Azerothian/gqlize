@@ -37,7 +37,7 @@ Every example below is drawn from the behaviour exercised in the test suite
 ```sh
 pnpm add @azerothian/gqlize @azerothian/gqlize-adapter-sequelize
 # peer dependencies
-pnpm add graphql@^16.8.1 graphql-relay@^0.10 sequelize@^6
+pnpm add graphql@^17.0.0 graphql-relay@^0.10 sequelize@^6
 # plus a Sequelize driver, e.g. sqlite3 / pg
 ```
 

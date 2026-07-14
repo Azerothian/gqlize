@@ -97,11 +97,11 @@ rewritten to concrete versions at publish time so the packages install standalon
 
 ## GraphQL
 
-`graphql` is a **peer dependency** (`^16.8.1`). gqlize needs a mutation's **nested** sub-fields to
+`graphql` is a **peer dependency** (`^17.0.0`). gqlize needs a mutation's **nested** sub-fields to
 execute serially (stock graphql only serializes top-level mutation fields). Rather than shipping a
 graphql fork, this repo applies a committed [pnpm patch](https://pnpm.io/cli/patch),
-`patches/graphql@16.8.1.patch`, via `pnpm.patchedDependencies`; `pnpm.overrides` pins the whole tree
-to that single patched `graphql@16.8.1`. Downstream consumers who need this behaviour can reuse the
+`patches/graphql@17.0.2.patch`, via `pnpm.patchedDependencies`; `pnpm.overrides` pins the whole tree
+to that single patched `graphql@17.0.2`. Downstream consumers who need this behaviour can reuse the
 same patch file.
 
 ## Publishing

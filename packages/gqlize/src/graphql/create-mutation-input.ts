@@ -72,7 +72,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         };
       } else {
         const type = instance.getGraphQLInputType(defName, `${fieldName}${forceOptional ? "Optional" : "Required"}`, field.type);
-        let t = field.allowNull || field.autoPopulated || forceOptional ? type : new GraphQLNonNull(type);
+        let t = field.allowNull || field.autoPopulated || forceOptional ? type : new GraphQLNonNull(type as any);
         fields[fieldName] = {
           type: t,
           description: comment,
