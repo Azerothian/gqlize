@@ -555,7 +555,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             type: new GraphQLInputObjectType({
               name: `GQLT${defName}Include${relationship.name}Object`,
               fields: () => {
-                return {
+                const includeFields: any = {
                   required: {
                     type: GraphQLBoolean,
                   },
@@ -571,13 +571,19 @@ export default class SequelizeAdapter implements GqlizeAdapter {
                   orderBy: {
                     type: this.getOrderByGraphQLType(targetModel.name),
                   },
-                  include: {
-                    type: this.getIncludeGraphQLType(
-                      targetModel.name,
-                      (targetModel as any).definition
-                    ),
-                  },
                 };
+                // A leaf target (no relationships of its own) has no include type;
+                // only expose the nested `include` field when one exists.
+                const nestedIncludeType = this.getIncludeGraphQLType(
+                  targetModel.name,
+                  (targetModel as any).definition
+                );
+                if (nestedIncludeType) {
+                  includeFields.include = {
+                    type: nestedIncludeType,
+                  };
+                }
+                return includeFields;
               },
             }),
           };
