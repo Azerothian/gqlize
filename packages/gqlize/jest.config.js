@@ -27,6 +27,7 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/query-eager.test.ts',
   '<rootDir>/__tests__/query-count.test.ts',
   '<rootDir>/__tests__/mutation.test.ts',
+  '<rootDir>/__tests__/mutation-relationships.test.ts',
   '<rootDir>/__tests__/relay.test.ts',
   '<rootDir>/__tests__/permission.test.ts',
   '<rootDir>/__tests__/comments.test.ts',

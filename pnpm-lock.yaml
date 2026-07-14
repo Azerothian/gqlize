@@ -29,6 +29,9 @@ importers:
       '@azerothian/gqlize-shared':
         specifier: workspace:*
         version: link:../gqlize-shared
+      '@azerothian/graphql-types':
+        specifier: workspace:^
+        version: link:../graphql-types
       '@vostro/object-visit':
         specifier: ^1.1.0
         version: 1.1.0

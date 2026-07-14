@@ -548,6 +548,8 @@ export default class GQLManager {
       const targetDef = this.getDefinition(targetName);
       if (input[key]) {
         const args = input[key];
+        const singular = association.associationType === "belongsTo" || association.associationType === "hasOne";
+        const isBtm = association.associationType === "belongsToMany";
         if (args.create) {
           await waterfall(args.create, async(arg: any) => {
             if (targetDef.before) {
@@ -636,30 +638,82 @@ export default class GQLManager {
             }));
           });
         }
-        if (args.remove) {
-          await waterfall(args.remove, async(arg: any) => {
-            const where = await targetAdapter.processFilterArgument(replaceIdDeep(arg, targetGlobalKeys, info.variableValues), targetDef.whereOperators, defaultOptions);
+        if (args.remove !== undefined && args.remove !== null) {
+          if (singular) {
+            // belongsTo/hasOne: disassociate by nulling the relationship.
+            if (args.remove === true) {
+              await source[association.accessors.set](null, defaultOptions);
+            }
+          } else {
+            await waterfall(args.remove, async(arg: any) => {
+              const where = await targetAdapter.processFilterArgument(replaceIdDeep(arg, targetGlobalKeys, info.variableValues), targetDef.whereOperators, defaultOptions);
+              const results = await targetAdapter.findAll(targetName, Object.assign({
+                where,
+              }, defaultOptions));
+              if (results.length > 0) {
+                return source[association.accessors.removeMultiple](results, defaultOptions);
+              }
+              return undefined;
+            });
+          }
+        }
+
+        if (args.add) {
+          await waterfall(args.add, async(arg: any) => {
+            // belongsToMany add entries are `{ where, through }`; other collections
+            // pass the filter directly.
+            const filter = isBtm ? (arg || {}).where : arg;
+            const through = isBtm ? (arg || {}).through : undefined;
+            const where = await targetAdapter.processFilterArgument(replaceIdDeep(filter, targetGlobalKeys, info.variableValues), targetDef.whereOperators, defaultOptions);
             const results = await targetAdapter.findAll(targetName, Object.assign({
               where,
             }, defaultOptions));
             if (results.length > 0) {
-              return source[association.accessors.removeMultiple](results, defaultOptions);
+              return source[association.accessors.addMultiple](results, through !== undefined ? Object.assign({through}, defaultOptions) : defaultOptions);
             }
             return undefined;
           });
         }
 
-        if (args.add) {
-          await waterfall(args.add, async(arg: any) => {
+        if (args.set !== undefined && args.set !== null) {
+          if (singular) {
+            // belongsTo/hasOne: associate one existing record found by filter.
+            const where = await targetAdapter.processFilterArgument(replaceIdDeep(args.set, targetGlobalKeys, info.variableValues), targetDef.whereOperators, defaultOptions);
+            const found = await targetAdapter.findAll(targetName, Object.assign({where, limit: 1}, defaultOptions));
+            await source[association.accessors.set](found[0] || null, defaultOptions);
+          } else {
+            // Collections: replace the entire set with all matching existing records.
+            const all: any[] = [];
+            let through: any;
+            await waterfall(args.set, async(arg: any) => {
+              const filter = isBtm ? (arg || {}).where : arg;
+              if (isBtm && (arg || {}).through !== undefined) {
+                through = arg.through;
+              }
+              const where = await targetAdapter.processFilterArgument(replaceIdDeep(filter, targetGlobalKeys, info.variableValues), targetDef.whereOperators, defaultOptions);
+              const results = await targetAdapter.findAll(targetName, Object.assign({where}, defaultOptions));
+              all.push(...results);
+              return undefined;
+            });
+            await source[association.accessors.set](all, through !== undefined ? Object.assign({through}, defaultOptions) : defaultOptions);
+          }
+        }
+
+        if (args.restore !== undefined && args.restore !== null) {
+          // Restore soft-deleted (paranoid) related records scoped to this relationship.
+          const restoreByFilter = async(arg: any) => {
             const where = await targetAdapter.processFilterArgument(replaceIdDeep(arg, targetGlobalKeys, info.variableValues), targetDef.whereOperators, defaultOptions);
-            const results = await targetAdapter.findAll(targetName, Object.assign({
-              where,
-            }, defaultOptions));
-            if (results.length > 0) {
-              return source[association.accessors.addMultiple](results, defaultOptions);
-            }
-            return undefined;
-          });
+            const res = await source[association.accessors.get](Object.assign({where, paranoid: false}, defaultOptions));
+            const records = Array.isArray(res) ? res : (res ? [res] : []);
+            await Promise.all(records
+              .filter((r: any) => r && r.deletedAt)
+              .map((r: any) => r.restore(defaultOptions)));
+          };
+          if (singular) {
+            await restoreByFilter(args.restore);
+          } else {
+            await waterfall(args.restore, restoreByFilter);
+          }
         }
       }
     });

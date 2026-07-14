@@ -1,7 +1,8 @@
 import {
   GraphQLInputObjectType, GraphQLNonNull, GraphQLScalarType, GraphQLEnumType, GraphQLList, GraphQLInt,
-  GraphQLID,
+  GraphQLID, GraphQLBoolean,
 } from "graphql";
+import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
 import {capitalize} from "@azerothian/gqlize-shared/utils/word";
@@ -116,52 +117,93 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         },
       }, schemaCache, "");
     }
-    switch (association.associationType) {
-      case "hasMany":
-      case "belongsToMany":
-        if (createInput) {
-          fld.create = {
-            type: new GraphQLList(createInput),
-            description: `This will create a new element with a relationship to the current ${defName}`,
-          };
-        }
-        if (updateInput) {
-          fld.update = {
-            type: new GraphQLList(updateInput),
-            description: `This will update any matching elements that have a relationship to the current ${defName}`,
-          };
-        }
+    const isBelongsToMany = association.associationType === "belongsToMany";
+    const isCollection = association.associationType === "hasMany" || isBelongsToMany;
+    if (isCollection) {
+      if (createInput) {
+        fld.create = {
+          type: new GraphQLList(createInput),
+          description: `This will create a new element with a relationship to the current ${defName}`,
+        };
+      }
+      if (updateInput) {
+        fld.update = {
+          type: new GraphQLList(updateInput),
+          description: `This will update any matching elements that have a relationship to the current ${defName}`,
+        };
+      }
+      if (isBelongsToMany) {
+        // belongsToMany add/set accept an optional `through` payload to write
+        // join-table column values for the associated records.
+        const throughInput = createGQLInputObject(`${defName}${capitalize(relName)}AddThrough`, {
+          where: {
+            type: filterType,
+            description: "Filter used to find the existing elements to associate",
+          },
+          through: {
+            type: JSONType,
+            description: "Attribute values to write on the join table for the associated elements",
+          },
+        }, schemaCache, "");
+        fld.add = {
+          type: new GraphQLList(throughInput),
+          description: `This will add any matching existing elements (with optional through attributes) to the current ${defName}`,
+        };
+        fld.set = {
+          type: new GraphQLList(throughInput),
+          description: `This will replace the entire ${relName} set with the matching existing elements (with optional through attributes)`,
+        };
+      } else {
         fld.add = {
           type: new GraphQLList(filterType),
           description: `This will add any matching elements with a relationship to the current ${defName}`,
         };
-        fld.remove = {
+        fld.set = {
           type: new GraphQLList(filterType),
-          description: `This will remove the relationship from any matching elements from the current ${defName}`,
+          description: `This will replace the entire ${relName} set with the matching existing elements`,
         };
-        fld.delete = {
-          type: new GraphQLList(filterType),
-          description: `This will delete any matching elements that have a relationship with the current ${defName}`,
+      }
+      fld.remove = {
+        type: new GraphQLList(filterType),
+        description: `This will remove the relationship from any matching elements from the current ${defName}`,
+      };
+      fld.delete = {
+        type: new GraphQLList(filterType),
+        description: `This will delete any matching elements that have a relationship with the current ${defName}`,
+      };
+      fld.restore = {
+        type: new GraphQLList(filterType),
+        description: `This will restore any soft-deleted matching elements related to the current ${defName}`,
+      };
+    } else {
+      if (createInput) {
+        fld.create = {
+          type: createInput,
+          description: `This will create a new element with a relationship to the current ${defName}`,
         };
-        break;
-      default:
-        if (createInput) {
-          fld.create = {
-            type: createInput,
-            description: `This will create a new element with a relationship to the current ${defName}`,
-          };
-        }
-        if (updateInput) {
-          fld.update = {
-            type: updateInput,
-            description: `This will update any matching elements that have a relationship to the current ${defName}`,
-          };
-        }
-        fld.delete = {
-          type: filterType,
-          description: `This will delete any matching elements that have a relationship with the current ${defName}`,
+      }
+      if (updateInput) {
+        fld.update = {
+          type: updateInput,
+          description: `This will update any matching elements that have a relationship to the current ${defName}`,
         };
-        break;
+      }
+      fld.set = {
+        type: filterType,
+        description: `This will associate an existing matching element with the current ${defName}`,
+      };
+      fld.remove = {
+        type: GraphQLBoolean,
+        description: `When true, this will disassociate the current ${relName} from the ${defName}`,
+      };
+      fld.delete = {
+        type: filterType,
+        description: `This will delete any matching elements that have a relationship with the current ${defName}`,
+      };
+      fld.restore = {
+        type: filterType,
+        description: `This will restore the soft-deleted ${relName} related to the current ${defName}`,
+      };
     }
     fields[relName] = {
       type: createGQLInputObject(`${defName}${capitalize(relName)}${capitalize(association.associationType)}Input`, fld, schemaCache, ""),
