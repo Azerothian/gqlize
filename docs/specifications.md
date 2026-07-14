@@ -52,7 +52,7 @@ Distinguishing characteristics:
 - **Relay global IDs & connections** — opaque IDs on primary/foreign keys with automatic
   translation, and a custom connection shape that carries a `total`.
 
-Metadata: version `6.0.0`, MIT licensed, npm scope `@azerothian`, Node.js ≥ 20.
+Metadata: version `6.0.0`, MIT licensed, npm scope `@azerothian`, Node.js ≥ 24.
 
 ---
 
@@ -558,7 +558,7 @@ each with its own subpath export:
   mutations, Relay connections, permissions, comments, the manager, per-builder units, and
   (in the adapter) Sequelize + filter behavior. Sample models: `Task`, `Item`, `TaskItem`,
   `Parent`, `Child`.
-- **Runtime:** Node.js ≥ 20.
+- **Runtime:** Node.js ≥ 24.
 - **Publishing:** per-package `pnpm build` → `publish/` → `package:npm` / `package:yalc`.
 
 > There is currently no CI configuration in the repository.
