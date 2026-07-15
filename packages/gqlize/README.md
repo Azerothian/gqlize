@@ -59,6 +59,29 @@ Downstream consumers who need serial nested mutations can reuse the same patch f
 do not travel with a published package). graphql still insists on a single copy in `node_modules`;
 the `overrides` entry pins the whole tree to one patched `graphql@17.0.2`.
 
+## Typed models (opt-in)
+
+By default `db.models.<Name>` is `any`. gqlize also offers a fluent, typed registration so
+models are strongly typed — instance attributes from the definition and static methods from
+`classMethods`:
+
+```ts
+const db = new Database()
+  .registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }))
+  .define(TaskDef)     // TaskDef built with the adapter's `defineModel<TInstance, TStatics>()`
+  .define(ItemDef);
+await db.initialise();
+await db.sync();
+
+db.models.Task.create({ name: "x" });   // fully typed (create args, return instance)
+```
+
+`define()` is synchronous and chainable; models are created during `initialise()`. The core is
+adapter-agnostic — the model type is provided by the adapter (see
+[`@azerothian/gqlize-adapter-sequelize` → Typed models](../gqlize-adapter-sequelize/README.md#typed-models),
+which is where `defineModel` / `SequelizeModel` live). The untyped `db.addDefinition(def)` still
+works unchanged.
+
 ## Adapters
 
 - Sequelize - https://github.com/VostroNet/gqlize-adapter-sequelize

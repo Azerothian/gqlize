@@ -163,6 +163,45 @@ Definition keys you'll commonly use:
 > no relationships of its own; exclude it from the schema with a permission gate so it isn't
 > exposed: `createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`.
 
+### Typed models (TypeScript, opt-in)
+
+`db.models.<Name>` is `any` by default. To get strongly-typed models, declare the instance
+interface the standard [Sequelize v6 way](https://sequelize.org/docs/v6/other-topics/typescript/),
+wrap the definition with the adapter's `defineModel`, and register with the fluent `db.define(...)`:
+
+```ts
+import Sequelize, {
+  Model, InferAttributes, InferCreationAttributes, CreationOptional,
+} from "sequelize";
+import { Database } from "@azerothian/gqlize";
+import SequelizeAdapter, { defineModel } from "@azerothian/gqlize-adapter-sequelize";
+
+interface TaskInstance
+  extends Model<InferAttributes<TaskInstance>, InferCreationAttributes<TaskInstance>> {
+  id: CreationOptional<number>;
+  name: string;
+}
+const TaskDef = defineModel<TaskInstance, { countAll(a: any, c: any): Promise<number> }>({
+  name: "Task",
+  define: { name: { type: Sequelize.STRING, allowNull: false } },
+  classMethods: { async countAll(this: any) { return this.count(); } },
+});
+
+const db = new Database()
+  .registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }))
+  .define(TaskDef);
+await db.initialise();
+await db.sync();
+
+await db.models.Task.create({ name: "alpha" });  // typed; create({}) is a compile error
+await db.models.Task.countAll(undefined, {});    // Promise<number>
+```
+
+Compose a model from several fragments with `SequelizeModel<Required, Optional>` — required
+fragments contribute required members, optional fragments contribute optional (`?`) members.
+See the [adapter README → Typed models](../packages/gqlize-adapter-sequelize/README.md#typed-models)
+for the full reference. The untyped `db.addDefinition(def)` remains available.
+
 ---
 
 ## 4. Serving the schema

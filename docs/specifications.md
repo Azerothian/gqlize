@@ -68,9 +68,9 @@ gqlize-shared (leaf) ──► gqlize (core) ──► gqlize-adapter-sequelize 
 
 | Package | Path | Responsibility |
 | --- | --- | --- |
-| [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | Core databinder: schema generation, Relay connections, field/model permissions, lifecycle hooks. Key files: `src/manager.ts` (`GQLManager`), `src/graphql/*` (builders), `src/permission-helper.ts`. |
-| [`@azerothian/gqlize-adapter-sequelize`](../packages/gqlize-adapter-sequelize) | `packages/gqlize-adapter-sequelize` | Reference `GqlizeAdapter` implementation over Sequelize 6. Entry: `src/index.ts`; `src/type-mapper.ts`, `src/utils/where-ops.ts`, `src/utils/replace-id-deep.ts`. |
-| [`@azerothian/gqlize-shared`](../packages/gqlize-shared) | `packages/gqlize-shared` | Shared type surface (`GqlizeAdapter`, `Definition`, `DefinitionField*`, `Association`, `Relationship`, `WhereOperators`, options/cache types), the `Events` enum, and utilities (`logger`, `unique`, `word`, `waterfall`). |
+| [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | Core databinder: schema generation, Relay connections, field/model permissions, lifecycle hooks, the generic (adapter-agnostic) typed-model manager. Key files: `src/manager.ts` (`GQLManager`, fluent `define()`), `src/graphql/*` (builders), `src/permission-helper.ts`. |
+| [`@azerothian/gqlize-adapter-sequelize`](../packages/gqlize-adapter-sequelize) | `packages/gqlize-adapter-sequelize` | Reference `GqlizeAdapter` implementation over Sequelize 6. Entry: `src/index.ts`; `src/type-mapper.ts`, `src/utils/where-ops.ts`, `src/utils/replace-id-deep.ts`. Typesystem binding in `src/types/orm.ts` (`defineModel`, `SequelizeModel`, `IORSequelizeModel`). |
+| [`@azerothian/gqlize-shared`](../packages/gqlize-shared) | `packages/gqlize-shared` | Shared type surface (`GqlizeAdapter`, `Definition`, `DefinitionField*`, `Association`, `Relationship`, `WhereOperators`, options/cache types), the generic definition typesystem (`src/types/orm.ts`: `ITypedDefinition`, `IORModel`), the `Events` enum, and utilities (`logger`, `unique`, `word`, `waterfall`). |
 | [`@azerothian/graphql-types`](../packages/graphql-types) | `packages/graphql-types` | Custom GraphQL scalars (`json`, `date`, `bigint`, `ip`, `upload`) and `createQueryType`. A local copy of `@vostro/graphql-types`. |
 
 > **Note:** the root `README.md` package table lists only the first three; `graphql-types`
@@ -222,6 +222,29 @@ export default {
   },
 } as Definition;
 ```
+
+### Typed definitions (opt-in typesystem)
+
+By default `GQLManager.models` is `{ [name: string]: any }`. An opt-in, type-level system makes
+`db.models.<Name>` a fully-typed model — instance attributes + `classMethods` statics — without
+changing runtime behaviour. It is layered to keep the **core adapter-agnostic**:
+
+| Layer | Location | Provides |
+| --- | --- | --- |
+| Generic plumbing | `gqlize-shared/src/types/orm.ts` | `ITypedDefinition<Name, Instance, Statics>`, `AnyTypedDef`, `ModelNameOf`, the generic **`IORModel<TBase, Required, Optional>`**, and the `IORBaseRegistry` HKT registry (fp-ts URI pattern). No `sequelize`. |
+| Sequelize binding | `gqlize-adapter-sequelize/src/types/orm.ts` | `defineModel<TInstance, TStatics>()`, the `"sequelize"` `IORBaseRegistry` augmentation → `ModelStatic<…>`, `IORSequelizeModel`, `SequelizeModel<Req, Opt>`, and the adapter's `__base` brand. The only sequelize-coupled file. |
+| Manager | `gqlize/src/manager.ts` | `GQLManager<TModels, TBase>` (both defaulted for backward compat), the fluent synchronous `define()` (applies `IORModel<TBase, [D], []>`; models created in `initialise()`), and `registerAdapter` threading `TBase` from the adapter's `__base` brand. Imports **no** sequelize. |
+
+Authors declare the instance interface the standard Sequelize v6 way
+(`Model<InferAttributes<M>, InferCreationAttributes<M>>`) and register with
+`new Database().registerAdapter(adapter).define(defineModel<TInstance, TStatics>(def))`.
+`IORModel` composes fragments with **required** (required members) and **optional** (`?` members)
+buckets. Type-level parity (including optionality, which needs `strictNullChecks`) is verified by
+`gqlize-adapter-sequelize/__tests__/types/orm.test-d.ts` under
+`tsconfig.test-d.json` (`pnpm typecheck:types`); runtime integration by
+`__tests__/define-model.test.ts`. Note: `DataType → TS` inference is intentionally **not**
+attempted — Sequelize v6 types `UUID`/`JSON`/`BOOLEAN`/… as one indistinct
+`AbstractDataTypeConstructor`, so attribute types are author-declared.
 
 ---
 

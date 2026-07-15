@@ -277,6 +277,8 @@ export type Model = {
 export type HookMap = {
   [hookName: string]: ((...args: any) => any)[] |((...args: any) => any)
 }
+
+export * from "./orm";
 // (arg0: any, arg1: any, arg2: any) => { (): any; new(): any; apply: { (arg0: any, arg1: any[]): any; new(): any; }; })
 // type Models = {
 //   [name: string]: Model

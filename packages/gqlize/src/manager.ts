@@ -5,7 +5,7 @@ import pluralize from "pluralize";
 import replaceIdDeep from "./utils/replace-id-deep";
 import {capitalize} from "@azerothian/gqlize-shared/utils/word";
 import events from "./events";
-import { Definitions, GqlizeAdapter, GqlizeOptions, Definition, HookMap, Relationship, Model, Association } from './types';
+import { Definitions, GqlizeAdapter, GqlizeOptions, Definition, HookMap, Relationship, Model, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import Events from "./events";
 import { GraphQLResolveInfo } from "graphql";
 import logger from "@azerothian/gqlize-shared/utils/logger";
@@ -63,12 +63,17 @@ const gqlizeHookList = [
   "afterCount",
 ];
 
-export default class GQLManager {
-  
+export default class GQLManager<
+  TModels extends Record<string, any> = { [name: string]: any },
+  TBase extends IORBase = IORBase,
+> {
+
   defs: Definitions;
   defsAdapters: {[name: string]: string};
   adapters: {[name: string]: GqlizeAdapter};
-  models: {[name: string]: any};
+  models: TModels;
+  /** Definitions queued by the typed fluent `define()`; created in `initialise()`. */
+  private _pendingDefs: { def: Definition; adapterName?: string }[] = [];
   relationships: {[name: string]: any};
   globalKeys: {[name: string]: any};
   hooks: {[defName: string]: HookMap};
@@ -81,7 +86,7 @@ export default class GQLManager {
     this.defs = {};
     this.defsAdapters = {};
     this.adapters = {};
-    this.models = {};
+    this.models = {} as TModels;
     this.relationships = {};
     this.globalKeys = {};
     this.hooks = {};
@@ -112,14 +117,44 @@ export default class GQLManager {
       return this.unshiftHook(h, hook);
     });
   }
-  registerAdapter = (adapter: GqlizeAdapter, overrideName?: string) => {
+  registerAdapter = <A extends GqlizeAdapter>(adapter: A, overrideName?: string): GQLManager<TModels, BaseOf<A>> => {
     if (overrideName) {
       adapter.adapterName = overrideName;
-    }    
+    }
     if (!this.defaultAdapter) {
       this.defaultAdapter = adapter.adapterName;
     }
     this.adapters[adapter.adapterName] =  adapter;
+    // The runtime is unchanged; the return type narrows the typesystem base URI
+    // (e.g. "sequelize") from the adapter's `__base` brand so `define()` produces
+    // adapter-typed models.
+    return this as unknown as GQLManager<TModels, BaseOf<A>>;
+  }
+  /**
+   * Typed, fluent, synchronous registration used to build a strongly-typed
+   * `models` map. Pair with `defineModel<TInstance, TStatics>()` from the adapter:
+   *
+   * ```ts
+   * const db = new Database()
+   *   .registerAdapter(sequelizeAdapter)
+   *   .define(TaskDef)
+   *   .define(ItemDef);
+   * await db.initialise(); await db.sync();
+   * db.models.Task.create({ name: "x" });   // fully typed
+   * ```
+   *
+   * The model is created during `initialise()` (deferred so the call chains); the
+   * untyped async `addDefinition` remains available and unchanged.
+   */
+  define = <D extends AnyTypedDef>(def: D, adapterName?: string): GQLManager<
+    TModels & { [K in ModelNameOf<D>]: IORModel<TBase, [D], []> },
+    TBase
+  > => {
+    this._pendingDefs.push({ def, adapterName });
+    return this as unknown as GQLManager<
+      TModels & { [K in ModelNameOf<D>]: IORModel<TBase, [D], []> },
+      TBase
+    >;
   }
   getDefinitionHooks = async(defName: any) => {
     const def = this.getDefinition(defName);
@@ -154,7 +189,7 @@ export default class GQLManager {
       return o;
     }, { ...nativeHooks } as HookMap);
 
-    this.models[def.name] = await adapter.createModel(def, nativeHooks);
+    (this.models as Record<string, any>)[def.name] = await adapter.createModel(def, nativeHooks);
   }
 
   createHook(hookName: string, def: Definition) {
@@ -360,6 +395,14 @@ export default class GQLManager {
     return adapter.getValueFromInstance(data, keyName);
   }
   initialise = async() => {
+    // Create any models queued by the fluent `define()` before wiring relationships.
+    if (this._pendingDefs.length > 0) {
+      const pending = this._pendingDefs;
+      this._pendingDefs = [];
+      for (const { def, adapterName } of pending) {
+        await this.addDefinition(def, adapterName);
+      }
+    }
     await Promise.all(Object.keys(this.defs).map((defName) => {
       const def = this.defs[defName];
       const sourceAdapter = this.getModelAdapter(defName);
