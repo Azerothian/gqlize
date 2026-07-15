@@ -528,6 +528,37 @@ Post(update: {
 Post(update: { where: { title: { eq: "New" } }, input: { comments: { restore: [ { body: { eq: "first" } } ] } } }) { id }
 ```
 
+**Select** — find existing records by filter and run **further relationship mutations on them**
+without modifying the found records themselves (no field write, no create/update/delete). Available
+both **top-level** (a sibling of `create` / `update` / `delete`) and **nested** on any relationship
+(a sibling of `update` / `set` / `add`). Nested `select` is **relationship-scoped** — it only sees
+records already related to the parent. Scalar fields inside `input` are ignored — only the
+relationship sub-mutations run.
+
+```graphql
+# top-level: find each Author, then (relationship-scoped) find their "draft" posts and tag them.
+# The authors and posts themselves are NOT modified.
+mutation {
+  models {
+    Author(select: [{
+      where: { name: { eq: "Ada" } },
+      input: {
+        posts: { select: [{
+          where: { status: { eq: "draft" } },
+          input: { tags: { add: [ { where: { name: { eq: "featured" } } } ] } }
+        }] }
+      }
+    }]) { id name }        # returns the found authors (unchanged)
+  }
+}
+
+# nested inside another mutation, and on a singular relationship:
+Post(update: {
+  where: { title: { eq: "New" } },
+  input: { author: { select: { where: { name: { eq: "Ada" } }, input: { posts: { create: [ { title: "Another" } ] } } } } }
+}) { id }
+```
+
 ### Class-method mutations
 
 ```graphql

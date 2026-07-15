@@ -176,3 +176,23 @@ mutation {
   }
 }
 ```
+
+Relationship mutations support `create`, `update`, `delete`, `add`, `set`, `remove`, `restore`, and
+`select`. **`select`** finds existing records by filter and runs further relationship mutations on
+them **without modifying the found records themselves** — it's available top-level (a sibling of
+`create`/`update`/`delete`) and nested on any relationship. Nested `select` is relationship-scoped:
+
+```
+mutation {
+  models {
+    # find "start", then (among ITS items) find "item1" and add a sub-tag — without changing either
+    Task(select: [{
+      where: { name: { eq: "start" } },
+      input: { items: { select: [{ where: { name: { eq: "item1" } }, input: { tags: { add: [{ where: { name: { eq: "urgent" } } }] } } }] } }
+    }]) { id }
+  }
+}
+```
+
+See the [usage guide](../../docs/guide.md) for the full mutation reference, and the
+[typed-models section](#typed-models-opt-in) for compile-time model typing.

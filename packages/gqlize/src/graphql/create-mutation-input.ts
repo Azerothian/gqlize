@@ -104,7 +104,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
     }
     const fld: any = {};
     const filterType = instance.getFilterGraphQLType(association.target);
-    let updateInput, createInput = inputTypes[association.target].required;
+    let updateInput, selectInput, createInput = inputTypes[association.target].required;
     if (inputTypes[association.target].optional) {
       updateInput = createGQLInputObject(`${defName}${capitalize(relName)}Update`, {
         where: {
@@ -114,6 +114,19 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         input: {
           type: inputTypes[association.target].optional,
           description: "This will update the items that you targeted with the filter in the where element",
+        },
+      }, schemaCache, "");
+      // `select` finds related records by filter and runs further relationship
+      // mutations on them via `input` WITHOUT modifying the found records
+      // themselves (scalar fields in `input` are ignored).
+      selectInput = createGQLInputObject(`${defName}${capitalize(relName)}Select`, {
+        where: {
+          type: filterType,
+          description: "Filter used to find the existing related elements to run relationship mutations on",
+        },
+        input: {
+          type: inputTypes[association.target].optional,
+          description: "Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified",
         },
       }, schemaCache, "");
     }
@@ -175,6 +188,12 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         type: new GraphQLList(filterType),
         description: `This will restore any soft-deleted matching elements related to the current ${defName}`,
       };
+      if (selectInput) {
+        fld.select = {
+          type: new GraphQLList(selectInput),
+          description: `This will find matching related elements and run relationship mutations on them without modifying the elements themselves`,
+        };
+      }
     } else {
       if (createInput) {
         fld.create = {
@@ -204,6 +223,12 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         type: filterType,
         description: `This will restore the soft-deleted ${relName} related to the current ${defName}`,
       };
+      if (selectInput) {
+        fld.select = {
+          type: selectInput,
+          description: `This will find the matching related ${relName} and run relationship mutations on it without modifying the element itself`,
+        };
+      }
     }
     fields[relName] = {
       type: createGQLInputObject(`${defName}${capitalize(relName)}${capitalize(association.associationType)}Input`, fld, schemaCache, ""),
@@ -253,6 +278,22 @@ export default function createMutationInput(instance: GQLManager, defName: strin
       input: {
         type: optional,
         description: "This is the input for the data",
+      },
+    }, schemaCache, "")) : undefined,
+    // `select` finds matching elements and runs relationship mutations on them
+    // (via `input`) without modifying the elements themselves.
+    select: (doNotSkipUpdate) ? new GraphQLList(createGQLInputObject(`${defName}SelectInput`, {
+      where: {
+        type: filterType,
+        description: "Filter used to find the existing elements to run relationship mutations on",
+      },
+      limit: {
+        type: GraphQLInt,
+        description: "If provided this will restrict the selection to only the first amount of ${limit}",
+      },
+      input: {
+        type: optional,
+        description: "Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified",
       },
     }, schemaCache, "")) : undefined,
     delete: new GraphQLList(filterType),
