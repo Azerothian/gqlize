@@ -212,6 +212,29 @@ describe("relationship mutations", () => {
     expect(await (p1 as any).getTags()).toHaveLength(0);
   });
 
+  it("select: scalar fields in the input are ignored (the selected rows are not modified)", async () => {
+    const db = await build();
+    const {Post, Tag} = db.models as any;
+    const post = await Post.create({title: "original"});
+    await Tag.create({name: "t1"});
+    const schema = await createSchema(db, schemaOpts as any);
+
+    // pass BOTH a scalar change (title) and a relationship mutation (tags.add)
+    const res = (await graphql({schema, source: `mutation { models {
+      Post(select: [{ where: { title: { eq: "original" } }, input: {
+        title: "HACKED",
+        tags: { add: [{ where: { name: { eq: "t1" } } }] }
+      } }]) { id title }
+    } }`})) as any;
+    validateResult(res);
+
+    // the relationship mutation ran...
+    expect((await (post as any).getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
+    // ...but the scalar `title` was ignored — the selected row is NOT modified
+    expect((await Post.findByPk(post.get("id"))).get("title")).toEqual("original");
+    expect(res.data.models.Post.map((p: any) => p.title)).toEqual(["original"]);
+  });
+
   it("select: singular relationship — selects the related record and runs its relation mutations", async () => {
     const db = await build();
     const {Post, Comment, Tag} = db.models as any;
