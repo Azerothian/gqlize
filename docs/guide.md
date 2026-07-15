@@ -35,7 +35,7 @@ Every example below is drawn from the behaviour exercised in the test suite
 ## 1. Installation
 
 ```sh
-pnpm add @azerothian/gqlize @azerothian/gqlize-adapter-sequelize
+pnpm add @azerothian/ormize @azerothian/gqlize @azerothian/ormize-adapter-sequelize
 # peer dependencies
 pnpm add graphql@^17.0.0 graphql-relay@^0.10 sequelize@^6
 # plus a Sequelize driver, e.g. sqlite3 / pg
@@ -51,12 +51,13 @@ pnpm add graphql@^17.0.0 graphql-relay@^0.10 sequelize@^6
 ## 2. Quick start
 
 ```ts
-import { Database, createSchema } from "@azerothian/gqlize";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import { Ormize } from "@azerothian/ormize";
+import { createSchema } from "@azerothian/gqlize";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import Sequelize from "sequelize";
 import { graphql } from "graphql";
 
-const db = new Database();
+const db = new Ormize();
 
 // 1. Register a data-source adapter (the first becomes the default).
 db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }), "sqlite");
@@ -85,8 +86,8 @@ const result = await graphql({
 console.log(result.data.models.Author.edges); // [{ node: { id, name: "Ada" } }]
 ```
 
-The lifecycle is always: **`new Database()` → `registerAdapter` → `addDefinition` (×N) →
-`initialise()` → `sync()` → `createSchema()`**.
+The lifecycle is always: **`new Ormize()` → `registerAdapter` → `addDefinition` (×N) →
+`initialise()` → `sync()` → `createSchema(orm)`**.
 
 ---
 
@@ -173,8 +174,8 @@ wrap the definition with the adapter's `defineModel`, and register with the flue
 import Sequelize, {
   Model, InferAttributes, InferCreationAttributes, CreationOptional,
 } from "sequelize";
-import { Database } from "@azerothian/gqlize";
-import SequelizeAdapter, { defineModel } from "@azerothian/gqlize-adapter-sequelize";
+import { Ormize } from "@azerothian/ormize";
+import SequelizeAdapter, { defineModel } from "@azerothian/ormize-adapter-sequelize";
 
 interface TaskInstance
   extends Model<InferAttributes<TaskInstance>, InferCreationAttributes<TaskInstance>> {
@@ -187,7 +188,7 @@ const TaskDef = defineModel<TaskInstance, { countAll(a: any, c: any): Promise<nu
   classMethods: { async countAll(this: any) { return this.count(); } },
 });
 
-const db = new Database()
+const db = new Ormize()
   .registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }))
   .define(TaskDef);
 await db.initialise();
@@ -199,7 +200,7 @@ await db.models.Task.countAll(undefined, {});    // Promise<number>
 
 Compose a model from several fragments with `SequelizeModel<Required, Optional>` — required
 fragments contribute required members, optional fragments contribute optional (`?`) members.
-See the [adapter README → Typed models](../packages/gqlize-adapter-sequelize/README.md#typed-models)
+See the [adapter README → Typed models](../packages/ormize-adapter-sequelize/README.md#typed-models)
 for the full reference. The untyped `db.addDefinition(def)` remains available.
 
 ---
@@ -655,7 +656,7 @@ options: {
 }
 ```
 
-Global hooks (all models) can be supplied via `new Database({ globalHooks: { … } })` or
+Global hooks (all models) can be supplied via `new Ormize({ globalHooks: { … } })` or
 `db.addHook(name, fn)`. The count-only query path additionally fires `beforeCount` and a
 gqlize-level `afterCount(total)` (which may transform the returned count).
 

@@ -1,36 +1,24 @@
-import { GraphQLInputType, GraphQLOutputType } from "graphql";
 import Events from "../events";
 
-export interface GqlizeAdapter {
+/**
+ * The backend (ORM) adapter contract. This is GraphQL-free — it is the interface
+ * `@azerothian/ormize` depends on. The GraphQL-typed extension lives in
+ * `./gqlize-adapter` (`GqlizeAdapter extends OrmAdapter`) so importing ormize never
+ * pulls `graphql`.
+ */
+export interface OrmAdapter {
   adapterName: string;
   createModel: (def: Definition, hooks?: any) => Promise<any>;
   getModel: (modelName: string) => Model;
   getAssociations: (defName: string) => {[relName: string]: Association};
-  // getGraphQLOutputType: (modelName: string, fieldName: string, type: any) => GraphQLOutputType
-  // getGraphQLInputType: (modelName: string, fieldName: string, type: any) => GraphQLInputType
   getValueFromInstance: (model: Model, sourceKey: string) => any;
   getFields: (defName: any) => {[fieldName: string]: DefinitionField};
-  getTypeMapper: () => ((type: any, modelName: string, newTypeName: string) => GraphQLInputType | GraphQLOutputType);
   createRelationship: (defName: string, modelName: string, relName: string, relType: string, relOptons: any) => any;
   getPrimaryKeyNameForModel: (modelName: string) => string[];
   createFunctionForFind: (modelName: string) => (keyValue: string, filterKey: string, singular: boolean) => ((...args: any) => any);
   reset: (options?: any) => Promise<void>;
   initialise: () => Promise<void>;
   sync: (options?: any) => Promise<void>;
-  // getGraphQLOutputType: (arg0: any, arg1: string, arg2: any) => any;
-  // resolveClassMethod: (defName: string, methodName: string, source: any, args: any, context: any, info:any) => any;
-  // getOrderByGraphQLType: (defName: string) => GraphQLOutputType;
-  getDefaultListArgs: (defName: string, definition: Definition) => GraphQLInputType;
-  getOrderByGraphQLType: (defName: string, definition: Definition) => GraphQLInputType;
-  getFilterGraphQLType: (defName: string, definition: Definition) => GraphQLInputType;
-  replaceIdInArgs: (args: any, defName: string, variableValues: any) => any;
-  resolveManyRelationship: (defName: string, association: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, info: any, options: any, countOnly?: boolean) => Promise<any>;
-  resolveSingleRelationship: (defName: string, association: Association, source: any, args: any, context: any, info: any, options: any) => Promise<any>;
-  processListArgsToOptions: (defName: string, args: any, offset: any, info: any, whereOperators: WhereOperators | undefined, graphQLArgs: {getGraphQLArgs: () => {
-      context: any;
-      info: any;
-      source: any;
-  }}, selectedFields: any, runHook?: (defName: string, hookName: string, value: any, ...args: any) => Promise<any>) => any;
   hasInlineCountFeature: () => boolean;
   findAll: (defName: string, options: any) => Promise<any>
   getInlineCount: (models: any) => Promise<number>;
@@ -40,7 +28,6 @@ export interface GqlizeAdapter {
   getCreateFunction: (defName: string) => any;
   getUpdateFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
   getDeleteFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
-
 }
 
 

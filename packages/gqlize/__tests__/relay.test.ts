@@ -1,7 +1,7 @@
 import {graphql} from "graphql";
 import {v4 as uuid} from "uuid";
 import {createInstance, validateResult} from "./helper";
-import {createSchema} from "../src/graphql/index";
+import {createSchema} from "../src";
 import {fromGlobalId} from "graphql-relay";
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 

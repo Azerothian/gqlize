@@ -1,7 +1,7 @@
 import {graphql} from "graphql";
 import Sequelize from "sequelize";
-import Database from "../src/manager";
-import {createSchema} from "../src/graphql/index";
+import { Ormize as Database } from "@azerothian/ormize";
+import {createSchema} from "../src";
 import {validateResult} from "./helper";
 import {createAdapterForDialect, registerTeardown} from "./helper/dialect";
 import {describe, it, expect} from "@jest/globals";

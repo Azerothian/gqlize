@@ -1,7 +1,7 @@
 import os from "os";
 import fs from "fs";
 import path from "path";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { GqlizeAdapter } from "../../src/types";
 
 /**

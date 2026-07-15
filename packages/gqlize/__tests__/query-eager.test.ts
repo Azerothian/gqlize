@@ -1,6 +1,6 @@
 import {graphql} from "graphql";
 import {createInstance, validateResult} from "./helper";
-import {createSchema} from "../src/graphql/index";
+import {createSchema} from "../src";
 import {describe, it, expect} from "@jest/globals";
 
 // NOTE: the test TaskItem model validates `name` as alphanumeric, 8-50 chars.

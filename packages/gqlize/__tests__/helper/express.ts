@@ -2,7 +2,7 @@ import {createServer} from "node:http";
 import {createYoga} from "graphql-yoga";
 
 import {createInstance} from "./index";
-import {createSchema} from "../../src/graphql/index";
+import {createSchema} from "../../src";
 
 const PORT = 3005;
 

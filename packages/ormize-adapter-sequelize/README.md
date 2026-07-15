@@ -1,11 +1,13 @@
-# gqlize-adapter-sequelize
+# @azerothian/ormize-adapter-sequelize
 
-This is a sequelize adapter for the graphql relational databinder [gqlize](https://github.com/azerothian/gqlize)
+Sequelize adapter for [`@azerothian/ormize`](../ormize) — pairs with the `Ormize` backend
+manager to connect Sequelize 6 data sources. When used together with
+[`@azerothian/gqlize`](../gqlize), enables full GraphQL schema generation over Sequelize models.
 
 ## Install
 
 ```sh
-pnpm add @azerothian/gqlize @azerothian/gqlize-adapter-sequelize
+pnpm add @azerothian/ormize @azerothian/gqlize @azerothian/ormize-adapter-sequelize
 ```
 
 Provide the peer dependencies in your project:
@@ -30,8 +32,8 @@ You declare the model **instance** interface the standard [Sequelize v6 way](htt
 import Sequelize, {
   Model, InferAttributes, InferCreationAttributes, CreationOptional,
 } from "sequelize";
-import { Database } from "@azerothian/gqlize";
-import SequelizeAdapter, { defineModel } from "@azerothian/gqlize-adapter-sequelize";
+import { Ormize } from "@azerothian/ormize";
+import SequelizeAdapter, { defineModel } from "@azerothian/ormize-adapter-sequelize";
 
 interface TaskInstance
   extends Model<InferAttributes<TaskInstance>, InferCreationAttributes<TaskInstance>> {
@@ -54,7 +56,7 @@ const TaskDef = defineModel<TaskInstance, TaskStatics>({
   },
 });
 
-const db = new Database()
+const db = new Ormize()
   .registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }))
   .define(TaskDef);
 
@@ -81,7 +83,7 @@ composes several definition fragments into one model type. Required fragments co
 **required** members; optional fragments contribute **optional** (`?`) members:
 
 ```ts
-import { defineModel, SequelizeModel } from "@azerothian/gqlize-adapter-sequelize";
+import { defineModel, SequelizeModel } from "@azerothian/ormize-adapter-sequelize";
 
 const TaskV1 = defineModel<TaskV1Instance, { staticMethod1(a: string, c: any): Promise<any> }>({ /* … */ });
 const TaskV2 = defineModel<TaskV2Instance, { staticMethod2(a: string, c: any): string }>({ /* … */ });

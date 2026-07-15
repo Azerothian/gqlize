@@ -10,6 +10,8 @@
     // their built declarations (turbo `^build` builds them first) rather than
     // source, so their .ts files are not pulled under this package's rootDir.
     "paths": {
+      "@azerothian/ormize": ["../ormize/publish/types/index.d.ts"],
+      "@azerothian/ormize/*": ["../ormize/publish/types/*"],
       "@azerothian/gqlize-shared": ["../gqlize-shared/publish/types/index.d.ts"],
       "@azerothian/gqlize-shared/*": ["../gqlize-shared/publish/types/*"],
       "@azerothian/graphql-types": ["../graphql-types/publish/types/index.d.ts"],

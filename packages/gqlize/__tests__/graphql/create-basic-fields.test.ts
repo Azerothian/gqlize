@@ -1,6 +1,7 @@
-import Database from "../../src/manager";
+import { Ormize } from "@azerothian/ormize";
+import GqlizeBinding from "../../src/manager";
 import createBasicFieldsFunc from "../../src/graphql/create-basic-fields";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 
 import {
   GraphQLID,
@@ -15,7 +16,7 @@ import { Definition, GqlizeAdapter } from '../../src/types';
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
 test("createBasicFieldsFunc - empty define", async() => {
-  const db = new Database();
+  const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
   }) as GqlizeAdapter, "sqlite");
@@ -38,7 +39,7 @@ test("createBasicFieldsFunc - empty define", async() => {
 });
 
 test("createBasicFieldsFunc - define", async() => {
-  const db = new Database();
+  const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
   }) as GqlizeAdapter, "sqlite");
@@ -69,7 +70,7 @@ test("createBasicFieldsFunc - define", async() => {
 
 
 test("createBasicFieldsFunc - define - override", async() => {
-  const db = new Database();
+  const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
   }) as GqlizeAdapter, "sqlite");
@@ -132,7 +133,7 @@ test("createBasicFieldsFunc - define - override", async() => {
 });
 
 test("createBasicFieldsFunc - define - with scalar", async() => {
-  const db = new Database();
+  const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
   }) as GqlizeAdapter, "sqlite");
@@ -182,7 +183,7 @@ test("createBasicFieldsFunc - define - with scalar", async() => {
 
 
 test("createBasicFieldsFunc - foreign keys", async() => {
-  const db = new Database();
+  const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
   }) as GqlizeAdapter, "sqlite");

@@ -1,8 +1,12 @@
-# gqlize
+# gqlize / ormize
 
 A relational data binder that generates GraphQL schemas over multiple data sources through
 pluggable adapters. This is a [pnpm](https://pnpm.io/) + [Turborepo](https://turborepo.com/)
 monorepo.
+
+The project is split into two layers: **`@azerothian/ormize`** (GraphQL-free backend manager —
+definitions, adapters, models, hooks, sync, relationships) and **`@azerothian/gqlize`** (GraphQL
+layer that accepts an `Ormize` instance and generates the full schema).
 
 ## Documentation
 
@@ -14,12 +18,13 @@ monorepo.
 ## Quick start
 
 ```ts
-import { Database, createSchema } from "@azerothian/gqlize";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import { Ormize } from "@azerothian/ormize";
+import { createSchema } from "@azerothian/gqlize";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import Sequelize from "sequelize";
 import { graphql } from "graphql";
 
-const db = new Database();
+const db = new Ormize();
 db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }), "sqlite");
 db.addDefinition({ name: "Author", define: { name: { type: Sequelize.STRING, allowNull: false } } });
 await db.initialise();
@@ -41,11 +46,12 @@ mutations, permissions, hooks, and more.
 
 | Package | Description |
 | --- | --- |
-| [`@azerothian/gqlize`](packages/gqlize) | Core databinder: schema generation, relay connections, field/model permissions, lifecycle hooks. |
-| [`@azerothian/gqlize-adapter-sequelize`](packages/gqlize-adapter-sequelize) | Sequelize adapter — the reference data-source implementation. |
-| [`@azerothian/gqlize-shared`](packages/gqlize-shared) | Shared type surface (`GqlizeAdapter`, `Definition`, …), the `Events` enum, and common utilities used by the two packages above. |
+| [`@azerothian/ormize`](packages/ormize) | GraphQL-free backend manager — `Ormize` class, `registerAdapter`, `define`/`addDefinition`, models, hooks, `initialise`/`sync`/`reset`, relationship wiring, and the definition typesystem. No GraphQL dependency. |
+| [`@azerothian/gqlize`](packages/gqlize) | GraphQL layer — `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema: object types, connections, queries, deep nested mutations, and permissions. |
+| [`@azerothian/ormize-adapter-sequelize`](packages/ormize-adapter-sequelize) | Sequelize adapter — the reference data-source implementation. Same `SequelizeAdapter` default export, same `defineModel`/`SequelizeModel` typesystem exports. |
+| [`@azerothian/gqlize-shared`](packages/gqlize-shared) | Shared type surface (`OrmAdapter` backend interface, `GqlizeAdapter` graphql extension, `Definition`, …), the `Events` enum, and common utilities used by the packages above. |
 
-Dependency graph (acyclic): `gqlize-shared` ← `gqlize` ← `gqlize-adapter-sequelize`.
+Dependency graph (acyclic): `graphql-types` + `gqlize-shared` → `ormize` → `gqlize` ; the sequelize adapter implements `GqlizeAdapter` and is registered on an `Ormize`.
 
 ## Prerequisites
 
@@ -64,7 +70,7 @@ pnpm watch        # turbo run watch   — tsc --watch per package
 ```
 
 Turbo caches task results and respects the dependency graph (e.g. `build` runs
-`gqlize-shared` → `gqlize` → `gqlize-adapter-sequelize`). Tests run against **source** via Jest
+`gqlize-shared` → `ormize` → `gqlize` → `ormize-adapter-sequelize`). Tests run against **source** via Jest
 `moduleNameMapper`, so no build is required to run them.
 
 ## Workspace layout
@@ -76,9 +82,11 @@ Turbo caches task results and respects the dependency graph (e.g. `build` runs
 ├── tsconfig.json         # solution config referencing every package (tsc -b)
 ├── pnpm-workspace.yaml
 └── packages/
+    ├── ormize/
     ├── gqlize/
-    ├── gqlize-adapter-sequelize/
-    └── gqlize-shared/
+    ├── ormize-adapter-sequelize/
+    ├── gqlize-shared/
+    └── graphql-types/
 ```
 
 ## Module formats

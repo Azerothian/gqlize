@@ -1,5 +1,6 @@
-import Database from "../../src/manager";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import { Ormize } from "@azerothian/ormize";
+import GqlizeBinding from "../../src/manager";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import createModelType from "../../src/graphql/create-model-type";
 import createListObject from "../../src/graphql/create-list-object";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
@@ -10,7 +11,7 @@ import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
 
 test("createListObject", async() => {
-  const db = new Database();
+  const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
   }) as GqlizeAdapter, "sqlite");

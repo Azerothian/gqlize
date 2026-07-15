@@ -1,7 +1,7 @@
 import {PubSub} from "graphql-subscriptions";
 
 import {createInstance} from "./helper";
-import {createSchema} from "../src/graphql/index";
+import {createSchema} from "../src";
 import { GraphQLObjectType } from 'graphql';
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 

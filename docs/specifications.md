@@ -63,18 +63,24 @@ acyclic:
 
 ```
 graphql-types (leaf)
-gqlize-shared (leaf) ──► gqlize (core) ──► gqlize-adapter-sequelize (adapter)
+gqlize-shared (leaf) ──► ormize (backend) ──► gqlize (graphql) ──► ormize-adapter-sequelize (adapter)
 ```
+
+**Package architecture:** `graphql-types` + `gqlize-shared` form the base layer. `ormize`
+builds on that base to provide the GraphQL-free backend manager. `gqlize` builds on `ormize`
+to add schema generation. The sequelize adapter implements `GqlizeAdapter` (from
+`gqlize-shared`) and is registered on an `Ormize` instance.
 
 | Package | Path | Responsibility |
 | --- | --- | --- |
-| [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | Core databinder: schema generation, Relay connections, field/model permissions, lifecycle hooks, the generic (adapter-agnostic) typed-model manager. Key files: `src/manager.ts` (`GQLManager`, fluent `define()`), `src/graphql/*` (builders), `src/permission-helper.ts`. |
-| [`@azerothian/gqlize-adapter-sequelize`](../packages/gqlize-adapter-sequelize) | `packages/gqlize-adapter-sequelize` | Reference `GqlizeAdapter` implementation over Sequelize 6. Entry: `src/index.ts`; `src/type-mapper.ts`, `src/utils/where-ops.ts`, `src/utils/replace-id-deep.ts`. Typesystem binding in `src/types/orm.ts` (`defineModel`, `SequelizeModel`, `IORSequelizeModel`). |
-| [`@azerothian/gqlize-shared`](../packages/gqlize-shared) | `packages/gqlize-shared` | Shared type surface (`GqlizeAdapter`, `Definition`, `DefinitionField*`, `Association`, `Relationship`, `WhereOperators`, options/cache types), the generic definition typesystem (`src/types/orm.ts`: `ITypedDefinition`, `IORModel`), the `Events` enum, and utilities (`logger`, `unique`, `word`, `waterfall`). |
+| [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise`/`sync`/`reset`, relationship wiring, and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
+| [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | GraphQL layer: `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema. Key files: `src/graphql/*` (builders), `src/permission-helper.ts`. |
+| [`@azerothian/ormize-adapter-sequelize`](../packages/ormize-adapter-sequelize) | `packages/ormize-adapter-sequelize` | Reference `GqlizeAdapter` implementation over Sequelize 6. Same `SequelizeAdapter` default export. Entry: `src/index.ts`; `src/type-mapper.ts`, `src/utils/where-ops.ts`, `src/utils/replace-id-deep.ts`. Typesystem binding in `src/types/orm.ts` (`defineModel`, `SequelizeModel`, `IORSequelizeModel`). |
+| [`@azerothian/gqlize-shared`](../packages/gqlize-shared) | `packages/gqlize-shared` | Shared type surface: `OrmAdapter` (backend adapter contract), `GqlizeAdapter extends OrmAdapter` (graphql extension, at `types/gqlize-adapter`), `Definition`, `DefinitionField*`, `Association`, `Relationship`, `WhereOperators`, options/cache types. Also: the generic definition typesystem (`src/types/orm.ts`: `ITypedDefinition`, `IORModel`), the `Events` enum, and utilities (`logger`, `unique`, `word`, `waterfall`). |
 | [`@azerothian/graphql-types`](../packages/graphql-types) | `packages/graphql-types` | Custom GraphQL scalars (`json`, `date`, `bigint`, `ip`, `upload`) and `createQueryType`. A local copy of `@vostro/graphql-types`. |
 
-> **Note:** the root `README.md` package table lists only the first three; `graphql-types`
-> is a fourth workspace package and is documented here for completeness.
+> **Note:** the root `README.md` package table lists only the first four; `graphql-types`
+> is a fifth workspace package and is documented here for completeness.
 
 Root configuration files: `package.json` (scripts, `pnpm@9.15.9`, graphql override/patch),
 `pnpm-workspace.yaml` (`packages/*`), `turbo.json` (task pipeline), `tsconfig.base.json`
@@ -85,25 +91,31 @@ Root configuration files: `package.json` (scripts, `pnpm@9.15.9`, graphql overri
 
 ## 3. Public API & Usage Lifecycle
 
-The core package (`packages/gqlize/src/index.ts`) exports exactly two symbols:
+The ormize package (`packages/ormize/src/index.ts`) exports the backend manager:
 
 ```ts
-export const Database = GQLManager;   // the manager class (default export of ./manager)
-export const createSchema = create;   // from ./graphql/index
+export class Ormize { /* GQLManager — registerAdapter, define, addDefinition, models, initialise, sync, reset, … */ }
 ```
 
-The Sequelize adapter's public API is its default-export class `SequelizeAdapter`.
+The gqlize package (`packages/gqlize/src/index.ts`) exports the GraphQL layer:
+
+```ts
+export const createSchema = create;   // from ./graphql/index — accepts an Ormize instance
+```
+
+The Sequelize adapter's public API is its default-export class `SequelizeAdapter`, exported from `@azerothian/ormize-adapter-sequelize`.
 
 ### Consumer lifecycle
 
-Canonical flow (see `packages/gqlize/__tests__/helper/index.ts`):
+Canonical flow:
 
 ```ts
-import { Database, createSchema } from "@azerothian/gqlize";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import { Ormize } from "@azerothian/ormize";
+import { createSchema } from "@azerothian/gqlize";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 
-// 1. Create the manager
-const db = new Database();
+// 1. Create the backend manager
+const db = new Ormize();
 
 // 2. Register one or more data-source adapters (the first becomes the default)
 db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }), "sqlite");
@@ -116,17 +128,19 @@ db.addDefinition(ItemDefinition);
 await db.initialise();
 await db.sync();
 
-// 5. Build the GraphQL schema
+// 5. Build the GraphQL schema (gqlize wraps the ormize instance)
 const schema = await createSchema(db, options /* GqlizeOptions */);
 ```
+
+Backend-only CRUD is available without building a schema: `await db.models.Task.create({ name: "alpha" })`.
 
 The resulting `schema` is a standard `graphql` `GraphQLSchema` and is executed with the
 stock `graphql()` executor. A `schema.$sql2gql = { types }` property is attached for
 introspection of the generated types.
 
-### Key `GQLManager` methods
+### Key `Ormize` (`GQLManager`) methods
 
-Consumer-facing (`packages/gqlize/src/manager.ts`):
+Consumer-facing (`packages/ormize/src/manager.ts`):
 
 - `registerAdapter(adapter, overrideName?)` — register an adapter; first one becomes `defaultAdapter`.
 - `addDefinition(def, adapterName?)` — register a model definition (validates a unique `name`, wires the hook map, calls `adapter.createModel`).
@@ -142,6 +156,10 @@ Internal resolution methods invoked by generated resolvers:
 - `resolveClassMethod` — invokes `Model[methodName](args, context)` with optional before/after.
 - `processCreate` / `processUpdate` / `processDelete` — mutation executors; run `processInputs`, translate global IDs (`replaceIdDeep`), fire the matching `Events.MUTATION_*` hook, delegate to adapter functions, then `processRelationshipMutation`.
 - `processRelationshipMutation` — the nested-mutation engine (see §5).
+
+> These internal resolution methods are invoked by gqlize's generated resolvers; they live in
+> `packages/ormize/src/manager.ts` (the `Ormize` class is backend-only) and are called from the
+> GraphQL layer in `packages/gqlize`.
 
 ---
 
@@ -225,22 +243,22 @@ export default {
 
 ### Typed definitions (opt-in typesystem)
 
-By default `GQLManager.models` is `{ [name: string]: any }`. An opt-in, type-level system makes
+By default `Ormize.models` is `{ [name: string]: any }`. An opt-in, type-level system makes
 `db.models.<Name>` a fully-typed model — instance attributes + `classMethods` statics — without
 changing runtime behaviour. It is layered to keep the **core adapter-agnostic**:
 
 | Layer | Location | Provides |
 | --- | --- | --- |
 | Generic plumbing | `gqlize-shared/src/types/orm.ts` | `ITypedDefinition<Name, Instance, Statics>`, `AnyTypedDef`, `ModelNameOf`, the generic **`IORModel<TBase, Required, Optional>`**, and the `IORBaseRegistry` HKT registry (fp-ts URI pattern). No `sequelize`. |
-| Sequelize binding | `gqlize-adapter-sequelize/src/types/orm.ts` | `defineModel<TInstance, TStatics>()`, the `"sequelize"` `IORBaseRegistry` augmentation → `ModelStatic<…>`, `IORSequelizeModel`, `SequelizeModel<Req, Opt>`, and the adapter's `__base` brand. The only sequelize-coupled file. |
-| Manager | `gqlize/src/manager.ts` | `GQLManager<TModels, TBase>` (both defaulted for backward compat), the fluent synchronous `define()` (applies `IORModel<TBase, [D], []>`; models created in `initialise()`), and `registerAdapter` threading `TBase` from the adapter's `__base` brand. Imports **no** sequelize. |
+| Sequelize binding | `ormize-adapter-sequelize/src/types/orm.ts` | `defineModel<TInstance, TStatics>()`, the `"sequelize"` `IORBaseRegistry` augmentation → `ModelStatic<…>`, `IORSequelizeModel`, `SequelizeModel<Req, Opt>`, and the adapter's `__base` brand. The only sequelize-coupled file. |
+| Manager | `ormize/src/manager.ts` | `GQLManager<TModels, TBase>` / `Ormize` (both defaulted for backward compat), the fluent synchronous `define()` (applies `IORModel<TBase, [D], []>`; models created in `initialise()`), and `registerAdapter` threading `TBase` from the adapter's `__base` brand. Imports **no** sequelize or graphql. |
 
 Authors declare the instance interface the standard Sequelize v6 way
 (`Model<InferAttributes<M>, InferCreationAttributes<M>>`) and register with
-`new Database().registerAdapter(adapter).define(defineModel<TInstance, TStatics>(def))`.
+`new Ormize().registerAdapter(adapter).define(defineModel<TInstance, TStatics>(def))`.
 `IORModel` composes fragments with **required** (required members) and **optional** (`?` members)
 buckets. Type-level parity (including optionality, which needs `strictNullChecks`) is verified by
-`gqlize-adapter-sequelize/__tests__/types/orm.test-d.ts` under
+`ormize-adapter-sequelize/__tests__/types/orm.test-d.ts` under
 `tsconfig.test-d.json` (`pnpm typecheck:types`); runtime integration by
 `__tests__/define-model.test.ts`. Note: `DataType → TS` inference is intentionally **not**
 attempted — Sequelize v6 types `UUID`/`JSON`/`BOOLEAN`/… as one indistinct
@@ -297,7 +315,7 @@ supported via `options.subscriptions`.
 (update), `{Def}UpdateInput` / `{Def}SelectInput` (`where`/`limit`/`input`), and delete filter
 inputs. The top-level model mutation exposes `create` / `update` / `delete` / **`select`**. For each
 association it also emits nested sub-fields, enabling deep writes, applied by
-`processRelationshipMutation` (`packages/gqlize/src/manager.ts`) via the Sequelize association
+`processRelationshipMutation` (`packages/ormize/src/manager.ts`) via the Sequelize association
 accessors (recursion depends on the graphql patch, see §12). The sub-fields per association type:
 
 - **hasMany / belongsToMany:** `create` (new records), `update` (`where`+`input` pairs),
@@ -354,7 +372,7 @@ mutation {
 
 ### Query resolution & eager loading
 
-For a top-level list query, `resolveFindAll` (`packages/gqlize/src/manager.ts`) resolves the
+For a top-level list query, `resolveFindAll` (`packages/ormize/src/manager.ts`) resolves the
 requested relationships **at the root level** rather than lazily per parent. It builds a
 combined include tree from the GraphQL **selection set** — merged with any explicit `include`
 argument — via `packages/gqlize/src/graphql/utils/build-include-from-selection.ts`, then issues
@@ -426,7 +444,7 @@ supported dialects by an inline `COUNT(*) OVER()` (`hasInlineCountFeature` /
 Primary-key and foreign-key fields are exposed as Relay **global IDs** via `graphql-relay`
 (`fromGlobalId` / `toGlobalId`). Global IDs are transparently translated back to raw IDs
 across both queries and mutations by `replaceIdDeep`
-(`packages/gqlize-adapter-sequelize/src/utils/replace-id-deep.ts` and the manager's
+(`packages/ormize-adapter-sequelize/src/utils/replace-id-deep.ts` and the manager's
 `replace-id-deep` util). A shared node interface and type mapper resolve a global ID back to
 its concrete object type.
 
@@ -470,7 +488,7 @@ gqlize has two distinct hook systems.
 ### 1. Sequelize-style lifecycle hooks
 
 The manager recognizes a full list of Sequelize lifecycle hook names (`hookList` in
-`packages/gqlize/src/manager.ts`): `beforeValidate`/`afterValidate`, `validationFailed`,
+`packages/ormize/src/manager.ts`): `beforeValidate`/`afterValidate`, `validationFailed`,
 `beforeCreate`/`afterCreate`, `beforeUpdate`/`afterUpdate`, `beforeDestroy`/`afterDestroy`,
 `beforeSave`/`afterSave`, `beforeFind`/`afterFind`, `beforeCount`, `beforeBulk*`,
 `beforeConnect`/`afterConnect`, `beforeSync`/`afterSync`, `beforeQuery`/`afterQuery`, and
@@ -529,7 +547,7 @@ per-definition hook map so `runHook` can fire it after a count, but it is withhe
 
 Any data source is integrated by implementing the `GqlizeAdapter` interface
 (`packages/gqlize-shared/src/types/index.ts`). The Sequelize adapter
-(`packages/gqlize-adapter-sequelize/src/index.ts`) is the reference implementation. The
+(`packages/ormize-adapter-sequelize/src/index.ts`) is the reference implementation. The
 contract groups into:
 
 - **Lifecycle:** `createModel`, `initialise`, `sync`, `reset`.

@@ -28,7 +28,8 @@ import {
 // import {GraphQLObjectType} from "graphql";
 import { GraphQLInputObjectType } from "graphql";
 import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
-import { Association, GqlizeAdapter, WhereOperators, DefinitionFieldMeta } from '@azerothian/gqlize-shared/types/index';
+import { Association, WhereOperators, DefinitionFieldMeta } from '@azerothian/gqlize-shared/types/index';
+import { GqlizeAdapter } from '@azerothian/gqlize-shared/types/gqlize-adapter';
 import { SequelizeDefinition, SqlClassMethod } from "./types";
 import { replaceWhereOperators } from "./utils/where-ops";
 

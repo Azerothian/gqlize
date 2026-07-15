@@ -1,5 +1,5 @@
-import Database from "../../src/manager";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import { Ormize as Database } from "@azerothian/ormize";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import createComplexFieldsFunc from "../../src/graphql/create-complex-fields";
 import {GraphQLObjectType, GraphQLInt} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
