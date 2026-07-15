@@ -294,7 +294,8 @@ supported via `options.subscriptions`.
 ### Mutation inputs & deep writes
 
 `create-mutation-input.ts` generates `{Def}RequiredInput` (create), `{Def}OptionalInput`
-(update), `{Def}UpdateInput` (`where`/`limit`/`input`), and delete filter inputs. For each
+(update), `{Def}UpdateInput` / `{Def}SelectInput` (`where`/`limit`/`input`), and delete filter
+inputs. The top-level model mutation exposes `create` / `update` / `delete` / **`select`**. For each
 association it also emits nested sub-fields, enabling deep writes, applied by
 `processRelationshipMutation` (`packages/gqlize/src/manager.ts`) via the Sequelize association
 accessors (recursion depends on the graphql patch, see §12). The sub-fields per association type:
@@ -307,6 +308,15 @@ accessors (recursion depends on the graphql patch, see §12). The sub-fields per
 - **belongsTo / hasOne:** `create`, `update`, `set` (associate an existing record found by a
   where filter → `accessors.set`), `remove` (`Boolean` → disassociate via `set(null)`),
   `delete`, `restore`.
+
+**`select`** (top-level and every relationship, entries `{ where, input }`) finds existing records
+by filter and runs **further relationship mutations** on them via `input` **without modifying the
+found records** — no field write, no create/update/delete; scalar fields in `input` are ignored.
+Nested `select` is **relationship-scoped** (`source[accessors.get]({ where })`, firing
+`beforeFind`/`afterFind`); top-level `select` finds globally (`adapter.findAll`) and returns the
+found rows. Implemented by `processSelect` (top-level) and the `select` branch of
+`processRelationshipMutation` (`manager.ts`), which recurse without calling
+`processCreate`/`processUpdate`/`processDelete` on the selected rows.
 
 ### Example query
 

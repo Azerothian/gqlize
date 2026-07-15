@@ -161,4 +161,75 @@ describe("relationship mutations", () => {
     validateResult(res);
     expect(await Comment.count()).toEqual(1);
   });
+
+  it("select: top-level + nested, relationship-scoped, runs relation mutations without modifying the found rows", async () => {
+    const db = await build();
+    const {Author, Post, Tag} = db.models as any;
+    const author = await Author.create({name: "author1"});
+    const keep = await Post.create({title: "keep", authorId: author.get("id")});
+    const other = await Post.create({title: "other", authorId: author.get("id")});
+    await Tag.create({name: "t1"});
+    const schema = await createSchema(db, schemaOpts as any);
+
+    const res = (await graphql({schema, source: `mutation { models {
+      Author(select: [{ where: { name: { eq: "author1" } }, input: {
+        posts: { select: [{ where: { title: { eq: "keep" } }, input: {
+          tags: { add: [{ where: { name: { eq: "t1" } } }] }
+        } }] }
+      } }]) { id name }
+    } }`})) as any;
+    validateResult(res);
+
+    // top-level select returns the found author, unchanged
+    expect(res.data.models.Author.map((a: any) => a.name)).toEqual(["author1"]);
+    // the selected post got the tag; its own title is unchanged
+    expect((await (keep as any).getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
+    expect((await Post.findByPk(keep.get("id"))).get("title")).toEqual("keep");
+    // the non-matching sibling post is untouched
+    expect(await (other as any).getTags()).toHaveLength(0);
+  });
+
+  it("select: nested select is relationship-scoped (cannot reach unrelated records)", async () => {
+    const db = await build();
+    const {Author, Post, Tag} = db.models as any;
+    const a1 = await Author.create({name: "a1"});
+    const a2 = await Author.create({name: "a2"});
+    const p1 = await Post.create({title: "p1", authorId: a1.get("id")});
+    const p2 = await Post.create({title: "p2", authorId: a2.get("id")});
+    await Tag.create({name: "t1"});
+    const schema = await createSchema(db, schemaOpts as any);
+
+    // a1 tries to select a post titled "p2" — but p2 belongs to a2, so it matches nothing.
+    const res = (await graphql({schema, source: `mutation { models {
+      Author(select: [{ where: { name: { eq: "a1" } }, input: {
+        posts: { select: [{ where: { title: { eq: "p2" } }, input: {
+          tags: { add: [{ where: { name: { eq: "t1" } } }] }
+        } }] }
+      } }]) { id }
+    } }`})) as any;
+    validateResult(res);
+    expect(await (p2 as any).getTags()).toHaveLength(0);
+    expect(await (p1 as any).getTags()).toHaveLength(0);
+  });
+
+  it("select: singular relationship — selects the related record and runs its relation mutations", async () => {
+    const db = await build();
+    const {Post, Comment, Tag} = db.models as any;
+    const post = await Post.create({title: "post1"});
+    await Comment.create({body: "c1", postId: post.get("id")});
+    await Tag.create({name: "t1"});
+    const schema = await createSchema(db, schemaOpts as any);
+
+    // Select the comment (top-level), then select its singular `post`, then tag the post.
+    const res = (await graphql({schema, source: `mutation { models {
+      Comment(select: [{ where: { body: { eq: "c1" } }, input: {
+        post: { select: { where: { title: { eq: "post1" } }, input: {
+          tags: { add: [{ where: { name: { eq: "t1" } } }] }
+        } } }
+      } }]) { id }
+    } }`})) as any;
+    validateResult(res);
+    expect((await (post as any).getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
+    expect((await Post.findByPk(post.get("id"))).get("title")).toEqual("post1");
+  });
 });

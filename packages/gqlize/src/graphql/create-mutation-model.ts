@@ -24,6 +24,12 @@ export default function createMutationModel(instance: GQLManager, defName: strin
       description: `This will update a new element for ${defName}`,
     };
   }
+  if (update && input.select) {
+    inp.select = {
+      type: input.select,
+      description: `This will find elements for ${defName} and run relationship mutations on them without modifying the elements themselves`,
+    };
+  }
   if (del) {
     inp.delete = {
       type: input.delete,
@@ -55,6 +61,13 @@ export default function createMutationModel(instance: GQLManager, defName: strin
         results = await waterfall(args.delete, async(arg, arr) => {
           const result = await instance.processDelete(defName, source, arg, context, info);
           const node = await waterfall(result, (el: any) => processAfter(el, args, context, info, definition, Events.MUTATION_DELETE));
+          return arr.concat(node);
+        }, results);
+      }
+      if (args.select) {
+        results = await waterfall(args.select, async(arg, arr) => {
+          const result = await instance.processSelect(defName, source, arg, context, info);
+          const node = await waterfall(result, (el: any) => processAfter(el, args, context, info, definition, Events.MUTATION_UPDATE));
           return arr.concat(node);
         }, results);
       }

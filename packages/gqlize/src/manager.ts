@@ -758,6 +758,27 @@ export default class GQLManager<
             await waterfall(args.restore, restoreByFilter);
           }
         }
+
+        if (args.select !== undefined && args.select !== null) {
+          // Find related records (scoped to this relationship via the get accessor,
+          // so beforeFind/afterFind fire) and run further relationship mutations on
+          // them via `arg.input`. The selected records themselves are NOT modified —
+          // no field write, no create/update/delete; scalar fields in `input` are
+          // ignored (only relationship sub-mutations are applied).
+          const selectByFilter = async(arg: any) => {
+            const where = await targetAdapter.processFilterArgument(replaceIdDeep(arg.where, targetGlobalKeys, info.variableValues), targetDef.whereOperators, defaultOptions);
+            const res = await source[association.accessors.get](Object.assign({where}, defaultOptions));
+            const records = Array.isArray(res) ? res : (res ? [res] : []);
+            await waterfall(records, async(m: any) => {
+              await this.processRelationshipMutation(targetDef.name, m, arg.input, context, info);
+            });
+          };
+          if (singular) {
+            await selectByFilter(args.select);
+          } else {
+            await waterfall(args.select, selectByFilter);
+          }
+        }
       }
     });
     return source;
@@ -842,6 +863,26 @@ export default class GQLManager<
       // }
     });
 
+    return results;
+  }
+  processSelect = async(defName: any, source: any, args: { input: any; where: any; limit: any; }, context: any, info: { variableValues: any; }) => {
+    // Find matching elements and run relationship mutations on them via `args.input`
+    // WITHOUT modifying the elements themselves (no field write / lifecycle change);
+    // scalar fields in `input` are ignored. Returns the found rows so the caller can
+    // select fields back.
+    const definition = this.getDefinition(defName);
+    const adapter = this.getModelAdapter(defName);
+    const globalKeys = this.getGlobalKeys(defName);
+    const options = createGetGraphQLArgsFunc(context, info, source, {limit: args.limit});
+    const where = await adapter.processFilterArgument(
+      replaceIdDeep(args.where, globalKeys, info.variableValues),
+      definition.whereOperators,
+      options,
+    );
+    const results = await adapter.findAll(defName, Object.assign({where, limit: args.limit}, options));
+    await waterfall(results, async(r: any) => {
+      await this.processRelationshipMutation(defName, r, args.input, context, info);
+    });
     return results;
   }
   processDelete = async(defName: any, source: any, args: any, context: any, info: { variableValues: any; }) => {
