@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "strict": true
+  },
+  // Only the (pure-type) definition-typesystem modules + the assertions — NOT the
+  // non-strict runtime src — so the type assertions run under strictNullChecks.
+  "include": ["src/types/**/*.ts", "__tests__/types/**/*.ts"]
+}

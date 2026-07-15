@@ -6,6 +6,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "typecheck": "tsc -b",
+    "typecheck:types": "pnpm --filter @azerothian/gqlize-adapter-sequelize run typecheck:types",
     "watch": "turbo run watch"
   },
   "devDependencies": {

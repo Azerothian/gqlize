@@ -57,6 +57,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   options: any;
   startup: { drop: string; create: string };
   meta: { [modelName: string]: { [objName: string]: any } };
+  /**
+   * Phantom brand identifying the typesystem base URI for this adapter. Never
+   * set at runtime; `BaseOf<SequelizeAdapter>` reads it so `db.define(...)`
+   * produces Sequelize-typed models. See `./types/orm`.
+   */
+  declare readonly __base?: import("./types/orm").IORSequelizeModel;
   constructor(adapterOptions = {}, ...config: any) {
     //allows the adaptor to have the same config options as sequelize
     this.adapterName = "sequelize";
@@ -1149,3 +1155,6 @@ function isFunction(functionToCheck: any) {
   }
   return false;
 }
+
+// Typed-models API (definition typesystem). See ./types/orm.
+export * from "./types/orm";
