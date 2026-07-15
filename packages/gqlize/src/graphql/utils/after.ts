@@ -5,7 +5,7 @@ export async function processAfter(node: any, args: any, context: any, info: any
   if (definition.after) {
     n = await definition.after({
       result: node, args, context, info, modelDefinition: definition,
-      type: Events.OUTPUT || e,
+      type: e || Events.OUTPUT,
     })
   }
   if (n?.override) {
