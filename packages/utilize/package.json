@@ -1,0 +1,56 @@
+{
+  "name": "@azerothian/utilize",
+  "version": "6.0.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "description": "Shared GraphQL-free utilities for gqlize/ormize: role-based permission construction and permission-gating helpers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Azerothian/gqlize.git",
+    "directory": "packages/utilize"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "main": "cjs/index.js",
+  "module": "lib/index.mjs",
+  "types": "types/index.d.ts",
+  "scripts": {
+    "watch": "tsc --watch",
+    "test": "jest",
+    "package:yalc": "pnpm run build && cd publish && yalc publish",
+    "package:npm": "pnpm run build && cd publish && npm publish",
+    "build": "rm -Rf ./publish || true; mkdir ./publish && run-p build:*",
+    "build:readme": "cp ./README.md ./publish/README.md",
+    "build:src": "copyfiles -u 1 \"src/**/*\" publish/src",
+    "build:package": "tsx ./scripts/prepare-package.ts",
+    "build:main": "swc src --out-dir publish/lib --out-file-extension mjs --strip-leading-paths -s --ignore \"**/*.d.ts\" && tsx ./scripts/fix-esm-extensions.ts",
+    "build:types": "tsc -p tsconfig.types.json --outDir publish/types",
+    "build:cjs": "swc src --out-dir publish/cjs --config-file=.swcrc-cjs --strip-leading-paths -s --ignore \"**/*.d.ts\""
+  },
+  "author": "VostroNet",
+  "license": "MIT",
+  "homepage": "https://github.com/azerothian/gqlize",
+  "bugs": {
+    "url": "https://github.com/azerothian/gqlize/issues"
+  },
+  "dependencies": {
+    "deepmerge": "^4.3.1"
+  },
+  "devDependencies": {
+    "@jest/globals": "^30.4.1",
+    "@swc/cli": "^0.8.1",
+    "@swc/core": "^1.15.43",
+    "@swc/jest": "^0.2.39",
+    "@tsconfig/node20": "^20.1.5",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.1.1",
+    "copyfiles": "^2.4.1",
+    "jest": "^30.4.2",
+    "jest-cli": "^30.4.2",
+    "npm-run-all2": "^9.0.2",
+    "tsx": "^4.19.4",
+    "typescript": "^7.0.2"
+  }
+}

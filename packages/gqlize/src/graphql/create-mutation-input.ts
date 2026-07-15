@@ -5,6 +5,7 @@ import {
 import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
+import { isInputFieldAllowed, isMutationAllowed } from "@azerothian/utilize";
 import {capitalize} from "@azerothian/gqlize-shared/utils/word";
 import {waterfallSync} from "@azerothian/gqlize-shared/utils/waterfall";
 import GQLManager from '../manager';
@@ -13,18 +14,7 @@ import { Relationship } from '../types/index';
 //(instance, defName, fields, relationships, inputTypes, false)
 export function generateInputFields(instance: GQLManager, defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, inputTypes: any, schemaCache: SchemaCache, forceOptional: boolean, options: GqlizeOptions) {
   let def = waterfallSync(Object.keys(defFields), (fieldName: string, fields: {[key: string]: any}) => {
-    let doNotSkip = true;
-    if (options.permission) {
-      if (forceOptional) {
-        if (options.permission.mutationUpdateInput) {
-          doNotSkip = options.permission.mutationUpdateInput(defName, fieldName, options.permission.options);
-        }
-      } else {
-        if (options.permission.mutationCreateInput) {
-          doNotSkip = options.permission.mutationCreateInput(defName, fieldName, options.permission.options);
-        }
-      }
-    }
+    const doNotSkip = isInputFieldAllowed(options.permission, defName, fieldName, forceOptional ? "update" : "create");
     if (!doNotSkip) {
       return fields;
     }
@@ -243,15 +233,8 @@ export default function createMutationInput(instance: GQLManager, defName: strin
   const associations = instance.getAssociations(defName);
   const definition = instance.getDefinition(defName);
   let required, optional;
-  let doNotSkipUpdate = true, doNotSkipCreate = true;
-  if (options.permission) {
-    if (options.permission.mutationUpdate) {
-      doNotSkipUpdate = options.permission.mutationUpdate(defName, options.permission.options);
-    }
-    if (options.permission.mutationCreate) {
-      doNotSkipCreate = options.permission.mutationCreate(defName, options.permission.options);
-    }
-  }
+  const doNotSkipUpdate = isMutationAllowed(options.permission, defName, "update");
+  const doNotSkipCreate = isMutationAllowed(options.permission, defName, "create");
   if (doNotSkipCreate) {
     required = createGQLInputObject(`${defName}RequiredInput`, function() {
       return generateInputFields(instance, defName, definition, fields, associations, inputTypes, schemaCache, false, options);

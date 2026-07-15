@@ -6,18 +6,14 @@ import {
 import createBasicFieldsFunc from "./create-basic-fields";
 import createRelatedFieldsFunc from "./create-related-fields";
 import createComplexFieldsFunc from "./create-complex-fields";
+import { isModelAllowed } from "@azerothian/utilize";
 import GQLManager from "../manager";
 import { SchemaCache } from '../types';
 
 
 export default async function createModelType(defName: string, instance: GQLManager, options: any, nodeInterface: any, schemaCache: SchemaCache, prefix = "") {
-  if (options.permission) {
-    if (options.permission.model) {
-      const result = await options.permission.model(defName);
-      if (!result) {
-        return undefined;
-      }
-    }
+  if (!isModelAllowed(options.permission, defName)) {
+    return undefined;
   }
   const definition = instance.getDefinition(defName);
   const basicFields = createBasicFieldsFunc(defName, instance, definition, options, schemaCache);

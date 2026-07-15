@@ -6,6 +6,7 @@
   },
   "references": [
     { "path": "../ormize" },
+    { "path": "../utilize" },
     { "path": "../gqlize-shared" },
     { "path": "../graphql-types" }
   ],

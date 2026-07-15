@@ -11,7 +11,9 @@
     // source, so their .ts files are not pulled under this package's rootDir.
     "paths": {
       "@azerothian/gqlize-shared": ["../gqlize-shared/publish/types/index.d.ts"],
-      "@azerothian/gqlize-shared/*": ["../gqlize-shared/publish/types/*"]
+      "@azerothian/gqlize-shared/*": ["../gqlize-shared/publish/types/*"],
+      "@azerothian/utilize": ["../utilize/publish/types/index.d.ts"],
+      "@azerothian/utilize/*": ["../utilize/publish/types/*"]
     }
   }
 }

@@ -2,9 +2,12 @@
   "files": [],
   "references": [
     { "path": "packages/graphql-types" },
+    { "path": "packages/utilize" },
     { "path": "packages/gqlize-shared" },
     { "path": "packages/ormize" },
     { "path": "packages/gqlize" },
-    { "path": "packages/ormize-adapter-sequelize" }
+    { "path": "packages/ormize-adapter-sequelize" },
+    { "path": "packages/ormize-zod4" },
+    { "path": "packages/nestize" }
   ]
 }

@@ -15,6 +15,7 @@ import {
 //   connectionArgs,
 // } from "graphql-relay";
 import globalIdField from "./utils/global-id-field";
+import { isFieldAllowed } from "@azerothian/utilize";
 import GQLManager from '../manager';
 import { Definition, GqlizeOptions, SchemaCache } from '../types';
 
@@ -30,12 +31,8 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
       const modelFields = instance.getFields(defName);
       let exclude = Object.keys(definition.override || {})
         .concat(definition.ignoreFields || []);
-      const fieldCommand = options.permission?.field
-      if (fieldCommand) {
-        exclude = exclude.concat(Object.keys(modelFields)
-          .filter((keyName) => keyName !== "id")
-          .filter((keyName) => !fieldCommand(defName, keyName, options.permission?.options)));
-      }
+      exclude = exclude.concat(Object.keys(modelFields)
+        .filter((keyName) => !isFieldAllowed(options.permission, defName, keyName)));
       const fieldKeys = Object.keys(modelFields)
         .filter((k) => exclude.indexOf(k) === -1);
       if (fieldKeys.length === 0) { // no need to continue
@@ -65,10 +62,8 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
       if (definition.override) {
         const overrideDefs = definition.override;
         fields = Object.keys(definition.override).reduce((f, fieldName) => {
-          if (fieldCommand) {
-            if (!fieldCommand(defName, fieldName, options.permission?.options)) {
-              return f;
-            }
+          if (!isFieldAllowed(options.permission, defName, fieldName)) {
+            return f;
           }
           const fieldDefinition = modelFields[fieldName]; // modelDefinition.define[fieldName];
           if (!fieldDefinition) {

@@ -7,6 +7,7 @@ import {
 import createNodeInterface from "./utils/create-node-interface";
 
 import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
+import { isModelAllowed, isMutationAllowed } from "@azerothian/utilize";
 import createModelType from "./create-model-type";
 import createListObject from "./create-list-object";
 import createClassMethods from "./create-class-methods";
@@ -18,11 +19,8 @@ import { GqlizeOptions, SchemaCache } from '../types';
 
 export function createModelTypes(instance: GQLManager, options: GqlizeOptions, nodeInterface: GraphQLInterfaceType, schemaCache: SchemaCache) {
   return async(defName: string, o: any) => {
-    if (options.permission?.model) {
-      const result = await options.permission.model(defName, options.permission?.options);
-      if (!result) {
-        return o;
-      }
+    if (!isModelAllowed(options.permission, defName)) {
+      return o;
     }
     o[defName] = await createModelType(defName, instance, options, nodeInterface, schemaCache);
     return o;
@@ -71,15 +69,9 @@ function createMutationModels(instance: GQLManager, options: GqlizeOptions, sche
           return o;
         }
       }
-      if (options.permission?.mutationUpdate) {
-        updateResult = await options.permission.mutationUpdate(defName, options.permission.options);
-      }
-      if (options.permission?.mutationDelete) {
-        deleteResult = await options.permission.mutationDelete(defName, options.permission.options);
-      }
-      if (options.permission?.mutationCreate) {
-        createResult = await options.permission.mutationCreate(defName, options.permission.options);
-      }
+      updateResult = isMutationAllowed(options.permission, defName, "update");
+      deleteResult = isMutationAllowed(options.permission, defName, "delete");
+      createResult = isMutationAllowed(options.permission, defName, "create");
       if (createResult || updateResult || deleteResult) {
         o[defName] = await createMutationModel(instance, defName, schemaCache, createResult, updateResult, deleteResult);
       }

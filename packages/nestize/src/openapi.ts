@@ -1,0 +1,207 @@
+import { z } from "zod";
+import { generateZodSchemas } from "@azerothian/ormize-zod4";
+import { isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize";
+import { OpenApiOptions } from "./types";
+
+// Minimal structural stand-ins so the builder needs no @nestjs/swagger types at
+// compile time (swagger is a peer dependency). `setupSwagger` casts at the call.
+type OpenAPIObject = {
+  openapi: string;
+  info: { title: string; version: string };
+  tags?: { name: string }[];
+  paths: Record<string, any>;
+  components: { schemas: Record<string, any> };
+};
+
+function ref(name: string) {
+  return { $ref: `#/components/schemas/${name}` };
+}
+
+function toSchema(schema: z.ZodTypeAny | undefined): any {
+  if (!schema) {
+    return { type: "object" };
+  }
+  return z.toJSONSchema(schema, { target: "openapi-3.0", unrepresentable: "any" });
+}
+
+function joinPath(prefix: string | undefined, resource: string): string {
+  const base = prefix ? `/${prefix.replace(/^\/|\/$/g, "")}` : "";
+  return `${base}/${resource}`;
+}
+
+/**
+ * Build a plain OpenAPI 3.0 document describing the REST surface Nestize generates
+ * for `orm`. `components.schemas` carries `<Model>` / `<Model>CreateInput` /
+ * `<Model>UpdateInput` (permission-filtered), and `paths` carries the CRUD +
+ * relation routes. GraphQL-free.
+ */
+export function buildOpenApiDocument(orm: any, options: OpenApiOptions = {}): OpenAPIObject {
+  const { permission, pathPrefix, includeRelations = true, readOnly = false } = options;
+  const title = options.title || "Nestize API";
+  const version = options.version || "1.0.0";
+
+  // Entity components omit nested relations (they would emit cyclic JSON-schema
+  // refs); relations are still reachable via their own routes.
+  const entitySchemas = generateZodSchemas(orm, { permission, includeRelations: false });
+  const inputSchemas = generateZodSchemas(orm, { permission });
+
+  const components: { schemas: Record<string, any> } = { schemas: {} };
+  const paths: Record<string, any> = {};
+  const tags: { name: string }[] = [];
+
+  const defs = (orm.getDefinitions && orm.getDefinitions()) || {};
+  const names = Object.keys(defs).filter((n) => isModelAllowed(permission, n));
+
+  for (const name of names) {
+    const resource = name.toLowerCase();
+    tags.push({ name });
+
+    components.schemas[name] = toSchema(entitySchemas.entity[name]);
+    if (inputSchemas.create[name]) {
+      components.schemas[`${name}CreateInput`] = toSchema(inputSchemas.create[name]);
+    }
+    if (inputSchemas.update[name]) {
+      components.schemas[`${name}UpdateInput`] = toSchema(inputSchemas.update[name]);
+    }
+
+    const collectionPath = joinPath(pathPrefix, resource);
+    const itemPath = joinPath(pathPrefix, `${resource}/{id}`);
+
+    const listResponse = {
+      "200": {
+        description: `List of ${name}`,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: {
+                total: { type: "integer" },
+                rows: { type: "array", items: ref(name) },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    const collection: any = {
+      get: {
+        tags: [name],
+        summary: `List ${name}`,
+        parameters: [
+          { name: "filter", in: "query", required: false, schema: { type: "string" }, description: "JSON filter DSL" },
+          { name: "order", in: "query", required: false, schema: { type: "string" } },
+          { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+          { name: "offset", in: "query", required: false, schema: { type: "integer" } },
+          { name: "count", in: "query", required: false, schema: { type: "string" } },
+        ],
+        responses: listResponse,
+      },
+    };
+    if (!readOnly && inputSchemas.create[name]) {
+      collection.post = {
+        tags: [name],
+        summary: `Create ${name}`,
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: ref(`${name}CreateInput`) } },
+        },
+        responses: {
+          "201": { description: `Created ${name}`, content: { "application/json": { schema: ref(name) } } },
+          "400": { description: "Validation failed" },
+        },
+      };
+    }
+    if (!readOnly && inputSchemas.update[name]) {
+      collection.patch = {
+        tags: [name],
+        summary: `Update ${name} matching a filter`,
+        parameters: [{ name: "filter", in: "query", required: false, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: ref(`${name}UpdateInput`) } },
+        },
+        responses: {
+          "200": { description: `Updated ${name}`, content: { "application/json": { schema: { type: "array", items: ref(name) } } } },
+        },
+      };
+    }
+    if (!readOnly) {
+      collection.delete = {
+        tags: [name],
+        summary: `Delete ${name} matching a filter`,
+        parameters: [{ name: "filter", in: "query", required: false, schema: { type: "string" } }],
+        responses: { "200": { description: `Deleted ${name}` } },
+      };
+    }
+    paths[collectionPath] = collection;
+
+    const idParam = { name: "id", in: "path", required: true, schema: { type: "string" } };
+    paths[itemPath] = {
+      get: {
+        tags: [name],
+        summary: `Fetch a ${name} by id`,
+        parameters: [idParam],
+        responses: {
+          "200": { description: name, content: { "application/json": { schema: ref(name) } } },
+          "404": { description: "Not found" },
+        },
+      },
+    };
+
+    if (includeRelations && orm.getAssociations) {
+      const associations = orm.getAssociations(name) || {};
+      for (const relName of Object.keys(associations)) {
+        const assoc = associations[relName];
+        if (!isRelationshipAllowed(permission, name, relName, assoc.target)) {
+          continue;
+        }
+        const single = assoc.associationType === "belongsTo" || assoc.associationType === "hasOne";
+        const relPath = joinPath(pathPrefix, `${resource}/{id}/${relName}`);
+        const relSchema = single
+          ? ref(assoc.target)
+          : {
+              type: "object",
+              properties: {
+                total: { type: "integer" },
+                rows: { type: "array", items: ref(assoc.target) },
+              },
+            };
+        paths[relPath] = {
+          get: {
+            tags: [name],
+            summary: `Fetch ${name}.${relName}`,
+            parameters: [idParam],
+            responses: {
+              "200": {
+                description: `${name}.${relName}`,
+                content: { "application/json": { schema: relSchema } },
+              },
+            },
+          },
+        };
+      }
+    }
+  }
+
+  return {
+    openapi: "3.0.0",
+    info: { title, version },
+    tags,
+    paths,
+    components,
+  };
+}
+
+/**
+ * Build the OpenAPI document for `orm` and mount Swagger UI on the Nest `app` at
+ * `options.path` (default `docs`) using `@nestjs/swagger`'s `SwaggerModule.setup`.
+ */
+export function setupSwagger(app: any, orm: any, options: OpenApiOptions = {}): OpenAPIObject {
+  const doc = buildOpenApiDocument(orm, options);
+  // Required lazily so @nestjs/swagger stays a peer dependency (not needed for the
+  // pure `buildOpenApiDocument` path).
+  const { SwaggerModule } = require("@nestjs/swagger");
+  SwaggerModule.setup(options.path || "docs", app, doc as any);
+  return doc;
+}

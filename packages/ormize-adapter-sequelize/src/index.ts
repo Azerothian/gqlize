@@ -28,8 +28,9 @@ import {
 // import {GraphQLObjectType} from "graphql";
 import { GraphQLInputObjectType } from "graphql";
 import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
-import { Association, WhereOperators, DefinitionFieldMeta } from '@azerothian/gqlize-shared/types/index';
+import { Association, WhereOperators, DefinitionFieldMeta, DataTypeDescriptor, Selection, isOrmizeDataType } from '@azerothian/gqlize-shared/types/index';
 import { GqlizeAdapter } from '@azerothian/gqlize-shared/types/gqlize-adapter';
+import { mapDataType as mapDataTypeImpl, toNativeType as toNativeTypeImpl } from "./data-type-mapper";
 import { SequelizeDefinition, SqlClassMethod } from "./types";
 import { replaceWhereOperators } from "./utils/where-ops";
 
@@ -224,6 +225,31 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     const rels = this.getAssociations(modelName);
     return rels[assocName];
   };
+  /** Read: classify a native Sequelize DataType instance into an abstract descriptor. */
+  mapDataType = (nativeType: any): DataTypeDescriptor => mapDataTypeImpl(nativeType);
+  /** Write: convert an abstract type descriptor/token into a native Sequelize DataType. */
+  toNativeType = (descriptor: DataTypeDescriptor): any => toNativeTypeImpl(descriptor);
+  /**
+   * Convert any authored abstract ormize type tokens in an attribute map to
+   * native Sequelize types. Native types (e.g. `Sequelize.STRING`) and fields
+   * without a token `type` pass through unchanged (backward compatible).
+   */
+  resolveAttributeTypes = (attributes: { [name: string]: any }): { [name: string]: any } => {
+    const out: { [name: string]: any } = {};
+    for (const key of Object.keys(attributes)) {
+      const attr = attributes[key];
+      if (isOrmizeDataType(attr)) {
+        // Shorthand form: `field: DataTypes.String`
+        out[key] = this.toNativeType(attr);
+      } else if (attr && typeof attr === "object" && isOrmizeDataType(attr.type)) {
+        // Object form: `field: { type: DataTypes.String, allowNull: false }`
+        out[key] = Object.assign({}, attr, { type: this.toNativeType(attr.type) });
+      } else {
+        out[key] = attr;
+      }
+    }
+    return out;
+  };
   createModel = async (def: SequelizeDefinition, hooks?: any): Promise<any> => {
     const { defaultAttr, defaultModel } = this.options;
     const newDef = Object.assign({}, def, {
@@ -241,7 +267,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     const defName = newDef.name;
     this.sequelize.define(
       defName,
-      Object.assign({}, defaultAttr, newDef.define),
+      this.resolveAttributeTypes(Object.assign({}, defaultAttr, newDef.define)),
       newDef.options
     );
 
@@ -645,7 +671,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     defName: any,
     args: { first?: any; last?: any; orderBy?: any[]; where?: any; include?: any },
     offset?: any,
-    info?: any,
+    selection?: Selection,
     whereOperators?: any,
     defaultOptions: any = {},
     selectedFields?: string | string[] | undefined,
@@ -1021,7 +1047,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   ) {
     return mergeFilterStatement(fieldName, value, match, originalWhere);
   }
-  resolveSingleRelationship = async (defName: string, relationship: Association, source: any, args: any, context: any, info: any, options: any) => {
+  resolveSingleRelationship = async (defName: string, relationship: Association, source: any, args: any, context: any, selection: Selection, options: any) => {
     if (source[relationship.name]) {
       return source[relationship.name];
     }
@@ -1040,7 +1066,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return source[relationship.accessors.count]({ where, getGraphQLArgs: options?.getGraphQLArgs });
   };
-  resolveManyRelationship = async (defName: string, relationship: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, info: any, options: any, countOnly?: boolean) => {
+  resolveManyRelationship = async (defName: string, relationship: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, selection: Selection, options: any, countOnly?: boolean) => {
     if (countOnly && !(source[relationship.name] !== undefined && source[relationship.name] !== null)) {
       // Only `total` requested: run a count instead of fetching rows.
       const where = await this.processFilterArgument(args.where || {}, whereOperators, options);
@@ -1072,7 +1098,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       defName,
       args,
       offset,
-      info,
+      selection,
       whereOperators,
       options
     );

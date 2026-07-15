@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": ".tsbuild",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "importHelpers": false
+  },
+  "references": [
+    { "path": "../ormize" },
+    { "path": "../ormize-zod4" },
+    { "path": "../utilize" }
+  ],
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", ".tsbuild", "lib", "cjs", "publish", "**/*.spec.ts"]
+}

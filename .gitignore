@@ -11,3 +11,6 @@ coverage/
 
 # tooling / local state
 .omc/
+
+# Serena tool artifacts
+.serena/

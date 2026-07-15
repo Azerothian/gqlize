@@ -81,6 +81,7 @@
   "dependencies": {
     "@azerothian/gqlize-shared": "workspace:*",
     "@azerothian/ormize": "workspace:*",
+    "@azerothian/utilize": "workspace:*",
     "@azerothian/graphql-types": "workspace:^",
     "@vostro/object-visit": "^1.1.0",
     "deepmerge": "^4.3.1",

@@ -1,4 +1,5 @@
 import Events from "../events";
+import { DataTypeDescriptor } from "./data-type";
 
 /**
  * The backend (ORM) adapter contract. This is GraphQL-free — it is the interface
@@ -28,7 +29,47 @@ export interface OrmAdapter {
   getCreateFunction: (defName: string) => any;
   getUpdateFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
   getDeleteFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
+  /** Read: classify an adapter-native type into an abstract `DataTypeDescriptor`. */
+  mapDataType: (nativeType: any) => DataTypeDescriptor;
+  /** Write: convert an abstract type token/descriptor back to an adapter-native type. */
+  toNativeType: (descriptor: DataTypeDescriptor) => any;
+  /**
+   * Turn list/relationship args into backend fetch options. GraphQL-free: the
+   * caller passes a {@link Selection} carrying any selected-field/count hints; the
+   * raw execution `info` (if any) rides along on `selection.raw`.
+   */
+  processListArgsToOptions: (defName: string, args: any, offset: any, selection: Selection, whereOperators: WhereOperators | undefined, graphQLArgs: {getGraphQLArgs: () => {
+      context: any;
+      info: any;
+      source: any;
+  }}, selectedFields: any, runHook?: (defName: string, hookName: string, value: any, ...args: any) => Promise<any>) => any;
+  resolveManyRelationship: (defName: string, association: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, selection: Selection, options: any, countOnly?: boolean) => Promise<any>;
+  resolveSingleRelationship: (defName: string, association: Association, source: any, args: any, context: any, selection: Selection, options: any) => Promise<any>;
 }
+
+/**
+ * Backend-agnostic description of what a resolver wants fetched. Replaces the
+ * GraphQL execution `info` in the ormize engine so the engine stays graphql-free.
+ * GraphQL callers (gqlize) populate this from `info`; other callers (e.g. REST)
+ * build it directly. `translateFilter`/`translateId` default to identity — gqlize
+ * injects relay global-id translation.
+ */
+export type Selection = {
+  /** eager-include plan (relations to JOIN) */
+  include?: any[];
+  /** selected scalar field names */
+  fields?: string[];
+  /** fetch count without rows */
+  countOnly?: boolean;
+  /** raw arg variables (caller-provided) */
+  variableValues?: any;
+  /** opaque passthrough; gqlize stashes the real GraphQLResolveInfo here so hooks still see `info` */
+  raw?: any;
+  /** default identity; gqlize passes replaceIdDeep bound to variableValues */
+  translateFilter?: (where: any, globalKeys: string[]) => any;
+  /** default identity; gqlize passes v => fromGlobalId(v).id */
+  translateId?: (value: any) => any;
+};
 
 
 export type GqlizeOptions = {
@@ -266,6 +307,7 @@ export type HookMap = {
 }
 
 export * from "./orm";
+export * from "./data-type";
 // (arg0: any, arg1: any, arg2: any) => { (): any; new(): any; apply: { (arg0: any, arg1: any[]): any; new(): any; }; })
 // type Models = {
 //   [name: string]: Model

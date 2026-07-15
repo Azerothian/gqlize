@@ -1,6 +1,7 @@
 import createListObject from "./create-list-object";
 // import { fromCursor, toCursor } from "./objects/cursor";
 import {capitalize} from "@azerothian/gqlize-shared/utils/word";
+import { isRelationshipAllowed } from "@azerothian/utilize";
 import { SchemaCache, GqlizeOptions, Definition, DefinitionFields, HookMap, Relationship, WhereOperators, Association } from '../types';
 import GQLManager from '../manager';
 import { GraphQLType, GraphQLArgs, GraphQLBoolean } from "graphql";
@@ -25,17 +26,8 @@ export default function createRelatedFieldsFunc(
       if (associationKeys.length > 0) {
         fields = associationKeys.reduce((f, relName) => {
           const association = associations[relName];
-          if (options.permission?.relationship) {
-            const result = options.permission.relationship(
-              defName,
-              relName,
-              association.target,
-              options.permission.options
-            );
-            if (!result) {
-              return f;
-            }
-            
+          if (!isRelationshipAllowed(options.permission, defName, relName, association.target)) {
+            return f;
           }
           const targetObject = schemaCache.types[association.target];
           const targetDef = instance.getDefinition(association.target);
