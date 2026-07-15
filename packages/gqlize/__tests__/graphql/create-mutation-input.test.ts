@@ -1,5 +1,6 @@
-import Database from "../../src/manager";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import { Ormize } from "@azerothian/ormize";
+import GqlizeBinding from "../../src/manager";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import Sequelize from "sequelize";
 import createMutationInput from "../../src/graphql/create-mutation-input";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
@@ -7,7 +8,7 @@ import { GqlizeAdapter } from "../../src/types";
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
 test("createMutationInput", async() => {
-  const db = new Database();
+  const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
   }) as GqlizeAdapter, "sqlite");

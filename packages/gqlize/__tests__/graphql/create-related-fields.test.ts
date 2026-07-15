@@ -1,5 +1,6 @@
-import Database from "../../src/manager";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
+import { Ormize } from "@azerothian/ormize";
+import GqlizeBinding from "../../src/manager";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import createRelatedFieldsFunc from "../../src/graphql/create-related-fields";
 import {GraphQLObjectType} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
@@ -7,7 +8,7 @@ import { Definition } from '../../src/types';
 import { GqlizeAdapter } from "../../src/types";
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 test("createRelatedFieldsFunc - empty define", async() => {
-  const db = new Database();
+  const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
   })  as GqlizeAdapter, "sqlite");

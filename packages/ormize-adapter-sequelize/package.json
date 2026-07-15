@@ -1,5 +1,5 @@
 {
-  "name": "@azerothian/gqlize-adapter-sequelize",
+  "name": "@azerothian/ormize-adapter-sequelize",
   "version": "6.0.0",
   "engines": {
     "node": ">=24"
@@ -8,7 +8,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Azerothian/gqlize.git",
-    "directory": "packages/gqlize-adapter-sequelize"
+    "directory": "packages/ormize-adapter-sequelize"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
@@ -31,12 +31,12 @@
   },
   "author": "VostroNet",
   "license": "MIT",
-  "homepage": "https://github.com/azerothian/gqlize-adapter-sequelize",
+  "homepage": "https://github.com/azerothian/ormize-adapter-sequelize",
   "bugs": {
-    "url": "https://github.com/azerothian/gqlize-adapter-sequelize/issues"
+    "url": "https://github.com/azerothian/ormize-adapter-sequelize/issues"
   },
   "devDependencies": {
-    "@azerothian/gqlize": "workspace:*",
+    "@azerothian/ormize": "workspace:*",
     "@jest/globals": "^30.4.1",
     "@swc/cli": "^0.8.1",
     "@swc/core": "^1.15.43",
@@ -66,7 +66,7 @@
     "uuid": "^14.0.1"
   },
   "peerDependencies": {
-    "@azerothian/gqlize": "^6.0.0",
+    "@azerothian/ormize": "^6.0.0",
     "graphql-relay": "^0.10.0",
     "sequelize": "^6.19.0"
   },

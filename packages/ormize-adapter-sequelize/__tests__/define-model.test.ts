@@ -4,7 +4,7 @@ import Sequelize, {
   InferCreationAttributes,
   CreationOptional,
 } from "sequelize";
-import { Database } from "@azerothian/gqlize";
+import { Ormize } from "@azerothian/ormize";
 import SequelizeAdapter from "../src";
 import { defineModel } from "../src/types/orm";
 import { describe, expect, it } from "@jest/globals";
@@ -44,7 +44,7 @@ describe("definition typesystem", () => {
     const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
 
     // Fluent chain: registerAdapter fixes the base URI, define() accumulates models.
-    const db = new Database().registerAdapter(adapter).define(WidgetDef);
+    const db = new Ormize().registerAdapter(adapter).define(WidgetDef);
 
     // Model not created until initialise().
     expect(db.models.Widget).toBeUndefined();

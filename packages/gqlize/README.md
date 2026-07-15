@@ -1,11 +1,17 @@
-# gqlize
+# @azerothian/gqlize
 
-A relational databinder for generating graphql schemas to connect and work with multi data sources, used to be called [sql2gql](https://github.com/VostroNet/sql2gql/tree/v3)
+The GraphQL layer of the gqlize / ormize project. Takes an `@azerothian/ormize` instance and
+generates a complete Relay-style GraphQL schema — object types, connections, queries, deep nested
+mutations, and fine-grained permissions — so you don't hand-write resolvers or SDL.
+
+Previously part of `@azerothian/gqlize` (which also contained the backend manager). The backend
+manager is now in [`@azerothian/ormize`](../ormize). Used to be called
+[sql2gql](https://github.com/VostroNet/sql2gql/tree/v3).
 
 ## Install
 
 ```sh
-pnpm add @azerothian/gqlize @azerothian/gqlize-adapter-sequelize
+pnpm add @azerothian/ormize @azerothian/gqlize @azerothian/ormize-adapter-sequelize
 ```
 
 `gqlize` and the Sequelize adapter expect these peer dependencies in your project:
@@ -61,12 +67,15 @@ the `overrides` entry pins the whole tree to one patched `graphql@17.0.2`.
 
 ## Typed models (opt-in)
 
-By default `db.models.<Name>` is `any`. gqlize also offers a fluent, typed registration so
-models are strongly typed — instance attributes from the definition and static methods from
+By default `db.models.<Name>` is `any`. The fluent typed registration from `@azerothian/ormize`
+makes models strongly typed — instance attributes from the definition and static methods from
 `classMethods`:
 
 ```ts
-const db = new Database()
+import { Ormize } from "@azerothian/ormize";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+
+const db = new Ormize()
   .registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }))
   .define(TaskDef)     // TaskDef built with the adapter's `defineModel<TInstance, TStatics>()`
   .define(ItemDef);
@@ -78,7 +87,7 @@ db.models.Task.create({ name: "x" });   // fully typed (create args, return inst
 
 `define()` is synchronous and chainable; models are created during `initialise()`. The core is
 adapter-agnostic — the model type is provided by the adapter (see
-[`@azerothian/gqlize-adapter-sequelize` → Typed models](../gqlize-adapter-sequelize/README.md#typed-models),
+[`@azerothian/ormize-adapter-sequelize` → Typed models](../ormize-adapter-sequelize/README.md#typed-models),
 which is where `defineModel` / `SequelizeModel` live). The untyped `db.addDefinition(def)` still
 works unchanged.
 

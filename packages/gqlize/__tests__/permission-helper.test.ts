@@ -1,6 +1,6 @@
 import {createInstance} from "./helper";
-import {createSchema} from "../src/graphql/index";
-import permissionHelper from "../src/permission-helper";
+import {createSchema} from "../src";
+import { createRoleBasedPermissions as permissionHelper } from "@azerothian/ormize";
 import { GraphQLObjectType } from 'graphql';
 
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";

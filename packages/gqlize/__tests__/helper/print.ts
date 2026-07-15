@@ -1,5 +1,5 @@
 import {createInstance} from "./index";
-import {createSchema} from "../../src/graphql/index";
+import {createSchema} from "../../src";
 import {printSchema} from "graphql";
 (async() => {
   const instance = await createInstance();

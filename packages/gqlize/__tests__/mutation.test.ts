@@ -1,11 +1,11 @@
 import {createInstance, validateResult} from "./helper";
 import {graphql} from "graphql";
-// import {createSchema} from "../src/graphql/index";
+// import {createSchema} from "../src";
 import Sequelize from "sequelize";
 import {toGlobalId} from "graphql-relay";
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
-import Database from "../src/manager";
-import {createSchema} from "../src/graphql/index";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { Ormize as Database } from "@azerothian/ormize";
+import {createSchema} from "../src";
 import { GqlizeAdapter } from "../src/types";
 import { Definition } from '../src/types/index';
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";

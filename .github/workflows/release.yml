@@ -96,7 +96,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          for pkg in gqlize-shared graphql-types gqlize gqlize-adapter-sequelize; do
+          for pkg in gqlize-shared graphql-types ormize gqlize ormize-adapter-sequelize; do
             echo "Publishing @azerothian/${pkg}@${{ steps.version.outputs.version }} (tag: ${{ steps.version.outputs.npm_tag }})"
             pnpm publish "packages/${pkg}/publish" \
               --no-git-checks --access public --tag "${{ steps.version.outputs.npm_tag }}"

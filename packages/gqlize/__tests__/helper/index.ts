@@ -1,5 +1,5 @@
 
-import Database from "../../src/manager";
+import { Ormize as Database } from "@azerothian/ormize";
 
 import TaskModel from "./models/task";
 import TaskItemModel from "./models/task-item";

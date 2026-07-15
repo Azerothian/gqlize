@@ -1,6 +1,6 @@
 import {graphql} from "graphql";
 import {createInstance, validateResult} from "./helper";
-import {createSchema} from "../src/graphql/index";
+import {createSchema} from "../src";
 import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
 
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";

@@ -1,5 +1,5 @@
-import SequelizeAdapter from "@azerothian/gqlize-adapter-sequelize";
-import Database from "../../src/manager";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { Ormize as Database } from "@azerothian/ormize";
 import createModelType from "../../src/graphql/create-model-type";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import { GqlizeAdapter } from "../../src/types";

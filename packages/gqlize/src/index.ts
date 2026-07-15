@@ -1,4 +1,5 @@
-import db from "./manager";
-import {createSchema as create} from "./graphql/index";
-export const Database = db;
-export const createSchema = create;
+import GqlizeBinding from "./manager";
+import { createSchema as buildSchema } from "./graphql/index";
+export function createSchema(orm: any, options?: any) {
+  return buildSchema(new GqlizeBinding(orm) as any, options);
+}

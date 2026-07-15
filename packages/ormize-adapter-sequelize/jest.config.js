@@ -13,8 +13,8 @@ module.exports = {
   },
   // Resolve sibling workspace packages from source. Order: most specific first.
   moduleNameMapper: {
-    '^@azerothian/gqlize$': '<rootDir>/../gqlize/src/index.ts',
-    '^@azerothian/gqlize/(.*)$': '<rootDir>/../gqlize/src/$1',
+    '^@azerothian/ormize$': '<rootDir>/../ormize/src/index.ts',
+    '^@azerothian/ormize/(.*)$': '<rootDir>/../ormize/src/$1',
     '^@azerothian/gqlize-shared$': '<rootDir>/../gqlize-shared/src/index.ts',
     '^@azerothian/gqlize-shared/(.*)$': '<rootDir>/../gqlize-shared/src/$1',
     '^@azerothian/graphql-types$': '<rootDir>/../graphql-types/src/index.ts',
