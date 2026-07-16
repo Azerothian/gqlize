@@ -764,7 +764,29 @@ export default class Ormize<
     });
     return source;
   }
+  /**
+   * Run a mutation callback inside a transaction so a multi-step mutation (a
+   * create/update/delete plus its nested relationship mutations) either fully
+   * applies or fully rolls back. An already-in-flight transaction on the context
+   * is reused rather than nested — relationship mutations recurse back into
+   * processCreate/Update/Delete — and an adapter without transaction support just
+   * runs the callback directly (no behaviour change).
+   */
+  withTransaction = async(defName: any, context: any, fn: (ctx: any) => Promise<any>): Promise<any> => {
+    if (context && context.transaction) {
+      return fn(context);
+    }
+    const adapter: any = this.getModelAdapter(defName);
+    if (!adapter || typeof adapter.transaction !== "function") {
+      return fn(context);
+    }
+    return adapter.transaction(async(t: any) => {
+      return fn(Object.assign({}, context, { transaction: t }));
+    });
+  }
+
   processCreate = async(defName: any, source: any, args: { input: any; }, context: any, selection?: Selection) => {
+    return this.withTransaction(defName, context, async(context: any) => {
     const translateFilter = selection?.translateFilter || ((w: any) => w);
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
@@ -797,9 +819,11 @@ export default class Ormize<
 
     }
     return [];
+    });
   }
 
   processUpdate = async(defName: any, source: any, args: { input: { [x: string]: any; }; where: any; limit: any; }, context: any, selection?: Selection) => {
+    return this.withTransaction(defName, context, async(context: any) => {
     const translateFilter = selection?.translateFilter || ((w: any) => w);
     const translateId = selection?.translateId || ((v: any) => v);
     const definition = this.getDefinition(defName);
@@ -848,8 +872,10 @@ export default class Ormize<
     });
 
     return results;
+    });
   }
   processSelect = async(defName: any, source: any, args: { input: any; where: any; limit: any; }, context: any, selection?: Selection) => {
+    return this.withTransaction(defName, context, async(context: any) => {
     const translateFilter = selection?.translateFilter || ((w: any) => w);
     // Find matching elements and run relationship mutations on them via `args.input`
     // WITHOUT modifying the elements themselves (no field write / lifecycle change);
@@ -869,8 +895,10 @@ export default class Ormize<
       await this.processRelationshipMutation(defName, r, args.input, context, selection);
     });
     return results;
+    });
   }
   processDelete = async(defName: any, source: any, args: any, context: any, selection?: Selection) => {
+    return this.withTransaction(defName, context, async(context: any) => {
     const translateFilter = selection?.translateFilter || ((w: any) => w);
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
@@ -899,6 +927,7 @@ export default class Ormize<
       // });
     };
     return processDelete(where, createResolveContext(context, selection, source), before, after);
+    });
   }
 
 }
@@ -908,7 +937,7 @@ export default class Ormize<
 // real GraphQLResolveInfo so that behaviour is identical, while ormize itself
 // stays graphql-free (it only forwards the opaque `raw`).
 function createResolveContext(context: any, selection: any, source: any, options: any = {}) {
-  return Object.assign({
+  const base: any = {
     getGraphQLArgs() {
       return {
         context,
@@ -916,7 +945,14 @@ function createResolveContext(context: any, selection: any, source: any, options
         source,
       };
     },
-  }, options);
+  };
+  // Propagate an in-flight transaction (set by withTransaction) so every nested
+  // Sequelize call — create/update/destroy/findAll and relationship accessors —
+  // joins the same transaction and a multi-step mutation is atomic.
+  if (context && context.transaction) {
+    base.transaction = context.transaction;
+  }
+  return Object.assign(base, options);
 }
 
 // Cursor-based offset from decoded `after`/`before` args (shared by the top-level

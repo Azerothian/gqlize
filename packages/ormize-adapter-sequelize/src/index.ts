@@ -116,6 +116,15 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   getORM = () => {
     return this.sequelize;
   };
+  /**
+   * Run `cb` inside a managed Sequelize transaction: it auto-commits when the
+   * callback resolves and auto-rolls-back if it throws. The transaction is
+   * threaded to nested queries via the resolve context (see the ormize manager),
+   * so a multi-step mutation either fully applies or fully rolls back.
+   */
+  transaction = (cb: (t: any) => Promise<any>): Promise<any> => {
+    return this.sequelize.transaction(cb);
+  };
   addInstanceFunction = (
     modelName: string ,
     funcName: string,

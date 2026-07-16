@@ -92,21 +92,20 @@ export type WritableFieldMeta = {
 /**
  * Structural mass-assignment guard, independent of any permission predicate.
  *
- * By default a client may NOT write:
- *  - auto-populated columns (timestamps / computed / auto-increment), and
- *  - primary keys and foreign keys — otherwise a caller could forge a record's
- *    id (collision) or reassign its owner/tenant via the FK (IDOR).
+ * By default a client may NOT write primary keys or foreign keys — otherwise a
+ * caller could forge a record's id (collision) or reassign its owner/tenant via
+ * the FK (IDOR). A field opts back in with `writable: true` in its definition.
  *
- * A field opts back in with `writable: true` in its definition. Auto-populated
- * columns are never writable, even with the opt-in. When no meta is available
- * the field is allowed (nothing to gate on).
+ * NOTE: this deliberately does NOT exclude `autoPopulated` fields. In this
+ * codebase `autoPopulated` also covers any column with a `defaultValue` (e.g. a
+ * boolean flag defaulting to false), which is perfectly valid client input —
+ * excluding it would silently drop those fields from mutations. Auto-increment
+ * primary keys are already covered by the primaryKey check. When no meta is
+ * available the field is allowed (nothing to gate on).
  */
 export function isStructurallyWritable(meta: WritableFieldMeta | undefined): boolean {
   if (!meta) {
     return true;
-  }
-  if (meta.autoPopulated) {
-    return false;
   }
   if (meta.writable === true) {
     return true;

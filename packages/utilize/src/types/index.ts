@@ -29,6 +29,12 @@ export interface OrmAdapter {
   getCreateFunction: (defName: string) => any;
   getUpdateFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
   getDeleteFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
+  /**
+   * Optional: run a callback inside a transaction (auto-commit / auto-rollback).
+   * When present, ormize wraps multi-step mutations in it. Adapters that cannot
+   * provide transactions may omit it — mutations then run without one.
+   */
+  transaction?: (cb: (t: any) => Promise<any>) => Promise<any>;
   /** Read: classify an adapter-native type into an abstract `DataTypeDescriptor`. */
   mapDataType: (nativeType: any) => DataTypeDescriptor;
   /** Write: convert an abstract type token/descriptor back to an adapter-native type. */

@@ -709,10 +709,11 @@ describe("mutations", () => {
     const {data: {__type: {inputFields}}} = await graphql({schema, source:"query {__type(name:\"TaskRequiredInput\") { inputFields {name} }}"}) as any;
     const mutationInputFields = inputFields.map((x: any) => x.name);
 
-    // Primary/foreign keys and auto-populated columns are excluded from mutation
-    // input by default (mass-assignment guard); every other field is exposed.
+    // Primary and foreign keys are excluded from mutation input by default
+    // (mass-assignment guard); every other field — including defaulted /
+    // auto-populated columns — is exposed.
     Object.keys(fields)
-      .filter((field) => !fields[field].primaryKey && !fields[field].foreignKey && !fields[field].autoPopulated)
+      .filter((field) => !fields[field].primaryKey && !fields[field].foreignKey)
       .map((field) => {
         expect(mutationInputFields).toContain(field);
       });
