@@ -37,7 +37,7 @@ import jsonType from "@azerothian/graphql-types/json";
 import dateType from "@azerothian/graphql-types/date";
 import uploadType from "@azerothian/graphql-types/upload";
 
-import {capitalize} from "@azerothian/gqlize-shared/utils/word";
+import {capitalize} from "@azerothian/utilize/utils/word";
 
 export default function typeMapper(type: any, modelName: any, fieldName: any) {
   return toGraphQL(type, Sequelize, modelName, fieldName);

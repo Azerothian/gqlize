@@ -5,7 +5,6 @@
     "outDir": ".tsbuild"
   },
   "references": [
-    { "path": "../gqlize-shared" },
     { "path": "../utilize" }
   ],
   "include": ["src/**/*"],

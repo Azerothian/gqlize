@@ -1,6 +1,6 @@
 import createListObject from "./create-list-object";
 // import { fromCursor, toCursor } from "./objects/cursor";
-import {capitalize} from "@azerothian/gqlize-shared/utils/word";
+import {capitalize} from "@azerothian/utilize/utils/word";
 import { isRelationshipAllowed } from "@azerothian/utilize";
 import { SchemaCache, GqlizeOptions, Definition, DefinitionFields, HookMap, Relationship, WhereOperators, Association } from '../types';
 import GQLManager from '../manager';

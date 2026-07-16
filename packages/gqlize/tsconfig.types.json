@@ -14,8 +14,6 @@
       "@azerothian/ormize/*": ["../ormize/publish/types/*"],
       "@azerothian/utilize": ["../utilize/publish/types/index.d.ts"],
       "@azerothian/utilize/*": ["../utilize/publish/types/*"],
-      "@azerothian/gqlize-shared": ["../gqlize-shared/publish/types/index.d.ts"],
-      "@azerothian/gqlize-shared/*": ["../gqlize-shared/publish/types/*"],
       "@azerothian/graphql-types": ["../graphql-types/publish/types/index.d.ts"],
       "@azerothian/graphql-types/*": ["../graphql-types/publish/types/*"]
     }

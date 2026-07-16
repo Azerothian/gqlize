@@ -1,11 +1,11 @@
 
-import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
+import waterfall from "@azerothian/utilize/utils/waterfall";
 
 import {
   GraphQLObjectType,
 } from "graphql";
 
-import { capitalize } from "@azerothian/gqlize-shared/utils/word";
+import { capitalize } from "@azerothian/utilize/utils/word";
 import GQLManager from '../manager';
 import { Definitions, GqlizeOptions, SchemaCache, Definition } from '../types';
 

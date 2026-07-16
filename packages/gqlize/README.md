@@ -20,7 +20,7 @@ pnpm add @azerothian/ormize @azerothian/gqlize @azerothian/ormize-adapter-sequel
 pnpm add graphql@^17.0.0 graphql-relay@^0.10.0 sequelize@^6.35.1
 ```
 
-(`@azerothian/gqlize-shared` and `@azerothian/graphql-types` are pulled in automatically.)
+(`@azerothian/utilize` and `@azerothian/graphql-types` are pulled in automatically.)
 
 > gqlize needs a small patch to `graphql` so nested mutation fields execute serially — see
 > [Caveats](#caveats) below.

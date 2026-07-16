@@ -1,7 +1,7 @@
 import {fromGlobalId} from "graphql-relay";
 import replaceIdDeep from "./utils/replace-id-deep";
 import { GraphQLResolveInfo } from "graphql";
-import logger from "@azerothian/gqlize-shared/utils/logger";
+import logger from "@azerothian/utilize/utils/logger";
 import buildIncludeFromSelection, { mergeIncludeMaps, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
 import { Model, Association, Selection } from './types';
 

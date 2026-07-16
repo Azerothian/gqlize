@@ -42,7 +42,7 @@ export type ModelNameOf<D> = D extends ITypedDefinition<infer N, any, any>
  * required fragment's `Model` brand (and its creation-attribute typing) intact.
  *
  * ```ts
- * declare module "@azerothian/gqlize-shared/types/orm" {
+ * declare module "@azerothian/utilize/types/orm" {
  *   interface IORBaseRegistry<ReqInstance, OptInstance, ReqStatics, OptStatics> {
  *     sequelize: ModelStatic<ReqInstance & Partial<InferAttributes<OptInstance>>>
  *       & ReqStatics & Partial<OptStatics>;

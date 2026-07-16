@@ -9,10 +9,10 @@ import {
 } from "graphql";
 
 import { fromCursor, toCursor } from "./objects/cursor";
-import {capitalize} from "@azerothian/gqlize-shared/utils/word";
+import {capitalize} from "@azerothian/utilize/utils/word";
 import { SchemaCache } from '../types';
 import GQLManager from "../manager";
-import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
+import waterfall from "@azerothian/utilize/utils/waterfall";
 import { processAfter } from "./utils/after";
 import Events from "../events";
 

@@ -1,9 +1,9 @@
 import Cache from "./utils/cache";
 import pluralize from "pluralize";
-import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
-import {capitalize} from "@azerothian/gqlize-shared/utils/word";
+import waterfall from "@azerothian/utilize/utils/waterfall";
+import {capitalize} from "@azerothian/utilize/utils/word";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Model, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
-import { OrmAdapter, DataTypeDescriptor, Selection } from '@azerothian/gqlize-shared/types/index';
+import { OrmAdapter, DataTypeDescriptor, Selection } from '@azerothian/utilize/types/index';
 import Events from "./events";
 
 const hookList = [

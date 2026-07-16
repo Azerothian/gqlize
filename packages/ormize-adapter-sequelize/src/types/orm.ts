@@ -8,12 +8,12 @@
 import type { Model, ModelStatic, InferAttributes } from "sequelize";
 import type {
   Definition,
-} from "@azerothian/gqlize-shared/types/index";
+} from "@azerothian/utilize/types/index";
 import type {
   ITypedDefinition,
   IORModel,
   AnyTypedDef,
-} from "@azerothian/gqlize-shared/types/orm";
+} from "@azerothian/utilize/types/orm";
 
 /** Author-declared attributes of an optional-bucket instance (Model brand excluded). */
 type OptionalAttrs<I> = I extends Model<any, any> ? Partial<InferAttributes<I>> : {};
@@ -32,7 +32,7 @@ export type SequelizeModelOf<ReqInstance, OptInstance, ReqStatics, OptStatics> =
     : never;
 
 // Register the sequelize base.
-declare module "@azerothian/gqlize-shared/types/orm" {
+declare module "@azerothian/utilize/types/orm" {
   interface IORBaseRegistry<ReqInstance, OptInstance, ReqStatics, OptStatics> {
     sequelize: SequelizeModelOf<ReqInstance, OptInstance, ReqStatics, OptStatics>;
   }

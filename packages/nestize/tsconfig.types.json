@@ -12,9 +12,7 @@
       "@azerothian/ormize-zod4": ["../ormize-zod4/publish/types/index.d.ts"],
       "@azerothian/ormize-zod4/*": ["../ormize-zod4/publish/types/*"],
       "@azerothian/utilize": ["../utilize/publish/types/index.d.ts"],
-      "@azerothian/utilize/*": ["../utilize/publish/types/*"],
-      "@azerothian/gqlize-shared": ["../gqlize-shared/publish/types/index.d.ts"],
-      "@azerothian/gqlize-shared/*": ["../gqlize-shared/publish/types/*"]
+      "@azerothian/utilize/*": ["../utilize/publish/types/*"]
     }
   }
 }

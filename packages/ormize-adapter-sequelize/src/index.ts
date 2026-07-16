@@ -6,8 +6,8 @@ import {
   QueryTypes,
   Sequelize,
 } from "sequelize";
-import logger from "@azerothian/gqlize-shared/utils/logger";
-import unique from "@azerothian/gqlize-shared/utils/unique";
+import logger from "@azerothian/utilize/utils/logger";
+import unique from "@azerothian/utilize/utils/unique";
 import typeMapper from "./type-mapper";
 import replaceIdDeep, {
   replaceDefWhereOperators,
@@ -27,9 +27,9 @@ import {
 } from "graphql";
 // import {GraphQLObjectType} from "graphql";
 import { GraphQLInputObjectType } from "graphql";
-import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
-import { Association, WhereOperators, DefinitionFieldMeta, DataTypeDescriptor, Selection, isOrmizeDataType } from '@azerothian/gqlize-shared/types/index';
-import { GqlizeAdapter } from '@azerothian/gqlize-shared/types/gqlize-adapter';
+import waterfall from "@azerothian/utilize/utils/waterfall";
+import { Association, WhereOperators, DefinitionFieldMeta, DataTypeDescriptor, Selection, isOrmizeDataType } from '@azerothian/utilize/types/index';
+import type { GqlizeAdapter } from '@azerothian/gqlize/types/gqlize-adapter';
 import { mapDataType as mapDataTypeImpl, toNativeType as toNativeTypeImpl } from "./data-type-mapper";
 import { SequelizeDefinition, SqlClassMethod } from "./types";
 import { replaceWhereOperators } from "./utils/where-ops";

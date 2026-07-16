@@ -11,7 +11,7 @@ import {
   DataType,
   DataTypeDescriptor,
   DataTypes,
-} from "@azerothian/gqlize-shared/types/data-type";
+} from "@azerothian/utilize/types/data-type";
 
 function keyOf(nativeType: any): string {
   const k = nativeType?.key ?? nativeType?.constructor?.key;

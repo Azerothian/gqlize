@@ -3,7 +3,6 @@
   "references": [
     { "path": "packages/graphql-types" },
     { "path": "packages/utilize" },
-    { "path": "packages/gqlize-shared" },
     { "path": "packages/ormize" },
     { "path": "packages/gqlize" },
     { "path": "packages/ormize-adapter-sequelize" },

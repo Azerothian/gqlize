@@ -1,7 +1,7 @@
 import { test, describe, it, expect } from "@jest/globals";
 import Sequelize, { DataTypes } from "sequelize";
 import SequelizeAdapter from "../src/index";
-import { DataType, isOrmizeDataType, DataTypes as OrmizeDataTypes } from "@azerothian/gqlize-shared/types/data-type";
+import { DataType, isOrmizeDataType, DataTypes as OrmizeDataTypes } from "@azerothian/utilize/types/data-type";
 
 function makeAdapter() {
   return new SequelizeAdapter({}, { dialect: "sqlite" });

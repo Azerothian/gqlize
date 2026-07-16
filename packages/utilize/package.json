@@ -36,9 +36,11 @@
     "url": "https://github.com/azerothian/gqlize/issues"
   },
   "dependencies": {
+    "debug": "^4.4.1",
     "deepmerge": "^4.3.1"
   },
   "devDependencies": {
+    "@types/debug": "^4.1.12",
     "@jest/globals": "^30.4.1",
     "@swc/cli": "^0.8.1",
     "@swc/core": "^1.15.43",

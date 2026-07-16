@@ -36,6 +36,7 @@
     "url": "https://github.com/azerothian/ormize-adapter-sequelize/issues"
   },
   "devDependencies": {
+    "@azerothian/gqlize": "workspace:*",
     "@azerothian/ormize": "workspace:*",
     "@jest/globals": "^30.4.1",
     "@swc/cli": "^0.8.1",
@@ -66,12 +67,13 @@
     "uuid": "^14.0.1"
   },
   "peerDependencies": {
+    "@azerothian/gqlize": "^6.0.0",
     "@azerothian/ormize": "^6.0.0",
     "graphql-relay": "^0.10.0",
     "sequelize": "^6.19.0"
   },
   "dependencies": {
-    "@azerothian/gqlize-shared": "workspace:*",
+    "@azerothian/utilize": "workspace:*",
     "@azerothian/graphql-types": "workspace:*",
     "@vostro/object-visit": "^1.1.0",
     "debug": "^4.4.1"

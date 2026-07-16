@@ -6,8 +6,8 @@ import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
 import { isInputFieldAllowed, isMutationAllowed } from "@azerothian/utilize";
-import {capitalize} from "@azerothian/gqlize-shared/utils/word";
-import {waterfallSync} from "@azerothian/gqlize-shared/utils/waterfall";
+import {capitalize} from "@azerothian/utilize/utils/word";
+import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
 import { Relationship } from '../types/index';

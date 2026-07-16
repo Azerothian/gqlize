@@ -49,9 +49,9 @@ mutations, permissions, hooks, and more.
 | [`@azerothian/ormize`](packages/ormize) | GraphQL-free backend manager — `Ormize` class, `registerAdapter`, `define`/`addDefinition`, models, hooks, `initialise`/`sync`/`reset`, relationship wiring, and the definition typesystem. No GraphQL dependency. |
 | [`@azerothian/gqlize`](packages/gqlize) | GraphQL layer — `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema: object types, connections, queries, deep nested mutations, and permissions. |
 | [`@azerothian/ormize-adapter-sequelize`](packages/ormize-adapter-sequelize) | Sequelize adapter — the reference data-source implementation. Same `SequelizeAdapter` default export, same `defineModel`/`SequelizeModel` typesystem exports. |
-| [`@azerothian/gqlize-shared`](packages/gqlize-shared) | Shared type surface (`OrmAdapter` backend interface, `GqlizeAdapter` graphql extension, `Definition`, …), the `Events` enum, and common utilities used by the packages above. |
+| [`@azerothian/utilize`](packages/utilize) | Shared foundation (GraphQL-free): the type surface (`OrmAdapter` backend interface, `Definition`, `DataType`/`DataTypes`, `Selection`, …), the `Events` enum, permission gate helpers + `createRoleBasedPermissions`, and common utilities used by the packages above. The `GqlizeAdapter` graphql extension lives in `@azerothian/gqlize`. |
 
-Dependency graph (acyclic): `graphql-types` + `gqlize-shared` → `ormize` → `gqlize` ; the sequelize adapter implements `GqlizeAdapter` and is registered on an `Ormize`.
+Dependency graph (acyclic): `graphql-types` + `utilize` → `ormize` → `gqlize` ; the sequelize adapter implements `GqlizeAdapter` (from `@azerothian/gqlize`) and is registered on an `Ormize`.
 
 ## Prerequisites
 
@@ -70,7 +70,7 @@ pnpm watch        # turbo run watch   — tsc --watch per package
 ```
 
 Turbo caches task results and respects the dependency graph (e.g. `build` runs
-`gqlize-shared` → `ormize` → `gqlize` → `ormize-adapter-sequelize`). Tests run against **source** via Jest
+`utilize` → `ormize` → `gqlize` → `ormize-adapter-sequelize`). Tests run against **source** via Jest
 `moduleNameMapper`, so no build is required to run them.
 
 ## Workspace layout
@@ -85,7 +85,7 @@ Turbo caches task results and respects the dependency graph (e.g. `build` runs
     ├── ormize/
     ├── gqlize/
     ├── ormize-adapter-sequelize/
-    ├── gqlize-shared/
+    ├── utilize/
     └── graphql-types/
 ```
 

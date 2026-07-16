@@ -6,7 +6,7 @@ import {
 
 import createNodeInterface from "./utils/create-node-interface";
 
-import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
+import waterfall from "@azerothian/utilize/utils/waterfall";
 import { isModelAllowed, isMutationAllowed } from "@azerothian/utilize";
 import createModelType from "./create-model-type";
 import createListObject from "./create-list-object";

@@ -4,7 +4,7 @@ import { Ormize as Database } from "@azerothian/ormize";
 import GqlizeBinding from "../src/manager";
 import Sequelize from "sequelize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
-import { OrmAdapter } from "@azerothian/gqlize-shared/types/index";
+import { OrmAdapter } from "@azerothian/utilize/types/index";
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
 test("manager - resolveManyRelationship - hasMany", async() => {

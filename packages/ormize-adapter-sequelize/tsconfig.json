@@ -5,7 +5,8 @@
     "outDir": ".tsbuild"
   },
   "references": [
-    { "path": "../gqlize-shared" },
+    { "path": "../utilize" },
+    { "path": "../gqlize" },
     { "path": "../graphql-types" }
   ],
   "include": ["src/**/*"],

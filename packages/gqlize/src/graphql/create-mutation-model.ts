@@ -1,7 +1,7 @@
 
 import createListObject from "./create-list-object";
 import {GraphQLList} from "graphql";
-import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
+import waterfall from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
 import { SchemaCache } from '../types';
 import { processAfter } from "./utils/after";

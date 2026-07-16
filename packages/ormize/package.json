@@ -61,7 +61,6 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@azerothian/gqlize-shared": "workspace:*",
     "@azerothian/utilize": "workspace:*",
     "pluralize": "^8.0.0"
   }

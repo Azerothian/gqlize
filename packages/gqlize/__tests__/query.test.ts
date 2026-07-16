@@ -1,7 +1,7 @@
 import {graphql} from "graphql";
 import {createInstance, validateResult} from "./helper";
 import {createSchema} from "../src";
-import waterfall from "@azerothian/gqlize-shared/utils/waterfall";
+import waterfall from "@azerothian/utilize/utils/waterfall";
 
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 import {toGlobalId} from "graphql-relay";
