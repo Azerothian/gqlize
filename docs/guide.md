@@ -622,7 +622,7 @@ discriminated by the `Events` enum (`QUERY`, `MUTATION_CREATE`, `MUTATION_UPDATE
 `MUTATION_DELETE`, `OUTPUT`):
 
 ```ts
-import events from "@azerothian/gqlize-shared/events";
+import events from "@azerothian/ormize/events";
 
 db.addDefinition({
   name: "Post",

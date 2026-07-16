@@ -49,9 +49,22 @@ mutations, permissions, hooks, and more.
 | [`@azerothian/ormize`](packages/ormize) | GraphQL-free backend manager — `Ormize` class, `registerAdapter`, `define`/`addDefinition`, models, hooks, `initialise`/`sync`/`reset`, relationship wiring, and the definition typesystem. No GraphQL dependency. |
 | [`@azerothian/gqlize`](packages/gqlize) | GraphQL layer — `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema: object types, connections, queries, deep nested mutations, and permissions. |
 | [`@azerothian/ormize-adapter-sequelize`](packages/ormize-adapter-sequelize) | Sequelize adapter — the reference data-source implementation. Same `SequelizeAdapter` default export, same `defineModel`/`SequelizeModel` typesystem exports. |
+| [`@azerothian/ormize-zod4`](packages/ormize-zod4) | Zod v4 projection — `generateZodSchemas(orm, options)` produces permission-gated entity/create/update schemas per model from the same ormize instance. |
+| [`@azerothian/nestize`](packages/nestize) | NestJS REST + Swagger projection — `NestizeModule.forRoot(orm, options)` exposes full CRUD + relationship + `_actions` routes over the ormize resolution engine, with an OpenAPI doc built from the ormize-zod4 schemas. |
 | [`@azerothian/utilize`](packages/utilize) | Shared foundation (GraphQL-free): the type surface (`OrmAdapter` backend interface, `Definition`, `DataType`/`DataTypes`, `Selection`, …), the `Events` enum, permission gate helpers + `createRoleBasedPermissions`, and common utilities used by the packages above. The `GqlizeAdapter` graphql extension lives in `@azerothian/gqlize`. |
+| [`@azerothian/graphql-types`](packages/graphql-types) | Standalone GraphQL scalar types (json, date, bigint, ip, upload, query) exposed as subpath imports. |
 
-Dependency graph (acyclic): `graphql-types` + `utilize` → `ormize` → `gqlize` ; the sequelize adapter implements `GqlizeAdapter` (from `@azerothian/gqlize`) and is registered on an `Ormize`.
+Dependency graph (acyclic): `graphql-types` + `utilize` → `ormize` → { `gqlize`, `ormize-zod4`, `nestize` } ; the sequelize adapter implements `GqlizeAdapter` (from `@azerothian/gqlize`) and is registered on an `Ormize`. `gqlize` (GraphQL), `ormize-zod4` (Zod) and `nestize` (REST) are three projections of one `Ormize` instance.
+
+## Examples
+
+Runnable example projects live under [`examples/`](examples) — each builds the same `Item`/`Task`
+domain on an in-memory SQLite ormize instance and can be started from the repo root after `pnpm install`:
+
+| Example | What it shows | Run |
+| --- | --- | --- |
+| [`examples/gqlize-basic`](examples/gqlize-basic) | A GraphQL API (graphql-yoga + GraphiQL) from `createSchema(orm)`. | `pnpm --filter @azerothian/example-gqlize-basic start` |
+| [`examples/nestize-rest`](examples/nestize-rest) | A NestJS REST API + Swagger UI from `NestizeModule.forRoot(orm)`. | `pnpm --filter @azerothian/example-nestize-rest start` |
 
 ## Prerequisites
 
@@ -85,8 +98,13 @@ Turbo caches task results and respects the dependency graph (e.g. `build` runs
     ├── ormize/
     ├── gqlize/
     ├── ormize-adapter-sequelize/
+    ├── ormize-zod4/
+    ├── nestize/
     ├── utilize/
     └── graphql-types/
+examples/
+    ├── gqlize-basic/          # GraphQL (graphql-yoga) example
+    └── nestize-rest/          # NestJS REST + Swagger example
 ```
 
 ## Module formats

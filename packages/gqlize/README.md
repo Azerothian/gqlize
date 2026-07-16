@@ -25,6 +25,12 @@ pnpm add graphql@^17.0.0 graphql-relay@^0.10.0 sequelize@^6.35.1
 > gqlize needs a small patch to `graphql` so nested mutation fields execute serially — see
 > [Caveats](#caveats) below.
 
+## Example project
+
+[`examples/gqlize-basic`](../../examples/gqlize-basic) is a complete, runnable GraphQL server
+(models → ormize → `createSchema` → graphql-yoga + GraphiQL). Start it from the repo root with
+`pnpm --filter @azerothian/example-gqlize-basic start`.
+
 ## License
 
 MIT

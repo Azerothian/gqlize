@@ -6,6 +6,10 @@ Generate a [NestJS](https://nestjs.com) REST API + Swagger/OpenAPI from an
 same graphql-free ormize resolution engine that gqlize uses, so REST and GraphQL
 share resolution, filtering, relationships and permission rules.
 
+> **Runnable example:** [`examples/nestize-rest`](../../examples/nestize-rest) — a complete NestJS app
+> (models → ormize → `forRoot` → Swagger) you can start with
+> `pnpm --filter @azerothian/example-nestize-rest start`, including `curl` recipes for every route.
+
 ## Install
 
 ```sh

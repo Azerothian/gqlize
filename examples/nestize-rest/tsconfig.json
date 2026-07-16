@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "module": "CommonJS",
+    "target": "ES2022",
+    "moduleResolution": "Node",
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "importHelpers": false,
+    "skipLibCheck": true,
+    "strict": false,
+    "baseUrl": ".",
+    "types": ["node", "reflect-metadata"],
+    "paths": {
+      "@azerothian/nestize": ["../../packages/nestize/src/index.ts"],
+      "@azerothian/nestize/*": ["../../packages/nestize/src/*"],
+      "@azerothian/ormize": ["../../packages/ormize/src/index.ts"],
+      "@azerothian/ormize/*": ["../../packages/ormize/src/*"],
+      "@azerothian/ormize-adapter-sequelize": ["../../packages/ormize-adapter-sequelize/src/index.ts"],
+      "@azerothian/ormize-adapter-sequelize/*": ["../../packages/ormize-adapter-sequelize/src/*"],
+      "@azerothian/ormize-zod4": ["../../packages/ormize-zod4/src/index.ts"],
+      "@azerothian/ormize-zod4/*": ["../../packages/ormize-zod4/src/*"],
+      "@azerothian/utilize": ["../../packages/utilize/src/index.ts"],
+      "@azerothian/utilize/*": ["../../packages/utilize/src/*"],
+      "@azerothian/graphql-types": ["../../packages/graphql-types/src/index.ts"],
+      "@azerothian/graphql-types/*": ["../../packages/graphql-types/src/*"]
+    }
+  },
+  "include": ["src/**/*"]
+}

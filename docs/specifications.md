@@ -63,27 +63,33 @@ acyclic:
 
 ```
 graphql-types (leaf)
-gqlize-shared (leaf) ──► ormize (backend) ──► gqlize (graphql) ──► ormize-adapter-sequelize (adapter)
+utilize (leaf) ──► ormize (backend) ──► gqlize (graphql) ──► ormize-adapter-sequelize (adapter)
+                              └────────► ormize-zod4 (zod)
+                              └────────► nestize (nestjs rest)
 ```
 
-**Package architecture:** `graphql-types` + `gqlize-shared` form the base layer. `ormize`
-builds on that base to provide the GraphQL-free backend manager. `gqlize` builds on `ormize`
-to add schema generation. The sequelize adapter implements `GqlizeAdapter` (from
-`gqlize-shared`) and is registered on an `Ormize` instance.
+**Package architecture:** `graphql-types` + `utilize` form the base layer. `ormize`
+builds on that base to provide the GraphQL-free backend manager. `gqlize` (GraphQL),
+`ormize-zod4` (Zod) and `nestize` (NestJS REST) are three **projections** of one `Ormize`
+instance. The sequelize adapter implements `GqlizeAdapter` (the graphql-typed adapter contract,
+which now lives in `gqlize`) and is registered on an `Ormize` instance.
 
 | Package | Path | Responsibility |
 | --- | --- | --- |
-| [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise`/`sync`/`reset`, relationship wiring, and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
-| [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | GraphQL layer: `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema. Key files: `src/graphql/*` (builders), `src/permission-helper.ts`. |
+| [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise`/`sync`/`reset`, relationship wiring, the graphql-free resolution engine (`resolveFindAll`/`process*`/`resolve{Many,Single}Relationship`), and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
+| [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | GraphQL layer: `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema. Key files: `src/graphql/*` (builders), `src/types/gqlize-adapter.ts` (the `GqlizeAdapter` contract). |
+| [`@azerothian/ormize-zod4`](../packages/ormize-zod4) | `packages/ormize-zod4` | Zod v4 projection: `generateZodSchemas(orm, options)` → permission-gated `{ entity, create, update }` schemas per model. |
+| [`@azerothian/nestize`](../packages/nestize) | `packages/nestize` | NestJS REST + Swagger projection: `NestizeModule.forRoot(orm, options)` + `buildOpenApiDocument`/`setupSwagger`. Drives the graphql-free ormize engine over REST; request bodies validated with the ormize-zod4 schemas. |
 | [`@azerothian/ormize-adapter-sequelize`](../packages/ormize-adapter-sequelize) | `packages/ormize-adapter-sequelize` | Reference `GqlizeAdapter` implementation over Sequelize 6. Same `SequelizeAdapter` default export. Entry: `src/index.ts`; `src/type-mapper.ts`, `src/utils/where-ops.ts`, `src/utils/replace-id-deep.ts`. Typesystem binding in `src/types/orm.ts` (`defineModel`, `SequelizeModel`, `IORSequelizeModel`). |
-| [`@azerothian/gqlize-shared`](../packages/gqlize-shared) | `packages/gqlize-shared` | Shared type surface: `OrmAdapter` (backend adapter contract), `GqlizeAdapter extends OrmAdapter` (graphql extension, at `types/gqlize-adapter`), `Definition`, `DefinitionField*`, `Association`, `Relationship`, `WhereOperators`, options/cache types. Also: the generic definition typesystem (`src/types/orm.ts`: `ITypedDefinition`, `IORModel`), the `Events` enum, and utilities (`logger`, `unique`, `word`, `waterfall`). |
+| [`@azerothian/utilize`](../packages/utilize) | `packages/utilize` | Shared, GraphQL-free foundation: `OrmAdapter` (backend adapter contract), `Definition`, `DefinitionField*`, `Association`, `Relationship`, `WhereOperators`, `Selection`, `DataType`/`DataTypes`, options/cache types; the generic definition typesystem (`src/types/orm.ts`: `ITypedDefinition`, `IORModel`); the `Events` enum; permission gate helpers + `createRoleBasedPermissions` (`src/gate.ts`, `src/permissions.ts`); and utilities (`logger`, `unique`, `word`, `waterfall`). |
 | [`@azerothian/graphql-types`](../packages/graphql-types) | `packages/graphql-types` | Custom GraphQL scalars (`json`, `date`, `bigint`, `ip`, `upload`) and `createQueryType`. A local copy of `@vostro/graphql-types`. |
 
-> **Note:** the root `README.md` package table lists only the first four; `graphql-types`
-> is a fifth workspace package and is documented here for completeness.
+> **Runnable examples:** [`examples/gqlize-basic`](../examples/gqlize-basic) (GraphQL) and
+> [`examples/nestize-rest`](../examples/nestize-rest) (REST) build the same domain on one ormize
+> instance — see the [root README](../README.md#examples).
 
 Root configuration files: `package.json` (scripts, `pnpm@9.15.9`, graphql override/patch),
-`pnpm-workspace.yaml` (`packages/*`), `turbo.json` (task pipeline), `tsconfig.base.json`
+`pnpm-workspace.yaml` (`packages/*`, `examples/*`), `turbo.json` (task pipeline), `tsconfig.base.json`
 (shared compiler options + `@azerothian/*` → `src/` path aliases), `tsconfig.json`
 (`tsc -b` project references), and `patches/graphql@17.0.2.patch`.
 
@@ -166,7 +172,7 @@ Internal resolution methods invoked by generated resolvers:
 ## 4. Model Definition Schema
 
 A **Definition** is the plain object passed to `db.addDefinition`. The full type lives in
-`packages/gqlize-shared/src/types/index.ts` (`Definition`). The canonical, full-featured
+`packages/utilize/src/types/index.ts` (`Definition`). The canonical, full-featured
 example is `packages/gqlize/__tests__/helper/models/task.ts`.
 
 ### Fields
@@ -249,7 +255,7 @@ changing runtime behaviour. It is layered to keep the **core adapter-agnostic**:
 
 | Layer | Location | Provides |
 | --- | --- | --- |
-| Generic plumbing | `gqlize-shared/src/types/orm.ts` | `ITypedDefinition<Name, Instance, Statics>`, `AnyTypedDef`, `ModelNameOf`, the generic **`IORModel<TBase, Required, Optional>`**, and the `IORBaseRegistry` HKT registry (fp-ts URI pattern). No `sequelize`. |
+| Generic plumbing | `utilize/src/types/orm.ts` | `ITypedDefinition<Name, Instance, Statics>`, `AnyTypedDef`, `ModelNameOf`, the generic **`IORModel<TBase, Required, Optional>`**, and the `IORBaseRegistry` HKT registry (fp-ts URI pattern). No `sequelize`. |
 | Sequelize binding | `ormize-adapter-sequelize/src/types/orm.ts` | `defineModel<TInstance, TStatics>()`, the `"sequelize"` `IORBaseRegistry` augmentation → `ModelStatic<…>`, `IORSequelizeModel`, `SequelizeModel<Req, Opt>`, and the adapter's `__base` brand. The only sequelize-coupled file. |
 | Manager | `ormize/src/manager.ts` | `GQLManager<TModels, TBase>` / `Ormize` (both defaulted for backward compat), the fluent synchronous `define()` (applies `IORModel<TBase, [D], []>`; models created in `initialise()`), and `registerAdapter` threading `TBase` from the adapter's `__base` brand. Imports **no** sequelize or graphql. |
 
@@ -453,7 +459,7 @@ its concrete object type.
 ## 7. Permissions
 
 Permissions are configured via `options.permission` (type `GqlizeOptions.permission` in
-`packages/gqlize-shared/src/types/index.ts`) and consulted throughout
+`packages/utilize/src/types/index.ts`) and consulted throughout
 `packages/gqlize/src/graphql/*`. Each callback returns a boolean; returning falsy omits the
 corresponding schema element.
 
@@ -512,7 +518,7 @@ after({ result,  args, context, info,        modelDefinition, type });
 
 ### The `Events` enum
 
-Defined in `packages/gqlize-shared/src/events.ts`:
+Defined in `packages/utilize/src/events.ts`:
 
 | Value | Name |
 | --- | --- |
@@ -546,7 +552,7 @@ per-definition hook map so `runHook` can fire it after a count, but it is withhe
 ## 9. Adapter Contract
 
 Any data source is integrated by implementing the `GqlizeAdapter` interface
-(`packages/gqlize-shared/src/types/index.ts`). The Sequelize adapter
+(`packages/utilize/src/types/index.ts`). The Sequelize adapter
 (`packages/ormize-adapter-sequelize/src/index.ts`) is the reference implementation. The
 contract groups into:
 

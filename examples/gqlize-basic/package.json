@@ -1,0 +1,27 @@
+{
+  "name": "@azerothian/example-gqlize-basic",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runnable GraphQL API (graphql-yoga) generated from an ormize instance with @azerothian/gqlize.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node -r @swc-node/register src/server.ts",
+    "query": "node -r @swc-node/register src/run.ts"
+  },
+  "dependencies": {
+    "@azerothian/gqlize": "workspace:*",
+    "@azerothian/ormize": "workspace:*",
+    "@azerothian/ormize-adapter-sequelize": "workspace:*",
+    "graphql": "17.0.2",
+    "graphql-relay": "^0.10.2",
+    "graphql-yoga": "^5.21.2",
+    "sequelize": "^6.37.7",
+    "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "@swc-node/register": "^1.10.10",
+    "@swc/core": "^1.15.43",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
