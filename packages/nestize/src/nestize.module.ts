@@ -1,8 +1,6 @@
 import { Controller, DynamicModule, Module, Provider, Type } from "@nestjs/common";
-import { APP_FILTER } from "@nestjs/core";
 import { NestizeService } from "./nestize.service";
 import { NestizeSchemaRegistry } from "./schema-registry";
-import { ZodExceptionFilter } from "./zod-exception.filter";
 import { NestizeController } from "./controllers";
 import { NestizeOptions, NESTIZE_OPTIONS, ORMIZE } from "./types";
 
@@ -12,6 +10,13 @@ export type NestizeAsyncOptions = {
   useFactory: (
     ...args: any[]
   ) => { orm: any; options?: NestizeOptions } | Promise<{ orm: any; options?: NestizeOptions }>;
+  /**
+   * Route path prefix. Must be supplied here (not via the async `options`)
+   * because Nest needs `controllers` synchronously at module-definition time,
+   * before the async factory resolves. A `pathPrefix` returned from `useFactory`
+   * cannot influence route mounting and is ignored.
+   */
+  pathPrefix?: string;
 };
 
 // Apply the optional pathPrefix by subclassing the base controller and (re)applying
@@ -26,10 +31,11 @@ function buildControllers(prefix?: string): Type<any>[] {
   return [PrefixedNestizeController];
 }
 
+// ZodExceptionFilter is applied at the controller level (@UseFilters) rather than
+// as a global APP_FILTER, so it only reshapes errors from Nestize's own routes.
 const sharedProviders: Provider[] = [
   NestizeSchemaRegistry,
   NestizeService,
-  { provide: APP_FILTER, useClass: ZodExceptionFilter },
 ];
 
 /**
@@ -60,7 +66,7 @@ export class NestizeModule {
     return {
       module: NestizeModule,
       imports: async.imports || [],
-      controllers: [NestizeController],
+      controllers: buildControllers(async.pathPrefix),
       providers: [
         resolved,
         {

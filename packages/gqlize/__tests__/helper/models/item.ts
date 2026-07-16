@@ -18,6 +18,10 @@ export default {
       comment: "The is the id column",
     },
     name: {type: Sequelize.STRING, allowNull: false},
+    // Self-referential belongsTo FK, opted in to being client-writable so the
+    // mutation tests can set it directly (foreign keys are excluded from
+    // mutation input by default — mass-assignment guard).
+    parentId: {type: Sequelize.UUID, allowNull: true, writable: true},
   },
   relationships: [
     {type: "hasOne", model: "Item", name: "hasOne", options: {as: "hasOne", foreignKey: "hasOneId", sourceKey: "id"}},

@@ -17,6 +17,10 @@ export default {
         },
       },
     },
+    // belongsTo Task FK, opted in to being client-writable so the mutation
+    // tests can set it directly (foreign keys are excluded from mutation input
+    // by default — mass-assignment guard).
+    taskId: {type: Sequelize.INTEGER, allowNull: true, writable: true},
   },
   relationships: [{
     type: "belongsTo",

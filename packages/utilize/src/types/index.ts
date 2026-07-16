@@ -172,6 +172,9 @@ export type DefinitionFieldMeta = {
   allowNull?: boolean;
   autoPopulated?: boolean;
   foreignTarget?: string;
+  // Opt-in to allow a primary/foreign key to be set from client mutation input.
+  // Defaults to false — see `isStructurallyWritable` (mass-assignment guard).
+  writable?: boolean;
   resolve?: any;
   args?: any;
   comment?: string;

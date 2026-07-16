@@ -23,13 +23,30 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+import { GraphQLError } from "graphql";
 import { unbase64, base64 } from "../utils/base64";
 
 export function fromCursor(cursor: string) {
-  let [id, index] = JSON.parse(unbase64(cursor));
+  // Cursors are client-supplied — decode defensively. A malformed `after`/
+  // `before` value must surface as a clean GraphQLError, not an uncaught
+  // JSON.parse SyntaxError leaking parser internals to the caller.
+  let decoded: any;
+  try {
+    decoded = JSON.parse(unbase64(cursor));
+  } catch {
+    throw new GraphQLError("Invalid cursor");
+  }
+  if (!Array.isArray(decoded)) {
+    throw new GraphQLError("Invalid cursor");
+  }
+  const [id, index] = decoded;
+  const idx = parseInt(index, 10);
+  if (typeof id !== "string" || Number.isNaN(idx)) {
+    throw new GraphQLError("Invalid cursor");
+  }
   return {
     id,
-    index: parseInt(index),
+    index: idx,
   };
 }
 export function toCursor(id: string, index: number) {

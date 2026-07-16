@@ -34,7 +34,25 @@ import { mapDataType as mapDataTypeImpl, toNativeType as toNativeTypeImpl } from
 import { SequelizeDefinition, SqlClassMethod } from "./types";
 import { replaceWhereOperators } from "./utils/where-ops";
 
+// Pagination safety bounds. This is the central backstop that bounds every list
+// query (GraphQL relay connections and REST list routes both funnel through
+// `processListArgsToOptions`). Without it, an absent `first`/`last` produced an
+// unbounded `findAll` (full-table dump) and an over-large value was passed
+// straight through — a trivial DoS / data-exfiltration vector.
+export const DEFAULT_PAGE_SIZE = 100;
+export const MAX_PAGE_SIZE = 1000;
 
+/**
+ * Coerce a client-supplied page size to a safe, bounded integer: falls back to
+ * DEFAULT_PAGE_SIZE when absent/NaN/non-positive, and caps at MAX_PAGE_SIZE.
+ */
+function clampPageSize(value: any): number {
+  const n = parseInt(value, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    return DEFAULT_PAGE_SIZE;
+  }
+  return Math.min(n, MAX_PAGE_SIZE);
+}
 
 function safeStringify(value: any) {
   const seen = new Set();
@@ -184,6 +202,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           foreignTarget,
           autoPopulated,
           ignoreGlobalKey: (attr as any).ignoreGlobalKey,
+          // Opt-in that lets a pk/fk be set from client input (default: excluded
+          // to prevent mass-assignment — see isStructurallyWritable).
+          writable: (attr as any).writable === true,
         } as DefinitionFieldMeta;
         return fields;
       }, {} as { [key: string]: DefinitionFieldMeta });
@@ -506,6 +527,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         options,
         err,
       });
+      // Fail fast at boot rather than silently booting with a missing/broken
+      // association — downstream query scoping and relationship resolution
+      // assume the association exists, so swallowing this hides real defects.
+      throw err;
     }
     this.sequelize.models[targetModel] = model;
   };
@@ -680,13 +705,16 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     let limit,
       include = [],
       order = [],
-      attributes = defaultOptions.attributes || [],
+      // Clone rather than alias: the array is mutated in place below
+      // (unshift/push), so aliasing a caller-provided `defaultOptions.attributes`
+      // would accumulate entries across calls.
+      attributes = [...(defaultOptions.attributes || [])],
       where;
     // const Model = this.getModel(defName);
 
-    if (args.first || args.last) {
-      limit = parseInt(args.first || args.last, 10);
-    }
+    // Always bound the page size — an absent first/last must not mean "no limit".
+    const requestedPageSize = args.first != null ? args.first : args.last;
+    limit = clampPageSize(requestedPageSize);
     if (args.orderBy) {
       order = args.orderBy;
     }
@@ -1086,6 +1114,13 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           const where = await this.processFilterArgument(args.where || {}, whereOperators, options);
           total = await this.countRelationship(relationship, source, where, options);
         } catch (e) {
+          // Fall back to the already-loaded page length, but surface the error —
+          // silently returning a plausible-but-wrong count hides real defects
+          // (e.g. a bug in filter processing) behind a valid-looking response.
+          log.error("countRelationship failed; falling back to loaded page length", {
+            relationship: relationship.name,
+            err: e,
+          });
           total = models.length;
         }
       }

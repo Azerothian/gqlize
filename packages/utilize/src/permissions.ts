@@ -69,10 +69,9 @@ function validateSection(permSection: string | any, keyName: string | number, de
 
 export default function createRoleBasedPermissions(role: string | number, rules: { [x: string]: any; }, options: any = {}) {
   const {defaultDeny = true, defaults: defaultPerms = {}} = options;
-  let compiledRules = Object.keys(rules).reduce((curr, key) => {
-    curr[key] = deepmerge(defaultPerms, rules[key]);
-    return curr;
-  }, {} as any)[role] || {};
+  // Only the selected role's rules are needed — merge just that entry rather than
+  // deep-merging every role's rules and discarding all but one.
+  let compiledRules = rules[role] ? deepmerge(defaultPerms, rules[role]) : {};
   let permission = Object.assign([
     "field",
     "relationship",

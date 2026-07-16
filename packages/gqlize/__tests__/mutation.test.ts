@@ -709,9 +709,14 @@ describe("mutations", () => {
     const {data: {__type: {inputFields}}} = await graphql({schema, source:"query {__type(name:\"TaskRequiredInput\") { inputFields {name} }}"}) as any;
     const mutationInputFields = inputFields.map((x: any) => x.name);
 
-    Object.keys(fields).map((field) => {
-      expect(mutationInputFields).toContain(field);
-    });
+    // Primary/foreign keys and auto-populated columns are excluded from mutation
+    // input by default (mass-assignment guard); every other field is exposed.
+    Object.keys(fields)
+      .filter((field) => !fields[field].primaryKey && !fields[field].foreignKey && !fields[field].autoPopulated)
+      .map((field) => {
+        expect(mutationInputFields).toContain(field);
+      });
+    expect(mutationInputFields).not.toContain("id");
   });
   it("create inputs - with PK defined", async() => {
     const instance = await createInstance();

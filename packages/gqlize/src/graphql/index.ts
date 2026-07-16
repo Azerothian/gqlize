@@ -82,7 +82,7 @@ function createMutationModels(instance: GQLManager, options: GqlizeOptions, sche
 
 export async function createSchemaObjects(instance: GQLManager, options: GqlizeOptions) {
   const rootSchema: any = {};
-  const {nodeInterface, nodeField, nodeTypeMapper} = createNodeInterface(instance);
+  const {nodeInterface, nodeField, nodeTypeMapper} = createNodeInterface(instance, options);
   const {subscriptions, extend = {}, root} = options;
   const definitions = instance.getDefinitions();
   const schemaCache = createSchemaCache();

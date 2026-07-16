@@ -4,7 +4,7 @@ import {
   isFieldAllowed,
   isRelationshipAllowed,
   isMutationAllowed,
-  isInputFieldAllowed,
+  isInputFieldWritable,
 } from "@azerothian/utilize";
 import { descriptorToZod } from "./type-mapper";
 import { applyValidators } from "./validators";
@@ -93,7 +93,7 @@ export function generateZodSchemas(orm: any, options: GenerateOptions = {}): Gen
       let base = baseOf(fieldName);
       if (meta.allowNull) base = base.nullable();
 
-      if (isInputFieldAllowed(permission, name, fieldName, "create")) {
+      if (isInputFieldWritable(permission, name, fieldName, "create", meta)) {
         const required =
           !meta.allowNull &&
           meta.defaultValue === undefined &&
@@ -101,7 +101,7 @@ export function generateZodSchemas(orm: any, options: GenerateOptions = {}): Gen
           !meta.primaryKey;
         createShape[fieldName] = required ? base : base.optional();
       }
-      if (isInputFieldAllowed(permission, name, fieldName, "update")) {
+      if (isInputFieldWritable(permission, name, fieldName, "update", meta)) {
         updateShape[fieldName] = base.optional();
       }
     }

@@ -15,7 +15,11 @@ type ZodObjectMap = { [modelName: string]: z.ZodObject<any> };
 @Injectable()
 export class NestizeSchemaRegistry {
   private schemas!: { entity: ZodObjectMap; create: ZodObjectMap; update: ZodObjectMap };
-  private resourceMap: { [resource: string]: string } = {};
+  // Null-prototype map: the `:resource` URL segment is attacker-controlled, so a
+  // plain object would let keys like `constructor`/`__proto__`/`hasOwnProperty`
+  // resolve to inherited members instead of `undefined`, bypassing the
+  // unknown-resource 404 path.
+  private resourceMap: { [resource: string]: string } = Object.create(null);
 
   constructor(
     @Inject(ORMIZE) private readonly orm: any,

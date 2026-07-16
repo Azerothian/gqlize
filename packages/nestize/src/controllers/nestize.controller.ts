@@ -8,8 +8,10 @@ import {
   Post,
   Query,
   Req,
+  UseFilters,
 } from "@nestjs/common";
 import { NestizeService } from "../nestize.service";
+import { ZodExceptionFilter } from "../zod-exception.filter";
 
 /**
  * Generic dynamic-dispatch REST controller. All model resources share one set of
@@ -21,6 +23,10 @@ import { NestizeService } from "../nestize.service";
  * literal first (first-match wins). The optional `pathPrefix` is applied by the
  * module via `@Controller(prefix)` on a subclass.
  */
+// Scope the Zod error formatter to this controller's routes only. Registering it
+// as a global APP_FILTER would reshape ZodErrors thrown anywhere in the host
+// application, silently overriding unrelated error contracts.
+@UseFilters(ZodExceptionFilter)
 @Controller()
 export class NestizeController {
   constructor(private readonly service: NestizeService) {}

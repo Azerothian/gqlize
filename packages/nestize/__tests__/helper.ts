@@ -18,6 +18,11 @@ const TaskDef: any = {
   define: {
     name: { type: DataTypes.STRING, allowNull: false },
     done: { type: DataTypes.BOOLEAN, defaultValue: false },
+    // Explicitly declare the belongsTo foreign key so it can opt in to being
+    // client-writable. Foreign keys are excluded from mutation input by default
+    // (mass-assignment / IDOR guard); `writable: true` re-enables setting it
+    // directly on create/update (e.g. POST /task { name, itemId }).
+    itemId: { type: DataTypes.INTEGER, allowNull: true, writable: true },
   },
   options: { timestamps: false },
   relationships: [

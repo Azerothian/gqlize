@@ -80,3 +80,51 @@ export function isInputFieldAllowed(permission: Permission | undefined, model: s
   const fn = kind === "create" ? permission?.mutationCreateInput : permission?.mutationUpdateInput;
   return isAllowed(fn, model, field, permission?.options);
 }
+
+/** Minimal field-meta shape used by the write-safety checks below. */
+export type WritableFieldMeta = {
+  primaryKey?: boolean;
+  foreignKey?: boolean;
+  autoPopulated?: boolean;
+  writable?: boolean;
+};
+
+/**
+ * Structural mass-assignment guard, independent of any permission predicate.
+ *
+ * By default a client may NOT write:
+ *  - auto-populated columns (timestamps / computed / auto-increment), and
+ *  - primary keys and foreign keys — otherwise a caller could forge a record's
+ *    id (collision) or reassign its owner/tenant via the FK (IDOR).
+ *
+ * A field opts back in with `writable: true` in its definition. Auto-populated
+ * columns are never writable, even with the opt-in. When no meta is available
+ * the field is allowed (nothing to gate on).
+ */
+export function isStructurallyWritable(meta: WritableFieldMeta | undefined): boolean {
+  if (!meta) {
+    return true;
+  }
+  if (meta.autoPopulated) {
+    return false;
+  }
+  if (meta.writable === true) {
+    return true;
+  }
+  return !(meta.primaryKey || meta.foreignKey);
+}
+
+/**
+ * Combined check for schema-generation layers: a field is writable as input only
+ * if it passes both the structural mass-assignment guard and the configured
+ * `isInputFieldAllowed` permission predicate.
+ */
+export function isInputFieldWritable(
+  permission: Permission | undefined,
+  model: string,
+  field: string,
+  kind: "create" | "update",
+  meta: WritableFieldMeta | undefined,
+): boolean {
+  return isStructurallyWritable(meta) && isInputFieldAllowed(permission, model, field, kind);
+}

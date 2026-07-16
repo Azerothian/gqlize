@@ -2,6 +2,7 @@ import Cache from "./utils/cache";
 import pluralize from "pluralize";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
+import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Model, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, DataTypeDescriptor, Selection } from '@azerothian/utilize/types/index';
 import Events from "./events";
@@ -530,8 +531,14 @@ export default class Ormize<
   }
   processInputs = async(defName: any, input: { [x: string]: any; }, args: any, context: any, info: any, model?: any) => {
     const definition = this.getDefinition(defName);
-    let i = Object.keys(this.getFields(defName)).reduce((o, key) => {
-      if (input[key] !== undefined) {
+    const fields = this.getFields(defName);
+    // Allow-list scalar input to writable columns. `isStructurallyWritable`
+    // drops primary keys, foreign keys, and auto-populated columns by default
+    // (unless a field opts in with `writable: true`) — a defense-in-depth guard
+    // against mass-assignment / IDOR that applies to both create and update
+    // (processUpdate funnels its payload back through here).
+    let i = Object.keys(fields).reduce((o, key) => {
+      if (input[key] !== undefined && isStructurallyWritable(fields[key])) {
         o[key] = input[key];
       }
       return o;

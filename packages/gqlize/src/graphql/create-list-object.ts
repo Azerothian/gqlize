@@ -6,6 +6,7 @@ import {
   GraphQLInt,
   GraphQLString,
   GraphQLBoolean,
+  GraphQLError,
 } from "graphql";
 
 import { fromCursor, toCursor } from "./objects/cursor";
@@ -101,6 +102,12 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
       let cursor: { index: any; id?: any; } | null = null;
       if (args.after || args.before) {
         cursor = fromCursor(args.after || args.before);
+        // Bind the cursor to this connection: cursors are minted as
+        // toCursor(name, idx), so a cursor whose id is a different connection's
+        // name was reused across connections and its index is meaningless here.
+        if (cursor && cursor.id !== name) {
+          throw new GraphQLError(`Cursor does not belong to the ${name} connection`);
+        }
       }
       const { total, models } = await resolveData(source, a, context, info);
       const edges = await Promise.all(models.map(async(row: any, idx: number) => {

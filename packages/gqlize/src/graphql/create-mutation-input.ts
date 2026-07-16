@@ -5,7 +5,7 @@ import {
 import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
-import { isInputFieldAllowed, isMutationAllowed } from "@azerothian/utilize";
+import { isInputFieldWritable, isMutationAllowed } from "@azerothian/utilize";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
@@ -14,7 +14,7 @@ import { Relationship } from '../types/index';
 //(instance, defName, fields, relationships, inputTypes, false)
 export function generateInputFields(instance: GQLManager, defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, inputTypes: any, schemaCache: SchemaCache, forceOptional: boolean, options: GqlizeOptions) {
   let def = waterfallSync(Object.keys(defFields), (fieldName: string, fields: {[key: string]: any}) => {
-    const doNotSkip = isInputFieldAllowed(options.permission, defName, fieldName, forceOptional ? "update" : "create");
+    const doNotSkip = isInputFieldWritable(options.permission, defName, fieldName, forceOptional ? "update" : "create", defFields[fieldName]);
     if (!doNotSkip) {
       return fields;
     }

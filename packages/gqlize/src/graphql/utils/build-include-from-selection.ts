@@ -2,6 +2,21 @@ import { getArgumentValues, GraphQLResolveInfo, GraphQLObjectType } from "graphq
 import GQLManager from "../../manager";
 import { fromCursor } from "../objects/cursor";
 
+// Bound per-parent eager-load page size. This mirrors the adapter's root-query
+// backstop but is applied at the GraphQL layer, since a nested `first`/`last`
+// is written straight onto the include descriptor and never passes back through
+// `processListArgsToOptions`. Without it, `orders(first: 10000000)` on a nested
+// connection is an unbounded per-parent fetch (DoS / amplification).
+const DEFAULT_INCLUDE_PAGE_SIZE = 100;
+const MAX_INCLUDE_PAGE_SIZE = 1000;
+function clampIncludePageSize(value: any): number {
+  const n = parseInt(value, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    return DEFAULT_INCLUDE_PAGE_SIZE;
+  }
+  return Math.min(n, MAX_INCLUDE_PAGE_SIZE);
+}
+
 /**
  * Descriptor for a single relationship that should be eager-loaded as part of the
  * parent's root query. Shape is a superset of what the sequelize adapter's
@@ -261,7 +276,11 @@ export function buildIncludeMapFromSelection(
         association.associationType === "hasMany" &&
         (paginated || fieldArgs.separate === true);
       if (fieldArgs.first != null || fieldArgs.last != null) {
-        descriptor.limit = parseInt(fieldArgs.first != null ? fieldArgs.first : fieldArgs.last, 10);
+        descriptor.limit = clampIncludePageSize(fieldArgs.first != null ? fieldArgs.first : fieldArgs.last);
+      } else if (descriptor.separate) {
+        // Per-parent separate fetch with no explicit page size — bound it so a
+        // nested connection can't pull an entire child table for each parent.
+        descriptor.limit = DEFAULT_INCLUDE_PAGE_SIZE;
       }
       if (fieldArgs.after) {
         descriptor.offset = decodeCursorIndex(fieldArgs.after) + 1;

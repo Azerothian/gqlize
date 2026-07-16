@@ -1,6 +1,5 @@
 
 export default function unique(arr: any[]) {
-  return arr.filter(function(value, index, self) {
-    return self.indexOf(value) === index;
-  });
+  // Set-based dedup is linear; the previous indexOf filter was O(n^2).
+  return Array.from(new Set(arr));
 }
