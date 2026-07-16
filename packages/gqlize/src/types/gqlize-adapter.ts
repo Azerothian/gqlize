@@ -11,9 +11,9 @@ import { OrmAdapter, Definition } from "./index";
  */
 export interface GqlizeAdapter extends OrmAdapter {
   getTypeMapper: () => ((type: any, modelName: string, newTypeName: string) => GraphQLInputType | GraphQLOutputType);
-  getDefaultListArgs: (defName: string, definition: Definition) => GraphQLInputType;
-  getOrderByGraphQLType: (defName: string, definition: Definition) => GraphQLInputType;
-  getFilterGraphQLType: (defName: string, definition: Definition) => GraphQLInputType;
+  getDefaultListArgs: (defName: string, definition: Definition, permission?: any) => GraphQLInputType;
+  getOrderByGraphQLType: (defName: string, permission?: any) => GraphQLInputType;
+  getFilterGraphQLType: (defName: string, definition: Definition, permission?: any) => GraphQLInputType;
   replaceIdInArgs: (args: any, defName: string, variableValues: any) => any;
   replaceIdInInclude: (include: any, defName: string, variableValues: any) => any;
 }

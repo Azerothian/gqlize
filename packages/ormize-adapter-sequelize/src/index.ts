@@ -8,6 +8,7 @@ import {
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
 import unique from "@azerothian/utilize/utils/unique";
+import { isFieldAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import replaceIdDeep, {
   replaceDefWhereOperators,
@@ -405,14 +406,30 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return this.createSQLFunction(q, modelName, args);
   };
-  createQueryConfig = (definition: SequelizeDefinition): any => {
+  // Permission object captured at schema-build time. The GraphQL filter/order/
+  // include type builders below fall back to it when no explicit permission is
+  // threaded through, so denied fields/relationships are consistently excluded
+  // regardless of which build path reaches a given model first.
+  _buildPermission: any = undefined;
+  setBuildPermission = (permission: any) => {
+    this._buildPermission = permission;
+  };
+
+  createQueryConfig = (definition: SequelizeDefinition, permission?: any): any => {
     const defName = definition.name;
     if(!defName) {
       throw "no name set";
     }
+    const perm = permission !== undefined ? permission : this._buildPermission;
     const fields = this.getFields(defName);
+    // Only expose permission-allowed fields as filterable. Otherwise a field
+    // hidden from the output type (e.g. a password hash) stays filterable and a
+    // client can binary-search its value from row counts (boolean oracle).
     let f = Object.keys(fields).reduce((o, k) => {
       const field = fields[k];
+      if (!isFieldAllowed(perm, defName, k)) {
+        return o;
+      }
       if (field.primaryKey || field.foreignKey) {
         o[k] = GraphQLID;
       } else {
@@ -429,7 +446,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       const field = rels[k];
       switch (field.associationType) {
         case "belongsTo":
-          o[field.foreignKey] = GraphQLID;
+          if (isFieldAllowed(perm, defName, field.foreignKey)) {
+            o[field.foreignKey] = GraphQLID;
+          }
           break;
       }
       return o;
@@ -563,18 +582,19 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return data[keyName];
   }
-  getFilterGraphQLType = (defName: any, definition: any) => {
+  getFilterGraphQLType = (defName: any, definition: any, permission?: any) => {
     if (!this.getMetaObj(defName, "queryType")) {
       this.setMetaObj(
         defName,
         "queryType",
-        createQueryType(this.createQueryConfig(definition))
+        createQueryType(this.createQueryConfig(definition, permission))
       );
     }
     return this.getMetaObj(defName, "queryType") as GraphQLInputObjectType;
   };
-  getOrderByGraphQLType = (defName: any) => {
+  getOrderByGraphQLType = (defName: any, permission?: any) => {
     if (!this.getMetaObj(defName, "orderByType")) {
+      const perm = permission !== undefined ? permission : this._buildPermission;
       const fields = this.getFields(defName);
       this.setMetaObj(
         defName,
@@ -582,7 +602,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         new GraphQLList(
           new GraphQLEnumType({
             name: `${defName}OrderBy`,
+            // Only permission-allowed fields are orderable — a denied field must
+            // not be sortable (another way to leak ordering-based information).
             values: Object.keys(fields).reduce((o, fieldName) => {
+              if (!isFieldAllowed(perm, defName, fieldName)) {
+                return o;
+              }
               o[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
               o[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
               return o;
@@ -597,8 +622,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
 
   getIncludeGraphQLType = (
     defName: any,
-    definition: { relationships: any[] }
+    definition: { relationships: any[] },
+    permission?: any
   ): GraphQLInputObjectType => {
+    const perm = permission !== undefined ? permission : this._buildPermission;
     if (
       !this.getMetaObj(defName, "includeType") &&
       (definition.relationships || []).length > 0
@@ -608,6 +635,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           o: { [x: string]: { type: GraphQLInputObjectType } },
           relationship: { model: any; name: string | number }
         ) => {
+          // Skip relationships the permission layer denies — otherwise a denied
+          // association stays joinable/orderable via `include`.
+          if (!isRelationshipAllowed(perm, defName, relationship.name as string, relationship.model)) {
+            return o;
+          }
           const targetModel = this.getModel(relationship.model);
           o[relationship.name] = {
             type: new GraphQLInputObjectType({
@@ -623,18 +655,20 @@ export default class SequelizeAdapter implements GqlizeAdapter {
                   where: {
                     type: this.getFilterGraphQLType(
                       targetModel.name,
-                      (targetModel as any).definition
+                      (targetModel as any).definition,
+                      permission
                     ),
                   },
                   orderBy: {
-                    type: this.getOrderByGraphQLType(targetModel.name),
+                    type: this.getOrderByGraphQLType(targetModel.name, permission),
                   },
                 };
                 // A leaf target (no relationships of its own) has no include type;
                 // only expose the nested `include` field when one exists.
                 const nestedIncludeType = this.getIncludeGraphQLType(
                   targetModel.name,
-                  (targetModel as any).definition
+                  (targetModel as any).definition,
+                  permission
                 );
                 if (nestedIncludeType) {
                   includeFields.include = {
@@ -658,11 +692,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return this.getMetaObj(defName, "includeType");
   };
-  getDefaultListArgs = (defName: any, definition: any) => {
-    const includeType = this.getIncludeGraphQLType(defName, definition);
+  getDefaultListArgs = (defName: any, definition: any, permission?: any) => {
+    const includeType = this.getIncludeGraphQLType(defName, definition, permission);
     const retVal: any = {
       where: {
-        type: this.getFilterGraphQLType(defName, definition),
+        type: this.getFilterGraphQLType(defName, definition, permission),
       },
     };
 

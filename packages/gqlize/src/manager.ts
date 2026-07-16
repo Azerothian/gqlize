@@ -54,21 +54,20 @@ export default class GqlizeBinding {
     const typeMapper = adapter.getTypeMapper();
     return typeMapper(type, modelName, `${fieldName}Input`);
   }
-  getDefaultListArgs = (defName: string) => {
+  getDefaultListArgs = (defName: string, permission?: any) => {
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
-    return adapter.getDefaultListArgs(defName, definition);
+    return adapter.getDefaultListArgs(defName, definition, permission);
   }
 
-  getOrderByGraphQLType = (defName: string) => {
+  getOrderByGraphQLType = (defName: string, permission?: any) => {
     const adapter = this.getModelAdapter(defName);
-    const definition = this.getDefinition(defName);
-    return adapter.getOrderByGraphQLType(defName, definition);
+    return adapter.getOrderByGraphQLType(defName, permission);
   }
-  getFilterGraphQLType = (defName: string) => {
+  getFilterGraphQLType = (defName: string, permission?: any) => {
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
-    return adapter.getFilterGraphQLType(defName, definition);
+    return adapter.getFilterGraphQLType(defName, definition, permission);
   }
 
   /**

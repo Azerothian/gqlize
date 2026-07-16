@@ -87,6 +87,17 @@ export async function createSchemaObjects(instance: GQLManager, options: GqlizeO
   const definitions = instance.getDefinitions();
   const schemaCache = createSchemaCache();
 
+  // Capture the configured permission on each adapter so its GraphQL type
+  // builders (filter/order/include) exclude permission-denied fields and
+  // relationships — otherwise a hidden field stays filterable/orderable and a
+  // denied relationship stays joinable (information-disclosure oracle).
+  Object.keys(definitions).forEach((defName) => {
+    const adapter: any = instance.getModelAdapter(defName);
+    if (adapter && typeof adapter.setBuildPermission === "function") {
+      adapter.setBuildPermission(options.permission);
+    }
+  });
+
   const types = await waterfall(Object.keys(definitions),
     createModelTypes(instance, options, nodeInterface, schemaCache), schemaCache.types);
 
