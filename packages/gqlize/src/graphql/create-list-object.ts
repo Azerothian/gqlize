@@ -137,19 +137,17 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
       }
       let hasNextPage = false;
       let hasPreviousPage = false;
-      if (args.first || args.last) {
-        const count = parseInt(args.first || args.last, 10);
-        let index = (!cursor) ? null  : Number(cursor.index);
-        if (index !== null) {
-          index++;
-        } else {
-          index = 0;
-        }
-        hasNextPage = index + 1 + count <= total;
-        hasPreviousPage = index - count >= 0;
-        if (args.last) {
-          [hasNextPage, hasPreviousPage] = [hasPreviousPage, hasNextPage];
-        }
+      if (edges.length > 0) {
+        // Derive page flags from the returned window's absolute position (edge
+        // cursors encode `position` = index-in-result-set). This is direction-
+        // agnostic and exact: there is a previous page iff the window does not
+        // start at 0, and a next page iff it does not reach the last row. The
+        // previous count-and-cursor arithmetic mis-handled windows starting
+        // between 1 and `count`, and the forward/backward flag swap was unsound.
+        const windowStart = fromCursor(edges[0].cursor).index;
+        const windowEnd = fromCursor(edges[edges.length - 1].cursor).index;
+        hasPreviousPage = windowStart > 0;
+        hasNextPage = windowEnd < total - 1;
       }
       return {
         pageInfo: {
