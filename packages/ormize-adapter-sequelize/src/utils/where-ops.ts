@@ -8,6 +8,17 @@ const ops = Reflect.ownKeys(Op).reduce((ops, k) => {
   return ops;
 }, {} as any);
 
+/**
+ * String names reserved as Sequelize where-operators (e.g. `in`, `between`,
+ * `match`, `and`). `replaceWhereOperators` rewrites any key matching one of
+ * these into its `Op` symbol at every depth, so a model column literally named
+ * one of them would have its filter silently reinterpreted as an operator.
+ * Adapters use this to warn about such collisions at model-definition time.
+ */
+export const reservedOperatorNames: ReadonlySet<string> = new Set(
+  Reflect.ownKeys(Op).filter((k) => typeof k === "string") as string[],
+);
+
 
 
 /**

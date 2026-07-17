@@ -136,6 +136,45 @@ export function buildOpenApiDocument(orm: any, options: OpenApiOptions = {}): Op
     }
     paths[collectionPath] = collection;
 
+    // Advanced select. NOTE: when `input` is supplied this route performs
+    // relationship create/update/delete on matched rows (it is not a pure read),
+    // so it is omitted in read-only mode.
+    if (!readOnly) {
+      paths[joinPath(pathPrefix, `${resource}/select`)] = {
+        post: {
+          tags: [name],
+          summary: `Advanced select for ${name}`,
+          description:
+            "Body: { where, limit, input }. When `input` is present it applies relationship create/update/delete to matched rows and requires update permission.",
+          requestBody: {
+            required: false,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    where: { type: "object" },
+                    limit: { type: "integer" },
+                    input: { type: "object" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: `Rows of ${name}`,
+              content: {
+                "application/json": {
+                  schema: { type: "object", properties: { rows: { type: "array", items: ref(name) } } },
+                },
+              },
+            },
+          },
+        },
+      };
+    }
+
     const idParam = { name: "id", in: "path", required: true, schema: { type: "string" } };
     paths[itemPath] = {
       get: {
@@ -180,6 +219,28 @@ export function buildOpenApiDocument(orm: any, options: OpenApiOptions = {}): Op
             },
           },
         };
+        // Relationship write routes (to-many relations only, mutation-enabled).
+        if (!readOnly && !single) {
+          paths[relPath].post = {
+            tags: [name],
+            summary: `Add/set ${name}.${relName}`,
+            parameters: [idParam],
+            requestBody: {
+              required: true,
+              content: { "application/json": { schema: { type: "object" } } },
+            },
+            responses: { "200": { description: `Updated ${name}` } },
+          };
+          const relIdParam = { name: "relId", in: "path", required: true, schema: { type: "string" } };
+          paths[joinPath(pathPrefix, `${resource}/{id}/${relName}/{relId}`)] = {
+            delete: {
+              tags: [name],
+              summary: `Remove a ${relName} from ${name}`,
+              parameters: [idParam, relIdParam],
+              responses: { "200": { description: `Removed from ${name}.${relName}` } },
+            },
+          };
+        }
       }
     }
   }

@@ -33,7 +33,7 @@ import { Association, WhereOperators, DefinitionFieldMeta, DataTypeDescriptor, S
 import type { GqlizeAdapter } from '@azerothian/gqlize/types/gqlize-adapter';
 import { mapDataType as mapDataTypeImpl, toNativeType as toNativeTypeImpl } from "./data-type-mapper";
 import { SequelizeDefinition, SqlClassMethod } from "./types";
-import { replaceWhereOperators } from "./utils/where-ops";
+import { replaceWhereOperators, reservedOperatorNames } from "./utils/where-ops";
 
 // Pagination safety bounds. This is the central backstop that bounds every list
 // query (GraphQL relay connections and REST list routes both funnel through
@@ -296,6 +296,17 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       throw "Unable to create model with no name";
     }
     const defName = newDef.name;
+    // Warn about columns whose name collides with a reserved where-operator:
+    // replaceWhereOperators would silently reinterpret a filter on such a column
+    // as the operator instead of an equality filter (a hard-to-diagnose footgun).
+    for (const fieldName of Object.keys(newDef.define || {})) {
+      if (reservedOperatorNames.has(fieldName)) {
+        log.error(
+          `Model "${defName}" field "${fieldName}" collides with a reserved where-operator; ` +
+          `filters on this column may be misinterpreted. Consider renaming it.`,
+        );
+      }
+    }
     this.sequelize.define(
       defName,
       this.resolveAttributeTypes(Object.assign({}, defaultAttr, newDef.define)),
@@ -493,10 +504,13 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         "startsWith",
         "endsWith",
         "substring",
-        "regexp",
-        "notRegexp",
-        "iRegexp",
-        "notIRegexp",
+        // Regex operators are opt-in. On dialects that evaluate client-supplied
+        // patterns (e.g. Postgres `~`/`~*`), a catastrophic-backtracking pattern
+        // is a ReDoS vector, so they are excluded unless the adapter is
+        // constructed with `{ enableRegexpOperators: true }`.
+        ...((this.options as any)?.enableRegexpOperators
+          ? ["regexp", "notRegexp", "iRegexp", "notIRegexp"]
+          : []),
       ],
       arrayFuncs: ["or", "and", "any", "all"],
       arrayValues: [

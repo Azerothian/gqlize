@@ -5,6 +5,27 @@ import {Op} from "sequelize";
 
 import { OKind, objVisit, BREAK } from "@vostro/object-visit";
 
+/**
+ * Decode a value as a Relay global id, but ONLY when it actually looks like one.
+ *
+ * `fromGlobalId` base64-decodes and splits `Type:id`. The previous code decoded
+ * any string matching the base64 charset, so a legitimate ID-typed filter value
+ * like "ABCD1234" (valid base64, but not a global id) was silently mangled into
+ * garbage, causing filters to miss rows. A genuine global id yields a non-empty
+ * type AND id; anything else is left untouched.
+ */
+function tryDecodeGlobalId(node: string): string | null {
+  try {
+    const { type, id } = fromGlobalId(node);
+    if (type && id) {
+      return id;
+    }
+  } catch {
+    // not a decodable global id — fall through
+  }
+  return null;
+}
+
 export default function replaceIdDeep(obj: any, keyMap: string[], variableValues: any) {
   if (obj instanceof Function) {
     obj = obj(variableValues);
@@ -45,7 +66,10 @@ export default function replaceIdDeep(obj: any, keyMap: string[], variableValues
           tagged = true;          
         }
         if (tagged && typeof node === "string" && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(node)) {
-          return fromGlobalId(node).id;
+          const decoded = tryDecodeGlobalId(node);
+          if (decoded !== null) {
+            return decoded;
+          }
         }
         return node;
       },
