@@ -816,9 +816,14 @@ TTL can also be set at write time (`options.ttl`) or as a definition-level defau
 (with read-your-writes) and apply atomically via `MULTI`/`EXEC` on commit, or discard on rollback — so
 a Valkey adapter participates in cross-adapter transactions with true rollback.
 
-**v1 limitations:** nested relationship-mutation *input* is not supported (associate by setting the
-foreign key field); `belongsToMany` population and composite multi-field indexes are deferred. See the
-runnable [`examples/valkey-basic`](../examples/valkey-basic).
+**Relationships.** All four relation types work — hasOne/belongsTo/hasMany via foreign-key index maps
+and belongsToMany via a join model (a normal indexed record, so `through` columns are supported).
+Nested relationship-mutation input (`{tags: {create/add/set/remove/...}}`) works the same as on the
+Sequelize adapter — the shared `__tests__/relations.test.ts` suite runs against both backends.
+
+**Limitations:** composite multi-field indexes and cross-adapter relationships (a relation whose
+target lives on a different adapter) are not supported. See the runnable
+[`examples/valkey-basic`](../examples/valkey-basic).
 
 ---
 

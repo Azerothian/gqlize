@@ -5,7 +5,7 @@ import { ValkeyModel } from "./model";
 import { DirectExecutor, Executor, ValkeyTransaction } from "./transaction";
 import { serialize, deserialize } from "./serialize";
 import { planIndexes, addToIndexes, removeFromIndexes, reindex } from "./indexes";
-import { executeQuery, processFilterArgument } from "./query";
+import { executeQuery, processFilterArgument, matchWhere } from "./query";
 import { ttlToScore, getExpiry, setExpiry } from "./expiry";
 import { mapDataType, toNativeType } from "./data-type-mapper";
 import typeMapper from "./type-mapper";
@@ -138,6 +138,7 @@ export default class ValkeyAdapter {
     for (const rel of model.relationships) {
       const type = rel.type;
       const fk = rel.options?.foreignKey;
+      const join = (rel as any).__join;
       out[rel.name] = {
         name: rel.name,
         target: rel.model,
@@ -146,6 +147,10 @@ export default class ValkeyAdapter {
         sourceKey: rel.options?.sourceKey,
         targetKey: rel.options?.targetKey,
         associationType: type,
+        // belongsToMany join descriptor (through model + the two foreign keys).
+        through: join?.through,
+        fkA: join?.fkA,
+        fkB: join?.fkB,
         accessors: {
           get: `get${rel.name}`, set: `set${rel.name}`, add: `add${rel.name}`,
           addMultiple: `add${rel.name}`, remove: `remove${rel.name}`,
@@ -165,16 +170,50 @@ export default class ValkeyAdapter {
     // Ensure the foreign key is an indexed field on whichever model owns it, so
     // relationship reads are index-driven.
     // Auto-created relationship FK fields are writable by default — in a KV store
-    // setting the foreign key IS how you associate (there is no nested-association
-    // mutation path in v1), so they must not be stripped by the mass-assignment guard.
+    // setting the foreign key IS how you associate, so they must not be stripped
+    // by the mass-assignment guard.
     if (relType === "belongsTo") {
       if (fk) { source.ensureField(fk, { foreignKey: true, foreignTarget: targetModel, writable: true }); source.addIndex(fk); }
     } else if (relType === "hasMany" || relType === "hasOne") {
       const target = this.models[targetModel];
       if (target && fk) { target.ensureField(fk, { foreignKey: true, foreignTarget: defName, writable: true }); target.addIndex(fk); }
+    } else if (relType === "belongsToMany") {
+      // Model the through/join as a normal indexed record with two foreign keys.
+      const throughName = typeof options.through === "string" ? options.through : options.through?.model;
+      const fkA = fk;
+      const fkB = options.otherKey || this.deriveOtherKey(targetModel, throughName, options.through) || `${targetModel.charAt(0).toLowerCase()}${targetModel.slice(1)}Id`;
+      if (throughName && fkA && fkB) {
+        this.ensureJoinModel(throughName, fkA, fkB);
+        const relObj = source.relationships.find((r: any) => r.name === relName);
+        if (relObj) (relObj as any).__join = { through: throughName, fkA, fkB };
+      }
     }
-    // belongsToMany join population is deferred (v1) — reads via join sets not yet built.
     return this.getAssociation(defName, relName);
+  };
+
+  /** Find the reciprocal belongsToMany's foreign key (the "other" join key). */
+  private deriveOtherKey(targetModel: string, throughName: string, through: any): string | undefined {
+    if (through && typeof through === "object" && through.otherKey) return through.otherKey;
+    const t = this.models[targetModel];
+    if (!t) return undefined;
+    const recip = (t.relationships || []).find((r: any) => {
+      const rt = typeof r.options?.through === "string" ? r.options.through : r.options?.through?.model;
+      return r.type === "belongsToMany" && rt === throughName;
+    });
+    return recip?.options?.foreignKey;
+  }
+
+  /** Ensure a join model exists for a belongsToMany, with both FKs indexed. */
+  private ensureJoinModel(throughName: string, fkA: string, fkB: string): void {
+    let jm = this.models[throughName];
+    if (!jm) {
+      jm = new ValkeyModel({ name: throughName, define: {}, options: {} });
+      this.models[throughName] = jm;
+    }
+    for (const fk of [fkA, fkB]) {
+      jm.ensureField(fk, { foreignKey: true, writable: true, index: true });
+      jm.addIndex(fk);
+    }
   };
 
   createFunctionForFind = (_modelName: string) => {
@@ -230,7 +269,121 @@ export default class ValkeyAdapter {
     const { ex, finish } = this.execFor(options);
     const raw = await ex.getObj(this.keys.obj(defName, id));
     await finish();
-    return raw == null ? null : deserialize(model.fields, raw);
+    return raw == null ? null : this.tag(deserialize(model.fields, raw), defName);
+  }
+
+  /** Single-object patch (fetch → merge → reindex → write), transaction-aware. */
+  private async persistPatch(modelName: string, id: any, patch: any, options?: any): Promise<any> {
+    const model = this.model(modelName);
+    const { ex, finish } = this.execFor(options);
+    const now = Date.now();
+    const raw = await ex.getObj(this.keys.obj(modelName, id));
+    if (raw == null) { await finish(); return null; }
+    const oldObj = deserialize(model.fields, raw);
+    const newObj = { ...oldObj, ...patch };
+    await this.enforceUnique(ex, model, newObj, id);
+    const currentTtl = await ex.pttl(this.keys.obj(modelName, id));
+    const ttlMs = currentTtl > 0 ? currentTtl : undefined;
+    const score = ttlToScore(ttlMs, now);
+    ex.putObj(this.keys.obj(modelName, id), serialize(model.fields, newObj), ttlMs);
+    reindex(ex, this.keys, model, id, oldObj, newObj, score, ttlMs);
+    await finish();
+    return this.tag(newObj, modelName);
+  }
+
+  private tagAll(records: any[], modelName: string): any[] {
+    for (const r of records) this.tag(r, modelName);
+    return records;
+  }
+
+  /**
+   * Attach relationship accessor methods (used by the manager's
+   * processRelationshipMutation) + a hidden model tag to a returned record. The
+   * accessors are non-enumerable, so they never leak into serialized output.
+   */
+  private tag(record: any, modelName: string): any {
+    if (!record || typeof record !== "object") return record;
+    Object.defineProperty(record, "__valkeyModel", { value: modelName, enumerable: false, configurable: true });
+    const adapter = this;
+    const model = this.model(modelName);
+    const arr = (v: any) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+    const tpk = (t: string) => adapter.model(t).primaryKey;
+    for (const assoc of Object.values(this.getAssociations(modelName)) as any[]) {
+      const { name: rel, associationType: type, target, foreignKey: fk } = assoc;
+      const srcKey = assoc.sourceKey || model.primaryKey;
+      const def = (name: string, fn: any) => {
+        if (record[name] === undefined) {
+          Object.defineProperty(record, name, { value: fn, enumerable: false, configurable: true });
+        }
+      };
+      if (type === "belongsTo") {
+        def(`set${rel}`, async (t: any, options: any) => {
+          const val = t ? t[tpk(target)] : null;
+          record[fk] = val;
+          return adapter.persistPatch(modelName, record[model.primaryKey], { [fk]: val }, options);
+        });
+        def(`get${rel}`, async (options: any) => (record[fk] == null ? null : adapter.getById(target, record[fk], options)));
+      } else if (type === "hasOne") {
+        const clearAndSet = async (t: any, options: any) => {
+          const current = await adapter.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
+          for (const c of current) await adapter.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
+          if (t) await adapter.persistPatch(target, t[tpk(target)], { [fk]: record[srcKey] }, options);
+        };
+        def(`set${rel}`, clearAndSet);
+        def(`get${rel}`, async (options: any) => (await adapter.findAll(target, { where: { [fk]: record[srcKey] }, limit: 1, transaction: options?.transaction }))[0] || null);
+      } else if (type === "hasMany") {
+        const add = async (recs: any, options: any) => {
+          for (const t of arr(recs)) await adapter.persistPatch(target, t[tpk(target)], { [fk]: record[srcKey] }, options);
+        };
+        def(`add${rel}`, add);
+        def(`remove${rel}`, async (recs: any, options: any) => {
+          for (const t of arr(recs)) await adapter.persistPatch(target, t[tpk(target)], { [fk]: null }, options);
+        });
+        def(`set${rel}`, async (recs: any, options: any) => {
+          const current = await adapter.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
+          for (const c of current) await adapter.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
+          await add(recs, options);
+        });
+        def(`get${rel}`, async (options: any) => {
+          const where = options?.where ? { and: [{ [fk]: record[srcKey] }, options.where] } : { [fk]: record[srcKey] };
+          return adapter.findAll(target, { where, limit: options?.limit, transaction: options?.transaction });
+        });
+      } else if (type === "belongsToMany") {
+        const { through, fkA, fkB } = assoc;
+        const add = async (recs: any, options: any) => {
+          const throughData = (options && options.through) || {};
+          for (const t of arr(recs)) {
+            const tid = t[tpk(target)];
+            const existing = await adapter.findAll(through, { where: { and: [{ [fkA]: record[srcKey] }, { [fkB]: tid }] }, transaction: options?.transaction });
+            if (!existing.length) {
+              await adapter.getCreateFunction(through)({ [fkA]: record[srcKey], [fkB]: tid, ...throughData }, options);
+            } else if (Object.keys(throughData).length) {
+              await adapter.persistPatch(through, existing[0][adapter.model(through).primaryKey], throughData, options);
+            }
+          }
+        };
+        def(`add${rel}`, add);
+        def(`remove${rel}`, async (recs: any, options: any) => {
+          for (const t of arr(recs)) {
+            await adapter.getDeleteFunction(through, undefined)({ and: [{ [fkA]: record[srcKey] }, { [fkB]: t[tpk(target)] }] }, options);
+          }
+        });
+        def(`set${rel}`, async (recs: any, options: any) => {
+          await adapter.getDeleteFunction(through, undefined)({ [fkA]: record[srcKey] }, options);
+          await add(recs, options);
+        });
+        def(`get${rel}`, async (options: any) => {
+          const edges = await adapter.findAll(through, { where: { [fkA]: record[srcKey] }, transaction: options?.transaction });
+          const out: any[] = [];
+          for (const e of edges) {
+            const t = await adapter.getById(target, e[fkB], options);
+            if (t && (!options?.where || matchWhere(t, options.where))) out.push(t);
+          }
+          return out;
+        });
+      }
+    }
+    return record;
   }
 
   // ---- query ----
@@ -263,7 +416,7 @@ export default class ValkeyAdapter {
       objs = objs.slice(offset, options.limit != null ? offset + options.limit : undefined);
     }
     await finish();
-    return objs;
+    return this.tagAll(objs, defName);
   };
 
   count = async (defName: string, options: any = {}) => {
@@ -293,7 +446,7 @@ export default class ValkeyAdapter {
     ex.putObj(this.keys.obj(defName, id), serialize(model.fields, obj), ttlMs);
     addToIndexes(ex, this.keys, model, id, planIndexes(this.keys, model, obj), score, ttlMs);
     await finish();
-    return obj;
+    return this.tag(obj, defName);
   };
 
   getUpdateFunction = (defName: string, whereOperators: any) =>
@@ -306,7 +459,7 @@ export default class ValkeyAdapter {
       const updated: any[] = [];
       for (const oldObj of matches) {
         const input = await processInput(oldObj);
-        if (!input || Object.keys(input).length === 0) { updated.push(oldObj); continue; }
+        if (!input || Object.keys(input).length === 0) { updated.push(this.tag(oldObj, defName)); continue; }
         const newObj = { ...oldObj, ...input };
         const id = oldObj[model.primaryKey];
         await this.enforceUnique(ex, model, newObj, id);
@@ -316,7 +469,7 @@ export default class ValkeyAdapter {
         const score = ttlToScore(ttlMs, now);
         ex.putObj(this.keys.obj(defName, id), serialize(model.fields, newObj), ttlMs);
         reindex(ex, this.keys, model, id, oldObj, newObj, score, ttlMs);
-        updated.push(newObj);
+        updated.push(this.tag(newObj, defName));
       }
       await finish();
       return updated;
@@ -341,11 +494,26 @@ export default class ValkeyAdapter {
       return deleted;
     };
 
-  update = async (_record: any, _input: any, _options?: any) => {
-    throw new Error("ValkeyAdapter: nested relationship mutation (update) is not supported (v1) — set the foreign key field instead");
+  /** Single-record update (used by the nested relationship-mutation `update` branch). */
+  update = async (record: any, input: any, options?: any) => {
+    const modelName = record?.__valkeyModel;
+    if (!modelName) throw new Error("ValkeyAdapter: update() requires an adapter-returned record");
+    return this.persistPatch(modelName, record[this.model(modelName).primaryKey], input, options);
   };
 
   // ---- relationships (reads) ----
+  private async btmTargets(association: any, source: any, options: any): Promise<any[]> {
+    const sourceModel = this.model(association.source);
+    const sourceKey = association.sourceKey || sourceModel.primaryKey;
+    const edges = await this.findAll(association.through, { where: { [association.fkA]: source[sourceKey] }, transaction: options?.transaction });
+    const out: any[] = [];
+    for (const e of edges) {
+      const t = await this.getById(association.target, e[association.fkB], options);
+      if (t) out.push(t);
+    }
+    return out;
+  }
+
   resolveSingleRelationship = async (defName: string, association: any, source: any, _args: any, _context: any, _selection: any, options: any) => {
     if (association.associationType === "belongsTo") {
       const targetId = source[association.foreignKey];
@@ -359,13 +527,22 @@ export default class ValkeyAdapter {
   };
 
   resolveManyRelationship = async (
-    defName: string, association: any, source: any, args: any, offset: any, whereOperators: any, _selection: any, options: any, countOnly?: boolean,
+    _defName: string, association: any, source: any, args: any, offset: any, whereOperators: any, _selection: any, options: any, countOnly?: boolean,
   ) => {
+    const limit = (args?.first != null || args?.last != null) ? clampPageSize(args.first ?? args.last) : undefined;
+    if (association.associationType === "belongsToMany") {
+      let models = await this.btmTargets(association, source, options);
+      if (args?.where) models = models.filter((m) => matchWhere(m, args.where));
+      models = this.tagAll(this.sortObjects(models, args?.orderBy), association.target);
+      const total = models.length;
+      if (countOnly) return { total, models: [] };
+      const start = offset || 0;
+      return { total, models: limit != null ? models.slice(start, start + limit) : models.slice(start) };
+    }
     const sourceModel = this.model(association.source);
     const sourceKey = association.sourceKey || sourceModel.primaryKey;
     const fkFilter = { [association.foreignKey]: source[sourceKey] };
     const where = args?.where ? { and: [fkFilter, args.where] } : fkFilter;
-    const limit = (args?.first != null || args?.last != null) ? clampPageSize(args.first ?? args.last) : undefined;
     const listOptions = { where, whereOperators, order: args?.orderBy, limit, offset: offset || 0, transaction: options?.transaction };
     const total = await this.count(association.target, { where, whereOperators, transaction: options?.transaction });
     if (countOnly) return { total, models: [] };
@@ -374,6 +551,11 @@ export default class ValkeyAdapter {
   };
 
   countRelationship = async (association: any, source: any, where: any, options: any) => {
+    if (association.associationType === "belongsToMany") {
+      let models = await this.btmTargets(association, source, options);
+      if (where && Object.keys(where).length) models = models.filter((m) => matchWhere(m, where));
+      return models.length;
+    }
     const sourceModel = this.model(association.source);
     const sourceKey = association.sourceKey || sourceModel.primaryKey;
     const fkFilter = { [association.foreignKey]: source[sourceKey] };
