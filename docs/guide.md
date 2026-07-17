@@ -768,5 +768,59 @@ A full runnable demo (SQLite + in-memory Postgres via PGlite) lives in
 
 ---
 
+## 12. The Valkey / Redis adapter
+
+`@azerothian/ormize-adapter-valkey` stores objects as typed JSON in Valkey/Redis. Unlike a SQL
+backend it **never scans the keyspace** — retrieval is driven entirely by index/mapping structures
+the adapter maintains itself.
+
+```ts
+import { Ormize } from "@azerothian/ormize";
+import ValkeyAdapter from "@azerothian/ormize-adapter-valkey";
+import IORedis from "ioredis";
+
+const orm = new Ormize();
+orm.registerAdapter(new ValkeyAdapter({ prefix: "app" }, new IORedis(url)), "valkey");
+```
+
+**Indexes.** A field is searchable when it is a primary key, a `unique` field, a relationship foreign
+key (auto-indexed), or marked `index: true` (or listed in a Sequelize-style `options.indexes`):
+
+```ts
+define: {
+  id:    { type: DataTypes.UUID, primaryKey: true },
+  email: { type: DataTypes.String, unique: true },   // unique index
+  role:  { type: DataTypes.String, index: true },    // secondary index
+  name:  { type: DataTypes.String },                 // NOT searchable
+}
+```
+
+**Index-only `where`.** A query must reference at least one indexed field; the adapter intersects the
+relevant index sets to build the candidate ids, then refines any non-indexed conditions in memory over
+that bounded set. A `where` with only non-indexed fields is **rejected** (it will not scan). The
+generated GraphQL `where`/`orderBy` types therefore expose only indexed fields. Relationship reads use
+the foreign-key index map, so they are index-driven too.
+
+**Expiry.** Get/set an object's TTL — and it cascades into the mappings, so an expired object is
+excluded from (and purged out of) every index it belonged to:
+
+```ts
+const adapter = orm.getModelAdapter("Session");
+await adapter.setExpiry("Session", id, 60_000); // 60s TTL, applied to the object AND its index entries
+await adapter.getExpiry("Session", id);         // ms remaining
+```
+
+TTL can also be set at write time (`options.ttl`) or as a definition-level default (`options.ttl`).
+
+**Transactions.** Inside `orm.transaction(...)`, Valkey writes buffer in a per-transaction overlay
+(with read-your-writes) and apply atomically via `MULTI`/`EXEC` on commit, or discard on rollback — so
+a Valkey adapter participates in cross-adapter transactions with true rollback.
+
+**v1 limitations:** nested relationship-mutation *input* is not supported (associate by setting the
+foreign key field); `belongsToMany` population and composite multi-field indexes are deferred. See the
+runnable [`examples/valkey-basic`](../examples/valkey-basic).
+
+---
+
 *See [specifications.md](specifications.md) for the architecture, the adapter contract, and the
 full generated-schema reference.*

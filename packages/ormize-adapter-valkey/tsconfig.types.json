@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "outDir": "./lib",
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "paths": {
+      "@azerothian/utilize": ["../utilize/publish/types/index.d.ts"],
+      "@azerothian/utilize/*": ["../utilize/publish/types/*"],
+      "@azerothian/gqlize": ["../gqlize/publish/types/index.d.ts"],
+      "@azerothian/gqlize/*": ["../gqlize/publish/types/*"],
+      "@azerothian/graphql-types": ["../graphql-types/publish/types/index.d.ts"],
+      "@azerothian/graphql-types/*": ["../graphql-types/publish/types/*"]
+    }
+  }
+}

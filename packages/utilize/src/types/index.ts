@@ -192,6 +192,8 @@ export type DefinitionFieldMeta = {
   type: any;
   foreignKey?: boolean;
   unique?: boolean;
+  // Non-unique secondary index marker (see DefinitionField.index).
+  index?: boolean;
   primaryKey?: boolean;
   ignoreGlobalKey?: boolean;
   description?: string;
@@ -211,6 +213,10 @@ export type DefinitionField = {
   type: any;
   foreignKey?: boolean;
   unique?: boolean;
+  // Marks a field as a (non-unique) secondary index. Adapters that build their
+  // own index structures (e.g. the Valkey adapter) use this — alongside `unique`
+  // and foreign keys — to decide which fields are searchable.
+  index?: boolean;
   primaryKey?: boolean;
   ignoreGlobalKey?: boolean;
   description?: string;

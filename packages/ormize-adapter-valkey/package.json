@@ -1,0 +1,77 @@
+{
+  "name": "@azerothian/ormize-adapter-valkey",
+  "version": "6.0.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "description": "Valkey/Redis adapter for the data binding library - ormize/gqlize. Index-only queries, mapping tables, expiry cascade, and MULTI/EXEC transactions.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Azerothian/gqlize.git",
+    "directory": "packages/ormize-adapter-valkey"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "watch": "tsc --watch",
+    "test": "jest",
+    "typecheck:types": "tsc -p tsconfig.test-d.json",
+    "package:yalc": "pnpm run build && cd publish && yalc publish",
+    "package:npm": "pnpm run build && cd publish && npm publish",
+    "build": "rm -Rf ./publish || true; mkdir ./publish && run-p build:*",
+    "build:readme": "cp ./README.md ./publish/README.md",
+    "build:src": "copyfiles -u 1 \"src/**/*\" publish/src",
+    "build:package": "tsx ./scripts/prepare-package.ts",
+    "build:main": "swc src --out-dir publish/lib --out-file-extension mjs --strip-leading-paths -s --ignore \"**/*.d.ts\" && tsx ./scripts/fix-esm-extensions.ts",
+    "build:types": "tsc -p tsconfig.types.json --outDir publish/types",
+    "build:cjs": "swc src --out-dir publish/cjs --config-file=.swcrc-cjs --strip-leading-paths -s --ignore \"**/*.d.ts\""
+  },
+  "author": "VostroNet",
+  "license": "MIT",
+  "homepage": "https://github.com/azerothian/ormize-adapter-valkey",
+  "bugs": {
+    "url": "https://github.com/azerothian/ormize-adapter-valkey/issues"
+  },
+  "devDependencies": {
+    "@azerothian/gqlize": "workspace:*",
+    "@azerothian/ormize": "workspace:*",
+    "@azerothian/ormize-adapter-sequelize": "workspace:*",
+    "@jest/globals": "^30.4.1",
+    "@swc/cli": "^0.8.1",
+    "@swc/core": "^1.15.43",
+    "@swc/jest": "^0.2.39",
+    "@tsconfig/node20": "^20.1.5",
+    "@tsconfig/recommended": "^1.0.8",
+    "@types/debug": "^4.1.12",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.1.1",
+    "copyfiles": "^2.4.1",
+    "del": "^8.0.1",
+    "graphql": "17.0.2",
+    "graphql-relay": "^0.10.2",
+    "ioredis": "^5.4.1",
+    "jest": "^30.4.2",
+    "jest-cli": "^30.4.2",
+    "npm-run-all2": "^9.0.2",
+    "redis-memory-server": "^0.12.1",
+    "sqlite3": "^6.0.1",
+    "tsx": "^4.19.4",
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "@azerothian/gqlize": "^6.0.0",
+    "@azerothian/ormize": "^6.0.0",
+    "graphql-relay": "^0.10.0",
+    "ioredis": "^5.0.0"
+  },
+  "dependencies": {
+    "@azerothian/utilize": "workspace:*",
+    "@azerothian/graphql-types": "workspace:*",
+    "@vostro/object-visit": "^1.1.0",
+    "debug": "^4.4.1",
+    "uuid": "^11.0.0"
+  }
+}

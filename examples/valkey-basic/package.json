@@ -1,0 +1,24 @@
+{
+  "name": "@azerothian/example-valkey-basic",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runnable demo of the Valkey ormize adapter: indexed queries, relationship reads via foreign-key index maps, and object expiry that cascades into the mapping data.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node -r @swc-node/register src/run.ts"
+  },
+  "dependencies": {
+    "@azerothian/graphql-types": "workspace:*",
+    "@azerothian/ormize": "workspace:*",
+    "@azerothian/ormize-adapter-valkey": "workspace:*",
+    "graphql": "17.0.2",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@swc-node/register": "^1.10.10",
+    "@swc/core": "^1.15.43",
+    "@types/node": "^24.0.0",
+    "redis-memory-server": "^0.12.1",
+    "typescript": "^5.9.3"
+  }
+}
