@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import pluralize from "pluralize";
 import logger from "@azerothian/utilize/utils/logger";
 import { Keys } from "./keys";
 import { ValkeyModel } from "./model";
@@ -24,6 +25,12 @@ function clampPageSize(v: any): number {
 
 function looksLikeClient(x: any): boolean {
   return !!x && typeof x.get === "function" && typeof x.set === "function" && typeof x.multi === "function";
+}
+
+const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+/** Sequelize-style accessor name parts for a relation: capitalized name + singular. */
+function relNames(name: string): { nameCap: string; singCap: string } {
+  return { nameCap: cap(name), singCap: cap(pluralize.singular(name)) };
 }
 
 /**
@@ -119,8 +126,28 @@ export default class ValkeyAdapter {
 
   // ---- model definition ----
   createModel = async (def: any, _hooks?: any) => {
-    const model = new ValkeyModel(def);
+    const model: any = new ValkeyModel(def);
     this.models[def.name] = model;
+    const name = def.name;
+    const adapter = this;
+
+    // Sequelize-style static CRUD on the model object (so `orm.models.X.create(...)` works).
+    model.create = (values: any, options?: any) => adapter.getCreateFunction(name)(values, options);
+    model.findAll = (options?: any) => adapter.findAll(name, options || {});
+    model.findOne = async (options?: any) => (await adapter.findAll(name, { ...(options || {}), limit: 1 }))[0] || null;
+    model.findByPk = (id: any, options?: any) => adapter.getById(name, id, options);
+    model.count = (options?: any) => adapter.count(name, options || {});
+    model.update = (values: any, options?: any) => adapter.getUpdateFunction(name, undefined)(options?.where || {}, () => values, options);
+    model.destroy = (options?: any) => adapter.getDeleteFunction(name, undefined)(options?.where || {}, options);
+
+    // Wire user-declared class/instance methods (top-level + options.*), matching
+    // the Sequelize adapter. Class methods → statics; instance methods → stashed
+    // for `tag()` to attach to each returned record.
+    const classMethods = { ...(def.classMethods || {}), ...(def.options?.classMethods || {}) };
+    const instanceMethods = { ...(def.instanceMethods || {}), ...(def.options?.instanceMethods || {}) };
+    for (const k of Object.keys(classMethods)) model[k] = classMethods[k];
+    model.__instanceMethods = instanceMethods;
+
     return model;
   };
   getModel = (name: string) => this.models[name];
@@ -151,12 +178,17 @@ export default class ValkeyAdapter {
         through: join?.through,
         fkA: join?.fkA,
         fkB: join?.fkB,
-        accessors: {
-          get: `get${rel.name}`, set: `set${rel.name}`, add: `add${rel.name}`,
-          addMultiple: `add${rel.name}`, remove: `remove${rel.name}`,
-          removeMultiple: `remove${rel.name}`, count: `count${rel.name}`,
-          create: `create${rel.name}`, hasSingle: `has${rel.name}`, hasAll: `has${rel.name}`,
-        },
+        // Sequelize-style accessor names (singular for the -one variants, plural
+        // for the -many). `tag()` defines exactly these on returned records.
+        accessors: (() => {
+          const { nameCap, singCap } = relNames(rel.name);
+          return {
+            get: `get${nameCap}`, set: `set${nameCap}`, add: `add${singCap}`,
+            addMultiple: `add${nameCap}`, remove: `remove${singCap}`,
+            removeMultiple: `remove${nameCap}`, count: `count${nameCap}`,
+            create: `create${singCap}`, hasSingle: `has${singCap}`, hasAll: `has${nameCap}`,
+          };
+        })(),
       };
     }
     return out;
@@ -297,89 +329,112 @@ export default class ValkeyAdapter {
   }
 
   /**
-   * Attach relationship accessor methods (used by the manager's
-   * processRelationshipMutation) + a hidden model tag to a returned record. The
-   * accessors are non-enumerable, so they never leak into serialized output.
+   * Decorate a returned record with a hidden model tag + the Sequelize-style
+   * instance API: CRUD (save/update/destroy/reload/get/toJSON), user-declared
+   * instance methods, and relationship finders/mutators (get/set/add/remove/
+   * count/has, singular + plural). All are non-enumerable, so they never leak
+   * into serialized output. The relationship names match `getAssociations`'
+   * `accessors`, so the manager's processRelationshipMutation uses them too.
    */
   private tag(record: any, modelName: string): any {
     if (!record || typeof record !== "object") return record;
     Object.defineProperty(record, "__valkeyModel", { value: modelName, enumerable: false, configurable: true });
     const adapter = this;
-    const model = this.model(modelName);
+    const model: any = this.model(modelName);
+    const pk = model.primaryKey;
     const arr = (v: any) => (Array.isArray(v) ? v : v == null ? [] : [v]);
     const tpk = (t: string) => adapter.model(t).primaryKey;
-    for (const assoc of Object.values(this.getAssociations(modelName)) as any[]) {
-      const { name: rel, associationType: type, target, foreignKey: fk } = assoc;
-      const srcKey = assoc.sourceKey || model.primaryKey;
-      const def = (name: string, fn: any) => {
+    const plain = () => ({ ...record });
+    const def = (names: string | string[], fn: any) => {
+      for (const name of Array.isArray(names) ? names : [names]) {
         if (record[name] === undefined) {
           Object.defineProperty(record, name, { value: fn, enumerable: false, configurable: true });
         }
-      };
+      }
+    };
+
+    // Instance CRUD.
+    def("save", async (options: any) => { await adapter.persistPatch(modelName, record[pk], plain(), options); return record; });
+    def("update", async (values: any, options: any) => { Object.assign(record, values); await adapter.persistPatch(modelName, record[pk], values, options); return record; });
+    def("destroy", async (options: any) => adapter.getDeleteFunction(modelName, undefined)({ [pk]: record[pk] }, options));
+    def("reload", async (options: any) => { const fresh = await adapter.getById(modelName, record[pk], options); if (fresh) Object.assign(record, fresh); return record; });
+    def("get", (key?: any) => (key === undefined || typeof key === "object" ? plain() : record[key]));
+    def("toJSON", () => plain());
+
+    // User-declared instance methods.
+    for (const [k, fn] of Object.entries(model.__instanceMethods || {})) def(k, fn);
+
+    // Relationship finders / mutators.
+    for (const assoc of Object.values(this.getAssociations(modelName)) as any[]) {
+      const { name: rel, associationType: type, target, foreignKey: fk } = assoc;
+      const srcKey = assoc.sourceKey || pk;
+      const { nameCap, singCap } = relNames(rel);
       if (type === "belongsTo") {
-        def(`set${rel}`, async (t: any, options: any) => {
+        def(`get${nameCap}`, async (options: any) => (record[fk] == null ? null : adapter.getById(target, record[fk], options)));
+        def(`set${nameCap}`, async (t: any, options: any) => {
           const val = t ? t[tpk(target)] : null;
           record[fk] = val;
-          return adapter.persistPatch(modelName, record[model.primaryKey], { [fk]: val }, options);
+          return adapter.persistPatch(modelName, record[pk], { [fk]: val }, options);
         });
-        def(`get${rel}`, async (options: any) => (record[fk] == null ? null : adapter.getById(target, record[fk], options)));
       } else if (type === "hasOne") {
-        const clearAndSet = async (t: any, options: any) => {
+        def(`get${nameCap}`, async (options: any) => (await adapter.findAll(target, { where: { [fk]: record[srcKey] }, limit: 1, transaction: options?.transaction }))[0] || null);
+        def(`set${nameCap}`, async (t: any, options: any) => {
           const current = await adapter.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
           for (const c of current) await adapter.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
           if (t) await adapter.persistPatch(target, t[tpk(target)], { [fk]: record[srcKey] }, options);
-        };
-        def(`set${rel}`, clearAndSet);
-        def(`get${rel}`, async (options: any) => (await adapter.findAll(target, { where: { [fk]: record[srcKey] }, limit: 1, transaction: options?.transaction }))[0] || null);
-      } else if (type === "hasMany") {
-        const add = async (recs: any, options: any) => {
-          for (const t of arr(recs)) await adapter.persistPatch(target, t[tpk(target)], { [fk]: record[srcKey] }, options);
-        };
-        def(`add${rel}`, add);
-        def(`remove${rel}`, async (recs: any, options: any) => {
-          for (const t of arr(recs)) await adapter.persistPatch(target, t[tpk(target)], { [fk]: null }, options);
         });
-        def(`set${rel}`, async (recs: any, options: any) => {
-          const current = await adapter.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
-          for (const c of current) await adapter.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
-          await add(recs, options);
-        });
-        def(`get${rel}`, async (options: any) => {
-          const where = options?.where ? { and: [{ [fk]: record[srcKey] }, options.where] } : { [fk]: record[srcKey] };
-          return adapter.findAll(target, { where, limit: options?.limit, transaction: options?.transaction });
-        });
-      } else if (type === "belongsToMany") {
+      } else if (type === "hasMany" || type === "belongsToMany") {
+        const isBtm = type === "belongsToMany";
         const { through, fkA, fkB } = assoc;
         const add = async (recs: any, options: any) => {
           const throughData = (options && options.through) || {};
           for (const t of arr(recs)) {
             const tid = t[tpk(target)];
-            const existing = await adapter.findAll(through, { where: { and: [{ [fkA]: record[srcKey] }, { [fkB]: tid }] }, transaction: options?.transaction });
-            if (!existing.length) {
-              await adapter.getCreateFunction(through)({ [fkA]: record[srcKey], [fkB]: tid, ...throughData }, options);
-            } else if (Object.keys(throughData).length) {
-              await adapter.persistPatch(through, existing[0][adapter.model(through).primaryKey], throughData, options);
+            if (isBtm) {
+              const existing = await adapter.findAll(through, { where: { and: [{ [fkA]: record[srcKey] }, { [fkB]: tid }] }, transaction: options?.transaction });
+              if (!existing.length) await adapter.getCreateFunction(through)({ [fkA]: record[srcKey], [fkB]: tid, ...throughData }, options);
+              else if (Object.keys(throughData).length) await adapter.persistPatch(through, existing[0][adapter.model(through).primaryKey], throughData, options);
+            } else {
+              await adapter.persistPatch(target, tid, { [fk]: record[srcKey] }, options);
             }
           }
         };
-        def(`add${rel}`, add);
-        def(`remove${rel}`, async (recs: any, options: any) => {
+        const remove = async (recs: any, options: any) => {
           for (const t of arr(recs)) {
-            await adapter.getDeleteFunction(through, undefined)({ and: [{ [fkA]: record[srcKey] }, { [fkB]: t[tpk(target)] }] }, options);
+            if (isBtm) await adapter.getDeleteFunction(through, undefined)({ and: [{ [fkA]: record[srcKey] }, { [fkB]: t[tpk(target)] }] }, options);
+            else await adapter.persistPatch(target, t[tpk(target)], { [fk]: null }, options);
           }
-        });
-        def(`set${rel}`, async (recs: any, options: any) => {
-          await adapter.getDeleteFunction(through, undefined)({ [fkA]: record[srcKey] }, options);
+        };
+        const get = async (options: any) => {
+          if (isBtm) {
+            const edges = await adapter.findAll(through, { where: { [fkA]: record[srcKey] }, transaction: options?.transaction });
+            const out: any[] = [];
+            for (const e of edges) {
+              const t = await adapter.getById(target, e[fkB], options);
+              if (t && (!options?.where || matchWhere(t, options.where))) out.push(t);
+            }
+            return out;
+          }
+          const where = options?.where ? { and: [{ [fk]: record[srcKey] }, options.where] } : { [fk]: record[srcKey] };
+          return adapter.findAll(target, { where, limit: options?.limit, transaction: options?.transaction });
+        };
+        const set = async (recs: any, options: any) => {
+          if (isBtm) {
+            await adapter.getDeleteFunction(through, undefined)({ [fkA]: record[srcKey] }, options);
+          } else {
+            const current = await adapter.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
+            for (const c of current) await adapter.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
+          }
           await add(recs, options);
-        });
-        def(`get${rel}`, async (options: any) => {
-          const edges = await adapter.findAll(through, { where: { [fkA]: record[srcKey] }, transaction: options?.transaction });
-          const out: any[] = [];
-          for (const e of edges) {
-            const t = await adapter.getById(target, e[fkB], options);
-            if (t && (!options?.where || matchWhere(t, options.where))) out.push(t);
-          }
-          return out;
+        };
+        def([`add${singCap}`, `add${nameCap}`], add);
+        def([`remove${singCap}`, `remove${nameCap}`], remove);
+        def(`set${nameCap}`, set);
+        def(`get${nameCap}`, get);
+        def(`count${nameCap}`, async (options: any) => (await get(options)).length);
+        def([`has${singCap}`, `has${nameCap}`], async (recs: any, options: any) => {
+          const cur = new Set((await get(options)).map((r: any) => r[tpk(target)]));
+          return arr(recs).every((t: any) => cur.has(t[tpk(target)]));
         });
       }
     }

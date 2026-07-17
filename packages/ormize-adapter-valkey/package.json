@@ -53,6 +53,7 @@
     "graphql": "17.0.2",
     "graphql-relay": "^0.10.2",
     "ioredis": "^5.4.1",
+    "@types/pluralize": "^0.0.33",
     "jest": "^30.4.2",
     "jest-cli": "^30.4.2",
     "npm-run-all2": "^9.0.2",
@@ -72,6 +73,7 @@
     "@azerothian/graphql-types": "workspace:*",
     "@vostro/object-visit": "^1.1.0",
     "debug": "^4.4.1",
+    "pluralize": "^8.0.0",
     "uuid": "^11.0.0"
   }
 }

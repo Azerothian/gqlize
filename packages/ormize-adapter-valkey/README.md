@@ -13,6 +13,10 @@ all retrieval is driven by secondary-index and mapping structures it maintains i
   mutation input, the same as the Sequelize adapter.
 - **Object expiry (TTL)** cascades into the mapping data — an expired object is excluded from and
   purged out of every index it belonged to.
+- **Sequelize-style model API** is supported too: static `orm.models.X.create/findAll/findByPk/count/
+  update/destroy`, instance `row.save/update/destroy/reload/get/toJSON`, definition `classMethods`/
+  `instanceMethods`, and relationship finders (`author.getPosts()`, `addPost`, `countPosts`, …) — the
+  same surface as the Sequelize adapter.
 - **Transactions** are real: inside `orm.transaction(...)` writes buffer in a per-transaction
   in-memory overlay (with read-your-writes) and apply atomically via `MULTI`/`EXEC` on commit, or
   discard on rollback.

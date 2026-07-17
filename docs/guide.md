@@ -821,6 +821,14 @@ and belongsToMany via a join model (a normal indexed record, so `through` column
 Nested relationship-mutation input (`{tags: {create/add/set/remove/...}}`) works the same as on the
 Sequelize adapter — the shared `__tests__/relations.test.ts` suite runs against both backends.
 
+**Sequelize-style model API.** In addition to the manager pipeline (`orm.processCreate`/
+`resolveFindAll`), the direct model/instance API works too, so a Valkey-backed model is used the same
+way as a Sequelize one: static `orm.models.X.create/findAll/findOne/findByPk/count/update/destroy`,
+instance `row.save/update/destroy/reload/get/toJSON`, definition `classMethods`/`instanceMethods`, and
+Sequelize-cased relationship finders (`author.getPosts()`, `addPost`, `countPosts`, …). The shared
+`__tests__/model-api.test.ts` suite asserts the same API on both adapters. (Direct static queries take
+the Valkey filter DSL — plain equality `{ name: "x" }` or `{ name: { eq: "x" } }`.)
+
 **Limitations:** composite multi-field indexes and cross-adapter relationships (a relation whose
 target lives on a different adapter) are not supported. See the runnable
 [`examples/valkey-basic`](../examples/valkey-basic).
