@@ -39,6 +39,24 @@ const rows = await orm.models.Task.findAll();
 - **gqlize**: `createSchema(orm, options)` builds a `graphql` schema from an `ormize` instance —
   query/mutation resolution, relay global IDs, connections, filter/order types.
 
+## Transactions & context
+
+Each mutation is already atomic on its own adapter. To make several operations one unit of work —
+including across adapters — wrap them in `orm.transaction(fn)`: it commits every adapter it touches
+on success and **rolls them all back if `fn` throws** (best-effort coordination, not two-phase
+commit). Nested calls join the active transaction.
+
+```ts
+await orm.transaction(async () => {
+  await orm.processCreate("Order",   null, { input: { /* … */ } }, {}, undefined); // adapter A
+  await orm.processCreate("Payment", null, { input: { /* … */ } }, {}, undefined); // adapter B → fails → both roll back
+});
+```
+
+`orm.runWithContext(context, fn)` makes `context` ambient (via `AsyncLocalStorage`) so
+`orm.getContext()` — and `definition.before`/`after` hooks — can read it without threading. See the
+runnable [`cross-adapter-transaction` example](../../examples/cross-adapter-transaction).
+
 ## Typed models
 
 The definition typesystem is shared with the adapter. Declare a Sequelize instance interface and

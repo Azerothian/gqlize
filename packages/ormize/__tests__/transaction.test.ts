@@ -61,3 +61,72 @@ describe("manager - transactions", () => {
     expect(childA.parentId).toEqual(parent.id);
   });
 });
+
+// Two adapters (two independent SQLite instances). `Left` lives on "sqlite",
+// `Right` on "sqlite2". A coordinated `orm.transaction` must commit both or, on
+// failure, roll BOTH back — even though they are separate database connections.
+async function buildTwoAdapterOrm() {
+  const db: any = new Database();
+  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) as OrmAdapter, "sqlite");
+  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) as OrmAdapter, "sqlite2");
+  await db.addDefinition({ name: "Left", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } } as any, "sqlite");
+  await db.addDefinition({ name: "Right", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } } as any, "sqlite2");
+  await db.initialise();
+  await db.sync();
+  return db;
+}
+
+describe("manager - cross-adapter transactions", () => {
+  it("rolls back BOTH adapters when work on one fails", async () => {
+    const db = await buildTwoAdapterOrm();
+    await expect(
+      db.transaction(async () => {
+        await db.processCreate("Left", null, { input: { name: "l" } }, {}, undefined);
+        // Fails at the DB (NOT NULL) on the *other* adapter.
+        await db.processCreate("Right", null, { input: { name: null } }, {}, undefined);
+      }),
+    ).rejects.toBeTruthy();
+    // The Left row (a different adapter/connection) must have rolled back too.
+    expect(await db.models.Left.count()).toEqual(0);
+    expect(await db.models.Right.count()).toEqual(0);
+  });
+
+  it("commits both adapters when all work succeeds", async () => {
+    const db = await buildTwoAdapterOrm();
+    await db.transaction(async () => {
+      await db.processCreate("Left", null, { input: { name: "l" } }, {}, undefined);
+      await db.processCreate("Right", null, { input: { name: "r" } }, {}, undefined);
+    });
+    expect(await db.models.Left.count()).toEqual(1);
+    expect(await db.models.Right.count()).toEqual(1);
+  });
+});
+
+describe("manager - ambient context tracking", () => {
+  it("propagates the request context across async boundaries into hooks", async () => {
+    let seenInHook: any;
+    const db: any = new Database();
+    db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) as OrmAdapter, "sqlite");
+    await db.addDefinition({
+      name: "Ctx",
+      define: { name: { type: Sequelize.STRING, allowNull: false } },
+      options: { timestamps: false },
+      before(opts: any) {
+        // The hook reads the ambient context implicitly — it was never threaded.
+        seenInHook = db.getContext();
+        return opts.params;
+      },
+    } as any);
+    await db.initialise();
+    await db.sync();
+
+    expect(db.getContext()).toBeUndefined();
+    await db.runWithContext({ user: "u1" }, async () => {
+      expect(db.getContext()).toEqual({ user: "u1" });
+      await db.processCreate("Ctx", null, { input: { name: "x" } }, {}, undefined);
+    });
+    expect(seenInHook).toEqual({ user: "u1" });
+    // Context does not leak outside the scope.
+    expect(db.getContext()).toBeUndefined();
+  });
+});

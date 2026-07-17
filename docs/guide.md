@@ -722,5 +722,51 @@ first registered adapter is the default.
 
 ---
 
+## 11. Transactions & async context
+
+### Single-adapter atomicity
+
+A create/update/delete and its nested relationship writes already run atomically: each top-level
+mutation is auto-wrapped in a transaction on its model's adapter, so a nested failure rolls the
+whole operation back. No code needed.
+
+### Coordinated cross-adapter transactions
+
+Wrap several operations — on one adapter or several — in `orm.transaction(fn)` to make them one
+unit of work. It lazily opens a transaction on each adapter it touches, commits them all on
+success, and **rolls them all back if `fn` throws** — even across separate databases:
+
+```ts
+await orm.transaction(async () => {
+  await orm.processCreate("Order",   null, { input: { ref: "ORD-1" } }, {}, undefined);        // sqlite
+  await orm.processCreate("Payment", null, { input: { orderRef: "ORD-1", amount: 100 } }, {}, undefined); // pg
+});
+// If the Postgres write fails, the SQLite Order is rolled back too.
+```
+
+Nested `orm.transaction(...)` calls join the active one rather than opening a new transaction.
+
+> **Best-effort, not two-phase commit.** A failure *during the work* rolls everything back cleanly.
+> It is not XA/2PC: a failure during the final commit phase, after some adapters have already
+> committed, cannot be undone (SQLite/Postgres offer no distributed transaction). For the common
+> validate → write-several-stores → commit flow, the mid-work rollback guarantee is what matters.
+
+### Async context tracking
+
+`orm.runWithContext(context, fn)` makes `context` ambient for the duration of `fn` (propagated via
+`AsyncLocalStorage`), readable anywhere via `orm.getContext()` — including inside
+`definition.before`/`after` hooks — without threading it through every call:
+
+```ts
+await orm.runWithContext({ user: currentUser }, async () => {
+  await orm.transaction(async () => { /* hooks here can read orm.getContext() */ });
+});
+```
+
+A full runnable demo (SQLite + in-memory Postgres via PGlite) lives in
+[`examples/cross-adapter-transaction`](../examples/cross-adapter-transaction).
+
+---
+
 *See [specifications.md](specifications.md) for the architecture, the adapter contract, and the
 full generated-schema reference.*

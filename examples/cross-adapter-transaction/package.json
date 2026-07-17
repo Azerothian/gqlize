@@ -1,0 +1,28 @@
+{
+  "name": "@azerothian/example-cross-adapter-transaction",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Demonstrates a coordinated ormize transaction across two adapters — SQLite and an in-memory Postgres (PGlite) — where a failure on one rolls back the other. Also shows AsyncLocalStorage request-context tracking.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node -r @swc-node/register src/run.ts"
+  },
+  "dependencies": {
+    "@azerothian/graphql-types": "workspace:*",
+    "@azerothian/ormize": "workspace:*",
+    "@azerothian/ormize-adapter-sequelize": "workspace:*",
+    "@electric-sql/pglite": "^0.5.4",
+    "@electric-sql/pglite-socket": "^0.2.7",
+    "graphql": "17.0.2",
+    "pg": "^8.22.0",
+    "pg-hstore": "^2.3.4",
+    "sequelize": "^6.37.7",
+    "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "@swc-node/register": "^1.10.10",
+    "@swc/core": "^1.15.43",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}

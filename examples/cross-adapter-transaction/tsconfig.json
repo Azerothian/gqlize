@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "module": "CommonJS",
+    "target": "ES2022",
+    "moduleResolution": "Node",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "importHelpers": false,
+    "skipLibCheck": true,
+    "strict": false,
+    "baseUrl": ".",
+    "types": ["node"],
+    "paths": {
+      "@azerothian/ormize": ["../../packages/ormize/src/index.ts"],
+      "@azerothian/ormize/*": ["../../packages/ormize/src/*"],
+      "@azerothian/ormize-adapter-sequelize": ["../../packages/ormize-adapter-sequelize/src/index.ts"],
+      "@azerothian/ormize-adapter-sequelize/*": ["../../packages/ormize-adapter-sequelize/src/*"],
+      "@azerothian/utilize": ["../../packages/utilize/src/index.ts"],
+      "@azerothian/utilize/*": ["../../packages/utilize/src/*"],
+      "@azerothian/graphql-types": ["../../packages/graphql-types/src/index.ts"],
+      "@azerothian/graphql-types/*": ["../../packages/graphql-types/src/*"]
+    }
+  },
+  "include": ["src/**/*"]
+}

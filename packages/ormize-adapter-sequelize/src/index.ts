@@ -125,6 +125,20 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   transaction = (cb: (t: any) => Promise<any>): Promise<any> => {
     return this.sequelize.transaction(cb);
   };
+  /**
+   * Begin an UNMANAGED Sequelize transaction (no callback): the returned handle
+   * is committed/rolled back explicitly by the cross-adapter coordinator. The
+   * `handle` is a Sequelize `Transaction`, threaded onto operation options as
+   * `{ transaction }`.
+   */
+  beginTransaction = async () => {
+    const t = await this.sequelize.transaction();
+    return {
+      handle: t,
+      commit: () => t.commit(),
+      rollback: () => t.rollback(),
+    };
+  };
   addInstanceFunction = (
     modelName: string ,
     funcName: string,

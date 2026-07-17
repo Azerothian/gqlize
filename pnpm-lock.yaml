@@ -24,6 +24,52 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  examples/cross-adapter-transaction:
+    dependencies:
+      '@azerothian/graphql-types':
+        specifier: workspace:*
+        version: link:../../packages/graphql-types
+      '@azerothian/ormize':
+        specifier: workspace:*
+        version: link:../../packages/ormize
+      '@azerothian/ormize-adapter-sequelize':
+        specifier: workspace:*
+        version: link:../../packages/ormize-adapter-sequelize
+      '@electric-sql/pglite':
+        specifier: ^0.5.4
+        version: 0.5.4
+      '@electric-sql/pglite-socket':
+        specifier: ^0.2.7
+        version: 0.2.7(@electric-sql/pglite-age@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_hashids@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_ivm@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_textsearch@0.0.6(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_uuidv7@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgtap@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgvector@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite@0.5.4)
+      graphql:
+        specifier: 17.0.2
+        version: 17.0.2(patch_hash=sevdkpvsdti3jg3cl3ztedxk3e)
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+      pg-hstore:
+        specifier: ^2.3.4
+        version: 2.3.4
+      sequelize:
+        specifier: ^6.37.7
+        version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)
+      sqlite3:
+        specifier: ^6.0.1
+        version: 6.0.1
+    devDependencies:
+      '@swc-node/register':
+        specifier: ^1.10.10
+        version: 1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(typescript@5.9.3)
+      '@swc/core':
+        specifier: ^1.15.43
+        version: 1.15.43
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   examples/gqlize-basic:
     dependencies:
       '@azerothian/gqlize':

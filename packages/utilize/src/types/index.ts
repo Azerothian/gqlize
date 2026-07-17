@@ -2,6 +2,17 @@ import Events from "../events";
 import { DataTypeDescriptor } from "./data-type";
 
 /**
+ * An unmanaged, adapter-native transaction. `handle` is the token threaded onto
+ * each operation's options (e.g. a Sequelize Transaction); `commit`/`rollback`
+ * finalise it. Returned by `OrmAdapter.beginTransaction`.
+ */
+export interface AdapterTransaction {
+  handle: any;
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+}
+
+/**
  * The backend (ORM) adapter contract. This is GraphQL-free — it is the interface
  * `@azerothian/ormize` depends on. The GraphQL-typed extension lives in
  * `./gqlize-adapter` (`GqlizeAdapter extends OrmAdapter`) so importing ormize never
@@ -31,10 +42,19 @@ export interface OrmAdapter {
   getDeleteFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
   /**
    * Optional: run a callback inside a transaction (auto-commit / auto-rollback).
-   * When present, ormize wraps multi-step mutations in it. Adapters that cannot
-   * provide transactions may omit it — mutations then run without one.
+   * When present, ormize wraps single-adapter multi-step mutations in it.
+   * Adapters that cannot provide transactions may omit it — mutations then run
+   * without one.
    */
   transaction?: (cb: (t: any) => Promise<any>) => Promise<any>;
+  /**
+   * Optional: begin an UNMANAGED transaction, returning a handle the caller
+   * commits or rolls back explicitly. Required for cross-adapter coordination
+   * (`orm.transaction`): the coordinator begins one per adapter and commits/rolls
+   * back them together. `handle` is the adapter-native transaction token that is
+   * threaded onto each operation's options.
+   */
+  beginTransaction?: () => Promise<AdapterTransaction>;
   /** Read: classify an adapter-native type into an abstract `DataTypeDescriptor`. */
   mapDataType: (nativeType: any) => DataTypeDescriptor;
   /** Write: convert an abstract type token/descriptor back to an adapter-native type. */

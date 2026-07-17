@@ -6,6 +6,8 @@ import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Model, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, DataTypeDescriptor, Selection } from '@azerothian/utilize/types/index';
 import Events from "./events";
+import OrmizeTransaction from "./transaction";
+import { store, getStore } from "./context";
 
 const hookList = [
   "beforeValidate",
@@ -765,24 +767,69 @@ export default class Ormize<
     return source;
   }
   /**
-   * Run a mutation callback inside a transaction so a multi-step mutation (a
-   * create/update/delete plus its nested relationship mutations) either fully
-   * applies or fully rolls back. An already-in-flight transaction on the context
-   * is reused rather than nested — relationship mutations recurse back into
-   * processCreate/Update/Delete — and an adapter without transaction support just
-   * runs the callback directly (no behaviour change).
+   * Run a coordinated unit of work. Any create/update/delete inside `fn` — on any
+   * adapter — joins the same coordinator: they commit together on success and all
+   * roll back if `fn` throws. Nested `transaction` calls join the active
+   * coordinator rather than opening a new one. See {@link OrmizeTransaction} for
+   * the best-effort (non-two-phase-commit) guarantee.
+   */
+  transaction = async <T = any>(fn: (tx: OrmizeTransaction) => Promise<T>): Promise<T> => {
+    const current = getStore();
+    if (current?.transaction) {
+      return fn(current.transaction);
+    }
+    const coordinator = new OrmizeTransaction(this);
+    return store.run({ ...(current || {}), transaction: coordinator }, async () => {
+      try {
+        const result = await fn(coordinator);
+        await coordinator.commit();
+        return result;
+      } catch (e) {
+        await coordinator.rollback();
+        throw e;
+      }
+    });
+  }
+
+  /** Run `fn` with an ambient request `context`, readable via `getContext()`. */
+  runWithContext = <T = any>(context: any, fn: () => T): T => {
+    const current = getStore();
+    return store.run({ ...(current || {}), context }, fn);
+  }
+
+  /** The ambient request context for the current async scope, if any. */
+  getContext = (): any => {
+    return getStore()?.context;
+  }
+
+  /**
+   * Run a mutation body enrolled in the correct per-adapter transaction so a
+   * multi-step mutation either fully applies or fully rolls back.
+   *
+   * - With an active coordinator (ambient, from `transaction()`) it resolves and
+   *   stamps THIS model's adapter transaction handle onto the context — so a
+   *   nested mutation on a *different* adapter joins that adapter's transaction,
+   *   not the parent's.
+   * - With no coordinator it auto-wraps the single mutation in one (preserving
+   *   single-adapter atomicity), then re-enters via the coordinator path.
+   * - An explicit `context.transaction` (with no coordinator) is honoured as-is,
+   *   and an adapter without transaction support just runs the callback directly.
    */
   withTransaction = async(defName: any, context: any, fn: (ctx: any) => Promise<any>): Promise<any> => {
+    const adapterName = this.defsAdapters[defName];
+    const active = getStore()?.transaction;
+    if (active) {
+      const handle = await active.handleFor(adapterName);
+      return fn(Object.assign({}, context, { transaction: handle }));
+    }
     if (context && context.transaction) {
       return fn(context);
     }
-    const adapter: any = this.getModelAdapter(defName);
-    if (!adapter || typeof adapter.transaction !== "function") {
+    const adapter: any = this.adapters[adapterName];
+    if (!adapter || (typeof adapter.beginTransaction !== "function" && typeof adapter.transaction !== "function")) {
       return fn(context);
     }
-    return adapter.transaction(async(t: any) => {
-      return fn(Object.assign({}, context, { transaction: t }));
-    });
+    return this.transaction(async() => this.withTransaction(defName, context, fn));
   }
 
   processCreate = async(defName: any, source: any, args: { input: any; }, context: any, selection?: Selection) => {

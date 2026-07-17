@@ -65,6 +65,7 @@ domain on an in-memory SQLite ormize instance and can be started from the repo r
 | --- | --- | --- |
 | [`examples/gqlize-basic`](examples/gqlize-basic) | A GraphQL API (graphql-yoga + GraphiQL) from `createSchema(orm)`. | `pnpm --filter @azerothian/example-gqlize-basic start` |
 | [`examples/nestize-rest`](examples/nestize-rest) | A NestJS REST API + Swagger UI from `NestizeModule.forRoot(orm)`. | `pnpm --filter @azerothian/example-nestize-rest start` |
+| [`examples/cross-adapter-transaction`](examples/cross-adapter-transaction) | A coordinated `orm.transaction()` across SQLite **and** in-memory Postgres (a failure on one rolls back the other), plus `AsyncLocalStorage` context tracking. | `pnpm --filter @azerothian/example-cross-adapter-transaction start` |
 
 ## Prerequisites
 
@@ -103,8 +104,9 @@ Turbo caches task results and respects the dependency graph (e.g. `build` runs
     ├── utilize/
     └── graphql-types/
 examples/
-    ├── gqlize-basic/          # GraphQL (graphql-yoga) example
-    └── nestize-rest/          # NestJS REST + Swagger example
+    ├── gqlize-basic/               # GraphQL (graphql-yoga) example
+    ├── nestize-rest/               # NestJS REST + Swagger example
+    └── cross-adapter-transaction/  # Coordinated tx across SQLite + Postgres (PGlite)
 ```
 
 ## Module formats
