@@ -10,7 +10,7 @@ on:
         description: "Version to publish (e.g. 7.0.0-beta.0)"
         required: true
       npm_mode:
-        description: "npmjs mode: auto (stage packages that already exist) or direct (publish immediately)"
+        description: "npmjs mode: auto (stage; the only mode OIDC permits) or direct (needs a token - see the publish step)"
         required: false
         default: auto
         type: choice
@@ -31,6 +31,10 @@ jobs:
   publish:
     # Trusted publishing requires a GitHub-hosted runner; self-hosted is not supported.
     runs-on: ubuntu-latest
+    # Must match the Environment field of every package's trusted publisher on npmjs.
+    # The OIDC token only carries an `environment` claim when the job asks for one, so
+    # dropping this silently breaks npmjs auth for the whole release.
+    environment: production
     env:
       # Dependency order, leaves first. Shared by both publish steps so they cannot
       # drift apart. Keep in sync with release-announce.yml.
@@ -167,11 +171,12 @@ jobs:
           ' $PACKAGES
 
       - name: Publish to npmjs
+        # Authenticates via OIDC trusted publishing - no token. All eight packages have a
+        # trusted publisher registered against Azerothian/gqlize + release.yml + the
+        # production environment. Do not reintroduce NODE_AUTH_TOKEN: a token present here
+        # wins over OIDC and forfeits the automatic provenance attestation. Likewise do not
+        # rename this file, or add --provenance (it is implied under OIDC).
         env:
-          # Bootstrap credential. Remove this once every package has a trusted publisher
-          # configured, so OIDC becomes the sole auth path - a token present here wins
-          # over OIDC and forfeits the automatic provenance attestation.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           NPM_TAG: ${{ steps.version.outputs.npm_tag }}
           NPM_MODE: ${{ github.event.inputs.npm_mode || 'auto' }}
@@ -182,9 +187,12 @@ jobs:
           published=""
           for pkg in $PACKAGES; do
             name="@azerothian/${pkg}"
-            # Neither `npm stage publish` nor trusted publishing can bootstrap a package
-            # name that has never been published, so a package's first release goes out
-            # directly and every release after it is staged.
+            # The trusted publishers allow `npm stage publish` only, so the direct branch
+            # below cannot succeed over OIDC. It is reachable in two cases, both of which
+            # need a human: npm_mode=direct, and a package added to the monorepo later
+            # (neither staging nor trusted publishing can bootstrap a name that has never
+            # been published - npm/cli#8544). Bootstrap those locally with
+            # scripts/bootstrap-npmjs.sh, then register their trusted publisher.
             if [ "$NPM_MODE" = "auto" ] && npm view "$name" version --registry="$REGISTRY" >/dev/null 2>&1; then
               echo "Staging ${name}@${VERSION} (tag: ${NPM_TAG})"
               ( cd "packages/${pkg}/publish" && npm stage publish --registry="$REGISTRY" --access public --tag "$NPM_TAG" )
