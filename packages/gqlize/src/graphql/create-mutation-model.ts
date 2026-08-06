@@ -12,13 +12,15 @@ export default function createMutationModel(instance: GQLManager, defName: strin
   const input = schemaCache.mutationInputs[defName];
   const definition = instance.getDefinition(defName);
   let inp: any = {};
-  if (create) {
+  // `input.create`/`input.update` are absent when permissions leave the model
+  // with nothing writable — there is no type for the argument to reference.
+  if (create && input.create) {
     inp.create = {
       type: input.create,
       description: `This will create a new element for ${defName}`,
     };
   }
-  if (update) {
+  if (update && input.update) {
     inp.update = {
       type: input.update,
       description: `This will update a new element for ${defName}`,

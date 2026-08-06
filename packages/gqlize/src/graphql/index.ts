@@ -14,6 +14,7 @@ import createClassMethods from "./create-class-methods";
 import createMutationModel from "./create-mutation-model";
 import createMutationInput from "./create-mutation-input";
 import createSchemaCache from "./create-schema-cache";
+import computeVisibleModels from "./utils/visible-models";
 import GQLManager from '../manager';
 import { GqlizeOptions, SchemaCache } from '../types';
 
@@ -43,48 +44,55 @@ export function createListObjects(instance: GQLManager, schemaCache: SchemaCache
   };
 }
 
-function createMutationInputs(instance: GQLManager, options: GqlizeOptions, schemaCache: SchemaCache) {
+function createMutationInputs(instance: GQLManager, options: GqlizeOptions, schemaCache: SchemaCache, mutableDefNames: Set<string>) {
   return async(defName: string, inputTypes: any) => {
-    if (schemaCache.types[defName]) {
-      if (options.permission?.mutation) {
-        const result = await options.permission.mutation(defName, options.permission.options);
-        if (!result) {
-          return inputTypes;
-        }
-      }
-      inputTypes[defName] = await createMutationInput(instance, defName, schemaCache, inputTypes, options);
+    if (mutableDefNames.has(defName)) {
+      inputTypes[defName] = await createMutationInput(instance, defName, schemaCache, inputTypes, options, mutableDefNames);
     }
     return inputTypes;
   };
 }
 
 
-function createMutationModels(instance: GQLManager, options: GqlizeOptions, schemaCache: SchemaCache) {
+function createMutationModels(instance: GQLManager, options: GqlizeOptions, schemaCache: SchemaCache, mutableDefNames: Set<string>) {
   return async(defName: string, o: any) => {
-    if (schemaCache.types[defName]) {
-      let updateResult = true, deleteResult = true, createResult = true;
-      if (options.permission?.mutation) {
-        const result = await options.permission.mutation(defName, options.permission.options);
-        if (!result) {
-          return o;
-        }
-      }
-      updateResult = isMutationAllowed(options.permission, defName, "update");
-      deleteResult = isMutationAllowed(options.permission, defName, "delete");
-      createResult = isMutationAllowed(options.permission, defName, "create");
+    if (mutableDefNames.has(defName)) {
+      const updateResult = isMutationAllowed(options.permission, defName, "update");
+      const deleteResult = isMutationAllowed(options.permission, defName, "delete");
+      const createResult = isMutationAllowed(options.permission, defName, "create");
       if (createResult || updateResult || deleteResult) {
-        o[defName] = await createMutationModel(instance, defName, schemaCache, createResult, updateResult, deleteResult);
+        const mutationModel = await createMutationModel(instance, defName, schemaCache, createResult, updateResult, deleteResult);
+        // Every input the mutation would have accepted can be denied away — a
+        // field with no arguments could not mutate anything, so drop it.
+        if (Object.keys(mutationModel.args).length > 0) {
+          o[defName] = mutationModel;
+        }
       }
     }
     return o;
   };
 }
 
-export async function createSchemaObjects(instance: GQLManager, options: GqlizeOptions) {
+export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: GqlizeOptions) {
   const rootSchema: any = {};
+  const definitions = instance.getDefinitions();
+
+  // Permissions can deny every field of a model, which would emit an output type
+  // with no fields — an invalid GraphQL type. Resolve which models still have a
+  // visible field and fold the answer back into the permission bag as a stricter
+  // `model` predicate, so every builder below (and the adapters' include types)
+  // sees the same set of models.
+  const visibleModels = computeVisibleModels(instance, definitions, gqlizeOptions);
+  const options: GqlizeOptions = visibleModels.size === Object.keys(definitions).length ? gqlizeOptions : {
+    ...gqlizeOptions,
+    permission: {
+      ...(gqlizeOptions.permission || {}),
+      model: (defName: string) => visibleModels.has(defName),
+    },
+  };
+
   const {nodeInterface, nodeField, nodeTypeMapper} = createNodeInterface(instance, options);
   const {subscriptions, extend = {}, root} = options;
-  const definitions = instance.getDefinitions();
   const schemaCache = createSchemaCache();
 
   // Capture the configured permission on each adapter so its GraphQL type
@@ -107,11 +115,26 @@ export async function createSchemaObjects(instance: GQLManager, options: GqlizeO
   const classMethodQueries = await waterfall(Object.keys(definitions),
     createClassMethods(instance, definitions, options, schemaCache), schemaCache.classMethodQueries);
 
+  // Which models get mutation inputs at all, resolved up-front. Each model's
+  // input builder needs to know synchronously whether a relationship's target
+  // will contribute a field; asking `schemaCache.mutationInputs` for that would
+  // depend on the order of the waterfall below.
+  const mutableDefNames = new Set<string>();
+  for (const defName of Object.keys(definitions)) {
+    if (!schemaCache.types[defName]) {
+      continue;
+    }
+    if (options.permission?.mutation && !(await options.permission.mutation(defName, options.permission.options))) {
+      continue;
+    }
+    mutableDefNames.add(defName);
+  }
+
   await waterfall(Object.keys(definitions),
-    createMutationInputs(instance, options, schemaCache), schemaCache.mutationInputs);
+    createMutationInputs(instance, options, schemaCache, mutableDefNames), schemaCache.mutationInputs);
 
   const mutationCollection = await waterfall(Object.keys(definitions),
-    createMutationModels(instance, options, schemaCache), schemaCache.mutationModels);
+    createMutationModels(instance, options, schemaCache, mutableDefNames), schemaCache.mutationModels);
 
   const classMethodMutations = await waterfall(Object.keys(definitions),
     createClassMethods(instance, definitions, options, schemaCache, "mutations"), schemaCache.classMethodMutations);

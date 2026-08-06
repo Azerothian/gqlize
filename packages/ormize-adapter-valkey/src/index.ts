@@ -80,7 +80,19 @@ export default class ValkeyAdapter {
   // ---- GraphQL type-builder support (gqlize) ----
   meta: { [model: string]: { [key: string]: any } } = {};
   _buildPermission: any = undefined;
-  setBuildPermission = (permission: any) => { this._buildPermission = permission; };
+  setBuildPermission = (permission: any) => {
+    if (permission !== this._buildPermission) {
+      // These three types are derived from the permission bag but cached by
+      // model name alone — a second schema build under a different permission
+      // would otherwise reuse the previous build's (differently gated) types.
+      Object.keys(this.meta).forEach((model) => {
+        delete this.meta[model].queryType;
+        delete this.meta[model].orderByType;
+        delete this.meta[model].includeType;
+      });
+    }
+    this._buildPermission = permission;
+  };
   getMetaObj = (model: string, key: string) => this.meta[model]?.[key];
   setMetaObj = (model: string, key: string, value: any) => {
     (this.meta[model] = this.meta[model] || {})[key] = value;

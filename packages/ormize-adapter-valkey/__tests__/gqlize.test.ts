@@ -96,4 +96,18 @@ describe("valkey adapter — gqlize GraphQL", () => {
     expect(keys).toContain("widgets");
     expect(keys).not.toContain("secrets");
   });
+
+  it("a later build with a stricter permission re-gates the cached types", async () => {
+    const { orm } = await buildSchema();
+    const open = await createSchema(orm);
+    expect(Object.keys((open.getType("GQLTQueryItemWhere") as any).getFields())).toContain("label");
+
+    // Filter/order/include types are cached on the adapter by model name, so a
+    // second build off the same instance must not reuse the first build's types.
+    const locked = await createSchema(orm, {
+      permission: { field: (_modelName: string, fieldName: string) => fieldName !== "label" },
+    });
+    expect(Object.keys((locked.getType("GQLTQueryItemWhere") as any).getFields())).not.toContain("label");
+    expect((locked.getType("ItemOrderBy") as any).getValues().map((v: any) => v.name)).not.toContain("labelASC");
+  });
 });

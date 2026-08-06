@@ -446,6 +446,19 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   // regardless of which build path reaches a given model first.
   _buildPermission: any = undefined;
   setBuildPermission = (permission: any) => {
+    if (permission !== this._buildPermission) {
+      // The meta cache is keyed by model name alone, but these three types are
+      // derived from the permission bag. Building a second schema off the same
+      // adapter under a different permission must not hand back the previous
+      // build's types — that would silently re-expose denied fields and
+      // relationships. `fields`/`associations` are permission-independent and
+      // deliberately survive.
+      Object.keys(this.meta).forEach((modelName) => {
+        delete this.meta[modelName].queryType;
+        delete this.meta[modelName].orderByType;
+        delete this.meta[modelName].includeType;
+      });
+    }
     this._buildPermission = permission;
   };
 

@@ -145,6 +145,25 @@ describe("permissions", () => {
     expect(includeFields.item).not.toBeDefined();
     expect(includeFields.btmItems).not.toBeDefined();
   });
+  it("type cache - a later build with a stricter permission re-gates the cached types", async() => {
+    const instance = await createInstance();
+    const open: any = await createSchema(instance);
+    expect(Object.keys(open.getType("GQLTQueryTaskWhere").getFields())).toContain("name");
+    expect(open.getType("TaskOrderBy").getValues().map((v: any) => v.name)).toContain("nameASC");
+
+    // Adapters cache the filter/order/include types by model name, so a second
+    // build off the same instance used to hand back the first build's types and
+    // silently ignore the stricter permission.
+    const locked: any = await createSchema(instance, {
+      permission: {
+        field(modelName: string, fieldName: string) {
+          return !(modelName === "Task" && fieldName === "name");
+        },
+      },
+    });
+    expect(Object.keys(locked.getType("GQLTQueryTaskWhere").getFields())).not.toContain("name");
+    expect(locked.getType("TaskOrderBy").getValues().map((v: any) => v.name)).not.toContain("nameASC");
+  });
   it("mutation model", async() => {
     const instance = await createInstance();
     const schema = await createSchema(instance, {

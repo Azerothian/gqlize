@@ -11,6 +11,47 @@ import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
 import { Relationship } from '../types/index';
+
+/** Whether a relationship may appear on a create/update input object. */
+function isRelationshipInputAllowed(options: GqlizeOptions, defName: string, relName: string, forceOptional: boolean) {
+  const permission: any = options.permission;
+  if (!permission) {
+    return true;
+  }
+  const predicate = forceOptional ? permission.mutationUpdateInput : permission.mutationCreateInput;
+  if (!predicate) {
+    return true;
+  }
+  return !!predicate(defName, relName, permission.options);
+}
+
+/**
+ * Whether `generateInputFields` will produce at least one field.
+ *
+ * An input object with no fields is not a valid GraphQL type, and permissions
+ * can deny every writable field of a model (primary and foreign keys are already
+ * stripped as structurally unwritable). This mirrors the two reduces below
+ * without building any types, so the caller can decide not to create the input
+ * object at all — the built version cannot be inspected because it is a thunk,
+ * deferred so that relationship targets later in the build order resolve.
+ */
+function hasInputFields(defName: string, defFields: DefinitionFields, associations: {[relName: string]: Association}, mutableDefNames: Set<string>, forceOptional: boolean, options: GqlizeOptions) {
+  const kind = forceOptional ? "update" : "create";
+  const hasWritableField = Object.keys(defFields).some((fieldName) => {
+    return isInputFieldWritable(options.permission, defName, fieldName, kind, defFields[fieldName]);
+  });
+  if (hasWritableField) {
+    return true;
+  }
+  // A permitted relationship always contributes a field: even when the target
+  // has no create/update input of its own, `set`/`remove`/`delete`/`restore`
+  // are built from its filter type.
+  return Object.keys(associations).some((relName) => {
+    return isRelationshipInputAllowed(options, defName, relName, forceOptional) &&
+      mutableDefNames.has(associations[relName].target);
+  });
+}
+
 //(instance, defName, fields, relationships, inputTypes, false)
 export function generateInputFields(instance: GQLManager, defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, inputTypes: any, schemaCache: SchemaCache, forceOptional: boolean, options: GqlizeOptions) {
   let def = waterfallSync(Object.keys(defFields), (fieldName: string, fields: {[key: string]: any}) => {
@@ -73,19 +114,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
   }, {} as {[key: string]: any});
 
   return waterfallSync(Object.keys(associations), (relName: string, fields: any) => {
-    let doNotSkip = true;
-    if (options.permission) {
-      if (forceOptional) {
-        if (options.permission.mutationUpdateInput) {
-          doNotSkip = options.permission.mutationUpdateInput(defName, relName, options.permission.options);
-        }
-      } else {
-        if (options.permission.mutationCreateInput) {
-          doNotSkip = options.permission.mutationCreateInput(defName, relName, options.permission.options);
-        }
-      }
-    }
-    if (!doNotSkip) {
+    if (!isRelationshipInputAllowed(options, defName, relName, forceOptional)) {
       return fields;
     }
     const association = associations[relName];
@@ -228,13 +257,18 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
   }, def);
 }
 
-export default function createMutationInput(instance: GQLManager, defName: string, schemaCache: SchemaCache, inputTypes: any, options: any) {
+export default function createMutationInput(instance: GQLManager, defName: string, schemaCache: SchemaCache, inputTypes: any, options: any, mutableDefNames: Set<string>) {
   const fields = instance.getFields(defName);
   const associations = instance.getAssociations(defName);
   const definition = instance.getDefinition(defName);
   let required, optional;
-  const doNotSkipUpdate = isMutationAllowed(options.permission, defName, "update");
-  const doNotSkipCreate = isMutationAllowed(options.permission, defName, "create");
+  // Permissions can leave a model with nothing writable at all; the resulting
+  // input object would have no fields and make the whole schema invalid, so it
+  // is not built and the mutations that would take it are omitted.
+  const doNotSkipUpdate = isMutationAllowed(options.permission, defName, "update") &&
+    hasInputFields(defName, fields, associations, mutableDefNames, true, options);
+  const doNotSkipCreate = isMutationAllowed(options.permission, defName, "create") &&
+    hasInputFields(defName, fields, associations, mutableDefNames, false, options);
   if (doNotSkipCreate) {
     required = createGQLInputObject(`${defName}RequiredInput`, function() {
       return generateInputFields(instance, defName, definition, fields, associations, inputTypes, schemaCache, false, options);
