@@ -703,6 +703,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             return o;
           }
           const targetModel = this.getModel(relationship.model);
+          // A relationship whose target lives on another adapter has no Sequelize
+          // model here, and no SQL JOIN can reach it — it is resolved by the
+          // target's own adapter as a separate query. Leaving it in would build
+          // the nested input object against `undefined` and crash schema
+          // construction, so omit it from `include` entirely.
+          if (!targetModel) {
+            return o;
+          }
           o[relationship.name] = {
             type: new GraphQLInputObjectType({
               name: `GQLT${defName}Include${relationship.name}Object`,
