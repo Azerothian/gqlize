@@ -8,6 +8,7 @@
     { "path": "packages/ormize-adapter-sequelize" },
     { "path": "packages/ormize-adapter-valkey" },
     { "path": "packages/ormize-zod4" },
-    { "path": "packages/nestize" }
+    { "path": "packages/nestize" },
+    { "path": "packages/temporalize" }
   ]
 }

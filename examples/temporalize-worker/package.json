@@ -1,0 +1,32 @@
+{
+  "name": "@azerothian/example-temporalize-worker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runnable Temporal workers + client generated from an ormize instance with @azerothian/temporalize.",
+  "type": "commonjs",
+  "scripts": {
+    "start:worker": "node -r @swc-node/register src/worker.ts",
+    "start:client": "node -r @swc-node/register src/client.ts"
+  },
+  "dependencies": {
+    "@azerothian/ormize": "workspace:*",
+    "@azerothian/ormize-adapter-sequelize": "workspace:*",
+    "@azerothian/ormize-zod4": "workspace:*",
+    "@azerothian/temporalize": "workspace:*",
+    "@azerothian/utilize": "workspace:*",
+    "@temporalio/activity": "^1.22.0",
+    "@temporalio/client": "^1.22.0",
+    "@temporalio/common": "^1.22.0",
+    "@temporalio/worker": "^1.22.0",
+    "@temporalio/workflow": "^1.22.0",
+    "sequelize": "^6.37.7",
+    "sqlite3": "^6.0.1",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@swc-node/register": "^1.10.10",
+    "@swc/core": "^1.15.43",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}

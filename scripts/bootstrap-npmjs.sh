@@ -21,7 +21,7 @@ VERSION="7.0.0-beta.1"
 NPM_TAG="beta"
 REGISTRY="https://registry.npmjs.org"
 # Dependency order, leaves first. Keep in sync with release.yml.
-PACKAGES="graphql-types utilize ormize gqlize ormize-adapter-sequelize ormize-adapter-valkey ormize-zod4 nestize"
+PACKAGES="graphql-types utilize ormize gqlize ormize-adapter-sequelize ormize-adapter-valkey ormize-zod4 nestize temporalize"
 
 DRY_RUN=""
 if [ "${1:-}" = "--dry-run" ]; then
