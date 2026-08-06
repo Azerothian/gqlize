@@ -210,9 +210,12 @@ jobs:
           ' $PACKAGES
 
       - name: Publish to npmjs
-        # Authenticates via OIDC trusted publishing - no token. All eight packages have a
-        # trusted publisher registered against Azerothian/gqlize + release.yml + the
-        # production environment. Do not reintroduce NODE_AUTH_TOKEN: a token present here
+        # Authenticates via OIDC trusted publishing - no token. Every package needs its own
+        # trusted publisher registered on npmjs against Azerothian/gqlize + release.yml +
+        # the production environment; there is no way to set one from CI. A package missing
+        # one fails as a 404 "OIDC token exchange error - package not found" from the token
+        # exchange, followed by a bare ENEEDAUTH from the publish itself.
+        # Do not reintroduce NODE_AUTH_TOKEN: a token present here
         # wins over OIDC and forfeits the automatic provenance attestation. Likewise do not
         # rename this file, or add --provenance (it is implied under OIDC).
         env:
