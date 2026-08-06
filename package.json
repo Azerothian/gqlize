@@ -13,6 +13,10 @@
     "turbo": "^2.10.5",
     "typescript": "^7.0.2"
   },
+  "redisMemoryServer": {
+    "//": "redis-memory-server defaults to `redis-stable`, a moving target. It now resolves to Redis 8.x, whose source tree bundles the search/timeseries/bloom/json modules; `make` builds them and redisearch.so needs a Rust toolchain, which fails on ubuntu-latest. Pin to the last pre-module line - the valkey adapter only uses core hash/set/zset commands.",
+    "version": "7.4.5"
+  },
   "pnpm": {
     "overrides": {
       "graphql": "17.0.2",
