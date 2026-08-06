@@ -167,6 +167,14 @@ export type Association = {
    * the join key.
    */
   crossAdapter?: boolean;
+  /**
+   * `belongsToMany` only: the join model, and the column on it that points at the
+   * target (`foreignKey` points at the source). A cross-adapter `belongsToMany`
+   * resolves through this model, so it must be a registered model in its own
+   * right rather than an implicit table.
+   */
+  through?: string;
+  otherKey?: string;
   accessors: {
     add: string;
     set: string;
@@ -201,6 +209,8 @@ export type Relationship = {
     /** Column on the target a `belongsTo` points at. Defaults to the target's primary key. */
     targetKey?: string;
     constraints?: boolean;
+    /** Column on the join model a `belongsToMany` uses to reach the target. */
+    otherKey?: string;
     through?: {
       model?: string;
       foreignKey?: string;

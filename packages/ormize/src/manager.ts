@@ -339,6 +339,8 @@ export default class Ormize<
       targetKey: rel.targetKey,
       associationType: rel.type,
       crossAdapter: true,
+      through: rel.through,
+      otherKey: rel.otherKey,
       accessors: {
         get: rel.funcName,
         set: `set${nameCap}`,
@@ -434,8 +436,14 @@ export default class Ormize<
         funcName = pluralize.plural(funcName);
         break;
       case "belongsTo":
+      case "hasOne":
         funcName = pluralize.singular(funcName);
         break;
+      case "belongsToMany":
+        funcName = pluralize.plural(funcName);
+        break;
+      default:
+        throw new Error(`Unknown relationship type ${rel.type}`);
     }
     this.relationships[def.name][rel.name].funcName = funcName;
     // const {foreignKey} = rel.options;
@@ -447,32 +455,132 @@ export default class Ormize<
     // defaults to the target's primary key.
     const targetKey = rel.options?.targetKey || targetAdapter.getPrimaryKeyNameForModel(rel.model)[0];
     Object.assign(this.relationships[def.name][rel.name], {foreignKey, sourceKey, targetKey});
-    const findFunc = await targetAdapter.createFunctionForFind(rel.model);
-    const adaptOptions = (options: any) => this.optionsForAdapter(def.name, rel.model, options);
-    // The proxy reads its join value off `this`, which is a *source* instance —
-    // so the read goes through the source adapter, not the target's.
-    switch (rel.type) {
-      case "hasMany":
-        this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName,
-          this.createProxyFunction(sourceAdapter, sourceKey, foreignKey, false, findFunc, adaptOptions));
-        break;
-      case "belongsTo":
-        this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName,
-          this.createProxyFunction(sourceAdapter, foreignKey, targetKey, true, findFunc, adaptOptions));
-        break;
-      default:
-        throw new Error(`Unknown relationship type ${rel.type}`);
+    if (rel.type === "belongsToMany") {
+      Object.assign(this.relationships[def.name][rel.name], this.resolveCrossAdapterJoin(def.name, rel));
     }
     const association = this.buildCrossAdapterAssociation(def.name, this.relationships[def.name][rel.name]);
+    if (rel.type === "belongsToMany") {
+      // The pair is resolved from the join model rather than from a key on either
+      // record, so there is no single find to proxy — see {@link crossAdapterBtmGetter}.
+      this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, this.crossAdapterBtmGetter(association));
+    } else {
+      const findFunc = await targetAdapter.createFunctionForFind(rel.model);
+      const adaptOptions = (options: any) => this.optionsForAdapter(def.name, rel.model, options);
+      // The proxy reads its join value off `this`, which is a *source* instance —
+      // so the read goes through the source adapter, not the target's. `belongsTo`
+      // keeps the key on the source and points at the target's `targetKey`; the
+      // other two keep it on each target and point back at the source's `sourceKey`,
+      // differing only in whether one row or many come back.
+      const proxy = rel.type === "belongsTo"
+        ? this.createProxyFunction(sourceAdapter, foreignKey, targetKey, true, findFunc, adaptOptions)
+        : this.createProxyFunction(sourceAdapter, sourceKey, foreignKey, rel.type === "hasOne", findFunc, adaptOptions);
+      this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, proxy);
+    }
     for (const [accessor, func] of Object.entries(this.crossAdapterWriteAccessors(association, sourceAdapter, targetAdapter))) {
       this.addProxyAccessor(sourceAdapter, def.name, modelClass, accessor, func);
     }
     return undefined;
   }
   /**
+   * Resolve the join model of a cross-adapter `belongsToMany` and the column on it
+   * that points at the target (`foreignKey` points at the source).
+   *
+   * The join has to physically live in exactly one datastore, and nothing in the
+   * pair implies which — so it must be a model registered with ormize in its own
+   * right, whose adapter the caller chose. An implicit through table (which each
+   * adapter would otherwise create in its own store, and which side won would
+   * depend on the order relationships happen to be wired in) is rejected.
+   */
+  private resolveCrossAdapterJoin(defName: string, rel: Relationship) {
+    const {through} = rel.options || {};
+    const throughName = typeof through === "string" ? through : through?.model;
+    const where = `${defName} (belongsToMany) ${rel.model}: ${rel.name}`;
+    if (!throughName) {
+      throw new Error(`Cross adapter belongsToMany requires a through model: ${where}`);
+    }
+    if (!this.defs[throughName]) {
+      throw new Error(`Cross adapter belongsToMany requires its through model '${throughName}' to be registered with ormize (it decides which adapter stores the join rows): ${where}`);
+    }
+    const otherKey = rel.options?.otherKey
+      || (typeof through === "object" ? through?.otherKey : undefined)
+      || this.deriveOtherKey(rel.model, throughName)
+      || `${rel.model.charAt(0).toLowerCase()}${rel.model.slice(1)}Id`;
+    return {through: throughName, otherKey};
+  }
+  /** The reciprocal `belongsToMany`'s foreign key — the join column pointing at the target. */
+  private deriveOtherKey(targetName: string, throughName: string): string | undefined {
+    const reciprocal = (this.defs[targetName]?.relationships || []).find((r: Relationship) => {
+      const t = typeof r.options?.through === "string" ? r.options.through : r.options?.through?.model;
+      return r.type === "belongsToMany" && t === throughName;
+    });
+    return reciprocal?.options?.foreignKey;
+  }
+  /** `mergeFilterStatement` on an adapter, with the error the missing case deserves. */
+  private filterMerger(defName: string) {
+    const adapter = this.getModelAdapter(defName);
+    if (!adapter.mergeFilterStatement) {
+      throw new Error(`Adapter '${adapter.adapterName}' cannot scope a query and so cannot take part in a cross-adapter relationship: it does not implement mergeFilterStatement`);
+    }
+    return adapter.mergeFilterStatement.bind(adapter);
+  }
+  /**
+   * The target keys a cross-adapter `belongsToMany` currently links to, read from
+   * the join model. Duplicated join rows collapse to one key.
+   *
+   * Only the transaction is carried over from the caller's options: everything
+   * else in them (`where`, `limit`, `paranoid`, …) describes the *target* query
+   * that these keys go on to scope, and would be nonsense against the join model.
+   */
+  private crossAdapterBtmKeys = async(association: Association, source: any, options?: any): Promise<any[]> => {
+    const throughName = association.through as string;
+    const sourceValue = this.getModelAdapter(association.source).getValueFromInstance(source, association.sourceKey);
+    if (sourceValue === undefined || sourceValue === null) {
+      return [];
+    }
+    const throughAdapter = this.getModelAdapter(throughName);
+    const opts = await this.optionsForAdapter(association.source, throughName, options);
+    const edges = await throughAdapter.findAll(throughName, {
+      where: this.filterMerger(throughName)(association.foreignKey, sourceValue, true, undefined),
+      ...(opts?.transaction !== undefined ? {transaction: opts.transaction} : {}),
+    });
+    const keys: any[] = [];
+    const seen = new Set<any>();
+    for (const edge of edges) {
+      const value = throughAdapter.getValueFromInstance(edge, association.otherKey as string);
+      if (value === undefined || value === null || seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      keys.push(value);
+    }
+    return keys;
+  }
+  /**
+   * The `get` accessor of a cross-adapter `belongsToMany`: resolve the linked keys
+   * from the join model, then run one query on the target scoped to them. Going
+   * through the target's own `findAll` (rather than fetching row by row) keeps a
+   * caller-supplied `where`/`limit` working exactly as it does for the other types.
+   */
+  private crossAdapterBtmGetter(association: Association) {
+    const self = this;
+    const targetAdapter = this.getModelAdapter(association.target);
+    return async function(this: Model, options?: any) {
+      const keys = await self.crossAdapterBtmKeys(association, this, options);
+      if (keys.length === 0) {
+        return [];
+      }
+      const opts = (await self.optionsForAdapter(association.source, association.target, options)) || {};
+      return targetAdapter.findAll(association.target, {
+        ...opts,
+        where: self.filterMerger(association.target)(association.targetKey, keys, true, opts.where),
+      });
+    };
+  }
+  /**
    * The write half of a cross-adapter relationship. There is no native association
    * to delegate to, so linking and unlinking is done by writing the foreign key
-   * directly — on the target for `hasMany`, on the source for `belongsTo`.
+   * directly — on the target for `hasMany`, on the source for `belongsTo`, and by
+   * creating and deleting join rows for `belongsToMany`.
    *
    * These are installed under the same accessor names a native association would
    * use, so `processRelationshipMutation` drives them without knowing the
@@ -502,6 +610,68 @@ export default class Ormize<
         [accessors.remove]: clear,
         [accessors.count]: async function(this: Model) {
           return sourceAdapter.getValueFromInstance(this, foreignKey) === null ? 0 : 1;
+        },
+      };
+    }
+    if (association.associationType === "belongsToMany") {
+      // The link is a row of its own: (un)linking creates and deletes join rows on
+      // whichever adapter hosts the through model — a third hop, independent of
+      // both the source's and the target's.
+      const self = this;
+      const throughName = association.through as string;
+      const otherKey = association.otherKey as string;
+      const throughAdapter = this.getModelAdapter(throughName);
+      const merge = this.filterMerger(throughName);
+      const edgeWhere = (sourceValue: any, targetValues?: any) => {
+        const where = merge(foreignKey, sourceValue, true, undefined);
+        return targetValues === undefined ? where : merge(otherKey, targetValues, true, where);
+      };
+      // Only the transaction crosses over: the rest of the caller's options describe
+      // the source's or the target's query, not the join model's.
+      const forThrough = async(options: any) => {
+        const opts = await self.optionsForAdapter(association.source, throughName, options);
+        return opts?.transaction !== undefined ? {transaction: opts.transaction} : {};
+      };
+      const link = async function(this: Model, targets: any, options?: any) {
+        const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
+        // `through` carries attribute values for the join row itself (the columns a
+        // join table has beyond its two keys).
+        const attributes = (options || {}).through || {};
+        const opts = await forThrough(options);
+        for (const target of list(targets)) {
+          const targetValue = targetAdapter.getValueFromInstance(target, targetKey);
+          const [existing] = await throughAdapter.findAll(throughName, {where: edgeWhere(sourceValue, targetValue), ...opts});
+          if (!existing) {
+            await throughAdapter.getCreateFunction(throughName)({[foreignKey]: sourceValue, [otherKey]: targetValue, ...attributes}, opts);
+          } else if (Object.keys(attributes).length > 0) {
+            await throughAdapter.update(existing, attributes, opts);
+          }
+        }
+      };
+      const unlinkWhere = async(where: any, options: any) => {
+        const opts = await forThrough(options);
+        await throughAdapter.getDeleteFunction(throughName, undefined)(where, opts, (r: any) => r, (r: any) => r);
+      };
+      const unlink = async function(this: Model, targets: any, options?: any) {
+        const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
+        const targetValues = list(targets).map((t) => targetAdapter.getValueFromInstance(t, targetKey));
+        if (targetValues.length === 0) {
+          return;
+        }
+        await unlinkWhere(edgeWhere(sourceValue, targetValues), options);
+      };
+      return {
+        [accessors.add]: link,
+        [accessors.addMultiple]: link,
+        [accessors.remove]: unlink,
+        [accessors.removeMultiple]: unlink,
+        // `set` replaces the whole collection: drop every join row, then relink.
+        [accessors.set]: async function(this: Model, targets: any, options?: any) {
+          await unlinkWhere(edgeWhere(sourceAdapter.getValueFromInstance(this, sourceKey)), options);
+          return link.call(this, targets, options);
+        },
+        [accessors.count]: async function(this: Model, options?: any) {
+          return (await self.crossAdapterBtmKeys(association, this, options)).length;
         },
       };
     }
@@ -635,9 +805,15 @@ export default class Ormize<
    *
    * `belongsTo` keeps the foreign key on the source and points at the target's
    * `targetKey`; `hasMany`/`hasOne` keep it on the target and point back at the
-   * source's `sourceKey`.
+   * source's `sourceKey`. `belongsToMany` keeps it on neither — the pair comes
+   * from the join model, so the scope is a *list* of target keys (which the
+   * adapters' `mergeFilterStatement` turns into an `in`) and reading it costs a
+   * query of its own.
    */
-  private crossAdapterScope(association: Association, source: any) {
+  private crossAdapterScope = async(association: Association, source: any, options?: any) => {
+    if (association.associationType === "belongsToMany") {
+      return {field: association.targetKey, value: await this.crossAdapterBtmKeys(association, source, options)};
+    }
     const sourceAdapter = this.getModelAdapter(association.source);
     const belongsTo = association.associationType === "belongsTo";
     const onSource = belongsTo ? association.foreignKey : association.sourceKey;
@@ -652,8 +828,10 @@ export default class Ormize<
    * the target model's own hooks behaving exactly as they do at the root.
    */
   private resolveCrossAdapterRelationship = async(defName: string, association: Association, source: any, args: any, context: any, selection?: Selection) => {
-    const scope = this.crossAdapterScope(association, source);
-    if (scope.field === undefined || scope.value === undefined || scope.value === null) {
+    const scope = await this.crossAdapterScope(association, source, context);
+    const empty = scope.value === undefined || scope.value === null
+      || (Array.isArray(scope.value) && scope.value.length === 0);
+    if (scope.field === undefined || empty) {
       return {total: 0, models: []};
     }
     // The query runs on the target's adapter, so any transaction handle carried by
@@ -798,6 +976,9 @@ export default class Ormize<
   }
   processRelationshipMutation = async(defName: any, source: any, input: any, context: any, selection?: Selection) => {
     const translateFilter = selection?.translateFilter || ((w: any) => w);
+    // A collection's getter returns an array, a singular relationship's returns one
+    // record or null — every branch below treats what it got back as a list.
+    const asList = (res: any) => Array.isArray(res) ? res : (res ? [res] : []);
     const associations = this.getAssociations(defName);
     const defaultOptions = createResolveContext(context, selection, source);
     await waterfall(Object.keys(associations), async(key: string, o: any) => {
@@ -849,11 +1030,11 @@ export default class Ormize<
             const {where, limit, input} = arg;
             // const [result] = await this.processUpdate(targetName, source, {input: arg}, context, info);
             const whereObj = await targetAdapter.processFilterArgument(translateFilter(where, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-            const targets = await source[association.accessors.get]({
+            const targets = asList(await source[association.accessors.get]({
               limit,
               where: whereObj,
               ...defaultOptions
-            });
+            }));
             let i = await this.processInputs(targetName, input, source, args, targetContext, selection?.raw);
             if (targetDef.before) {
               i = await targetDef.before({
@@ -879,9 +1060,9 @@ export default class Ormize<
         }
         if (args.delete) {
           await waterfall(args.delete, async(arg: any) => {
-            const targets = await source[association.accessors.get](Object.assign({
+            const targets = asList(await source[association.accessors.get](Object.assign({
               where: await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions),
-            }, defaultOptions));
+            }, defaultOptions)));
             // let i = await this.processInputs(targetName, input, source, args, context, info);
             await Promise.all(targets.map(async(model: any) => {
               const defName = targetDef.name;
@@ -971,7 +1152,7 @@ export default class Ormize<
           const restoreByFilter = async(arg: any) => {
             const where = await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions);
             const res = await source[association.accessors.get](Object.assign({where, paranoid: false}, defaultOptions));
-            const records = Array.isArray(res) ? res : (res ? [res] : []);
+            const records = asList(res);
             await Promise.all(records
               .filter((r: any) => r && r.deletedAt)
               .map((r: any) => r.restore(targetOptions)));
@@ -992,9 +1173,9 @@ export default class Ormize<
           const selectByFilter = async(arg: any) => {
             const where = await targetAdapter.processFilterArgument(translateFilter(arg.where, targetGlobalKeys), targetDef.whereOperators, targetOptions);
             const res = await source[association.accessors.get](Object.assign({where}, defaultOptions));
-            const records = Array.isArray(res) ? res : (res ? [res] : []);
+            const records = asList(res);
             await waterfall(records, async(m: any) => {
-              await this.processRelationshipMutation(targetDef.name, m, arg.input, context, selection);
+              await this.processRelationshipMutation(targetDef.name, m, arg.input, targetContext, selection);
             });
           };
           if (singular) {
