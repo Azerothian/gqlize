@@ -231,9 +231,14 @@ jobs:
           # is "need auth", with no indication of which claim did not match.
           NPM_CONFIG_LOGLEVEL: verbose
         run: |
-          set -e
           staged=""
           published=""
+          failed=""
+          # Deliberately not `set -e`: aborting on the first package hides whether the
+          # other seven would have worked, and a trusted publisher is registered per
+          # package. Every package is attempted, the verdicts are summarised below, and
+          # the step still fails if any did. Safe because a staged publish is not live
+          # until a maintainer approves it, and can be dropped with `npm stage reject`.
           for pkg in $PACKAGES; do
             name="@azerothian/${pkg}"
             # The trusted publishers allow `npm stage publish` only, so the direct branch
@@ -243,15 +248,28 @@ jobs:
             # been published - npm/cli#8544). Bootstrap those locally with
             # scripts/bootstrap-npmjs.sh, then register their trusted publisher.
             if [ "$NPM_MODE" = "auto" ] && npm view "$name" version --registry="$REGISTRY" >/dev/null 2>&1; then
-              echo "Staging ${name}@${VERSION} (tag: ${NPM_TAG})"
-              ( cd "packages/${pkg}/publish" && npm stage publish --registry="$REGISTRY" --access public --tag "$NPM_TAG" )
-              staged="${staged} ${name}"
+              echo "::group::Staging ${name}@${VERSION} (tag: ${NPM_TAG})"
+              if ( cd "packages/${pkg}/publish" && npm stage publish --registry="$REGISTRY" --access public --tag "$NPM_TAG" ); then
+                staged="${staged} ${name}"
+              else
+                failed="${failed} ${name}"
+              fi
+              echo "::endgroup::"
             else
-              echo "Publishing ${name}@${VERSION} directly (tag: ${NPM_TAG})"
-              ( cd "packages/${pkg}/publish" && npm publish --registry="$REGISTRY" --access public --tag "$NPM_TAG" )
-              published="${published} ${name}"
+              echo "::group::Publishing ${name}@${VERSION} directly (tag: ${NPM_TAG})"
+              if ( cd "packages/${pkg}/publish" && npm publish --registry="$REGISTRY" --access public --tag "$NPM_TAG" ); then
+                published="${published} ${name}"
+              else
+                failed="${failed} ${name}"
+              fi
+              echo "::endgroup::"
             fi
           done
+
+          echo "--- npmjs verdicts ---"
+          for n in $staged; do echo "staged     ${n}"; done
+          for n in $published; do echo "published  ${n}"; done
+          for n in $failed; do echo "FAILED     ${n}"; done
 
           {
             echo "## npmjs - ${VERSION} (tag: \`${NPM_TAG}\`)"
@@ -268,5 +286,14 @@ jobs:
               echo 'Approve from a trusted device: `npm stage list`, then `npm stage approve <stage-id>` for each (prompts for an OTP).'
               echo
             fi
+            if [ -n "$failed" ]; then
+              echo "### Failed"
+              for n in $failed; do echo "- \`${n}\`"; done
+              echo
+              echo 'A 404 `OIDC token exchange error - package not found` means that package has no trusted publisher on npmjs matching this repository, `release.yaml` and the `production` environment.'
+              echo
+            fi
             echo "Then run the **Release Announce** workflow with tag \`${VERSION}\` to create the GitHub Release."
           } >> "$GITHUB_STEP_SUMMARY"
+
+          [ -z "$failed" ]
