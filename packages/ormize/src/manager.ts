@@ -5,6 +5,7 @@ import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Model, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, DataTypeDescriptor, Selection } from '@azerothian/utilize/types/index';
+import { DataTypes } from "@azerothian/utilize/types/data-type";
 import Events from "./events";
 import OrmizeTransaction from "./transaction";
 import { store, getStore } from "./context";
@@ -72,6 +73,8 @@ export default class Ormize<
   models: TModels;
   /** Definitions queued by the typed fluent `define()`; created in `initialise()`. */
   private _pendingDefs: { def: Definition; adapterName?: string }[] = [];
+  /** Join models a cross-adapter `belongsToMany` needs and nobody registered; created in `initialise()`. */
+  private _joinModels: {[name: string]: {source: string, target: string, foreignKey: string, otherKey: string, sourceKey: string, targetKey: string}} = {};
   relationships: {[name: string]: any};
   globalKeys: {[name: string]: any};
   hooks: {[defName: string]: HookMap};
@@ -456,7 +459,7 @@ export default class Ormize<
     const targetKey = rel.options?.targetKey || targetAdapter.getPrimaryKeyNameForModel(rel.model)[0];
     Object.assign(this.relationships[def.name][rel.name], {foreignKey, sourceKey, targetKey});
     if (rel.type === "belongsToMany") {
-      Object.assign(this.relationships[def.name][rel.name], this.resolveCrossAdapterJoin(def.name, rel));
+      Object.assign(this.relationships[def.name][rel.name], this.resolveCrossAdapterJoin(def.name, rel, {foreignKey, sourceKey, targetKey}));
     }
     const association = this.buildCrossAdapterAssociation(def.name, this.relationships[def.name][rel.name]);
     if (rel.type === "belongsToMany") {
@@ -485,27 +488,61 @@ export default class Ormize<
    * Resolve the join model of a cross-adapter `belongsToMany` and the column on it
    * that points at the target (`foreignKey` points at the source).
    *
-   * The join has to physically live in exactly one datastore, and nothing in the
-   * pair implies which — so it must be a model registered with ormize in its own
-   * right, whose adapter the caller chose. An implicit through table (which each
-   * adapter would otherwise create in its own store, and which side won would
-   * depend on the order relationships happen to be wired in) is rejected.
+   * The join has to physically live in exactly one datastore. An unnamed one is
+   * named after the pair — sorted, so both sides of a reciprocal pair agree on it
+   * regardless of which is wired first — and one that is not a registered model
+   * gets generated (see {@link generateJoinModels}). A generated join model is
+   * queued rather than created here: relationships are wired concurrently, so
+   * both sides would otherwise race to define it.
    */
-  private resolveCrossAdapterJoin(defName: string, rel: Relationship) {
+  private resolveCrossAdapterJoin(defName: string, rel: Relationship, keys: {foreignKey: string, sourceKey: string, targetKey: string}) {
     const {through} = rel.options || {};
-    const throughName = typeof through === "string" ? through : through?.model;
-    const where = `${defName} (belongsToMany) ${rel.model}: ${rel.name}`;
-    if (!throughName) {
-      throw new Error(`Cross adapter belongsToMany requires a through model: ${where}`);
-    }
-    if (!this.defs[throughName]) {
-      throw new Error(`Cross adapter belongsToMany requires its through model '${throughName}' to be registered with ormize (it decides which adapter stores the join rows): ${where}`);
-    }
+    const throughName = (typeof through === "string" ? through : through?.model)
+      || [defName, rel.model].sort().join("");
     const otherKey = rel.options?.otherKey
       || (typeof through === "object" ? through?.otherKey : undefined)
       || this.deriveOtherKey(rel.model, throughName)
       || `${rel.model.charAt(0).toLowerCase()}${rel.model.slice(1)}Id`;
+    if (!this.defs[throughName] && !this._joinModels[throughName]) {
+      this._joinModels[throughName] = {source: defName, target: rel.model, otherKey, ...keys};
+    }
     return {through: throughName, otherKey};
+  }
+  /**
+   * Define the join models a cross-adapter `belongsToMany` needed and the caller
+   * did not register, on the first registered adapter.
+   *
+   * Run in one pass after every relationship is wired: the column types are read
+   * off the keys they point at, and an adapter only knows a model's full field
+   * list (foreign keys included) once its relationships have been created.
+   */
+  private async generateJoinModels() {
+    const adapterName = this.defaultAdapter || Object.keys(this.adapters)[0];
+    for (const name of Object.keys(this._joinModels)) {
+      const join = this._joinModels[name];
+      delete this._joinModels[name];
+      if (this.defs[name]) {
+        continue;
+      }
+      await this.addDefinition({
+        name,
+        // No primary key is declared: each adapter synthesizes its own (an
+        // auto-increment `id` on both of the shipped ones). Both join columns are
+        // indexed — a key-value adapter can only answer a `where` from an index.
+        define: {
+          [join.foreignKey]: {type: this.keyType(join.source, join.sourceKey), allowNull: true, index: true, writable: true},
+          [join.otherKey]: {type: this.keyType(join.target, join.targetKey), allowNull: true, index: true, writable: true},
+        },
+        options: {timestamps: false},
+        relationships: [],
+      } as any, adapterName);
+    }
+  }
+  /** The abstract type of a model's key column, for a generated join model to mirror. */
+  private keyType(defName: string, keyName: string): DataTypeDescriptor {
+    const adapter = this.getModelAdapter(defName);
+    const field: any = adapter.getFields(defName)[keyName];
+    return field?.type ? adapter.mapDataType(field.type) : DataTypes.String;
   }
   /** The reciprocal `belongsToMany`'s foreign key — the join column pointing at the target. */
   private deriveOtherKey(targetName: string, throughName: string): string | undefined {
@@ -620,9 +657,10 @@ export default class Ormize<
       const self = this;
       const throughName = association.through as string;
       const otherKey = association.otherKey as string;
-      const throughAdapter = this.getModelAdapter(throughName);
-      const merge = this.filterMerger(throughName);
+      // Resolved on use, not on wiring: a join model ormize generates itself is
+      // only defined once every relationship has been read.
       const edgeWhere = (sourceValue: any, targetValues?: any) => {
+        const merge = self.filterMerger(throughName);
         const where = merge(foreignKey, sourceValue, true, undefined);
         return targetValues === undefined ? where : merge(otherKey, targetValues, true, where);
       };
@@ -638,6 +676,7 @@ export default class Ormize<
         // join table has beyond its two keys).
         const attributes = (options || {}).through || {};
         const opts = await forThrough(options);
+        const throughAdapter = self.getModelAdapter(throughName);
         for (const target of list(targets)) {
           const targetValue = targetAdapter.getValueFromInstance(target, targetKey);
           const [existing] = await throughAdapter.findAll(throughName, {where: edgeWhere(sourceValue, targetValue), ...opts});
@@ -650,7 +689,7 @@ export default class Ormize<
       };
       const unlinkWhere = async(where: any, options: any) => {
         const opts = await forThrough(options);
-        await throughAdapter.getDeleteFunction(throughName, undefined)(where, opts, (r: any) => r, (r: any) => r);
+        await self.getModelAdapter(throughName).getDeleteFunction(throughName, undefined)(where, opts, (r: any) => r, (r: any) => r);
       };
       const unlink = async function(this: Model, targets: any, options?: any) {
         const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
@@ -756,6 +795,7 @@ export default class Ormize<
       return waterfall(def.relationships, async(rel: any) =>
         this.processRelationship(def, sourceAdapter, rel));
     }));
+    await this.generateJoinModels();
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       return adapter.initialise();

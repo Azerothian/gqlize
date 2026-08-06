@@ -657,14 +657,16 @@ describe.each(["sqlite", "valkey"] as const)("cross-adapter relationships — be
   });
 });
 
-describe("cross-adapter relationships — belongsToMany configuration", () => {
-  const buildWith = async (prefix: string, options: any) => {
+// A through model nobody registered is generated on the first registered adapter
+// — here Valkey, which is registered first below.
+describe("cross-adapter relationships — a generated join model", () => {
+  const buildWith = async (prefix: string, options: any, reciprocal?: any) => {
     const orm: any = new Ormize();
     orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
     orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
     await orm.addDefinition({
       name: "Left",
-      define: { name: { type: Sequelize.STRING } },
+      define: { name: { type: Sequelize.STRING, allowNull: false } },
       options: { timestamps: false },
       relationships: [{ type: "belongsToMany", model: "Right", name: "rights", options }],
     }, "sqlite");
@@ -672,19 +674,80 @@ describe("cross-adapter relationships — belongsToMany configuration", () => {
       name: "Right",
       define: { id: { type: DataTypes.UUID, primaryKey: true }, name: { type: DataTypes.String, index: true } },
       options: {},
-      relationships: [],
+      relationships: reciprocal ? [{ type: "belongsToMany", model: "Left", name: "lefts", options: reciprocal }] : [],
     }, "valkey");
-    return orm;
+    await orm.initialise();
+    await orm.sync();
+    return { orm, schema: await createSchema(orm) };
+  };
+  const link = async (schema: any) => {
+    await q(schema, `mutation { models { Left(create: { name: "l1" }) { name } } }`);
+    await q(schema, `mutation { models { Right(create: { name: "r1" }) { name } } }`);
+    await q(schema, `mutation { models { Left(update: { where: { name: { eq: "l1" } }, input: { rights: { add: [{ where: { name: { eq: "r1" } } }] } } }) { name } } }`);
+    return (await q(schema, `{ models { Left { edges { node { rights { edges { node { name } } } } } } } }`))
+      .models.Left.edges[0].node.rights.edges.map((e: any) => e.node.name);
   };
 
-  it("rejects a belongsToMany with no through model", async () => {
-    const orm = await buildWith("xa-btm-x1", { foreignKey: "leftId" });
-    await expect(orm.initialise()).rejects.toThrow(/requires a through model/);
+  it("generates the named through model on the first registered adapter", async () => {
+    const { orm, schema } = await buildWith("xa-btm-g1", { through: "LeftRight", foreignKey: "leftId", otherKey: "rightId" });
+    expect(orm.defsAdapters.LeftRight).toBe("valkey");
+    expect(await link(schema)).toEqual(["r1"]);
+    expect(await orm.getModelAdapter("LeftRight").findAll("LeftRight", {})).toHaveLength(1);
   });
 
-  it("rejects a through model that is not registered with ormize", async () => {
-    const orm = await buildWith("xa-btm-x2", { through: "LeftRight", foreignKey: "leftId" });
-    await expect(orm.initialise()).rejects.toThrow(/'LeftRight' to be registered with ormize/);
+  it("names an unnamed through model after the pair, the same way from either side", async () => {
+    const { orm, schema } = await buildWith("xa-btm-g2",
+      { foreignKey: "leftId", otherKey: "rightId" },
+      { foreignKey: "rightId", otherKey: "leftId" });
+    // Sorted, so both sides land on the same model however they are wired.
+    expect(orm.getAssociations("Left").rights.through).toBe("LeftRight");
+    expect(orm.getAssociations("Right").lefts.through).toBe("LeftRight");
+    expect(await link(schema)).toEqual(["r1"]);
+    const d = await q(schema, `{ models { Right { edges { node { lefts { edges { node { name } } } } } } } }`);
+    expect(d.models.Right.edges[0].node.lefts.edges.map((e: any) => e.node.name)).toEqual(["l1"]);
+  });
+
+  it("mirrors the type of each key it points at", async () => {
+    const { orm } = await buildWith("xa-btm-g3", { through: "LeftRight", foreignKey: "leftId", otherKey: "rightId" });
+    const fields = orm.getFields("LeftRight");
+    // `Left.id` is a SQLite auto-increment integer, `Right.id` a Valkey UUID.
+    expect(fields.leftId.type.type).toBe("Int");
+    expect(fields.rightId.type.type).toBe("UUID");
+  });
+
+  it("leaves an explicitly registered through model alone", async () => {
+    const orm: any = new Ormize();
+    orm.registerAdapter(new ValkeyAdapter({ prefix: "xa-btm-g4" }, client), "valkey");
+    orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+    await orm.addDefinition({
+      name: "Left",
+      define: { name: { type: Sequelize.STRING, allowNull: false } },
+      options: { timestamps: false },
+      relationships: [{ type: "belongsToMany", model: "Right", name: "rights", options: { through: "LeftRight", foreignKey: "leftId", otherKey: "rightId" } }],
+    }, "sqlite");
+    await orm.addDefinition({
+      name: "Right",
+      define: { id: { type: DataTypes.UUID, primaryKey: true }, name: { type: DataTypes.String, index: true } },
+      options: {},
+      relationships: [],
+    }, "valkey");
+    await orm.addDefinition({
+      name: "LeftRight",
+      define: {
+        leftId: { type: Sequelize.INTEGER, allowNull: true },
+        rightId: { type: Sequelize.STRING, allowNull: true },
+        note: { type: Sequelize.STRING, allowNull: true },
+      },
+      options: { timestamps: false },
+      relationships: [],
+    }, "sqlite");
+    await orm.initialise();
+    await orm.sync();
+    const schema = await createSchema(orm);
+    expect(orm.defsAdapters.LeftRight).toBe("sqlite");
+    expect(await link(schema)).toEqual(["r1"]);
+    // The registered columns survive — nothing was regenerated over them.
+    expect(Object.keys(orm.getFields("LeftRight"))).toContain("note");
   });
 });
 
