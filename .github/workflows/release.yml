@@ -9,10 +9,19 @@ on:
       version:
         description: "Version to publish (e.g. 7.0.0-beta.0)"
         required: true
+      npm_mode:
+        description: "npmjs mode: auto (stage packages that already exist) or direct (publish immediately)"
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - direct
 
 permissions:
-  contents: write # create the GitHub Release
+  contents: read # tag validation; the GitHub Release is created by release-announce.yml
   packages: write # publish to GitHub Packages
+  id-token: write # mint OIDC tokens for npmjs trusted publishing
 
 concurrency:
   group: release-${{ github.ref }}
@@ -20,7 +29,12 @@ concurrency:
 
 jobs:
   publish:
+    # Trusted publishing requires a GitHub-hosted runner; self-hosted is not supported.
     runs-on: ubuntu-latest
+    env:
+      # Dependency order, leaves first. Shared by both publish steps so they cannot
+      # drift apart. Keep in sync with release-announce.yml.
+      PACKAGES: "graphql-types utilize ormize gqlize ormize-adapter-sequelize ormize-adapter-valkey ormize-zod4 nestize"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,6 +97,20 @@ jobs:
               if (!fs.existsSync(file)) continue;
               const json = JSON.parse(fs.readFileSync(file, "utf8"));
               json.version = version;
+              // Internal ranges written as plain semver (e.g. peerDependencies: "^6.0.0")
+              // do not travel with the release and would demand siblings from the previous
+              // major. workspace: ranges are left alone - prepare-package.ts resolves those
+              // against these just-bumped manifests.
+              for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+                const deps = json[field];
+                if (!deps) continue;
+                for (const name of Object.keys(deps)) {
+                  if (!name.startsWith("@azerothian/")) continue;
+                  if (String(deps[name]).startsWith("workspace:")) continue;
+                  deps[name] = `^${version}`;
+                  console.log(`  ${json.name} ${field}.${name} -> ^${version}`);
+                }
+              }
               fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
               console.log(`${json.name} -> ${version}`);
             }
@@ -94,25 +122,94 @@ jobs:
       - name: Publish to GitHub Packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          NPM_TAG: ${{ steps.version.outputs.npm_tag }}
         run: |
           set -e
-          for pkg in graphql-types utilize ormize gqlize ormize-adapter-sequelize ormize-zod4 nestize; do
-            echo "Publishing @azerothian/${pkg}@${{ steps.version.outputs.version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          for pkg in $PACKAGES; do
+            echo "Publishing @azerothian/${pkg}@${VERSION} (tag: ${NPM_TAG})"
             pnpm publish "packages/${pkg}/publish" \
-              --no-git-checks --access public --tag "${{ steps.version.outputs.npm_tag }}"
+              --no-git-checks --access public --tag "${NPM_TAG}"
           done
 
-      - name: Create GitHub Release
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # --- npmjs.org ----------------------------------------------------------
+      # Re-running setup-node rewrites ~/.npmrc to point at npmjs. Safe here because
+      # the GitHub Packages publish above has already completed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          scope: "@azerothian"
+
+      - name: Pin npm CLI (>= 11.15.0 for `npm stage`)
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists; skipping."
-          else
-            FLAGS="--generate-notes"
-            if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then
-              FLAGS="$FLAGS --prerelease"
+          npm i -g npm@^11.15.0
+          npm --version
+
+      - name: Drop the GitHub Packages registry override from the build artifacts
+        run: |
+          set -e
+          # The source manifests keep publishConfig.registry pointing at GitHub Packages;
+          # these publish/ directories are generated artifacts, so stripping it here
+          # overrides the registry for npmjs without touching anything tracked in git.
+          node -e '
+            const fs = require("fs");
+            for (const pkg of process.argv.slice(1)) {
+              const file = `packages/${pkg}/publish/package.json`;
+              const json = JSON.parse(fs.readFileSync(file, "utf8"));
+              if (json.publishConfig) {
+                delete json.publishConfig.registry;
+                if (Object.keys(json.publishConfig).length === 0) delete json.publishConfig;
+              }
+              fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
+              console.log(`stripped publishConfig.registry from ${file}`);
+            }
+          ' $PACKAGES
+
+      - name: Publish to npmjs
+        env:
+          # Bootstrap credential. Remove this once every package has a trusted publisher
+          # configured, so OIDC becomes the sole auth path - a token present here wins
+          # over OIDC and forfeits the automatic provenance attestation.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          NPM_TAG: ${{ steps.version.outputs.npm_tag }}
+          NPM_MODE: ${{ github.event.inputs.npm_mode || 'auto' }}
+          REGISTRY: https://registry.npmjs.org
+        run: |
+          set -e
+          staged=""
+          published=""
+          for pkg in $PACKAGES; do
+            name="@azerothian/${pkg}"
+            # Neither `npm stage publish` nor trusted publishing can bootstrap a package
+            # name that has never been published, so a package's first release goes out
+            # directly and every release after it is staged.
+            if [ "$NPM_MODE" = "auto" ] && npm view "$name" version --registry="$REGISTRY" >/dev/null 2>&1; then
+              echo "Staging ${name}@${VERSION} (tag: ${NPM_TAG})"
+              ( cd "packages/${pkg}/publish" && npm stage publish --registry="$REGISTRY" --access public --tag "$NPM_TAG" )
+              staged="${staged} ${name}"
+            else
+              echo "Publishing ${name}@${VERSION} directly (tag: ${NPM_TAG})"
+              ( cd "packages/${pkg}/publish" && npm publish --registry="$REGISTRY" --access public --tag "$NPM_TAG" )
+              published="${published} ${name}"
             fi
-            gh release create "$GITHUB_REF_NAME" $FLAGS
-          fi
+          done
+
+          {
+            echo "## npmjs - ${VERSION} (tag: \`${NPM_TAG}\`)"
+            echo
+            if [ -n "$published" ]; then
+              echo "### Published immediately"
+              for n in $published; do echo "- \`${n}\`"; done
+              echo
+            fi
+            if [ -n "$staged" ]; then
+              echo "### Staged - awaiting approval"
+              for n in $staged; do echo "- \`${n}\`"; done
+              echo
+              echo 'Approve from a trusted device: `npm stage list`, then `npm stage approve <stage-id>` for each (prompts for an OTP).'
+              echo
+            fi
+            echo "Then run the **Release Announce** workflow with tag \`${VERSION}\` to create the GitHub Release."
+          } >> "$GITHUB_STEP_SUMMARY"

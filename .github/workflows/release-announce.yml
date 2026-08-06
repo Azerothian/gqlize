@@ -1,0 +1,76 @@
+name: Release Announce
+
+# Creates the GitHub Release once the npmjs versions are actually live. Split out of
+# release.yml because staged publishes are not installable until a maintainer runs
+# `npm stage approve`, and announcing before that points people at versions they
+# cannot install.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Released tag to announce (e.g. 7.0.0-beta.1)"
+        required: true
+
+permissions:
+  contents: write # create the GitHub Release
+
+concurrency:
+  group: release-announce-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    env:
+      # Keep in sync with release.yml.
+      PACKAGES: "graphql-types utilize ormize gqlize ormize-adapter-sequelize ormize-adapter-valkey ormize-zod4 nestize"
+      TAG: ${{ github.event.inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Ensure the tag exists
+        run: |
+          if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::Tag ${TAG} does not exist."
+            exit 1
+          fi
+
+      - name: Ensure every package is live on npmjs
+        run: |
+          set -e
+          VERSION="${TAG#v}"
+          missing=""
+          for pkg in $PACKAGES; do
+            name="@azerothian/${pkg}"
+            if npm view "${name}@${VERSION}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+              echo "ok       ${name}@${VERSION}"
+            else
+              echo "MISSING  ${name}@${VERSION}"
+              missing="${missing} ${name}"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not live on npmjs (still awaiting \`npm stage approve\`?):${missing}"
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+          else
+            FLAGS="--generate-notes"
+            case "$TAG" in
+              *-*) FLAGS="$FLAGS --prerelease" ;;
+            esac
+            gh release create "$TAG" $FLAGS
+          fi
