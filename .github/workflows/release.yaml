@@ -303,11 +303,22 @@ jobs:
             # scripts/bootstrap-npmjs.sh, then register their trusted publisher.
             if [ "$NPM_MODE" = "auto" ] && npm view "$name" version --registry="$REGISTRY" >/dev/null 2>&1; then
               echo "::group::Staging ${name}@${VERSION} (tag: ${NPM_TAG})"
-              if ( cd "packages/${pkg}/publish" && npm stage publish --registry="$REGISTRY" --access public --tag "$NPM_TAG" ); then
+              rc=0
+              ( cd "packages/${pkg}/publish" && npm stage publish --registry="$REGISTRY" --access public --tag "$NPM_TAG" ) > stage.log 2>&1 || rc=$?
+              cat stage.log
+              if [ "$rc" -eq 0 ]; then
+                staged="${staged} ${name}"
+              elif grep -q 'Cannot stage previously published version' stage.log; then
+                # Idempotent, matching the GitHub Packages step: an earlier run already
+                # staged this exact version, and awaiting approval is the end state we
+                # want. Re-reporting it as a failure would hide the packages that really
+                # did fail.
+                echo "${name}@${VERSION} was already staged by an earlier run"
                 staged="${staged} ${name}"
               else
                 failed="${failed} ${name}"
               fi
+              rm -f stage.log
               echo "::endgroup::"
             else
               echo "::group::Publishing ${name}@${VERSION} directly (tag: ${NPM_TAG})"
