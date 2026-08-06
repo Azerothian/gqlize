@@ -220,6 +220,11 @@ jobs:
           NPM_TAG: ${{ steps.version.outputs.npm_tag }}
           NPM_MODE: ${{ github.event.inputs.npm_mode || 'auto' }}
           REGISTRY: https://registry.npmjs.org
+          # npm's OIDC helper is written never to throw: every reason it declines to
+          # mint a token is logged at verbose and the publish then fails with a bare
+          # ENEEDAUTH. Without this the only symptom of a trusted-publisher misconfig
+          # is "need auth", with no indication of which claim did not match.
+          NPM_CONFIG_LOGLEVEL: verbose
         run: |
           set -e
           staged=""
