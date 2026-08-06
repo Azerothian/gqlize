@@ -145,10 +145,18 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           NPM_TAG: ${{ steps.version.outputs.npm_tag }}
+          REGISTRY: https://npm.pkg.github.com
         run: |
           set -e
           for pkg in $PACKAGES; do
-            echo "Publishing @azerothian/${pkg}@${VERSION} (tag: ${NPM_TAG})"
+            name="@azerothian/${pkg}"
+            # Idempotent: a re-run after a later step failed must not 409 here and
+            # force the release onto a fresh version number.
+            if npm view "${name}@${VERSION}" version --registry="$REGISTRY" >/dev/null 2>&1; then
+              echo "${name}@${VERSION} is already published; skipping"
+              continue
+            fi
+            echo "Publishing ${name}@${VERSION} (tag: ${NPM_TAG})"
             pnpm publish "packages/${pkg}/publish" \
               --no-git-checks --access public --tag "${NPM_TAG}"
           done
@@ -166,6 +174,20 @@ jobs:
         run: |
           npm i -g npm@^11.15.0
           npm --version
+
+      - name: Clear the placeholder auth token so npm falls through to OIDC
+        run: |
+          set -e
+          # setup-node writes `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into
+          # $NPM_CONFIG_USERCONFIG and, when no token is supplied, exports NODE_AUTH_TOKEN
+          # at job scope as the literal string XXXXX-XXXXX-XXXXX-XXXXX. npm treats any
+          # configured credential as an explicit opt out of trusted publishing, so it sent
+          # the placeholder and got E401 without ever minting an OIDC token. Removing the
+          # line (rather than the env var, which is exported job-wide and out of reach of a
+          # step-level `env:`) leaves the scope -> npmjs registry mapping intact.
+          sed -i '/_authToken/d' "$NPM_CONFIG_USERCONFIG"
+          echo "Remaining npmjs config keys:"
+          sed 's/=.*//' "$NPM_CONFIG_USERCONFIG"
 
       - name: Drop the GitHub Packages registry override from the build artifacts
         run: |
