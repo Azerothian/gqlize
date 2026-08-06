@@ -189,6 +189,30 @@ jobs:
           echo "Remaining npmjs config keys:"
           sed 's/=.*//' "$NPM_CONFIG_USERCONFIG"
 
+      - name: Show the OIDC claims npmjs matches a trusted publisher against
+        # Diagnostic only, never fatal. npm surfaces just `body.message` from a failed
+        # token exchange ("package not found"), which cannot distinguish an unregistered
+        # package from a publisher registered against a different repository, workflow
+        # file or environment. These claims are what the registry compares.
+        continue-on-error: true
+        run: |
+          set -eo pipefail
+          # The token is a short-lived credential: only its decoded claims are printed,
+          # and it is passed by stdin so it never reaches the process table.
+          curl -sS -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
+            | node -e '
+              const chunks = [];
+              process.stdin.on("data", (c) => chunks.push(c));
+              process.stdin.on("end", () => {
+                const { value } = JSON.parse(Buffer.concat(chunks).toString());
+                const claims = JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString());
+                for (const k of ["repository", "repository_owner", "workflow_ref", "job_workflow_ref", "environment", "ref", "event_name"]) {
+                  console.log(`${k}: ${claims[k]}`);
+                }
+              });
+            '
+
       - name: Drop the GitHub Packages registry override from the build artifacts
         run: |
           set -e
