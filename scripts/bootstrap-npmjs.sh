@@ -8,7 +8,7 @@
 # very first publish of each new name has to happen here, interactively, with a
 # real OTP. Every release after this one goes through CI.
 #
-# This mirrors .github/workflows/release.yml exactly: same version bump, same
+# This mirrors .github/workflows/release.yaml exactly: same version bump, same
 # internal-range rewrite, same build, same publishConfig strip, same per-package
 # direct-vs-staged decision. Run it from a clean tree; the source manifests are
 # restored on exit whether it succeeds or fails.
@@ -20,7 +20,7 @@ set -euo pipefail
 VERSION="7.0.0-beta.1"
 NPM_TAG="beta"
 REGISTRY="https://registry.npmjs.org"
-# Dependency order, leaves first. Keep in sync with release.yml.
+# Dependency order, leaves first. Keep in sync with release.yaml.
 PACKAGES="graphql-types utilize ormize gqlize ormize-adapter-sequelize ormize-adapter-valkey ormize-zod4 nestize"
 
 DRY_RUN=""
@@ -179,6 +179,6 @@ echo
 echo "Next: configure a trusted publisher for each newly published package -"
 echo "  Organization/user:   Azerothian"
 echo "  Repository:          gqlize"
-echo "  Workflow filename:   release.yml"
+echo "  Workflow filename:   release.yaml"
 echo "  Environment:         production"
 echo "  Allowed actions:     npm stage publish   (only)"

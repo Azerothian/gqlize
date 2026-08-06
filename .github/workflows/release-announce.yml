@@ -1,7 +1,7 @@
 name: Release Announce
 
 # Creates the GitHub Release once the npmjs versions are actually live. Split out of
-# release.yml because staged publishes are not installable until a maintainer runs
+# release.yaml because staged publishes are not installable until a maintainer runs
 # `npm stage approve`, and announcing before that points people at versions they
 # cannot install.
 
@@ -23,7 +23,7 @@ jobs:
   announce:
     runs-on: ubuntu-latest
     env:
-      # Keep in sync with release.yml.
+      # Keep in sync with release.yaml.
       PACKAGES: "graphql-types utilize ormize gqlize ormize-adapter-sequelize ormize-adapter-valkey ormize-zod4 nestize"
       TAG: ${{ github.event.inputs.tag }}
     steps:
