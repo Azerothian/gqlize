@@ -79,11 +79,41 @@ export default class GqlizeBinding {
    * merged with any explicit `include` arg, exposed via `selection.include` (and
    * mutated back onto `a.include` so the engine's afterFind post-pass sees it).
    */
+  /**
+   * A cross-adapter relationship is resolved by a second query keyed off a column
+   * on this side of the join — but that column is only in the selection set if the
+   * caller happened to ask for it, and adapters project `selection.fields` down to
+   * the attributes they load. Add the join keys of any selected cross-adapter
+   * relationship so the resolver has a value to join on.
+   */
+  private withCrossAdapterJoinKeys(defName: string, fields?: string[]): string[] | undefined {
+    if (!fields?.length) {
+      return fields;
+    }
+    let associations: {[relName: string]: Association};
+    try {
+      associations = this.getAssociations(defName);
+    } catch (e) {
+      return fields;
+    }
+    const out = [...fields];
+    for (const fieldName of fields) {
+      const association: any = associations[fieldName];
+      if (!association?.crossAdapter) {
+        continue;
+      }
+      const joinKey = association.associationType === "belongsTo" ? association.foreignKey : association.sourceKey;
+      if (joinKey && !out.includes(joinKey)) {
+        out.push(joinKey);
+      }
+    }
+    return out;
+  }
   private buildSelection(defName: string, info: any, a?: any): Selection {
     const selection: Selection = {
       raw: info,
       variableValues: info?.variableValues,
-      fields: (info && Array.isArray(info.fieldNodes)) ? getSelectionFields(info.fieldNodes[0], info) : undefined,
+      fields: (info && Array.isArray(info.fieldNodes)) ? this.withCrossAdapterJoinKeys(defName, getSelectionFields(info.fieldNodes[0], info)) : undefined,
       countOnly: wantsCountOnly(info),
       translateFilter: (w: any, keys: string[]) => replaceIdDeep(w, keys, info?.variableValues),
       translateId: (v: any) => fromGlobalId(v).id,

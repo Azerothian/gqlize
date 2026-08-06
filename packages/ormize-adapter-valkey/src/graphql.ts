@@ -73,6 +73,10 @@ export function getIncludeGraphQLType(adapter: any, defName: string, _definition
       // A relationship whose target model is denied has no output type in the
       // schema either, so it must not be includable.
       if (!isModelAllowed(perm, relationship.model)) return o;
+      // A relationship whose target lives on another adapter is not a model here
+      // and cannot be eager-loaded in one Valkey round trip — it is resolved by
+      // the target's own adapter as a separate query, so it is not includable.
+      if (!adapter.getModel(relationship.model)) return o;
       const targetName = relationship.model;
       o[relationship.name] = {
         type: new GraphQLInputObjectType({

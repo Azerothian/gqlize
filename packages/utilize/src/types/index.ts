@@ -36,6 +36,19 @@ export interface OrmAdapter {
   getInlineCount: (models: any) => Promise<number>;
   count: (defName: string, options: any) => Promise<number>;
   processFilterArgument: (where: any, whereOperators: any, options: any) => any
+  /**
+   * Optional: merge a single equality (or, for array values, membership) filter
+   * into an already-processed `where`, returning the combined adapter-native
+   * filter. Required for a model to be the *target* of a cross-adapter
+   * relationship, which is resolved as a root query scoped to the join key.
+   */
+  mergeFilterStatement?: (fieldName: string, value: any, match: boolean | undefined, originalWhere: any) => any;
+  /**
+   * Optional: install an extra instance method on an already-defined model. Used
+   * to attach cross-adapter relationship accessors to adapters whose "model" is a
+   * plain descriptor rather than a class with a prototype.
+   */
+  addInstanceFunction?: (modelName: string, name: string, fn: any) => void;
   update: (model: any, i: any, defaultOptions: any) => Promise<any>;
   getCreateFunction: (defName: string) => any;
   getUpdateFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
@@ -147,6 +160,13 @@ export type Association = {
   targetKey: string;
   sourceKey: string;
   associationType: string;
+  /**
+   * True when source and target live on different adapters. Such a relationship
+   * has no native association behind it: it cannot be eager-loaded (no JOIN spans
+   * two datastores) and is resolved as a separate query on the target, scoped to
+   * the join key.
+   */
+  crossAdapter?: boolean;
   accessors: {
     add: string;
     set: string;
@@ -178,6 +198,8 @@ export type Relationship = {
     as?: string;
     foreignKey?: string;
     sourceKey?: string;
+    /** Column on the target a `belongsTo` points at. Defaults to the target's primary key. */
+    targetKey?: string;
     constraints?: boolean;
     through?: {
       model?: string;

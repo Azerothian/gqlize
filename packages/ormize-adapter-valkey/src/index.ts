@@ -165,6 +165,18 @@ export default class ValkeyAdapter {
   getModel = (name: string) => this.models[name];
   getModels = () => this.models;
 
+  /**
+   * Register an extra instance method on an already-defined model. Records pick it
+   * up in {@link tag}, alongside the user-declared instance methods. Ormize uses
+   * this to install the accessors for a cross-adapter relationship, which it has
+   * to implement itself because the target lives in another datastore — a Valkey
+   * "model" is a plain descriptor, so there is no prototype to hang them on.
+   */
+  addInstanceFunction = (modelName: string, name: string, fn: any) => {
+    const model: any = this.model(modelName);
+    model.__instanceMethods = { ...(model.__instanceMethods || {}), [name]: fn };
+  };
+
   getFields = (defName: string) => this.model(defName).fields as any;
 
   getPrimaryKeyNameForModel = (defName: string): string[] => [this.model(defName).primaryKey];
@@ -260,10 +272,22 @@ export default class ValkeyAdapter {
     }
   };
 
-  createFunctionForFind = (_modelName: string) => {
-    // Cross-adapter relationship proxy. Deferred in v1.
-    return () => () => {
-      throw new Error("ValkeyAdapter: cross-adapter relationships are not supported (v1)");
+  /**
+   * Build the finder ormize wraps into a cross-adapter accessor: given the join
+   * value read off the source record, query this adapter's model by `filterKey`.
+   * `filterKey` must be indexed — Valkey never scans the keyspace.
+   */
+  createFunctionForFind = (modelName: string) => {
+    return (value: any, filterKey: string, singular: boolean) => {
+      return async (options: { where?: any } = {}) => {
+        const opts = Object.assign({}, options, {
+          where: this.mergeFilterStatement(filterKey, value, true, options.where),
+        });
+        if (!singular) {
+          return this.findAll(modelName, opts);
+        }
+        return (await this.findAll(modelName, { ...opts, limit: 1 }))[0] || null;
+      };
     };
   };
 
@@ -379,6 +403,13 @@ export default class ValkeyAdapter {
     // Relationship finders / mutators.
     for (const assoc of Object.values(this.getAssociations(modelName)) as any[]) {
       const { name: rel, associationType: type, target, foreignKey: fk } = assoc;
+      // A relationship whose target lives on another adapter has no model here and
+      // cannot be walked with a Valkey lookup. Ormize installs its own accessors
+      // for it (they arrive via `__instanceMethods` above), so skip it rather than
+      // shadowing them with ones that would throw on an unknown model.
+      if (!this.models[target]) {
+        continue;
+      }
       const srcKey = assoc.sourceKey || pk;
       const { nameCap, singCap } = relNames(rel);
       if (type === "belongsTo") {
@@ -456,6 +487,16 @@ export default class ValkeyAdapter {
   // ---- query ----
   processFilterArgument = (where: any, whereOperators: any, options: any) =>
     processFilterArgument(where, whereOperators, options);
+
+  /** Merge an equality (or, for arrays, membership) filter into an existing `where`. */
+  mergeFilterStatement = (fieldName: string, value: any, match = true, originalWhere?: any) => {
+    const op = Array.isArray(value) ? (match ? "in" : "notIn") : (match ? "eq" : "ne");
+    const filter = { [fieldName]: { [op]: value } };
+    if (originalWhere && Object.keys(originalWhere).length) {
+      return { and: [originalWhere, filter] };
+    }
+    return filter;
+  };
 
   hasInlineCountFeature = () => false;
   getInlineCount = async (_models: any) => 0;

@@ -298,14 +298,88 @@ export default class Ormize<
     //TODO: add cross adapter fields
     return adapter.getFields(defName);
   }
-  getAssociations = (defName: string) => {
+  /**
+   * Associations for a model, merging the adapter's native ones with the
+   * cross-adapter relationships ormize wires itself. An adapter only knows about
+   * relationships it created (`createRelationship`), so a relationship whose
+   * target lives on another adapter would otherwise be invisible to callers such
+   * as gqlize's schema builder. Cross-adapter entries are flagged with
+   * `crossAdapter: true` so consumers can tell they cannot be eager-loaded.
+   */
+  getAssociations = (defName: string): {[relName: string]: Association} => {
     const adapter = this.getModelAdapter(defName);
-    //TODO: add cross adapter relationships
-    return adapter.getAssociations(defName);
+    const associations = {...adapter.getAssociations(defName)};
+    const rels = this.relationships[defName] || {};
+    for (const relName of Object.keys(rels)) {
+      const rel = rels[relName];
+      if (rel.internal !== false) {
+        continue;
+      }
+      // An adapter that derives associations from the raw definition (rather than
+      // from what it actually created) will already list a cross-adapter
+      // relationship, but without the join keys or the flag that tells callers it
+      // must not be resolved locally — so overlay ours on top either way.
+      associations[relName] = {
+        ...associations[relName],
+        ...this.buildCrossAdapterAssociation(defName, rel),
+      };
+    }
+    return associations;
+  }
+  /** Build an {@link Association} descriptor for an ormize-wired cross-adapter relationship. */
+  private buildCrossAdapterAssociation(defName: string, rel: any): Association {
+    const nameCap = capitalize(rel.name);
+    const singCap = capitalize(pluralize.singular(rel.name));
+    return {
+      name: rel.name,
+      target: rel.model,
+      source: defName,
+      foreignKey: rel.foreignKey,
+      sourceKey: rel.sourceKey,
+      targetKey: rel.targetKey,
+      associationType: rel.type,
+      crossAdapter: true,
+      accessors: {
+        get: rel.funcName,
+        set: `set${nameCap}`,
+        add: `add${singCap}`,
+        addMultiple: `add${nameCap}`,
+        remove: `remove${singCap}`,
+        removeMultiple: `remove${nameCap}`,
+        count: `count${nameCap}`,
+        create: `create${singCap}`,
+        hasSingle: `has${singCap}`,
+        hasAll: `has${nameCap}`,
+      },
+    };
   }
   getModelAdapter = (modelName: string) => {
     const adapterName = this.defsAdapters[modelName];
     return this.adapters[adapterName];
+  }
+  /**
+   * Re-point an options (or context) object's transaction handle from one model's
+   * adapter at another's.
+   *
+   * A transaction handle is opened by, and only meaningful to, the adapter that
+   * created it — handing a Sequelize transaction to Valkey, or the reverse, at
+   * best does nothing and at worst throws deep inside the driver. Every hop
+   * across an adapter boundary (only a cross-adapter relationship makes one)
+   * therefore swaps in the coordinator's handle for the adapter about to be
+   * called, or drops it when there is no coordinator to ask.
+   */
+  private optionsForAdapter = async(fromDefName: string, toDefName: string, options: any) => {
+    if (this.defsAdapters[fromDefName] === this.defsAdapters[toDefName] || !options || options.transaction === undefined) {
+      return options;
+    }
+    const handle = await getStore()?.transaction?.handleFor(this.defsAdapters[toDefName]);
+    const o = Object.assign({}, options);
+    if (handle === undefined) {
+      delete o.transaction;
+    } else {
+      o.transaction = handle;
+    }
+    return o;
   }
   /**
    * Convert an adapter-native type (e.g. `Sequelize.DataTypes.STRING`) into the
@@ -369,24 +443,125 @@ export default class Ormize<
       throw new Error(`For cross adapter relationships you must define a foreign key ${def.name} (${rel.type}) ${rel.model}: ${rel.name}`);
     }
     let sourceKey = rel.options?.sourceKey || sourcePrimaryKeyName;
+    // `targetKey` is the column on the target that a belongsTo points at; it
+    // defaults to the target's primary key.
+    const targetKey = rel.options?.targetKey || targetAdapter.getPrimaryKeyNameForModel(rel.model)[0];
+    Object.assign(this.relationships[def.name][rel.name], {foreignKey, sourceKey, targetKey});
     const findFunc = await targetAdapter.createFunctionForFind(rel.model);
+    const adaptOptions = (options: any) => this.optionsForAdapter(def.name, rel.model, options);
+    // The proxy reads its join value off `this`, which is a *source* instance —
+    // so the read goes through the source adapter, not the target's.
     switch (rel.type) {
       case "hasMany":
-        modelClass.prototype[funcName] =
-          this.createProxyFunction(targetAdapter, sourceKey, foreignKey, false, findFunc);
-        return undefined;
+        this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName,
+          this.createProxyFunction(sourceAdapter, sourceKey, foreignKey, false, findFunc, adaptOptions));
+        break;
       case "belongsTo":
-        modelClass.prototype[funcName] =
-          this.createProxyFunction(targetAdapter, foreignKey, sourceKey, true, findFunc);
-        return undefined;
+        this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName,
+          this.createProxyFunction(sourceAdapter, foreignKey, targetKey, true, findFunc, adaptOptions));
+        break;
+      default:
+        throw new Error(`Unknown relationship type ${rel.type}`);
     }
-    throw new Error(`Unknown relationship type ${rel.type}`);
+    const association = this.buildCrossAdapterAssociation(def.name, this.relationships[def.name][rel.name]);
+    for (const [accessor, func] of Object.entries(this.crossAdapterWriteAccessors(association, sourceAdapter, targetAdapter))) {
+      this.addProxyAccessor(sourceAdapter, def.name, modelClass, accessor, func);
+    }
+    return undefined;
   }
-  createProxyFunction(adapter: OrmAdapter, sourceKey: string, filterKey: string, singular: boolean, findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((...args: any) => any))  {
-    return function(this: Model) {
+  /**
+   * The write half of a cross-adapter relationship. There is no native association
+   * to delegate to, so linking and unlinking is done by writing the foreign key
+   * directly — on the target for `hasMany`, on the source for `belongsTo`.
+   *
+   * These are installed under the same accessor names a native association would
+   * use, so `processRelationshipMutation` drives them without knowing the
+   * relationship spans two datastores. Note that each write is an independent
+   * statement against its own adapter: they are only atomic when the whole
+   * mutation runs inside `orm.transaction()`, which coordinates a transaction per
+   * adapter.
+   */
+  private crossAdapterWriteAccessors(association: Association, sourceAdapter: OrmAdapter, targetAdapter: OrmAdapter) {
+    const {foreignKey, sourceKey, targetKey, accessors} = association;
+    const list = (targets: any) => (Array.isArray(targets) ? targets : [targets]).filter((t) => t !== undefined && t !== null);
+    // Callers build one options object for the source's adapter; writes aimed at
+    // the target's adapter need its own transaction handle instead.
+    const forTarget = (options: any) => this.optionsForAdapter(association.source, association.target, options);
+    if (association.associationType === "belongsTo") {
+      // The key lives on the source: pointing it elsewhere is a write to `this`.
+      const set = async function(this: Model, target: any, options?: any) {
+        const value = target ? targetAdapter.getValueFromInstance(target, targetKey) : null;
+        return sourceAdapter.update(this, {[foreignKey]: value}, options);
+      };
+      const clear = async function(this: Model, _target?: any, options?: any) {
+        return sourceAdapter.update(this, {[foreignKey]: null}, options);
+      };
+      return {
+        [accessors.set]: set,
+        [accessors.add]: set,
+        [accessors.remove]: clear,
+        [accessors.count]: async function(this: Model) {
+          return sourceAdapter.getValueFromInstance(this, foreignKey) === null ? 0 : 1;
+        },
+      };
+    }
+    // hasMany/hasOne: the key lives on each target, so (un)linking writes there.
+    const relink = (value: (self: Model) => any) => async function(this: Model, targets: any, options?: any) {
+      const fk = value(this);
+      const opts = await forTarget(options);
+      for (const target of list(targets)) {
+        await targetAdapter.update(target, {[foreignKey]: fk}, opts);
+      }
+    };
+    const link = relink((self) => sourceAdapter.getValueFromInstance(self, sourceKey));
+    const unlink = relink(() => null);
+    return {
+      [accessors.add]: link,
+      [accessors.addMultiple]: link,
+      [accessors.remove]: unlink,
+      [accessors.removeMultiple]: unlink,
+      // `set` replaces the whole collection: drop the ones no longer in it, then link.
+      [accessors.set]: async function(this: Model, targets: any, options?: any) {
+        const next = list(targets);
+        const nextKeys = new Set(next.map((t) => targetAdapter.getValueFromInstance(t, targetKey)));
+        const current = await (this as any)[accessors.get](options);
+        const opts = await forTarget(options);
+        for (const existing of list(current)) {
+          if (!nextKeys.has(targetAdapter.getValueFromInstance(existing, targetKey))) {
+            await targetAdapter.update(existing, {[foreignKey]: null}, opts);
+          }
+        }
+        return link.call(this, next, options);
+      },
+      [accessors.count]: async function(this: Model, options?: any) {
+        return list(await (this as any)[accessors.get](options)).length;
+      },
+    };
+  }
+  /**
+   * Install the cross-adapter accessor (`getFiles()`, `getItem()`, …) on the
+   * source model. Class-based adapters (Sequelize) take it on the prototype;
+   * adapters whose "model" is a plain descriptor rather than a constructor get
+   * it via `addInstanceFunction`, and those with neither simply go without —
+   * the GraphQL and `resolveXRelationship` paths do not depend on it.
+   */
+  private addProxyAccessor(sourceAdapter: OrmAdapter, defName: string, modelClass: any, funcName: string, func: any) {
+    if (modelClass?.prototype) {
+      modelClass.prototype[funcName] = func;
+      return;
+    }
+    if (sourceAdapter.addInstanceFunction) {
+      sourceAdapter.addInstanceFunction(defName, funcName, func);
+    }
+  }
+  createProxyFunction(adapter: OrmAdapter, sourceKey: string, filterKey: string, singular: boolean, findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((...args: any) => any), adaptOptions?: (options: any) => Promise<any>)  {
+    return async function(this: Model, options?: any) {
       const keyValue = adapter.getValueFromInstance(this, sourceKey);
+      // The find runs on the *target's* adapter while `options` were built for the
+      // source's, so any transaction handle in them has to be swapped first.
+      const opts = adaptOptions ? await adaptOptions(options) : options;
       return findFunc(keyValue, filterKey, singular)
-        .apply(this, Array.from(arguments));
+        .call(this, opts);
     };
   }
   getValueFromInstance = (defName: any, data: any, keyName: any) => {
@@ -452,7 +627,44 @@ export default class Ormize<
   // `Selection` from execution `info`; here the engine only reads its fields.
   // ---------------------------------------------------------------------------
 
+  /**
+   * Resolve the join key for a cross-adapter relationship: which field on the
+   * *target* to filter, and the value to filter it by, read off the source
+   * instance through the source adapter (a Sequelize instance and a Valkey
+   * record expose their values differently).
+   *
+   * `belongsTo` keeps the foreign key on the source and points at the target's
+   * `targetKey`; `hasMany`/`hasOne` keep it on the target and point back at the
+   * source's `sourceKey`.
+   */
+  private crossAdapterScope(association: Association, source: any) {
+    const sourceAdapter = this.getModelAdapter(association.source);
+    const belongsTo = association.associationType === "belongsTo";
+    const onSource = belongsTo ? association.foreignKey : association.sourceKey;
+    const onTarget = belongsTo ? association.targetKey : association.foreignKey;
+    return {field: onTarget, value: sourceAdapter.getValueFromInstance(source, onSource)};
+  }
+  /**
+   * A cross-adapter relationship is just a root query on the target model scoped
+   * to the join key — the target's adapter cannot see the source's rows, so there
+   * is nothing to JOIN and no accessor to call. Routing it through
+   * {@link resolveFindAll} keeps `where`, ordering, pagination, count-only and
+   * the target model's own hooks behaving exactly as they do at the root.
+   */
+  private resolveCrossAdapterRelationship = async(defName: string, association: Association, source: any, args: any, context: any, selection?: Selection) => {
+    const scope = this.crossAdapterScope(association, source);
+    if (scope.field === undefined || scope.value === undefined || scope.value === null) {
+      return {total: 0, models: []};
+    }
+    // The query runs on the target's adapter, so any transaction handle carried by
+    // the (source-side) context has to be swapped for that adapter's own.
+    const targetContext = await this.optionsForAdapter(association.source, defName, context);
+    return this.resolveFindAll(defName, source, args, targetContext, selection, scope);
+  }
   resolveManyRelationship = async(defName: string, association: Association, source: Model, args: any, context: any, selection?: Selection) => {
+    if (association.crossAdapter) {
+      return this.resolveCrossAdapterRelationship(defName, association, source, args, context, selection);
+    }
     const options = createResolveContext(context, selection, source);
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
@@ -472,12 +684,25 @@ export default class Ormize<
     return result;
   }
   resolveSingleRelationship = async(defName: string, association: Association, source: any, args: any, context: any, selection?: Selection) => {
+    if (association.crossAdapter) {
+      // `countOnly` is inferred from a connection's selection set; a singular
+      // relation has no `edges`, so the inference misreads it. It always wants
+      // the row.
+      const single = selection ? {...selection, countOnly: false} : selection;
+      const {models} = await this.resolveCrossAdapterRelationship(defName, association, source, {...args, first: 1}, context, single);
+      return models[0] || null;
+    }
     const adapter = this.getModelAdapter(defName);
     const options = createResolveContext(context, selection, source);
     // afterFind for JOIN-eager single relations is fired by resolveFindAll's post-pass.
     return adapter.resolveSingleRelationship(defName, association, source, args, context, selection as any, options);
   }
-  resolveFindAll = async(defName: any, source: any, args: { after?: { index: number; }; before?: { index: number; }; limit?: any; }, context: any, selection?: Selection) => {
+  /**
+   * @param scope optional `{field, value}` equality filter merged into the built
+   * query on top of the caller's `where`. Used to scope a cross-adapter
+   * relationship to its join key.
+   */
+  resolveFindAll = async(defName: any, source: any, args: { after?: { index: number; }; before?: { index: number; }; limit?: any; }, context: any, selection?: Selection, scope?: {field: string, value: any}) => {
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
     const options = createResolveContext(context, selection, source);
@@ -491,6 +716,15 @@ export default class Ormize<
     }
     const offset = cursorOffset(args);
     const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, a, offset, selection as any, definition.whereOperators, options, selectedFields, this.runHook);
+    if (scope) {
+      if (!adapter.mergeFilterStatement) {
+        throw new Error(`Adapter '${adapter.adapterName}' cannot scope a query and so cannot be the target of a cross-adapter relationship: it does not implement mergeFilterStatement`);
+      }
+      getOptions.where = adapter.mergeFilterStatement(scope.field, scope.value, true, getOptions.where);
+      if (countOptions) {
+        countOptions.where = adapter.mergeFilterStatement(scope.field, scope.value, true, countOptions.where);
+      }
+    }
     if (definition.before) {
       await definition.before({
         params: getOptions, args, context, info: selection?.raw,
@@ -573,6 +807,13 @@ export default class Ormize<
       const targetGlobalKeys = this.getGlobalKeys(targetName);
       const targetDef = this.getDefinition(targetName);
       if (input[key]) {
+        // Anything handed to the target's adapter needs that adapter's transaction
+        // handle: for a cross-adapter relationship the one in `defaultOptions` /
+        // `context` was opened by this model's adapter and is meaningless there.
+        // (Resolving it enrols the target adapter in the unit of work, so only do
+        // it for a relationship the mutation actually touches.)
+        const targetOptions = await this.optionsForAdapter(defName, targetName, defaultOptions);
+        const targetContext = await this.optionsForAdapter(defName, targetName, context);
         const args = input[key];
         const singular = association.associationType === "belongsTo" || association.associationType === "hasOne";
         const isBtm = association.associationType === "belongsToMany";
@@ -586,7 +827,7 @@ export default class Ormize<
               });
             }
 
-            const [result] = await this.processCreate(targetName, source, {input: arg}, context, selection);
+            const [result] = await this.processCreate(targetName, source, {input: arg}, targetContext, selection);
             // const targetAdapter = this.getModelAdapter(targetName);
             // const k = this.getValueFromInstance(targetName, result, targetAdapter.getPrimaryKeyNameForModel(targetName));
 
@@ -607,13 +848,13 @@ export default class Ormize<
           await waterfall(args.update, async(arg: { where: any; limit: any; input: any; }) => {
             const {where, limit, input} = arg;
             // const [result] = await this.processUpdate(targetName, source, {input: arg}, context, info);
-            const whereObj = await targetAdapter.processFilterArgument(translateFilter(where, targetGlobalKeys), targetDef.whereOperators, defaultOptions);
+            const whereObj = await targetAdapter.processFilterArgument(translateFilter(where, targetGlobalKeys), targetDef.whereOperators, targetOptions);
             const targets = await source[association.accessors.get]({
               limit,
               where: whereObj,
               ...defaultOptions
             });
-            let i = await this.processInputs(targetName, input, source, args, context, selection?.raw);
+            let i = await this.processInputs(targetName, input, source, args, targetContext, selection?.raw);
             if (targetDef.before) {
               i = await targetDef.before({
                 params: input, args, context, info: selection?.raw,
@@ -622,7 +863,7 @@ export default class Ormize<
               });
             }
             await Promise.all(targets.map(async(model: any) => {
-              let m = await targetAdapter.update(model, i, defaultOptions);
+              let m = await targetAdapter.update(model, i, targetOptions);
               // if (targetDef.after) {
               //   m = await targetDef.after({
               //     result: m, args, context, info,
@@ -631,7 +872,7 @@ export default class Ormize<
               //   });
               // }
               const defName = targetDef.name;
-              await this.processRelationshipMutation(defName, m, input, context, selection);
+              await this.processRelationshipMutation(defName, m, input, targetContext, selection);
               return m;
             }));
           });
@@ -639,12 +880,12 @@ export default class Ormize<
         if (args.delete) {
           await waterfall(args.delete, async(arg: any) => {
             const targets = await source[association.accessors.get](Object.assign({
-              where: await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, defaultOptions),
+              where: await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions),
             }, defaultOptions));
             // let i = await this.processInputs(targetName, input, source, args, context, info);
             await Promise.all(targets.map(async(model: any) => {
               const defName = targetDef.name;
-              await this.processRelationshipMutation(defName, model, input, context, selection);
+              await this.processRelationshipMutation(defName, model, input, targetContext, selection);
               if (targetDef.before) {
                 await targetDef.before({
                   params: model, args, context, info: selection?.raw,
@@ -652,7 +893,7 @@ export default class Ormize<
                   type: Events.MUTATION_DELETE,
                 });
               }
-              await this.processDelete(defName, source, arg, context, selection);
+              await this.processDelete(defName, source, arg, targetContext, selection);
               // if (targetDef.after) {
               //   await targetDef.after({
               //     result: model, args, context, info,
@@ -672,10 +913,10 @@ export default class Ormize<
             }
           } else {
             await waterfall(args.remove, async(arg: any) => {
-              const where = await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, defaultOptions);
+              const where = await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions);
               const results = await targetAdapter.findAll(targetName, Object.assign({
                 where,
-              }, defaultOptions));
+              }, targetOptions));
               if (results.length > 0) {
                 return source[association.accessors.removeMultiple](results, defaultOptions);
               }
@@ -690,10 +931,10 @@ export default class Ormize<
             // pass the filter directly.
             const filter = isBtm ? (arg || {}).where : arg;
             const through = isBtm ? (arg || {}).through : undefined;
-            const where = await targetAdapter.processFilterArgument(translateFilter(filter, targetGlobalKeys), targetDef.whereOperators, defaultOptions);
+            const where = await targetAdapter.processFilterArgument(translateFilter(filter, targetGlobalKeys), targetDef.whereOperators, targetOptions);
             const results = await targetAdapter.findAll(targetName, Object.assign({
               where,
-            }, defaultOptions));
+            }, targetOptions));
             if (results.length > 0) {
               return source[association.accessors.addMultiple](results, through !== undefined ? Object.assign({through}, defaultOptions) : defaultOptions);
             }
@@ -704,8 +945,8 @@ export default class Ormize<
         if (args.set !== undefined && args.set !== null) {
           if (singular) {
             // belongsTo/hasOne: associate one existing record found by filter.
-            const where = await targetAdapter.processFilterArgument(translateFilter(args.set, targetGlobalKeys), targetDef.whereOperators, defaultOptions);
-            const found = await targetAdapter.findAll(targetName, Object.assign({where, limit: 1}, defaultOptions));
+            const where = await targetAdapter.processFilterArgument(translateFilter(args.set, targetGlobalKeys), targetDef.whereOperators, targetOptions);
+            const found = await targetAdapter.findAll(targetName, Object.assign({where, limit: 1}, targetOptions));
             await source[association.accessors.set](found[0] || null, defaultOptions);
           } else {
             // Collections: replace the entire set with all matching existing records.
@@ -716,8 +957,8 @@ export default class Ormize<
               if (isBtm && (arg || {}).through !== undefined) {
                 through = arg.through;
               }
-              const where = await targetAdapter.processFilterArgument(translateFilter(filter, targetGlobalKeys), targetDef.whereOperators, defaultOptions);
-              const results = await targetAdapter.findAll(targetName, Object.assign({where}, defaultOptions));
+              const where = await targetAdapter.processFilterArgument(translateFilter(filter, targetGlobalKeys), targetDef.whereOperators, targetOptions);
+              const results = await targetAdapter.findAll(targetName, Object.assign({where}, targetOptions));
               all.push(...results);
               return undefined;
             });
@@ -728,12 +969,12 @@ export default class Ormize<
         if (args.restore !== undefined && args.restore !== null) {
           // Restore soft-deleted (paranoid) related records scoped to this relationship.
           const restoreByFilter = async(arg: any) => {
-            const where = await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, defaultOptions);
+            const where = await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions);
             const res = await source[association.accessors.get](Object.assign({where, paranoid: false}, defaultOptions));
             const records = Array.isArray(res) ? res : (res ? [res] : []);
             await Promise.all(records
               .filter((r: any) => r && r.deletedAt)
-              .map((r: any) => r.restore(defaultOptions)));
+              .map((r: any) => r.restore(targetOptions)));
           };
           if (singular) {
             await restoreByFilter(args.restore);
@@ -749,7 +990,7 @@ export default class Ormize<
           // no field write, no create/update/delete; scalar fields in `input` are
           // ignored (only relationship sub-mutations are applied).
           const selectByFilter = async(arg: any) => {
-            const where = await targetAdapter.processFilterArgument(translateFilter(arg.where, targetGlobalKeys), targetDef.whereOperators, defaultOptions);
+            const where = await targetAdapter.processFilterArgument(translateFilter(arg.where, targetGlobalKeys), targetDef.whereOperators, targetOptions);
             const res = await source[association.accessors.get](Object.assign({where}, defaultOptions));
             const records = Array.isArray(res) ? res : (res ? [res] : []);
             await waterfall(records, async(m: any) => {
