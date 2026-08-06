@@ -649,6 +649,141 @@ describe("tests", () => {
     expect(defaultArgs.include).toBeDefined();
   });
 
+  it("adapter - include - all relationships denied omits the include type", async() => {
+    const adapter = new SequelizeAdapter({}, {
+      dialect: "sqlite",
+    });
+    const itemDef = {
+      name: "Item",
+      define: {
+        "name": {
+          type: Sequelize.STRING,
+          allowNull: false,
+        },
+      },
+      relationships: [{
+        type: "hasMany",
+        model: "Item",
+        name: "children",
+        options: {
+          as: "children",
+          foreignKey: "itemId",
+        },
+      }],
+    };
+    await adapter.createModel(itemDef);
+    const permission = {
+      relationship: () => false,
+    };
+    // An input object with no fields is invalid GraphQL — the type must not exist
+    // at all, and the `include` arg must be dropped along with it.
+    expect(adapter.getIncludeGraphQLType(itemDef.name, itemDef, permission)).not.toBeDefined();
+    const defaultArgs = adapter.getDefaultListArgs(itemDef.name, itemDef, permission);
+    expect(defaultArgs.where).toBeDefined();
+    expect(defaultArgs.include).not.toBeDefined();
+  });
+
+  it("adapter - include - relationships to denied models are excluded", async() => {
+    const adapter = new SequelizeAdapter({}, {
+      dialect: "sqlite",
+    });
+    const secretDef = {
+      name: "Secret",
+      define: {
+        "value": {
+          type: Sequelize.STRING,
+        },
+      },
+      relationships: [],
+    };
+    const itemDef = {
+      name: "Item",
+      define: {
+        "name": {
+          type: Sequelize.STRING,
+        },
+      },
+      relationships: [{
+        type: "hasMany",
+        model: "Item",
+        name: "children",
+        options: {
+          as: "children",
+          foreignKey: "itemId",
+        },
+      }, {
+        type: "hasMany",
+        model: "Secret",
+        name: "secrets",
+        options: {
+          as: "secrets",
+          foreignKey: "itemId",
+        },
+      }],
+    };
+    await adapter.createModel(secretDef);
+    await adapter.createModel(itemDef);
+    const includeType = adapter.getIncludeGraphQLType(itemDef.name, itemDef, {
+      model: (modelName: string) => modelName !== "Secret",
+    }) as any;
+    expect(includeType).toBeDefined();
+    const includeFields = includeType.ofType.getFields();
+    expect(includeFields.children).toBeDefined();
+    // A denied datatype has no output type either, so it must not be joinable.
+    expect(includeFields.secrets).not.toBeDefined();
+  });
+
+  it("adapter - orderBy - all fields denied omits the orderBy enum", async() => {
+    const adapter = new SequelizeAdapter({}, {
+      dialect: "sqlite",
+    });
+    // `isFieldAllowed` hard-allows a field literally named `id`, so an all-denied
+    // orderBy is only reachable on a model with a differently named primary key.
+    const codeDef = {
+      name: "Coded",
+      define: {
+        "code": {
+          type: Sequelize.STRING,
+          primaryKey: true,
+        },
+        "label": {
+          type: Sequelize.STRING,
+        },
+      },
+      relationships: [],
+    };
+    await adapter.createModel(codeDef);
+    expect(adapter.getOrderByGraphQLType(codeDef.name, {
+      field: () => false,
+    })).not.toBeDefined();
+  });
+
+  it("adapter - orderBy - allowed fields still produce an enum", async() => {
+    const adapter = new SequelizeAdapter({}, {
+      dialect: "sqlite",
+    });
+    const codeDef = {
+      name: "Coded",
+      define: {
+        "code": {
+          type: Sequelize.STRING,
+          primaryKey: true,
+        },
+        "label": {
+          type: Sequelize.STRING,
+        },
+      },
+      relationships: [],
+    };
+    await adapter.createModel(codeDef);
+    const orderBy = adapter.getOrderByGraphQLType(codeDef.name, {
+      field: (_modelName: string, fieldName: string) => fieldName === "label",
+    }) as any;
+    expect(orderBy).toBeDefined();
+    const valueNames = orderBy.ofType.getValues().map((v: any) => v.name);
+    expect(valueNames).toEqual(["labelASC", "labelDESC"]);
+  });
+
   it("adapter - hasInlineCountFeature - sqlite", async() => {
     const adapter = new SequelizeAdapter({
       disableInlineCount: false,

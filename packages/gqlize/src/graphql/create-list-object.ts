@@ -88,15 +88,18 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
         type: GraphQLInt,
         description: "If provided the results will be the first ${amount} of records from provided cursor, if a cursor is not provided  the results will be the last ${amount} of records.",
       },
-      orderBy: {
-        type: orderBy,
-        description: "If provided this will sort the results by the supplied column and direction",
-      },
       required: {
         type: GraphQLBoolean,
         description: "When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.",
       }
-    }, instance.getDefaultListArgs(targetDefName)),
+    }, orderBy ? {
+      // Permissions can deny every orderable field, leaving no orderBy enum to
+      // reference — omit the argument rather than emitting `type: undefined`.
+      orderBy: {
+        type: orderBy,
+        description: "If provided this will sort the results by the supplied column and direction",
+      },
+    } : {}, instance.getDefaultListArgs(targetDefName)),
     async resolve(source: any, args: { after: any; before: any; first: any; last: any; }, context: any, info: any) {
       const a = processDefaultArgs(args);
       let cursor: { index: any; id?: any; } | null = null;

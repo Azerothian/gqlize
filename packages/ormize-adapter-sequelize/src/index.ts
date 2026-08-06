@@ -8,7 +8,7 @@ import {
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
 import unique from "@azerothian/utilize/utils/unique";
-import { isFieldAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
+import { isFieldAllowed, isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import replaceIdDeep, {
   replaceDefWhereOperators,
@@ -633,26 +633,32 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (!this.getMetaObj(defName, "orderByType")) {
       const perm = permission !== undefined ? permission : this._buildPermission;
       const fields = this.getFields(defName);
-      this.setMetaObj(
-        defName,
-        "orderByType",
-        new GraphQLList(
-          new GraphQLEnumType({
-            name: `${defName}OrderBy`,
-            // Only permission-allowed fields are orderable — a denied field must
-            // not be sortable (another way to leak ordering-based information).
-            values: Object.keys(fields).reduce((o, fieldName) => {
-              if (!isFieldAllowed(perm, defName, fieldName)) {
-                return o;
-              }
-              o[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
-              o[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
-              return o;
-            }, {} as { [key: string]: any }),
-            // description: "",
-          })
-        )
-      );
+      // Only permission-allowed fields are orderable — a denied field must
+      // not be sortable (another way to leak ordering-based information).
+      const values = Object.keys(fields).reduce((o, fieldName) => {
+        if (!isFieldAllowed(perm, defName, fieldName)) {
+          return o;
+        }
+        o[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
+        o[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
+        return o;
+      }, {} as { [key: string]: any });
+      // An enum with no values is an invalid GraphQL type. When permissions deny
+      // every orderable field, leave the meta unset so callers omit `orderBy`
+      // entirely rather than emitting an empty `${defName}OrderBy`.
+      if (Object.keys(values).length > 0) {
+        this.setMetaObj(
+          defName,
+          "orderByType",
+          new GraphQLList(
+            new GraphQLEnumType({
+              name: `${defName}OrderBy`,
+              values,
+              // description: "",
+            })
+          )
+        );
+      }
     }
     return this.getMetaObj(defName, "orderByType") as GraphQLInputObjectType;
   };
@@ -677,6 +683,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           if (!isRelationshipAllowed(perm, defName, relationship.name as string, relationship.model)) {
             return o;
           }
+          // A relationship whose target model is denied has no output type in the
+          // schema either (see gqlize's create-related-fields), so it must not be
+          // includable — that would expose a restricted datatype as a join target.
+          if (!isModelAllowed(perm, relationship.model)) {
+            return o;
+          }
           const targetModel = this.getModel(relationship.model);
           o[relationship.name] = {
             type: new GraphQLInputObjectType({
@@ -696,10 +708,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
                       permission
                     ),
                   },
-                  orderBy: {
-                    type: this.getOrderByGraphQLType(targetModel.name, permission),
-                  },
                 };
+                // A target whose orderable fields are all denied has no orderBy
+                // enum; only expose the field when one exists.
+                const targetOrderByType = this.getOrderByGraphQLType(
+                  targetModel.name,
+                  permission
+                );
+                if (targetOrderByType) {
+                  includeFields.orderBy = {
+                    type: targetOrderByType,
+                  };
+                }
                 // A leaf target (no relationships of its own) has no include type;
                 // only expose the nested `include` field when one exists.
                 const nestedIncludeType = this.getIncludeGraphQLType(
@@ -721,11 +741,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         {} as {[key: string]: any}
       );
       // const queryConfig = this.createQueryConfig(definition);
-      const includeType = new GraphQLInputObjectType({
-        name: `GQLT${defName}IncludeObject`,
-        fields,
-      });
-      this.setMetaObj(defName, "includeType", new GraphQLList(includeType));
+      // The `relationships.length` check above is against the raw list, before
+      // permission filtering. If every relationship is denied (or targets a denied
+      // model) the field map is empty, and an input object with no fields is an
+      // invalid GraphQL type. Leave the meta unset so getDefaultListArgs and the
+      // nested `include` guard omit the argument entirely.
+      if (Object.keys(fields).length > 0) {
+        const includeType = new GraphQLInputObjectType({
+          name: `GQLT${defName}IncludeObject`,
+          fields,
+        });
+        this.setMetaObj(defName, "includeType", new GraphQLList(includeType));
+      }
     }
     return this.getMetaObj(defName, "includeType");
   };

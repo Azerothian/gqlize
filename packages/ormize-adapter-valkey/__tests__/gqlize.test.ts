@@ -60,4 +60,40 @@ describe("valkey adapter — gqlize GraphQL", () => {
     expect(keys).toContain("label");
     expect(keys).not.toContain("note");
   });
+
+  it("relationships to permission-denied models are excluded from the include type", async () => {
+    const orm: any = new Ormize();
+    orm.registerAdapter(new ValkeyAdapter({ prefix: "gqlperm" }, client), "valkey");
+    await orm.addDefinition({
+      name: "Basket",
+      define: { id: { type: DataTypes.UUID, primaryKey: true }, name: { type: DataTypes.String, index: true } },
+      options: {},
+      relationships: [
+        { type: "hasMany", model: "Widget", name: "widgets", options: { foreignKey: "basketId" } },
+        { type: "hasMany", model: "Secret", name: "secrets", options: { foreignKey: "basketId" } },
+      ],
+    });
+    await orm.addDefinition({
+      name: "Widget",
+      define: { id: { type: DataTypes.UUID, primaryKey: true }, label: { type: DataTypes.String, index: true } },
+      options: {},
+    });
+    await orm.addDefinition({
+      name: "Secret",
+      define: { id: { type: DataTypes.UUID, primaryKey: true }, value: { type: DataTypes.String, index: true } },
+      options: {},
+    });
+    await orm.initialise();
+    await orm.sync();
+    const schema = await createSchema(orm, {
+      permission: { model: (modelName: string) => modelName !== "Secret" },
+    });
+    // A denied datatype has no output type in the schema, so it must not remain
+    // reachable as a join target on an include argument either.
+    const includeType: any = schema.getType("GQLTBasketInclude");
+    expect(includeType).toBeDefined();
+    const keys = Object.keys(includeType.getFields());
+    expect(keys).toContain("widgets");
+    expect(keys).not.toContain("secrets");
+  });
 });

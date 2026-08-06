@@ -108,6 +108,43 @@ describe("permissions", () => {
     const taskFields = schema.getQueryType().getFields().models.type.getFields().Task.type.getFields().edges.type.ofType.getFields().node.type.getFields();
     return expect(taskFields.items).not.toBeDefined();
   });
+  it("relationship - denying every relationship omits the include type", async() => {
+    const instance = await createInstance();
+    // Task has three relationships (items, item, btmItems). Denying all of them
+    // leaves GQLTTaskIncludeObject with no fields, which is an invalid GraphQL
+    // input object — it must be dropped rather than emitted empty.
+    const schema = await createSchema(instance, {
+      permission: {
+        relationship(modelName) {
+          return modelName !== "Task";
+        },
+      },
+    }) as any;
+    expect(schema.getType("GQLTTaskIncludeObject")).not.toBeDefined();
+    const taskField = schema.getQueryType().getFields().models.type.getFields().Task;
+    expect(taskField.args.find((a: any) => a.name === "include")).not.toBeDefined();
+    // Sibling models are unaffected and keep their include argument.
+    const taskItemField = schema.getQueryType().getFields().models.type.getFields().TaskItem;
+    expect(taskItemField).toBeDefined();
+  });
+  it("model - denied datatypes are excluded from include types", async() => {
+    const instance = await createInstance();
+    // Task.item and Task.btmItems both target Item; only Task.items (TaskItem)
+    // should survive.
+    const schema = await createSchema(instance, {
+      permission: {
+        model(modelName) {
+          return modelName !== "Item";
+        },
+      },
+    }) as any;
+    const includeType = schema.getType("GQLTTaskIncludeObject");
+    expect(includeType).toBeDefined();
+    const includeFields = includeType.getFields();
+    expect(includeFields.items).toBeDefined();
+    expect(includeFields.item).not.toBeDefined();
+    expect(includeFields.btmItems).not.toBeDefined();
+  });
   it("mutation model", async() => {
     const instance = await createInstance();
     const schema = await createSchema(instance, {

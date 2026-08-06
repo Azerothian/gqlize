@@ -1,6 +1,6 @@
 import { GraphQLID, GraphQLList, GraphQLEnumType, GraphQLInputObjectType, GraphQLBoolean } from "graphql";
 import createQueryType from "@azerothian/graphql-types/query";
-import { isFieldAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
+import { isFieldAllowed, isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import { ValkeyModel } from "./model";
 
@@ -46,15 +46,20 @@ export function getOrderByGraphQLType(adapter: any, defName: string, permission?
   const perm = permission !== undefined ? permission : adapter._buildPermission;
   if (!adapter.getMetaObj(defName, "orderByType")) {
     const model: ValkeyModel = adapter.model(defName);
-    adapter.setMetaObj(defName, "orderByType", new GraphQLList(new GraphQLEnumType({
-      name: `${defName}OrderBy`,
-      values: Object.keys(model.fields).reduce((o: any, fieldName) => {
-        if (!isFieldAllowed(perm, defName, fieldName)) return o;
-        o[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
-        o[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
-        return o;
-      }, {}),
-    })));
+    const values = Object.keys(model.fields).reduce((o: any, fieldName) => {
+      if (!isFieldAllowed(perm, defName, fieldName)) return o;
+      o[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
+      o[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
+      return o;
+    }, {});
+    // An enum with no values is an invalid GraphQL type — when permissions deny
+    // every orderable field, leave the meta unset so callers omit `orderBy`.
+    if (Object.keys(values).length) {
+      adapter.setMetaObj(defName, "orderByType", new GraphQLList(new GraphQLEnumType({
+        name: `${defName}OrderBy`,
+        values,
+      })));
+    }
   }
   return adapter.getMetaObj(defName, "orderByType");
 }
@@ -65,6 +70,9 @@ export function getIncludeGraphQLType(adapter: any, defName: string, _definition
   if (!adapter.getMetaObj(defName, "includeType") && (model.relationships || []).length > 0) {
     const fields = model.relationships.reduce((o: any, relationship: any) => {
       if (!isRelationshipAllowed(perm, defName, relationship.name, relationship.model)) return o;
+      // A relationship whose target model is denied has no output type in the
+      // schema either, so it must not be includable.
+      if (!isModelAllowed(perm, relationship.model)) return o;
       const targetName = relationship.model;
       o[relationship.name] = {
         type: new GraphQLInputObjectType({
@@ -74,8 +82,9 @@ export function getIncludeGraphQLType(adapter: any, defName: string, _definition
               required: { type: GraphQLBoolean },
               separate: { type: GraphQLBoolean },
               where: { type: getFilterGraphQLType(adapter, targetName, adapter.model(targetName).definition, permission) },
-              orderBy: { type: getOrderByGraphQLType(adapter, targetName, permission) },
             };
+            const targetOrderBy = getOrderByGraphQLType(adapter, targetName, permission);
+            if (targetOrderBy) includeFields.orderBy = { type: targetOrderBy };
             const nested = getIncludeGraphQLType(adapter, targetName, adapter.model(targetName).definition, permission);
             if (nested) includeFields.include = { type: nested };
             return includeFields;
