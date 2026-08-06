@@ -12,6 +12,24 @@ concurrency:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    # Without this the GitHub default of 6h applies, so a stalled step burns
+    # hours of runner time before anyone notices.
+    timeout-minutes: 20
+    env:
+      # The valkey suite talks to the service container below instead of
+      # downloading a redis-server binary at test time. Keep the image pinned to
+      # the same 7.x line as `redis-memory-server.version` in the root manifest.
+      REDIS_URL: redis://localhost:6379
+    services:
+      redis:
+        image: redis:7.4.5
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 

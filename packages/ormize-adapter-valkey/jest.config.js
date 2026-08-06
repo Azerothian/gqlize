@@ -2,8 +2,11 @@
 module.exports = {
   verbose: true,
   testEnvironment: 'node',
-  // Suites share a single redis-memory-server instance / keyspace; run serially.
+  // Suites share a single redis instance / keyspace; run serially.
   maxWorkers: 1,
+  // ioredis keeps handles alive past the last suite, which otherwise leaves the
+  // run hanging after every test has already passed.
+  forceExit: true,
   transform: {
     '^.+\\.[tj]sx?$': ['@swc/jest', {
       jsc: { parser: { syntax: 'typescript', tsx: true }, target: 'es2022' },
