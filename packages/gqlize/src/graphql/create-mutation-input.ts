@@ -11,6 +11,7 @@ import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
 import { Relationship } from '../types/index';
+import { recordExternalType } from "./snapshot/ledger";
 
 /** Whether a relationship may appear on a create/update input object. */
 function isRelationshipInputAllowed(options: GqlizeOptions, defName: string, relName: string, forceOptional: boolean) {
@@ -81,6 +82,13 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         } else {
           inputType = type;
         }
+        recordExternalType(schemaCache, inputType, {
+          via: "definitionOverride",
+          defName,
+          fieldName,
+          use: "inputType",
+          forceOptional,
+        });
 
         if (!field.allowNull && !field.autoPopulated && !forceOptional) {
           fields[fieldName] = {

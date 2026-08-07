@@ -41,7 +41,7 @@ jobs:
     env:
       # Dependency order, leaves first. Shared by both publish steps so they cannot
       # drift apart. Keep in sync with release-announce.yml.
-      PACKAGES: "graphql-types utilize ormize gqlize ormize-adapter-sequelize ormize-adapter-valkey ormize-zod4 nestize"
+      PACKAGES: "graphql-types utilize ormize gqlize ormize-adapter-sequelize ormize-adapter-valkey ormize-zod4 nestize temporalize"
       # The valkey suite talks to the service container below instead of
       # downloading a redis-server binary at test time. Keep the image pinned to
       # the same 7.x line as `redis-memory-server.version` in the root manifest.
@@ -135,6 +135,26 @@ jobs:
               fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
               console.log(`${json.name} -> ${version}`);
             }
+
+            // gqlize carries its version as a *value* too, because the schema-artifact
+            // fingerprint folds in "which gqlize built this" and a JSON import of the
+            // manifest is not available to the emitted cjs/ and lib/ trees. It is
+            // hand-written and matches package.json in git (asserted by
+            // __tests__/version.test.ts, which runs above this step), so it has to be
+            // rewritten here or every published release would report the last committed
+            // version and the staleness check would read as compatible across releases
+            // it should reject.
+            const versionFile = "packages/gqlize/src/version.ts";
+            const before = fs.readFileSync(versionFile, "utf8");
+            const after = before.replace(
+              /^export const VERSION = ".*";$/m,
+              `export const VERSION = "${version}";`,
+            );
+            if (after === before) {
+              throw new Error(`could not rewrite VERSION in ${versionFile}`);
+            }
+            fs.writeFileSync(versionFile, after);
+            console.log(`${versionFile} -> ${version}`);
           ' "${{ steps.version.outputs.version }}"
 
       - name: Build

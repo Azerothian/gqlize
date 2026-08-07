@@ -5,8 +5,7 @@ import { isRelationshipAllowed } from "@azerothian/utilize";
 import { SchemaCache, GqlizeOptions, Definition, DefinitionFields, HookMap, Relationship, WhereOperators, Association } from '../types';
 import GQLManager from '../manager';
 import { GraphQLType, GraphQLArgs, GraphQLBoolean } from "graphql";
-import Events from "../events";
-import { processAfter } from "./utils/after";
+import { bindField } from "./resolvers/bind";
 
 export default function createRelatedFieldsFunc(
   defName: string,
@@ -38,7 +37,7 @@ export default function createRelatedFieldsFunc(
           switch (association.associationType) {
             case "hasOne":
             case "belongsTo":
-              f[relName] = {
+              f[relName] = bindField({
                 type: targetObject,
                 description: ((definition.comments || {}).fields || {})[relName],
                 args: {
@@ -47,22 +46,15 @@ export default function createRelatedFieldsFunc(
                     description: "When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.",
                   },
                 },
-                async resolve(source: any, args: any, context: any, info: any) {
-                  const node = await instance.resolveSingleRelationship(
-                    targetDef.name || "",
-                    association,
-                    source,
-                    args,
-                    context,
-                    info,
-                  );
-
-                  return processAfter(node, args, context, info, definition, Events.QUERY);
-                },
-              };
+              }, {
+                kind: "singleRelationship",
+                defName,
+                relName,
+                targetDefName: association.target,
+              }, { instance, options });
               break;
             default:
-              f[relName] = createManyObject(instance, schemaCache, targetDef, targetObject, "", association, (definition.comments?.fields || {})[relName]);
+              f[relName] = createManyObject(instance, schemaCache, defName, targetDef, targetObject, "", association, (definition.comments?.fields || {})[relName], options);
               break;
           }
 
@@ -75,20 +67,15 @@ export default function createRelatedFieldsFunc(
   };
 }
 
-function createManyObject(instance: GQLManager, schemaCache: SchemaCache, targetDef: Definition, targetObject: any, prefix: string, relationship: Association, comment: string) {
+function createManyObject(instance: GQLManager, schemaCache: SchemaCache, defName: string, targetDef: Definition, targetObject: any, prefix: string, relationship: Association, comment: string, options: GqlizeOptions) {
   if(targetDef?.name) {
-    return createListObject(instance, schemaCache, targetDef.name, targetObject, (source: any, args: any, context: any, info: any) => {
-      if(targetDef?.name) {
-        return instance.resolveManyRelationship(
-          targetDef.name,
-          relationship,
-          source,
-          args,
-          context,
-          info,
-        );
-      }
-      throw "unable to continue";
-    }, prefix, `${relationship.associationType}${capitalize(relationship.name)}`, undefined, comment);
+    // The association is looked up on the *parent* (`defName`) while the rows
+    // themselves belong to the target — hence both names in the descriptor.
+    return createListObject(instance, schemaCache, targetDef.name, targetObject, {
+      source: "manyRelationship",
+      defName: targetDef.name,
+      parentDefName: defName,
+      relName: relationship.name,
+    }, prefix, `${relationship.associationType}${capitalize(relationship.name)}`, undefined, comment, options);
   }
 }

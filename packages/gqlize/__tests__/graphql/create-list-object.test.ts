@@ -26,11 +26,19 @@ test("createListObject", async() => {
   const {nodeInterface} = createNodeInterface(db);
   const schemaCache = createSchemaCache();
   schemaCache.types.Item = createModelType(itemDef.name, db, {}, nodeInterface, schemaCache);
-  //(instance, schemaCache, targetDefName, targetType, resolveData, prefix = "", suffix = "")
-  const listObject = createListObject(db, schemaCache, itemDef.name, schemaCache.types.Item, (a: any,b: any,c: any): Promise<{total: any, models: any}> => {
-    return {} as any;
-  } , "", "");
+  //(instance, schemaCache, targetDefName, targetType, data, prefix = "", suffix = "")
+  const listObject = createListObject(db, schemaCache, itemDef.name, schemaCache.types.Item, {
+    source: "findAll",
+    defName: itemDef.name,
+  }, "", "");
   expect(listObject.type).toBeInstanceOf(GraphQLObjectType);
+  expect(listObject.resolve).toBeInstanceOf(Function);
+  expect(listObject.extensions.gqlize).toEqual({
+    kind: "connection",
+    connectionName: "Item",
+    targetDefName: "Item",
+    data: {source: "findAll", defName: "Item"},
+  });
 
   // expect(basicFieldsFunc).toBeInstanceOf(Function);
   // const fields = basicFieldsFunc();

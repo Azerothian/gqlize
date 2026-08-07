@@ -6,40 +6,26 @@ import {
   GraphQLInt,
   GraphQLString,
   GraphQLBoolean,
-  GraphQLError,
 } from "graphql";
 
-import { fromCursor, toCursor } from "./objects/cursor";
 import {capitalize} from "@azerothian/utilize/utils/word";
-import { SchemaCache } from '../types';
+import { GqlizeOptions, SchemaCache } from '../types';
 import GQLManager from "../manager";
-import waterfall from "@azerothian/utilize/utils/waterfall";
-import { processAfter } from "./utils/after";
-import Events from "../events";
+import { bindField } from "./resolvers/bind";
+import { DataSourceDescriptor } from "./resolvers/types";
 
-function processDefaultArgs(args: { before: string; after: string; }) {
-  const newArgs: any = {};
-  if (args.before) {
-    newArgs.before = fromCursor(args.before);
-  }
-  if (args.after) {
-    newArgs.after = fromCursor(args.after);
-  }
-  return {
-    ...args,
-    ...newArgs
-  };
-}
-
-
-export default function createListObject(instance: GQLManager, schemaCache: SchemaCache, targetDefName: string, targetType: any, resolveData: ((arg0: any, arg1: any, arg2: any, arg3: any) => PromiseLike<{ total: any; models: any; }>), prefix = "", suffix = "", customArgs?: any, comment?: string) {
+/**
+ * `data` describes where the page of rows comes from rather than being a
+ * closure over it, so the same connection can be rebuilt from a serialized
+ * schema. The resolver itself lives in `resolvers/connection.ts`.
+ */
+export default function createListObject(instance: GQLManager, schemaCache: SchemaCache, targetDefName: string, targetType: any, data: DataSourceDescriptor, prefix = "", suffix = "", customArgs?: any, comment?: string, options: GqlizeOptions = {}) {
   const name = `${capitalize(prefix)}${capitalize(targetDefName)}${capitalize(suffix)}`;
   if (schemaCache.lists[name]) {
     return schemaCache.lists[name]; //TODO: figure out why this is getting hit?
   }
   const orderBy = instance.getOrderByGraphQLType(targetDefName);
-  const definition = instance.getDefinition(targetDefName);
-  const response = {
+  const response = bindField({
     description: comment,
     type: new GraphQLObjectType({
       name: `${name}List`,
@@ -100,70 +86,12 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
         description: "If provided this will sort the results by the supplied column and direction",
       },
     } : {}, instance.getDefaultListArgs(targetDefName)),
-    async resolve(source: any, args: { after: any; before: any; first: any; last: any; }, context: any, info: any) {
-      const a = processDefaultArgs(args);
-      let cursor: { index: any; id?: any; } | null = null;
-      if (args.after || args.before) {
-        cursor = fromCursor(args.after || args.before);
-        // Bind the cursor to this connection: cursors are minted as
-        // toCursor(name, idx), so a cursor whose id is a different connection's
-        // name was reused across connections and its index is meaningless here.
-        if (cursor && cursor.id !== name) {
-          throw new GraphQLError(`Cursor does not belong to the ${name} connection`);
-        }
-      }
-      const { total, models } = await resolveData(source, a, context, info);
-      const edges = await Promise.all(models.map(async(row: any, idx: number) => {
-        const node = await processAfter(row, a, context, info, definition, Events.OUTPUT);
-        if(!node) {
-          return undefined;
-        }
-        let startIndex = null;
-        if (cursor) {
-          startIndex = Number(cursor.index);
-        }
-        if (startIndex !== null) {
-          startIndex++;
-        } else {
-          startIndex = 0;
-        }
-        return {
-          cursor: toCursor(name, idx + startIndex),
-          node,
-        };
-      })).then((edges: any) => edges.filter((e: any) => (e !== undefined && e !== null)));
-      
-      let startCursor, endCursor;
-      if (edges.length > 0) {
-        startCursor = edges[0].cursor;
-        endCursor = edges[edges.length - 1].cursor;
-      }
-      let hasNextPage = false;
-      let hasPreviousPage = false;
-      if (edges.length > 0) {
-        // Derive page flags from the returned window's absolute position (edge
-        // cursors encode `position` = index-in-result-set). This is direction-
-        // agnostic and exact: there is a previous page iff the window does not
-        // start at 0, and a next page iff it does not reach the last row. The
-        // previous count-and-cursor arithmetic mis-handled windows starting
-        // between 1 and `count`, and the forward/backward flag swap was unsound.
-        const windowStart = fromCursor(edges[0].cursor).index;
-        const windowEnd = fromCursor(edges[edges.length - 1].cursor).index;
-        hasPreviousPage = windowStart > 0;
-        hasNextPage = windowEnd < total - 1;
-      }
-      return {
-        pageInfo: {
-          hasNextPage,
-          hasPreviousPage,
-          startCursor,
-          endCursor,
-        },
-        total,
-        edges,
-      };
-    }
-  };
+  }, {
+    kind: "connection",
+    connectionName: name,
+    targetDefName,
+    data,
+  }, { instance, options });
   schemaCache.lists[name] = response;
   return schemaCache.lists[name];
 }

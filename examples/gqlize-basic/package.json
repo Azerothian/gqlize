@@ -6,7 +6,11 @@
   "type": "commonjs",
   "scripts": {
     "start": "node -r @swc-node/register src/server.ts",
-    "query": "node -r @swc-node/register src/run.ts"
+    "query": "node -r @swc-node/register src/run.ts",
+    "start:artifact": "node -r @swc-node/register src/server-artifact.ts",
+    "schema:build": "node -r @swc-node/register ../../packages/gqlize/src/cli/index.ts build",
+    "schema:check": "node -r @swc-node/register ../../packages/gqlize/src/cli/index.ts check",
+    "schema:print": "node -r @swc-node/register ../../packages/gqlize/src/cli/index.ts print"
   },
   "dependencies": {
     "@azerothian/gqlize": "workspace:*",

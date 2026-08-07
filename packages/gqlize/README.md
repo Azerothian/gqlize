@@ -97,6 +97,138 @@ adapter-agnostic — the model type is provided by the adapter (see
 which is where `defineModel` / `SequelizeModel` live). The untyped `db.addDefinition(def)` still
 works unchanged.
 
+## Pre-generated schema artifacts
+
+`createSchema(orm, options)` builds the schema from scratch on every boot. You can instead
+pre-generate it into a JSON artifact, review and diff it like any other build output, and rebuild an
+executable schema from it at boot:
+
+```sh
+npx gqlize build      # ./gqlize.schema.json  (+ an optional SDL sidecar)
+npx gqlize check      # exit 1 if the artifact no longer matches the definitions
+npx gqlize print      # the schema as SDL, live or --from-artifact
+```
+
+**Build this for artifact availability, reviewability and determinism, not for speed.** The
+generator is a small part of a boot dominated by loading the driver and `initialise()`/`sync()`, and
+the loader still needs the ormize instance — it *is* the resolution engine. Measure before claiming
+a startup win.
+
+The artifact is JSON, not SDL, and that is not a stylistic choice: `printSchema` discards enum
+*internal* values, which is where `TaskOrderBy.nameASC`'s `["name","ASC"]` payload lives, and it
+never prints applied directives. An SDL round-trip loses both, silently. SDL stays available as a
+secondary artifact for codegen and CI diffs.
+
+### Config
+
+```ts
+// gqlize.config.ts
+import { defineConfig } from "@azerothian/gqlize/cli/types";
+import { buildOrm } from "./src/orm";
+import { adminPermission, anonPermission } from "./src/permissions";
+
+export default defineConfig({
+  orm: () => buildOrm(),               // already initialise()d and sync()ed
+  out: "./generated/schema.json",
+  sdl: "./generated/schema.graphql",   // optional; for codegen / CI diffs
+  profiles: {
+    admin: { options: { permission: adminPermission } },
+    anon:  { options: { permission: anonPermission  } },
+  },
+});
+```
+
+`gqlize build --all-profiles` writes one artifact per profile, folding the profile name into the
+filename (`schema.admin.json`, `schema.anon.json`) so two profiles can never collide on one file.
+
+Discovery order is `--config`, then the nearest `gqlize.config.{ts,mts,mjs,js,cjs}` walking up from
+the cwd, then a `"gqlize": "./path/to/config"` pointer in `package.json`.
+
+### Loading it
+
+```ts
+import { loadSchema } from "@azerothian/gqlize/snapshot";
+
+const orm = await buildOrm();
+const schema = await loadSchema("./generated/schema.json", orm, {
+  permission: adminPermission,       // the same options you pass to createSchema
+  permissionProfile: "admin",
+});
+```
+
+`loadSchema` reads `.json` or `.json.gz` (detected by content, not extension) and hands off to
+`materializeSchema(snapshot, orm, options)`, which is what to call when the artifact arrives from a
+bundler import, S3, or a config service instead of the filesystem.
+
+`options.extend` and `options.root` are **not** serialized — they are arbitrary user field configs
+with arbitrary resolvers, so pass them at load exactly as you pass them to `createSchema`. When an
+extend field needs to reference a *generated* type, use `extendFactory(types)` so it binds to the
+materialized instance rather than a stale one.
+
+### Staleness
+
+Every artifact carries a fingerprint of the definitions it was built from — models, fields,
+relationships, class methods, adapters, the gqlize and graphql versions. A mismatch throws at load:
+
+```
+gqlize: the schema artifact is stale — models differs from the live definitions. Rebuild it.
+```
+
+`onMismatch` controls that: `"throw"` (default), `"warn"` (load it anyway), or `"rebuild"` (fall
+back to a live `createSchema`) — the last being a good development default so a model edit does not
+force a rebuild step mid-iteration:
+
+```ts
+const schema = await loadSchema(artifact, orm, {
+  permission,
+  onMismatch: process.env.NODE_ENV === "production" ? "throw" : "rebuild",
+});
+```
+
+**The one drift the fingerprint cannot see is permissions**, because `options.permission` is a bag
+of closures and closures cannot be hashed. Two mitigations: pass an opaque `permissionProfile` id
+(recorded in the fingerprint, so an `admin` artifact loaded under `anon` is caught), and run
+`gqlize check` in CI — by default it does not stop at the fingerprint, it builds the schema live,
+materializes the artifact, and diffs the sorted SDL. That catches *any* divergence, permissions
+included. `--no-strict` drops to the fingerprint-only comparison.
+
+The fingerprint is deliberately dialect-invariant: building against SQLite in CI and serving
+Postgres in production is a normal setup, and the dialect does not affect schema shape.
+
+### Programmatic API
+
+Everything the CLI does is a public function on `@azerothian/gqlize/snapshot`:
+
+```ts
+snapshotSchema(schema, opts?)                 // GraphQLSchema  -> SchemaSnapshot
+materializeSchema(snapshot, orm, options?)    // SchemaSnapshot -> GraphQLSchema
+loadSchema(path, orm, options?)               // read + parse + materialize
+readSnapshot(path)                            // read + parse only (.json / .json.gz)
+fingerprintDefinitions(orm, opts?)            // Ormize -> Fingerprint
+compareFingerprints(a, b)                     // -> the names of the differing parts
+```
+
+so a health probe or a bespoke CI gate needs no CLI at all:
+
+```ts
+const drift = compareFingerprints(
+  artifact.fingerprint,
+  fingerprintDefinitions(orm, { permissionProfile: "admin" }),
+);
+if (drift.length) throw new Error(`stale gqlize artifact: ${drift.join(", ")}`);
+```
+
+Custom scalars are code, so they cannot be serialized. Pass the same map to both ends — omitting one
+at load throws with the scalar's name rather than failing at request time:
+
+```ts
+const artifact = snapshotSchema(schema, { scalars: { Money } });
+const schema   = await materializeSchema(artifact, orm, { permission, scalars: { Money } });
+```
+
+[`examples/gqlize-basic`](../../examples/gqlize-basic) has a working config and an artifact-served
+server (`pnpm schema:build && pnpm start:artifact`).
+
 ## Adapters
 
 - Sequelize - https://github.com/VostroNet/gqlize-adapter-sequelize

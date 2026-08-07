@@ -12,7 +12,8 @@ Every example below is drawn from the behaviour exercised in the test suite
 2. [Quick start](#2-quick-start)
 3. [Defining models](#3-defining-models)
 4. [Serving the schema](#4-serving-the-schema)
-5. [Querying](#5-querying)
+5. [Pre-generated schema artifacts](#5-pre-generated-schema-artifacts)
+6. [Querying](#6-querying)
    - [Lists & Relay connections](#lists--relay-connections)
    - [Filtering (`where`)](#filtering-where)
    - [Ordering (`orderBy`)](#ordering-orderby)
@@ -21,14 +22,16 @@ Every example below is drawn from the behaviour exercised in the test suite
    - [Count-only (`total`)](#count-only-total)
    - [Global IDs & `node`](#global-ids--node)
    - [Class & instance methods](#class--instance-methods)
-6. [Mutations](#6-mutations)
+7. [Mutations](#7-mutations)
    - [Create / update / delete](#create--update--delete)
    - [Nested relationship writes](#nested-relationship-writes)
    - [Class-method mutations](#class-method-mutations)
-7. [Permissions](#7-permissions)
-8. [Hooks](#8-hooks)
-9. [Custom scalars & JSON columns](#9-custom-scalars--json-columns)
-10. [Multiple data sources](#10-multiple-data-sources)
+8. [Permissions](#8-permissions)
+9. [Hooks](#9-hooks)
+10. [Custom scalars & JSON columns](#10-custom-scalars--json-columns)
+11. [Multiple data sources](#11-multiple-data-sources)
+12. [Transactions & async context](#12-transactions--async-context)
+13. [The Valkey / Redis adapter](#13-the-valkey--redis-adapter)
 
 ---
 
@@ -152,7 +155,7 @@ Definition keys you'll commonly use:
 - **`relationships`** — `{ type, model, name, options }`, `type` ∈ `belongsTo | hasOne | hasMany
   | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`as`/`through`.
 - **`override`** — expose a column as a different GraphQL type with `input`/`output` transforms
-  (see [§9](#9-custom-scalars--json-columns)).
+  (see [§10](#10-custom-scalars--json-columns)).
 - **`whereOperators` / `whereOperatorTypes`** — custom filter operators usable in `where`
   (see [Filtering](#filtering-where)).
 - **`expose.classMethods` / `expose.instanceMethods`** — surface methods to GraphQL under
@@ -231,7 +234,81 @@ console.log(printSchema(await createSchema(db)));
 
 ---
 
-## 5. Querying
+## 5. Pre-generated schema artifacts
+
+`createSchema` builds the whole type graph on every boot. You can instead generate it once into a
+JSON artifact — something you can review in a pull request, diff in CI, and load at startup.
+
+The package ships a `gqlize` binary:
+
+```sh
+npx gqlize build      # -> ./gqlize.schema.json (+ an optional SDL sidecar)
+npx gqlize check      # exit 1 if the artifact no longer matches your definitions
+npx gqlize print      # the schema as SDL — live, or --from-artifact
+```
+
+It reads a config file (`gqlize.config.ts`, discovered by walking up from the cwd):
+
+```ts
+// gqlize.config.ts
+import { defineConfig } from "@azerothian/gqlize/cli/types";
+import { buildDb } from "./src/db";
+
+export default defineConfig({
+  orm: () => buildDb(),                // must return an initialise()d + sync()ed instance
+  out: "./generated/schema.json",
+  sdl: "./generated/schema.graphql",   // optional sidecar, for codegen and CI diffs
+});
+```
+
+Then load it instead of building:
+
+```ts
+import { loadSchema } from "@azerothian/gqlize/snapshot";
+
+const db = await buildDb();
+const schema = await loadSchema("./generated/schema.json", db, { permission });
+```
+
+Three things are worth understanding before you adopt this:
+
+- **The ormize instance is still required.** It *is* the resolution engine — the artifact replaces
+  only the type-construction step, not the data access underneath it. `loadSchema` binds the
+  serialized field descriptors back onto your live definitions.
+- **Build it for reviewability and determinism, not for boot speed.** Schema generation is a small
+  part of a boot dominated by loading the driver and running `initialise()`/`sync()`, and the loader
+  still pays those. Measure before claiming a startup win.
+- **The artifact is JSON, not SDL, and that matters.** `printSchema` discards enum *internal* values
+  — the `["name", "ASC"]` payload behind `PostOrderBy.nameASC` — and never prints applied
+  directives. An SDL round-trip loses both silently, so SDL is only ever a secondary artifact.
+
+Every artifact carries a fingerprint of the definitions it was built from, and a mismatch throws at
+load. During development you usually want the artifact to get out of your way instead:
+
+```ts
+const schema = await loadSchema("./generated/schema.json", db, {
+  permission,
+  onMismatch: process.env.NODE_ENV === "production" ? "throw" : "rebuild",
+});
+```
+
+`"rebuild"` warns and falls back to a live `createSchema`, so editing a model mid-iteration does not
+force a rebuild step. The other modes are `"throw"` (the default) and `"warn"`.
+
+One caveat to know up front: the fingerprint **cannot see permission changes**, because
+`options.permission` is a bag of closures and closures cannot be hashed. That is what
+`gqlize check` is for — by default it rebuilds the schema live and diffs the sorted SDL, which
+catches permission drift and everything else. Run it in CI.
+
+See the [`@azerothian/gqlize` README](../packages/gqlize/README.md#pre-generated-schema-artifacts)
+for permission profiles, custom scalars, `extendFactory`, and the full programmatic API
+(`snapshotSchema`, `materializeSchema`, `fingerprintDefinitions`), and
+[`examples/gqlize-basic`](../examples/gqlize-basic) for a working config and an artifact-served
+server.
+
+---
+
+## 6. Querying
 
 All model queries live under the root `models` field. A model's list field is a
 **Relay-style connection**.
@@ -431,7 +508,7 @@ Method `type` may be a string reference (`"Post"`, `"Post[]"`) or a concrete Gra
 
 ---
 
-## 6. Mutations
+## 7. Mutations
 
 Top-level mutations live under `mutation { models { {Model}(...) { …selection } } }`. Create /
 update / delete **return arrays** (`data.models.Post[0]`), not connections.
@@ -568,7 +645,7 @@ mutation { classMethods { Post { publish(input: { amount: 2 }) { id title } } } 
 
 ---
 
-## 7. Permissions
+## 8. Permissions
 
 Pass a `permission` object as the second argument to `createSchema`. Each key is a predicate
 returning a boolean; returning falsy removes the corresponding element from the schema.
@@ -613,7 +690,7 @@ const schema = await createSchema(db, { permission });
 
 ---
 
-## 8. Hooks
+## 9. Hooks
 
 Two hook systems.
 
@@ -662,7 +739,7 @@ gqlize-level `afterCount(total)` (which may transform the returned count).
 
 ---
 
-## 9. Custom scalars & JSON columns
+## 10. Custom scalars & JSON columns
 
 `@azerothian/graphql-types` provides ready-made scalars:
 
@@ -703,7 +780,7 @@ mutation { models { Post(create: { title: "x", metadata: { slug: "hello" } }) { 
 
 ---
 
-## 10. Multiple data sources
+## 11. Multiple data sources
 
 Register more than one adapter and route models to them. Relationships whose target lives on a
 **different** adapter are resolved as their own root queries (they can't be JOINed across
@@ -722,7 +799,7 @@ first registered adapter is the default.
 
 ---
 
-## 11. Transactions & async context
+## 12. Transactions & async context
 
 ### Single-adapter atomicity
 
@@ -768,7 +845,7 @@ A full runnable demo (SQLite + in-memory Postgres via PGlite) lives in
 
 ---
 
-## 12. The Valkey / Redis adapter
+## 13. The Valkey / Redis adapter
 
 `@azerothian/ormize-adapter-valkey` stores objects as typed JSON in Valkey/Redis. Unlike a SQL
 backend it **never scans the keyspace** — retrieval is driven entirely by index/mapping structures

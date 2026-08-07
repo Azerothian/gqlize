@@ -40,6 +40,8 @@ Set `PORT` to change the port (`PORT=4001 pnpm --filter @azerothian/example-gqli
 | [`src/orm.ts`](src/orm.ts) | `new Ormize()` → `registerAdapter(new SequelizeAdapter(...))` → `addDefinition()` → `initialise()` → `sync()`, then seeds rows. |
 | [`src/server.ts`](src/server.ts) | `const schema = await createSchema(orm)` → serve with graphql-yoga. |
 | [`src/run.ts`](src/run.ts) | Executes a query + mutation in-process via `graphql()` (no HTTP). |
+| [`gqlize.config.ts`](gqlize.config.ts) | Config for the `gqlize` CLI — where the orm comes from and where the artifact goes. |
+| [`src/server-artifact.ts`](src/server-artifact.ts) | The same server, served off a pre-generated schema artifact. |
 
 The whole projection is one call:
 
@@ -120,6 +122,31 @@ const schema = await createSchema(orm, { permission });
 
 See the [`@azerothian/gqlize` README](../../packages/gqlize/README.md) for the full feature set
 (typed models, hooks, custom `where` operators, class/instance methods).
+
+## Pre-generated schema artifact
+
+Instead of building the schema on every boot, generate it once and load it:
+
+```sh
+pnpm --filter @azerothian/example-gqlize-basic schema:build   # -> generated/schema.json + .graphql
+pnpm --filter @azerothian/example-gqlize-basic schema:check   # exit 1 if it no longer matches the models
+pnpm --filter @azerothian/example-gqlize-basic start:artifact # the same server, served off the artifact
+```
+
+[`src/server-artifact.ts`](src/server-artifact.ts) is the whole difference:
+
+```ts
+const schema = await loadSchema("./generated/schema.json", orm, { onMismatch: "rebuild" });
+```
+
+The ormize instance is still required — it is the resolution engine the schema binds to; the
+artifact only replaces the *type construction* step. `schema:check` is the CI gate: it builds the
+schema live, materializes the artifact, and diffs the sorted SDL, so any drift fails the build.
+
+> The `schema:*` scripts run the CLI from source (`node -r @swc-node/register
+> ../../packages/gqlize/src/cli/index.ts`) because this example uses the workspace packages
+> unbuilt. In your own project, `@azerothian/gqlize` installs a `gqlize` binary, so these are just
+> `gqlize build` / `gqlize check`.
 
 ## Notes
 

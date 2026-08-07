@@ -14,17 +14,16 @@ import {
 //   connectionDefinitions,
 //   connectionArgs,
 // } from "graphql-relay";
-import globalIdField from "./utils/global-id-field";
+import { globalIdFieldConfig } from "./utils/global-id-field";
 import { isFieldAllowed } from "@azerothian/utilize";
 import GQLManager from '../manager';
 import { Definition, GqlizeOptions, SchemaCache } from '../types';
+import { bindField } from "./resolvers/bind";
+import { recordExternalType } from "./snapshot/ledger";
 
-
-function globalIdBindValue(defName: string, key: string, instance: GQLManager) {
-  return (i: any) => instance.getValueFromInstance(defName, i, key);
-}
 
 export default function createBasicFieldsFunc(defName: string, instance: GQLManager, definition: Definition, options: GqlizeOptions, schemaCache: SchemaCache) {
+  const bindingContext = {instance, options};
   return function basicFields() {
     let fields = schemaCache.basicFields[defName];
     if (!fields) {
@@ -47,15 +46,25 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
           } else {
             globalKeyName = fieldDef.foreignTarget;
           }
-          f[key] = globalIdField(globalKeyName, globalIdBindValue(defName, key, instance), fieldDef.allowNull);
+          f[key] = bindField(globalIdFieldConfig(fieldDef.allowNull), {
+            kind: "globalId",
+            defName,
+            fieldName: key,
+            typeName: globalKeyName,
+            nullable: fieldDef.allowNull,
+          }, bindingContext);
         } else {
           const type = instance.getGraphQLOutputType(defName, key, fieldDef.type);
-          f[key] = {
+          const config = {
             type: fieldDef.allowNull ? type : new GraphQLNonNull(type as any),
             description: ((definition.comments || {}).fields || {})[key] || fieldDef.description,
-            resolve: fieldDef.resolve,
             args: fieldDef.args,
           };
+          // Only fields the user actually gave a resolver get a binding; the
+          // rest fall through to graphql's default property resolver.
+          f[key] = typeof fieldDef.resolve === "function"
+            ? bindField(config, {kind: "modelField", defName, fieldName: key}, bindingContext)
+            : config;
         }
         return f;
       }, {} as {[key: string]: any});
@@ -78,14 +87,22 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
           } else {
             type = overrideFieldDefinition.type;
           }
+          recordExternalType(schemaCache, type, {
+            via: "definitionOverride",
+            defName,
+            fieldName,
+            use: "type",
+          });
           if (!fieldDefinition.allowNull) {
             type = new GraphQLNonNull(type);
           }
-          f[fieldName] = {
+          const config = {
             // description: overrideFieldDefinition.description || fieldDefinition.description,
             type,
-            resolve: overrideFieldDefinition.output,
           };
+          f[fieldName] = typeof overrideFieldDefinition.output === "function"
+            ? bindField(config, {kind: "overrideOutput", defName, fieldName}, bindingContext)
+            : config;
           return f;
         }, fields);
       }
