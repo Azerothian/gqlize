@@ -11,6 +11,7 @@ import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
 import { Relationship } from '../types/index';
+import { recordExternalType } from "./snapshot/ledger";
 //(instance, defName, fields, relationships, inputTypes, false)
 export function generateInputFields(instance: GQLManager, defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, inputTypes: any, schemaCache: SchemaCache, forceOptional: boolean, options: GqlizeOptions) {
   let def = waterfallSync(Object.keys(defFields), (fieldName: string, fields: {[key: string]: any}) => {
@@ -40,6 +41,13 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         } else {
           inputType = type;
         }
+        recordExternalType(schemaCache, inputType, {
+          via: "definitionOverride",
+          defName,
+          fieldName,
+          use: "inputType",
+          forceOptional,
+        });
 
         if (!field.allowNull && !field.autoPopulated && !forceOptional) {
           fields[fieldName] = {

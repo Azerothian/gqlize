@@ -1,29 +1,18 @@
 import {GraphQLID, GraphQLNonNull} from "graphql";
 
-import {
-  toGlobalId,
-} from "graphql-relay";
+import { globalIdResolver } from "../resolvers/model-field";
 
-export default function globalIdField(typeName: any, idFetcher: (arg0: any, arg1: any, arg2: any) => any, isNullable: any) {
-  let type;
-  if (!isNullable) {
-    type = new GraphQLNonNull(GraphQLID);
-  } else {
-    type = GraphQLID;
-  }
+/** The type/description half of a relay global-id field — no resolver. */
+export function globalIdFieldConfig(isNullable: any) {
   return {
     description: "The ID of an object",
-    type,
-    resolve: (obj: { id: any; }, args: any, context: any, info: { parentType: { name: any; }; }) => {
-      const id = idFetcher ? idFetcher(obj, context, info) : obj.id;
-      if (!id && id !== 0 && isNullable) {
-        return undefined;
-      } else {
-        return toGlobalId(
-          typeName || info.parentType.name,
-          id
-        );
-      }
-    },
+    type: isNullable ? GraphQLID : new GraphQLNonNull(GraphQLID),
+  };
+}
+
+export default function globalIdField(typeName: any, idFetcher: (arg0: any, arg1: any, arg2: any) => any, isNullable: any) {
+  return {
+    ...globalIdFieldConfig(isNullable),
+    resolve: globalIdResolver(typeName, idFetcher, isNullable),
   };
 }

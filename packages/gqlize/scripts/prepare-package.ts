@@ -93,6 +93,12 @@ async function updatePackageJson() {
   packageJson.module = "lib/index.mjs";
   packageJson.types = "types/index.d.ts";
 
+  // The `gqlize` CLI. Points at the CJS build: it is the one that runs on every
+  // supported Node without an `exports`/extension dance. swc preserves the
+  // leading `#!/usr/bin/env node` verbatim (verified against `.swcrc-cjs`), so
+  // no post-processing step is required here.
+  packageJson.bin = { gqlize: "./cjs/cli/index.js" };
+
   // Replace workspace: protocol ranges with concrete versions so the published
   // package is installable outside the monorepo.
   const versions = await loadWorkspaceVersions();

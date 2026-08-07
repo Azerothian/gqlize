@@ -9,8 +9,14 @@ coverage/
 /packages/*/cjs/
 /packages/*/.tsbuild/
 
+# generated gqlize schema artifacts (rebuilt with `pnpm schema:build`)
+/examples/*/generated/
+
 # tooling / local state
 .omc/
 
 # Serena tool artifacts
 .serena/
+
+# claude code local state
+.claude/

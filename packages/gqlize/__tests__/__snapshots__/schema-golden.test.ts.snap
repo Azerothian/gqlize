@@ -1,0 +1,6763 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`golden schema default profile: enum internal values 1`] = `
+{
+  "ChildOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+    [
+      "parentIdASC",
+      [
+        "parentId",
+        "ASC",
+      ],
+    ],
+    [
+      "parentIdDESC",
+      [
+        "parentId",
+        "DESC",
+      ],
+    ],
+  ],
+  "ItemOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "parentIdASC",
+      [
+        "parentId",
+        "ASC",
+      ],
+    ],
+    [
+      "parentIdDESC",
+      [
+        "parentId",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+    [
+      "hasOneIdASC",
+      [
+        "hasOneId",
+        "ASC",
+      ],
+    ],
+    [
+      "hasOneIdDESC",
+      [
+        "hasOneId",
+        "DESC",
+      ],
+    ],
+    [
+      "taskIdASC",
+      [
+        "taskId",
+        "ASC",
+      ],
+    ],
+    [
+      "taskIdDESC",
+      [
+        "taskId",
+        "DESC",
+      ],
+    ],
+    [
+      "belongsToIdASC",
+      [
+        "belongsToId",
+        "ASC",
+      ],
+    ],
+    [
+      "belongsToIdDESC",
+      [
+        "belongsToId",
+        "DESC",
+      ],
+    ],
+  ],
+  "ParentOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+  ],
+  "TaskItemOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "taskIdASC",
+      [
+        "taskId",
+        "ASC",
+      ],
+    ],
+    [
+      "taskIdDESC",
+      [
+        "taskId",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+  ],
+  "TaskOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "nullCheckASC",
+      [
+        "nullCheck",
+        "ASC",
+      ],
+    ],
+    [
+      "nullCheckDESC",
+      [
+        "nullCheck",
+        "DESC",
+      ],
+    ],
+    [
+      "intZeroCheckASC",
+      [
+        "intZeroCheck",
+        "ASC",
+      ],
+    ],
+    [
+      "intZeroCheckDESC",
+      [
+        "intZeroCheck",
+        "DESC",
+      ],
+    ],
+    [
+      "mutationCheckASC",
+      [
+        "mutationCheck",
+        "ASC",
+      ],
+    ],
+    [
+      "mutationCheckDESC",
+      [
+        "mutationCheck",
+        "DESC",
+      ],
+    ],
+    [
+      "optionsASC",
+      [
+        "options",
+        "ASC",
+      ],
+    ],
+    [
+      "optionsDESC",
+      [
+        "options",
+        "DESC",
+      ],
+    ],
+    [
+      "options2ASC",
+      [
+        "options2",
+        "ASC",
+      ],
+    ],
+    [
+      "options2DESC",
+      [
+        "options2",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+  ],
+  "__DirectiveLocation": [
+    [
+      "QUERY",
+      "QUERY",
+    ],
+    [
+      "MUTATION",
+      "MUTATION",
+    ],
+    [
+      "SUBSCRIPTION",
+      "SUBSCRIPTION",
+    ],
+    [
+      "FIELD",
+      "FIELD",
+    ],
+    [
+      "FRAGMENT_DEFINITION",
+      "FRAGMENT_DEFINITION",
+    ],
+    [
+      "FRAGMENT_SPREAD",
+      "FRAGMENT_SPREAD",
+    ],
+    [
+      "INLINE_FRAGMENT",
+      "INLINE_FRAGMENT",
+    ],
+    [
+      "VARIABLE_DEFINITION",
+      "VARIABLE_DEFINITION",
+    ],
+    [
+      "FRAGMENT_VARIABLE_DEFINITION",
+      "FRAGMENT_VARIABLE_DEFINITION",
+    ],
+    [
+      "SCHEMA",
+      "SCHEMA",
+    ],
+    [
+      "SCALAR",
+      "SCALAR",
+    ],
+    [
+      "OBJECT",
+      "OBJECT",
+    ],
+    [
+      "FIELD_DEFINITION",
+      "FIELD_DEFINITION",
+    ],
+    [
+      "ARGUMENT_DEFINITION",
+      "ARGUMENT_DEFINITION",
+    ],
+    [
+      "INTERFACE",
+      "INTERFACE",
+    ],
+    [
+      "UNION",
+      "UNION",
+    ],
+    [
+      "ENUM",
+      "ENUM",
+    ],
+    [
+      "ENUM_VALUE",
+      "ENUM_VALUE",
+    ],
+    [
+      "INPUT_OBJECT",
+      "INPUT_OBJECT",
+    ],
+    [
+      "INPUT_FIELD_DEFINITION",
+      "INPUT_FIELD_DEFINITION",
+    ],
+    [
+      "DIRECTIVE_DEFINITION",
+      "DIRECTIVE_DEFINITION",
+    ],
+  ],
+  "__TypeKind": [
+    [
+      "SCALAR",
+      "SCALAR",
+    ],
+    [
+      "OBJECT",
+      "OBJECT",
+    ],
+    [
+      "INTERFACE",
+      "INTERFACE",
+    ],
+    [
+      "UNION",
+      "UNION",
+    ],
+    [
+      "ENUM",
+      "ENUM",
+    ],
+    [
+      "INPUT_OBJECT",
+      "INPUT_OBJECT",
+    ],
+    [
+      "LIST",
+      "LIST",
+    ],
+    [
+      "NON_NULL",
+      "NON_NULL",
+    ],
+  ],
+}
+`;
+
+exports[`golden schema default profile: sdl 1`] = `
+"schema {
+  query: RootQuery
+  mutation: Mutation
+}
+
+type RootQuery {
+  """Fetches an object given its ID"""
+  node(
+    """The ID of an object"""
+    id: ID!
+  ): Node
+  models: QueryModels
+  classMethods: QueryClassMethods
+}
+
+"""An object with an ID"""
+interface Node {
+  """The id of the object."""
+  id: ID!
+}
+
+type QueryModels {
+  Parent(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ParentOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryParentWhere
+    include: [GQLTParentIncludeObject]
+  ): ParentList
+  Child(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ChildOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryChildWhere
+    include: [GQLTChildIncludeObject]
+  ): ChildList
+  Task(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [TaskOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryTaskWhere
+    include: [GQLTTaskIncludeObject]
+  ): TaskList
+  TaskItem(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [TaskItemOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryTaskItemWhere
+    include: [GQLTTaskItemIncludeObject]
+  ): TaskItemList
+  Item(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ItemOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryItemWhere
+    include: [GQLTItemIncludeObject]
+  ): ItemList
+}
+
+type ParentList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Parent"""
+  edges: [ParentEdge]
+}
+
+type PageInfo {
+  hasNextPage: Boolean
+  hasPreviousPage: Boolean
+  startCursor: String
+  endCursor: String
+}
+
+"""Parent edge"""
+type ParentEdge {
+  node: Parent
+  cursor: String
+}
+
+type Parent implements Node {
+  """The ID of an object"""
+  id: ID!
+  name: String!
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+  children(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ChildOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryChildWhere
+    include: [GQLTChildIncludeObject]
+  ): ChildHasManyChildrenList
+}
+
+"""
+A special custom Scalar type for Dates that converts to a ISO formatted string 
+"""
+scalar GQLTDate
+
+type ChildHasManyChildrenList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for ChildHasManyChildren"""
+  edges: [ChildHasManyChildrenEdge]
+}
+
+"""ChildHasManyChildren edge"""
+type ChildHasManyChildrenEdge {
+  node: Child
+  cursor: String
+}
+
+type Child implements Node {
+  """The ID of an object"""
+  id: ID!
+  name: String
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+
+  """The ID of an object"""
+  parentId: ID
+  parent(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Parent
+}
+
+enum ChildOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+  parentIdASC
+  parentIdDESC
+}
+
+input GQLTQueryChildWhere {
+  id: GQLTQueryChildWhereid
+  name: GQLTQueryChildWherename
+  createdAt: GQLTQueryChildWherecreatedAt
+  updatedAt: GQLTQueryChildWhereupdatedAt
+  parentId: GQLTQueryChildWhereparentId
+  or: [GQLTQueryChildWhere]
+  and: [GQLTQueryChildWhere]
+  any: [GQLTQueryChildWhere]
+  all: [GQLTQueryChildWhere]
+}
+
+input GQLTQueryChildWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryChildWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryChildWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryChildWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryChildWhereparentId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTChildIncludeObject {
+  parent: GQLTChildIncludeparentObject
+}
+
+input GQLTChildIncludeparentObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryParentWhere
+  orderBy: [ParentOrderBy]
+  include: [GQLTParentIncludeObject]
+}
+
+input GQLTQueryParentWhere {
+  id: GQLTQueryParentWhereid
+  name: GQLTQueryParentWherename
+  createdAt: GQLTQueryParentWherecreatedAt
+  updatedAt: GQLTQueryParentWhereupdatedAt
+  or: [GQLTQueryParentWhere]
+  and: [GQLTQueryParentWhere]
+  any: [GQLTQueryParentWhere]
+  all: [GQLTQueryParentWhere]
+}
+
+input GQLTQueryParentWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryParentWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryParentWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryParentWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+enum ParentOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+}
+
+input GQLTParentIncludeObject {
+  children: GQLTParentIncludechildrenObject
+}
+
+input GQLTParentIncludechildrenObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryChildWhere
+  orderBy: [ChildOrderBy]
+  include: [GQLTChildIncludeObject]
+}
+
+type ChildList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Child"""
+  edges: [ChildEdge]
+}
+
+"""Child edge"""
+type ChildEdge {
+  node: Child
+  cursor: String
+}
+
+type TaskList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Task"""
+  edges: [TaskEdge]
+}
+
+"""Task edge"""
+type TaskEdge {
+  node: Task
+  cursor: String
+}
+
+type Task implements Node {
+  """The ID of an object"""
+  id: ID!
+  name: String!
+  nullCheck: String
+  intZeroCheck: Int
+  mutationCheck: String
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+  options: TaskOptions
+  options2: String
+  items(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [TaskItemOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryTaskItemWhere
+    include: [GQLTTaskItemIncludeObject]
+  ): TaskItemHasManyItemsList
+  item(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Item
+  btmItems(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ItemOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryItemWhere
+    include: [GQLTItemIncludeObject]
+  ): ItemBelongsToManyBtmItemsList
+  testInstanceMethod(input: TestInstanceMethodInput!): [Task]
+}
+
+type TaskOptions {
+  hidden: String
+  hidden2: String
+}
+
+type TaskItemHasManyItemsList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for TaskItemHasManyItems"""
+  edges: [TaskItemHasManyItemsEdge]
+}
+
+"""TaskItemHasManyItems edge"""
+type TaskItemHasManyItemsEdge {
+  node: TaskItem
+  cursor: String
+}
+
+type TaskItem implements Node {
+  """The ID of an object"""
+  id: ID!
+  name: String!
+
+  """The ID of an object"""
+  taskId: ID
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+  task(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Task
+  testInstanceMethodArray: [TaskItem]
+  testInstanceMethodSingle: TaskItem
+}
+
+enum TaskItemOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  taskIdASC
+  taskIdDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+}
+
+input GQLTQueryTaskItemWhere {
+  id: GQLTQueryTaskItemWhereid
+  name: GQLTQueryTaskItemWherename
+  taskId: GQLTQueryTaskItemWheretaskId
+  createdAt: GQLTQueryTaskItemWherecreatedAt
+  updatedAt: GQLTQueryTaskItemWhereupdatedAt
+  or: [GQLTQueryTaskItemWhere]
+  and: [GQLTQueryTaskItemWhere]
+  any: [GQLTQueryTaskItemWhere]
+  all: [GQLTQueryTaskItemWhere]
+}
+
+input GQLTQueryTaskItemWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryTaskItemWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskItemWheretaskId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryTaskItemWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryTaskItemWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTTaskItemIncludeObject {
+  task: GQLTTaskItemIncludetaskObject
+}
+
+input GQLTTaskItemIncludetaskObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryTaskWhere
+  orderBy: [TaskOrderBy]
+  include: [GQLTTaskIncludeObject]
+}
+
+input GQLTQueryTaskWhere {
+  id: GQLTQueryTaskWhereid
+  name: GQLTQueryTaskWherename
+  nullCheck: GQLTQueryTaskWherenullCheck
+  intZeroCheck: GQLTQueryTaskWhereintZeroCheck
+  mutationCheck: GQLTQueryTaskWheremutationCheck
+  options: GQLTQueryTaskWhereoptions
+  options2: GQLTQueryTaskWhereoptions2
+  createdAt: GQLTQueryTaskWherecreatedAt
+  updatedAt: GQLTQueryTaskWhereupdatedAt
+  or: [GQLTQueryTaskWhere]
+  and: [GQLTQueryTaskWhere]
+  any: [GQLTQueryTaskWhere]
+  all: [GQLTQueryTaskWhere]
+  hasNoItems: Boolean
+  chainTest: Boolean
+}
+
+input GQLTQueryTaskWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryTaskWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskWherenullCheck {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskWhereintZeroCheck {
+  eq: Int
+  ne: Int
+  gte: Int
+  lte: Int
+  lt: Int
+  not: Int
+  is: Int
+  like: Int
+  notLike: Int
+  iLike: Int
+  notILike: Int
+  startsWith: Int
+  endsWith: Int
+  substring: Int
+  in: [Int]
+  notIn: [Int]
+  contains: [Int]
+  contained: [Int]
+  between: [Int]
+  notBetween: [Int]
+  overlap: [Int]
+  adjacent: [Int]
+  strictLeft: [Int]
+  strictRight: [Int]
+  noExtendRight: [Int]
+  noExtendLeft: [Int]
+}
+
+input GQLTQueryTaskWheremutationCheck {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskWhereoptions {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskWhereoptions2 {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryTaskWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+enum TaskOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  nullCheckASC
+  nullCheckDESC
+  intZeroCheckASC
+  intZeroCheckDESC
+  mutationCheckASC
+  mutationCheckDESC
+  optionsASC
+  optionsDESC
+  options2ASC
+  options2DESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+}
+
+input GQLTTaskIncludeObject {
+  items: GQLTTaskIncludeitemsObject
+  item: GQLTTaskIncludeitemObject
+  btmItems: GQLTTaskIncludebtmItemsObject
+}
+
+input GQLTTaskIncludeitemsObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryTaskItemWhere
+  orderBy: [TaskItemOrderBy]
+  include: [GQLTTaskItemIncludeObject]
+}
+
+input GQLTTaskIncludeitemObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTQueryItemWhere {
+  id: GQLTQueryItemWhereid
+  name: GQLTQueryItemWherename
+  parentId: GQLTQueryItemWhereparentId
+  createdAt: GQLTQueryItemWherecreatedAt
+  updatedAt: GQLTQueryItemWhereupdatedAt
+  hasOneId: GQLTQueryItemWherehasOneId
+  taskId: GQLTQueryItemWheretaskId
+  belongsToId: GQLTQueryItemWherebelongsToId
+  or: [GQLTQueryItemWhere]
+  and: [GQLTQueryItemWhere]
+  any: [GQLTQueryItemWhere]
+  all: [GQLTQueryItemWhere]
+}
+
+input GQLTQueryItemWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryItemWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryItemWhereparentId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryItemWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryItemWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryItemWherehasOneId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryItemWheretaskId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryItemWherebelongsToId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+enum ItemOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  parentIdASC
+  parentIdDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+  hasOneIdASC
+  hasOneIdDESC
+  taskIdASC
+  taskIdDESC
+  belongsToIdASC
+  belongsToIdDESC
+}
+
+input GQLTItemIncludeObject {
+  hasOne: GQLTItemIncludehasOneObject
+  belongsTo: GQLTItemIncludebelongsToObject
+  children: GQLTItemIncludechildrenObject
+  parent: GQLTItemIncludeparentObject
+  task: GQLTItemIncludetaskObject
+  btmTasks: GQLTItemIncludebtmTasksObject
+}
+
+input GQLTItemIncludehasOneObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTItemIncludebelongsToObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTItemIncludechildrenObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTItemIncludeparentObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTItemIncludetaskObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryTaskWhere
+  orderBy: [TaskOrderBy]
+  include: [GQLTTaskIncludeObject]
+}
+
+input GQLTItemIncludebtmTasksObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryTaskWhere
+  orderBy: [TaskOrderBy]
+  include: [GQLTTaskIncludeObject]
+}
+
+input GQLTTaskIncludebtmItemsObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+"""item comment"""
+type Item implements Node {
+  """The ID of an object"""
+  id: ID!
+
+  """name comment"""
+  name: String!
+
+  """The ID of an object"""
+  parentId: ID
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+
+  """The ID of an object"""
+  hasOneId: ID
+
+  """The ID of an object"""
+  taskId: ID
+
+  """The ID of an object"""
+  belongsToId: ID
+
+  """hasOne comment"""
+  hasOne(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Item
+  belongsTo(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Item
+
+  """children comment"""
+  children(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ItemOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryItemWhere
+    include: [GQLTItemIncludeObject]
+  ): ItemHasManyChildrenList
+  parent(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Item
+  task(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Task
+  btmTasks(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [TaskOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryTaskWhere
+    include: [GQLTTaskIncludeObject]
+  ): TaskBelongsToManyBtmTasksList
+
+  """testInstanceMethod comment"""
+  testInstanceMethod: Boolean
+}
+
+type ItemHasManyChildrenList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for ItemHasManyChildren"""
+  edges: [ItemHasManyChildrenEdge]
+}
+
+"""ItemHasManyChildren edge"""
+type ItemHasManyChildrenEdge {
+  node: Item
+  cursor: String
+}
+
+type TaskBelongsToManyBtmTasksList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for TaskBelongsToManyBtmTasks"""
+  edges: [TaskBelongsToManyBtmTasksEdge]
+}
+
+"""TaskBelongsToManyBtmTasks edge"""
+type TaskBelongsToManyBtmTasksEdge {
+  node: Task
+  cursor: String
+}
+
+type ItemBelongsToManyBtmItemsList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for ItemBelongsToManyBtmItems"""
+  edges: [ItemBelongsToManyBtmItemsEdge]
+}
+
+"""ItemBelongsToManyBtmItems edge"""
+type ItemBelongsToManyBtmItemsEdge {
+  node: Item
+  cursor: String
+}
+
+input TestInstanceMethodInput {
+  amount: Int!
+}
+
+type TaskItemList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for TaskItem"""
+  edges: [TaskItemEdge]
+}
+
+"""TaskItem edge"""
+type TaskItemEdge {
+  node: TaskItem
+  cursor: String
+}
+
+type ItemList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Item"""
+  edges: [ItemEdge]
+}
+
+"""Item edge"""
+type ItemEdge {
+  node: Item
+  cursor: String
+}
+
+type QueryClassMethods {
+  Task: TaskQueryClassMethods
+  TaskItem: TaskItemQueryClassMethods
+}
+
+type TaskQueryClassMethods {
+  reverseNameArray: [Task]
+  getHiddenData: TaskHiddenData
+  getHiddenData2: TaskHiddenData2
+}
+
+type TaskHiddenData {
+  hidden: String
+}
+
+type TaskHiddenData2 {
+  hidden: String
+}
+
+type TaskItemQueryClassMethods {
+  getTaskItemsArray: [TaskItem]
+  getTaskItemsSingle: TaskItem
+}
+
+type Mutation {
+  models: MutationModels
+  classMethods: MutationClassMethods
+}
+
+type MutationModels {
+  Parent(
+    """This will create a new element for Parent"""
+    create: [ParentRequiredInput]
+
+    """This will update a new element for Parent"""
+    update: [ParentUpdateInput]
+
+    """
+    This will find elements for Parent and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [ParentSelectInput]
+
+    """This will delete a new element for Parent"""
+    delete: [GQLTQueryParentWhere]
+  ): [Parent]
+  Child(
+    """This will create a new element for Child"""
+    create: [ChildRequiredInput]
+
+    """This will update a new element for Child"""
+    update: [ChildUpdateInput]
+
+    """
+    This will find elements for Child and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [ChildSelectInput]
+
+    """This will delete a new element for Child"""
+    delete: [GQLTQueryChildWhere]
+  ): [Child]
+  Task(
+    """This will create a new element for Task"""
+    create: [TaskRequiredInput]
+
+    """This will update a new element for Task"""
+    update: [TaskUpdateInput]
+
+    """
+    This will find elements for Task and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [TaskSelectInput]
+
+    """This will delete a new element for Task"""
+    delete: [GQLTQueryTaskWhere]
+  ): [Task]
+  TaskItem(
+    """This will create a new element for TaskItem"""
+    create: [TaskItemRequiredInput]
+
+    """This will update a new element for TaskItem"""
+    update: [TaskItemUpdateInput]
+
+    """
+    This will find elements for TaskItem and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [TaskItemSelectInput]
+
+    """This will delete a new element for TaskItem"""
+    delete: [GQLTQueryTaskItemWhere]
+  ): [TaskItem]
+  Item(
+    """This will create a new element for Item"""
+    create: [ItemRequiredInput]
+
+    """This will update a new element for Item"""
+    update: [ItemUpdateInput]
+
+    """
+    This will find elements for Item and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [ItemSelectInput]
+
+    """This will delete a new element for Item"""
+    delete: [GQLTQueryItemWhere]
+  ): [Item]
+}
+
+""""""
+input ParentRequiredInput {
+  name: String!
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for ParentChildrenHasMany"""
+  children: ParentChildrenHasManyInput
+}
+
+""""""
+input ParentChildrenHasManyInput {
+  """
+  This will create a new element with a relationship to the current Parent
+  """
+  create: [ChildRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Parent
+  """
+  update: [ParentChildrenUpdate]
+
+  """
+  This will add any matching elements with a relationship to the current Parent
+  """
+  add: [GQLTQueryChildWhere]
+
+  """
+  This will replace the entire children set with the matching existing elements
+  """
+  set: [GQLTQueryChildWhere]
+
+  """
+  This will remove the relationship from any matching elements from the current Parent
+  """
+  remove: [GQLTQueryChildWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Parent
+  """
+  delete: [GQLTQueryChildWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Parent
+  """
+  restore: [GQLTQueryChildWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [ParentChildrenSelect]
+}
+
+""""""
+input ChildRequiredInput {
+  name: String
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for ChildParentBelongsTo"""
+  parent: ChildParentBelongsToInput
+}
+
+""""""
+input ChildParentBelongsToInput {
+  """
+  This will create a new element with a relationship to the current Child
+  """
+  create: ParentRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Child
+  """
+  update: ChildParentUpdate
+
+  """
+  This will associate an existing matching element with the current Child
+  """
+  set: GQLTQueryParentWhere
+
+  """When true, this will disassociate the current parent from the Child"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Child
+  """
+  delete: GQLTQueryParentWhere
+
+  """This will restore the soft-deleted parent related to the current Child"""
+  restore: GQLTQueryParentWhere
+
+  """
+  This will find the matching related parent and run relationship mutations on it without modifying the element itself
+  """
+  select: ChildParentSelect
+}
+
+""""""
+input ChildParentUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryParentWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ParentOptionalInput
+}
+
+""""""
+input ParentOptionalInput {
+  name: String
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for ParentChildrenHasMany"""
+  children: ParentChildrenHasManyInput
+}
+
+""""""
+input ChildParentSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryParentWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ParentOptionalInput
+}
+
+""""""
+input ParentChildrenUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryChildWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ChildOptionalInput
+}
+
+""""""
+input ChildOptionalInput {
+  name: String
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for ChildParentBelongsTo"""
+  parent: ChildParentBelongsToInput
+}
+
+""""""
+input ParentChildrenSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryChildWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ChildOptionalInput
+}
+
+""""""
+input ParentUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryParentWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: ParentOptionalInput
+}
+
+""""""
+input ParentSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryParentWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ParentOptionalInput
+}
+
+""""""
+input ChildUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryChildWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: ChildOptionalInput
+}
+
+""""""
+input ChildSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryChildWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ChildOptionalInput
+}
+
+""""""
+input TaskRequiredInput {
+  name: String!
+  nullCheck: String
+  intZeroCheck: Int
+  mutationCheck: String
+  options: TaskOptionsOptionsInput
+  options2: String
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for TaskItemsHasMany"""
+  items: TaskItemsHasManyInput
+
+  """This is the mutation object for TaskItemHasOne"""
+  item: TaskItemHasOneInput
+
+  """This is the mutation object for TaskBtmItemsBelongsToMany"""
+  btmItems: TaskBtmItemsBelongsToManyInput
+}
+
+input TaskOptionsOptionsInput {
+  hidden: String
+  hidden2: String
+}
+
+""""""
+input TaskItemsHasManyInput {
+  """This will create a new element with a relationship to the current Task"""
+  create: [TaskItemRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Task
+  """
+  update: [TaskItemsUpdate]
+
+  """
+  This will add any matching elements with a relationship to the current Task
+  """
+  add: [GQLTQueryTaskItemWhere]
+
+  """
+  This will replace the entire items set with the matching existing elements
+  """
+  set: [GQLTQueryTaskItemWhere]
+
+  """
+  This will remove the relationship from any matching elements from the current Task
+  """
+  remove: [GQLTQueryTaskItemWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Task
+  """
+  delete: [GQLTQueryTaskItemWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Task
+  """
+  restore: [GQLTQueryTaskItemWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [TaskItemsSelect]
+}
+
+""""""
+input TaskItemRequiredInput {
+  name: String!
+
+  """This a primary key for TaskItem"""
+  taskId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for TaskItemTaskBelongsTo"""
+  task: TaskItemTaskBelongsToInput
+}
+
+""""""
+input TaskItemTaskBelongsToInput {
+  """
+  This will create a new element with a relationship to the current TaskItem
+  """
+  create: TaskRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current TaskItem
+  """
+  update: TaskItemTaskUpdate
+
+  """
+  This will associate an existing matching element with the current TaskItem
+  """
+  set: GQLTQueryTaskWhere
+
+  """When true, this will disassociate the current task from the TaskItem"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current TaskItem
+  """
+  delete: GQLTQueryTaskWhere
+
+  """
+  This will restore the soft-deleted task related to the current TaskItem
+  """
+  restore: GQLTQueryTaskWhere
+
+  """
+  This will find the matching related task and run relationship mutations on it without modifying the element itself
+  """
+  select: TaskItemTaskSelect
+}
+
+""""""
+input TaskItemTaskUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryTaskWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskOptionalInput {
+  name: String
+  nullCheck: String
+  intZeroCheck: Int
+  mutationCheck: String
+  options: TaskOptionsOptionalOptions
+  options2: String
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for TaskItemsHasMany"""
+  items: TaskItemsHasManyInput
+
+  """This is the mutation object for TaskItemHasOne"""
+  item: TaskItemHasOneInput
+
+  """This is the mutation object for TaskBtmItemsBelongsToMany"""
+  btmItems: TaskBtmItemsBelongsToManyInput
+}
+
+input TaskOptionsOptionalOptions {
+  hidden: String
+  hidden2: String
+}
+
+""""""
+input TaskItemHasOneInput {
+  """This will create a new element with a relationship to the current Task"""
+  create: ItemRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Task
+  """
+  update: TaskItemUpdate
+
+  """This will associate an existing matching element with the current Task"""
+  set: GQLTQueryItemWhere
+
+  """When true, this will disassociate the current item from the Task"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Task
+  """
+  delete: GQLTQueryItemWhere
+
+  """This will restore the soft-deleted item related to the current Task"""
+  restore: GQLTQueryItemWhere
+
+  """
+  This will find the matching related item and run relationship mutations on it without modifying the element itself
+  """
+  select: TaskItemSelect
+}
+
+""""""
+input ItemRequiredInput {
+  """name comment"""
+  name: String!
+
+  """This a primary key for Item"""
+  parentId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for ItemHasOneHasOne"""
+  hasOne: ItemHasOneHasOneInput
+
+  """This is the mutation object for ItemBelongsToBelongsTo"""
+  belongsTo: ItemBelongsToBelongsToInput
+
+  """This is the mutation object for ItemChildrenHasMany"""
+  children: ItemChildrenHasManyInput
+
+  """This is the mutation object for ItemParentBelongsTo"""
+  parent: ItemParentBelongsToInput
+
+  """This is the mutation object for ItemTaskBelongsTo"""
+  task: ItemTaskBelongsToInput
+
+  """This is the mutation object for ItemBtmTasksBelongsToMany"""
+  btmTasks: ItemBtmTasksBelongsToManyInput
+}
+
+""""""
+input ItemHasOneHasOneInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: ItemRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: ItemHasOneUpdate
+
+  """This will associate an existing matching element with the current Item"""
+  set: GQLTQueryItemWhere
+
+  """When true, this will disassociate the current hasOne from the Item"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: GQLTQueryItemWhere
+
+  """This will restore the soft-deleted hasOne related to the current Item"""
+  restore: GQLTQueryItemWhere
+
+  """
+  This will find the matching related hasOne and run relationship mutations on it without modifying the element itself
+  """
+  select: ItemHasOneSelect
+}
+
+""""""
+input ItemHasOneUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemOptionalInput {
+  """name comment"""
+  name: String
+
+  """This a primary key for Item"""
+  parentId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for ItemHasOneHasOne"""
+  hasOne: ItemHasOneHasOneInput
+
+  """This is the mutation object for ItemBelongsToBelongsTo"""
+  belongsTo: ItemBelongsToBelongsToInput
+
+  """This is the mutation object for ItemChildrenHasMany"""
+  children: ItemChildrenHasManyInput
+
+  """This is the mutation object for ItemParentBelongsTo"""
+  parent: ItemParentBelongsToInput
+
+  """This is the mutation object for ItemTaskBelongsTo"""
+  task: ItemTaskBelongsToInput
+
+  """This is the mutation object for ItemBtmTasksBelongsToMany"""
+  btmTasks: ItemBtmTasksBelongsToManyInput
+}
+
+""""""
+input ItemBelongsToBelongsToInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: ItemRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: ItemBelongsToUpdate
+
+  """This will associate an existing matching element with the current Item"""
+  set: GQLTQueryItemWhere
+
+  """When true, this will disassociate the current belongsTo from the Item"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: GQLTQueryItemWhere
+
+  """
+  This will restore the soft-deleted belongsTo related to the current Item
+  """
+  restore: GQLTQueryItemWhere
+
+  """
+  This will find the matching related belongsTo and run relationship mutations on it without modifying the element itself
+  """
+  select: ItemBelongsToSelect
+}
+
+""""""
+input ItemBelongsToUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemBelongsToSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemChildrenHasManyInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: [ItemRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: [ItemChildrenUpdate]
+
+  """
+  This will add any matching elements with a relationship to the current Item
+  """
+  add: [GQLTQueryItemWhere]
+
+  """
+  This will replace the entire children set with the matching existing elements
+  """
+  set: [GQLTQueryItemWhere]
+
+  """
+  This will remove the relationship from any matching elements from the current Item
+  """
+  remove: [GQLTQueryItemWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: [GQLTQueryItemWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Item
+  """
+  restore: [GQLTQueryItemWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [ItemChildrenSelect]
+}
+
+""""""
+input ItemChildrenUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemChildrenSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemParentBelongsToInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: ItemRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: ItemParentUpdate
+
+  """This will associate an existing matching element with the current Item"""
+  set: GQLTQueryItemWhere
+
+  """When true, this will disassociate the current parent from the Item"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: GQLTQueryItemWhere
+
+  """This will restore the soft-deleted parent related to the current Item"""
+  restore: GQLTQueryItemWhere
+
+  """
+  This will find the matching related parent and run relationship mutations on it without modifying the element itself
+  """
+  select: ItemParentSelect
+}
+
+""""""
+input ItemParentUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemParentSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemTaskBelongsToInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: TaskRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: ItemTaskUpdate
+
+  """This will associate an existing matching element with the current Item"""
+  set: GQLTQueryTaskWhere
+
+  """When true, this will disassociate the current task from the Item"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: GQLTQueryTaskWhere
+
+  """This will restore the soft-deleted task related to the current Item"""
+  restore: GQLTQueryTaskWhere
+
+  """
+  This will find the matching related task and run relationship mutations on it without modifying the element itself
+  """
+  select: ItemTaskSelect
+}
+
+""""""
+input ItemTaskUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryTaskWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input ItemTaskSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input ItemBtmTasksBelongsToManyInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: [TaskRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: [ItemBtmTasksUpdate]
+
+  """
+  This will add any matching existing elements (with optional through attributes) to the current Item
+  """
+  add: [ItemBtmTasksAddThrough]
+
+  """
+  This will replace the entire btmTasks set with the matching existing elements (with optional through attributes)
+  """
+  set: [ItemBtmTasksAddThrough]
+
+  """
+  This will remove the relationship from any matching elements from the current Item
+  """
+  remove: [GQLTQueryTaskWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: [GQLTQueryTaskWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Item
+  """
+  restore: [GQLTQueryTaskWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [ItemBtmTasksSelect]
+}
+
+""""""
+input ItemBtmTasksUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryTaskWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input ItemBtmTasksAddThrough {
+  """Filter used to find the existing elements to associate"""
+  where: GQLTQueryTaskWhere
+
+  """
+  Attribute values to write on the join table for the associated elements
+  """
+  through: GQLTJson
+}
+
+"""The \`JSON\` scalar type represents raw JSON as values."""
+scalar GQLTJson
+
+""""""
+input ItemBtmTasksSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input ItemHasOneSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskItemUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskItemSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskBtmItemsBelongsToManyInput {
+  """This will create a new element with a relationship to the current Task"""
+  create: [ItemRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Task
+  """
+  update: [TaskBtmItemsUpdate]
+
+  """
+  This will add any matching existing elements (with optional through attributes) to the current Task
+  """
+  add: [TaskBtmItemsAddThrough]
+
+  """
+  This will replace the entire btmItems set with the matching existing elements (with optional through attributes)
+  """
+  set: [TaskBtmItemsAddThrough]
+
+  """
+  This will remove the relationship from any matching elements from the current Task
+  """
+  remove: [GQLTQueryItemWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Task
+  """
+  delete: [GQLTQueryItemWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Task
+  """
+  restore: [GQLTQueryItemWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [TaskBtmItemsSelect]
+}
+
+""""""
+input TaskBtmItemsUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskBtmItemsAddThrough {
+  """Filter used to find the existing elements to associate"""
+  where: GQLTQueryItemWhere
+
+  """
+  Attribute values to write on the join table for the associated elements
+  """
+  through: GQLTJson
+}
+
+""""""
+input TaskBtmItemsSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskItemTaskSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskItemsUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryTaskItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: TaskItemOptionalInput
+}
+
+""""""
+input TaskItemOptionalInput {
+  name: String
+
+  """This a primary key for TaskItem"""
+  taskId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for TaskItemTaskBelongsTo"""
+  task: TaskItemTaskBelongsToInput
+}
+
+""""""
+input TaskItemsSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskItemOptionalInput
+}
+
+""""""
+input TaskUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskItemUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryTaskItemWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: TaskItemOptionalInput
+}
+
+""""""
+input TaskItemSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskItemWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskItemOptionalInput
+}
+
+""""""
+input ItemUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+type MutationClassMethods {
+  Task: TaskMutationsClassMethods
+  TaskItem: TaskItemMutationsClassMethods
+  Item: ItemMutationsClassMethods
+}
+
+type TaskMutationsClassMethods {
+  reverseName(input: TaskReverseNameInput!): Task
+  reverseName2(input: TaskReverseName2Input!): Task
+}
+
+input TaskReverseNameInput {
+  amount: Int!
+}
+
+input TaskReverseName2Input {
+  amount: Int!
+}
+
+type TaskItemMutationsClassMethods {
+  getTaskItemsArray: [TaskItem]
+  getTaskItemsSingle: TaskItem
+}
+
+type ItemMutationsClassMethods {
+  """reverseName comment"""
+  reverseName: Boolean
+}"
+`;
+
+exports[`golden schema records a build ledger of user-supplied types: external types 1`] = `
+{
+  "TaskHiddenData": {
+    "defName": "Task",
+    "group": "classMethods",
+    "methodName": "getHiddenData",
+    "target": "query",
+    "use": "type",
+    "via": "definitionExpose",
+  },
+  "TaskHiddenData2": {
+    "defName": "Task",
+    "group": "classMethods",
+    "methodName": "getHiddenData2",
+    "target": "query",
+    "use": "type",
+    "via": "definitionExpose",
+  },
+  "TaskOptions": {
+    "defName": "Task",
+    "fieldName": "options",
+    "use": "type",
+    "via": "definitionOverride",
+  },
+  "TaskOptionsOptionalOptions": {
+    "defName": "Task",
+    "fieldName": "options",
+    "forceOptional": true,
+    "use": "inputType",
+    "via": "definitionOverride",
+  },
+  "TaskOptionsOptionsInput": {
+    "defName": "Task",
+    "fieldName": "options",
+    "forceOptional": false,
+    "use": "inputType",
+    "via": "definitionOverride",
+  },
+  "TaskReverseName2Input": {
+    "argName": "input",
+    "defName": "Task",
+    "group": "classMethods",
+    "methodName": "reverseName2",
+    "target": "mutations",
+    "use": "arg",
+    "via": "definitionExpose",
+  },
+  "TaskReverseNameInput": {
+    "argName": "input",
+    "defName": "Task",
+    "group": "classMethods",
+    "methodName": "reverseName",
+    "target": "mutations",
+    "use": "arg",
+    "via": "definitionExpose",
+  },
+  "TestInstanceMethodInput": {
+    "argName": "input",
+    "defName": "Task",
+    "group": "instanceMethods",
+    "methodName": "testInstanceMethod",
+    "target": "query",
+    "use": "arg",
+    "via": "definitionExpose",
+  },
+}
+`;
+
+exports[`golden schema restrictive permission profile: enum internal values 1`] = `
+{
+  "ChildOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+    [
+      "parentIdASC",
+      [
+        "parentId",
+        "ASC",
+      ],
+    ],
+    [
+      "parentIdDESC",
+      [
+        "parentId",
+        "DESC",
+      ],
+    ],
+  ],
+  "ItemOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "parentIdASC",
+      [
+        "parentId",
+        "ASC",
+      ],
+    ],
+    [
+      "parentIdDESC",
+      [
+        "parentId",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+    [
+      "hasOneIdASC",
+      [
+        "hasOneId",
+        "ASC",
+      ],
+    ],
+    [
+      "hasOneIdDESC",
+      [
+        "hasOneId",
+        "DESC",
+      ],
+    ],
+    [
+      "taskIdASC",
+      [
+        "taskId",
+        "ASC",
+      ],
+    ],
+    [
+      "taskIdDESC",
+      [
+        "taskId",
+        "DESC",
+      ],
+    ],
+    [
+      "belongsToIdASC",
+      [
+        "belongsToId",
+        "ASC",
+      ],
+    ],
+    [
+      "belongsToIdDESC",
+      [
+        "belongsToId",
+        "DESC",
+      ],
+    ],
+  ],
+  "ParentOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+  ],
+  "TaskItemOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "taskIdASC",
+      [
+        "taskId",
+        "ASC",
+      ],
+    ],
+    [
+      "taskIdDESC",
+      [
+        "taskId",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+  ],
+  "TaskOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "nameASC",
+      [
+        "name",
+        "ASC",
+      ],
+    ],
+    [
+      "nameDESC",
+      [
+        "name",
+        "DESC",
+      ],
+    ],
+    [
+      "nullCheckASC",
+      [
+        "nullCheck",
+        "ASC",
+      ],
+    ],
+    [
+      "nullCheckDESC",
+      [
+        "nullCheck",
+        "DESC",
+      ],
+    ],
+    [
+      "intZeroCheckASC",
+      [
+        "intZeroCheck",
+        "ASC",
+      ],
+    ],
+    [
+      "intZeroCheckDESC",
+      [
+        "intZeroCheck",
+        "DESC",
+      ],
+    ],
+    [
+      "optionsASC",
+      [
+        "options",
+        "ASC",
+      ],
+    ],
+    [
+      "optionsDESC",
+      [
+        "options",
+        "DESC",
+      ],
+    ],
+    [
+      "options2ASC",
+      [
+        "options2",
+        "ASC",
+      ],
+    ],
+    [
+      "options2DESC",
+      [
+        "options2",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+  ],
+  "__DirectiveLocation": [
+    [
+      "QUERY",
+      "QUERY",
+    ],
+    [
+      "MUTATION",
+      "MUTATION",
+    ],
+    [
+      "SUBSCRIPTION",
+      "SUBSCRIPTION",
+    ],
+    [
+      "FIELD",
+      "FIELD",
+    ],
+    [
+      "FRAGMENT_DEFINITION",
+      "FRAGMENT_DEFINITION",
+    ],
+    [
+      "FRAGMENT_SPREAD",
+      "FRAGMENT_SPREAD",
+    ],
+    [
+      "INLINE_FRAGMENT",
+      "INLINE_FRAGMENT",
+    ],
+    [
+      "VARIABLE_DEFINITION",
+      "VARIABLE_DEFINITION",
+    ],
+    [
+      "FRAGMENT_VARIABLE_DEFINITION",
+      "FRAGMENT_VARIABLE_DEFINITION",
+    ],
+    [
+      "SCHEMA",
+      "SCHEMA",
+    ],
+    [
+      "SCALAR",
+      "SCALAR",
+    ],
+    [
+      "OBJECT",
+      "OBJECT",
+    ],
+    [
+      "FIELD_DEFINITION",
+      "FIELD_DEFINITION",
+    ],
+    [
+      "ARGUMENT_DEFINITION",
+      "ARGUMENT_DEFINITION",
+    ],
+    [
+      "INTERFACE",
+      "INTERFACE",
+    ],
+    [
+      "UNION",
+      "UNION",
+    ],
+    [
+      "ENUM",
+      "ENUM",
+    ],
+    [
+      "ENUM_VALUE",
+      "ENUM_VALUE",
+    ],
+    [
+      "INPUT_OBJECT",
+      "INPUT_OBJECT",
+    ],
+    [
+      "INPUT_FIELD_DEFINITION",
+      "INPUT_FIELD_DEFINITION",
+    ],
+    [
+      "DIRECTIVE_DEFINITION",
+      "DIRECTIVE_DEFINITION",
+    ],
+  ],
+  "__TypeKind": [
+    [
+      "SCALAR",
+      "SCALAR",
+    ],
+    [
+      "OBJECT",
+      "OBJECT",
+    ],
+    [
+      "INTERFACE",
+      "INTERFACE",
+    ],
+    [
+      "UNION",
+      "UNION",
+    ],
+    [
+      "ENUM",
+      "ENUM",
+    ],
+    [
+      "INPUT_OBJECT",
+      "INPUT_OBJECT",
+    ],
+    [
+      "LIST",
+      "LIST",
+    ],
+    [
+      "NON_NULL",
+      "NON_NULL",
+    ],
+  ],
+}
+`;
+
+exports[`golden schema restrictive permission profile: sdl 1`] = `
+"schema {
+  query: RootQuery
+  mutation: Mutation
+}
+
+type RootQuery {
+  """Fetches an object given its ID"""
+  node(
+    """The ID of an object"""
+    id: ID!
+  ): Node
+  models: QueryModels
+  classMethods: QueryClassMethods
+}
+
+"""An object with an ID"""
+interface Node {
+  """The id of the object."""
+  id: ID!
+}
+
+type QueryModels {
+  Child(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ChildOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryChildWhere
+    include: [GQLTChildIncludeObject]
+  ): ChildList
+  Task(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [TaskOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryTaskWhere
+    include: [GQLTTaskIncludeObject]
+  ): TaskList
+  TaskItem(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [TaskItemOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryTaskItemWhere
+    include: [GQLTTaskItemIncludeObject]
+  ): TaskItemList
+  Item(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ItemOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryItemWhere
+    include: [GQLTItemIncludeObject]
+  ): ItemList
+}
+
+type ChildList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Child"""
+  edges: [ChildEdge]
+}
+
+type PageInfo {
+  hasNextPage: Boolean
+  hasPreviousPage: Boolean
+  startCursor: String
+  endCursor: String
+}
+
+"""Child edge"""
+type ChildEdge {
+  node: Child
+  cursor: String
+}
+
+type Child implements Node {
+  """The ID of an object"""
+  id: ID!
+  name: String
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+
+  """The ID of an object"""
+  parentId: ID
+}
+
+"""
+A special custom Scalar type for Dates that converts to a ISO formatted string 
+"""
+scalar GQLTDate
+
+enum ChildOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+  parentIdASC
+  parentIdDESC
+}
+
+input GQLTQueryChildWhere {
+  id: GQLTQueryChildWhereid
+  name: GQLTQueryChildWherename
+  createdAt: GQLTQueryChildWherecreatedAt
+  updatedAt: GQLTQueryChildWhereupdatedAt
+  parentId: GQLTQueryChildWhereparentId
+  or: [GQLTQueryChildWhere]
+  and: [GQLTQueryChildWhere]
+  any: [GQLTQueryChildWhere]
+  all: [GQLTQueryChildWhere]
+}
+
+input GQLTQueryChildWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryChildWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryChildWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryChildWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryChildWhereparentId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTChildIncludeObject {
+  parent: GQLTChildIncludeparentObject
+}
+
+input GQLTChildIncludeparentObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryParentWhere
+  orderBy: [ParentOrderBy]
+  include: [GQLTParentIncludeObject]
+}
+
+input GQLTQueryParentWhere {
+  id: GQLTQueryParentWhereid
+  name: GQLTQueryParentWherename
+  createdAt: GQLTQueryParentWherecreatedAt
+  updatedAt: GQLTQueryParentWhereupdatedAt
+  or: [GQLTQueryParentWhere]
+  and: [GQLTQueryParentWhere]
+  any: [GQLTQueryParentWhere]
+  all: [GQLTQueryParentWhere]
+}
+
+input GQLTQueryParentWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryParentWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryParentWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryParentWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+enum ParentOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+}
+
+input GQLTParentIncludeObject {
+  children: GQLTParentIncludechildrenObject
+}
+
+input GQLTParentIncludechildrenObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryChildWhere
+  orderBy: [ChildOrderBy]
+  include: [GQLTChildIncludeObject]
+}
+
+type TaskList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Task"""
+  edges: [TaskEdge]
+}
+
+"""Task edge"""
+type TaskEdge {
+  node: Task
+  cursor: String
+}
+
+type Task implements Node {
+  """The ID of an object"""
+  id: ID!
+  name: String!
+  nullCheck: String
+  intZeroCheck: Int
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+  options: TaskOptions
+  options2: String
+  item(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Item
+  btmItems(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ItemOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryItemWhere
+    include: [GQLTItemIncludeObject]
+  ): ItemBelongsToManyBtmItemsList
+  testInstanceMethod(input: TestInstanceMethodInput!): [Task]
+}
+
+type TaskOptions {
+  hidden: String
+  hidden2: String
+}
+
+"""item comment"""
+type Item implements Node {
+  """The ID of an object"""
+  id: ID!
+
+  """name comment"""
+  name: String!
+
+  """The ID of an object"""
+  parentId: ID
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+
+  """The ID of an object"""
+  hasOneId: ID
+
+  """The ID of an object"""
+  taskId: ID
+
+  """The ID of an object"""
+  belongsToId: ID
+
+  """hasOne comment"""
+  hasOne(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Item
+  belongsTo(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Item
+
+  """children comment"""
+  children(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ItemOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryItemWhere
+    include: [GQLTItemIncludeObject]
+  ): ItemHasManyChildrenList
+  parent(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Item
+  task(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Task
+  btmTasks(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [TaskOrderBy]
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+    where: GQLTQueryTaskWhere
+    include: [GQLTTaskIncludeObject]
+  ): TaskBelongsToManyBtmTasksList
+
+  """testInstanceMethod comment"""
+  testInstanceMethod: Boolean
+}
+
+type ItemHasManyChildrenList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for ItemHasManyChildren"""
+  edges: [ItemHasManyChildrenEdge]
+}
+
+"""ItemHasManyChildren edge"""
+type ItemHasManyChildrenEdge {
+  node: Item
+  cursor: String
+}
+
+enum ItemOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  parentIdASC
+  parentIdDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+  hasOneIdASC
+  hasOneIdDESC
+  taskIdASC
+  taskIdDESC
+  belongsToIdASC
+  belongsToIdDESC
+}
+
+input GQLTQueryItemWhere {
+  id: GQLTQueryItemWhereid
+  name: GQLTQueryItemWherename
+  parentId: GQLTQueryItemWhereparentId
+  createdAt: GQLTQueryItemWherecreatedAt
+  updatedAt: GQLTQueryItemWhereupdatedAt
+  hasOneId: GQLTQueryItemWherehasOneId
+  taskId: GQLTQueryItemWheretaskId
+  belongsToId: GQLTQueryItemWherebelongsToId
+  or: [GQLTQueryItemWhere]
+  and: [GQLTQueryItemWhere]
+  any: [GQLTQueryItemWhere]
+  all: [GQLTQueryItemWhere]
+}
+
+input GQLTQueryItemWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryItemWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryItemWhereparentId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryItemWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryItemWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryItemWherehasOneId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryItemWheretaskId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryItemWherebelongsToId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTItemIncludeObject {
+  hasOne: GQLTItemIncludehasOneObject
+  belongsTo: GQLTItemIncludebelongsToObject
+  children: GQLTItemIncludechildrenObject
+  parent: GQLTItemIncludeparentObject
+  task: GQLTItemIncludetaskObject
+  btmTasks: GQLTItemIncludebtmTasksObject
+}
+
+input GQLTItemIncludehasOneObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTItemIncludebelongsToObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTItemIncludechildrenObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTItemIncludeparentObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTItemIncludetaskObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryTaskWhere
+  orderBy: [TaskOrderBy]
+  include: [GQLTTaskIncludeObject]
+}
+
+input GQLTQueryTaskWhere {
+  id: GQLTQueryTaskWhereid
+  name: GQLTQueryTaskWherename
+  nullCheck: GQLTQueryTaskWherenullCheck
+  intZeroCheck: GQLTQueryTaskWhereintZeroCheck
+  options: GQLTQueryTaskWhereoptions
+  options2: GQLTQueryTaskWhereoptions2
+  createdAt: GQLTQueryTaskWherecreatedAt
+  updatedAt: GQLTQueryTaskWhereupdatedAt
+  or: [GQLTQueryTaskWhere]
+  and: [GQLTQueryTaskWhere]
+  any: [GQLTQueryTaskWhere]
+  all: [GQLTQueryTaskWhere]
+  hasNoItems: Boolean
+  chainTest: Boolean
+}
+
+input GQLTQueryTaskWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryTaskWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskWherenullCheck {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskWhereintZeroCheck {
+  eq: Int
+  ne: Int
+  gte: Int
+  lte: Int
+  lt: Int
+  not: Int
+  is: Int
+  like: Int
+  notLike: Int
+  iLike: Int
+  notILike: Int
+  startsWith: Int
+  endsWith: Int
+  substring: Int
+  in: [Int]
+  notIn: [Int]
+  contains: [Int]
+  contained: [Int]
+  between: [Int]
+  notBetween: [Int]
+  overlap: [Int]
+  adjacent: [Int]
+  strictLeft: [Int]
+  strictRight: [Int]
+  noExtendRight: [Int]
+  noExtendLeft: [Int]
+}
+
+input GQLTQueryTaskWhereoptions {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskWhereoptions2 {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryTaskWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+enum TaskOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  nullCheckASC
+  nullCheckDESC
+  intZeroCheckASC
+  intZeroCheckDESC
+  optionsASC
+  optionsDESC
+  options2ASC
+  options2DESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+}
+
+input GQLTTaskIncludeObject {
+  item: GQLTTaskIncludeitemObject
+  btmItems: GQLTTaskIncludebtmItemsObject
+}
+
+input GQLTTaskIncludeitemObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTTaskIncludebtmItemsObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: [GQLTItemIncludeObject]
+}
+
+input GQLTItemIncludebtmTasksObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryTaskWhere
+  orderBy: [TaskOrderBy]
+  include: [GQLTTaskIncludeObject]
+}
+
+type TaskBelongsToManyBtmTasksList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for TaskBelongsToManyBtmTasks"""
+  edges: [TaskBelongsToManyBtmTasksEdge]
+}
+
+"""TaskBelongsToManyBtmTasks edge"""
+type TaskBelongsToManyBtmTasksEdge {
+  node: Task
+  cursor: String
+}
+
+type ItemBelongsToManyBtmItemsList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for ItemBelongsToManyBtmItems"""
+  edges: [ItemBelongsToManyBtmItemsEdge]
+}
+
+"""ItemBelongsToManyBtmItems edge"""
+type ItemBelongsToManyBtmItemsEdge {
+  node: Item
+  cursor: String
+}
+
+input TestInstanceMethodInput {
+  amount: Int!
+}
+
+type TaskItemList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for TaskItem"""
+  edges: [TaskItemEdge]
+}
+
+"""TaskItem edge"""
+type TaskItemEdge {
+  node: TaskItem
+  cursor: String
+}
+
+type TaskItem implements Node {
+  """The ID of an object"""
+  id: ID!
+  name: String!
+
+  """The ID of an object"""
+  taskId: ID
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+  task(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Task
+  testInstanceMethodArray: [TaskItem]
+  testInstanceMethodSingle: TaskItem
+}
+
+enum TaskItemOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  taskIdASC
+  taskIdDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+}
+
+input GQLTQueryTaskItemWhere {
+  id: GQLTQueryTaskItemWhereid
+  name: GQLTQueryTaskItemWherename
+  taskId: GQLTQueryTaskItemWheretaskId
+  createdAt: GQLTQueryTaskItemWherecreatedAt
+  updatedAt: GQLTQueryTaskItemWhereupdatedAt
+  or: [GQLTQueryTaskItemWhere]
+  and: [GQLTQueryTaskItemWhere]
+  any: [GQLTQueryTaskItemWhere]
+  all: [GQLTQueryTaskItemWhere]
+}
+
+input GQLTQueryTaskItemWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryTaskItemWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryTaskItemWheretaskId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryTaskItemWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryTaskItemWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTTaskItemIncludeObject {
+  task: GQLTTaskItemIncludetaskObject
+}
+
+input GQLTTaskItemIncludetaskObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryTaskWhere
+  orderBy: [TaskOrderBy]
+  include: [GQLTTaskIncludeObject]
+}
+
+type ItemList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Item"""
+  edges: [ItemEdge]
+}
+
+"""Item edge"""
+type ItemEdge {
+  node: Item
+  cursor: String
+}
+
+type QueryClassMethods {
+  Task: TaskQueryClassMethods
+  TaskItem: TaskItemQueryClassMethods
+}
+
+type TaskQueryClassMethods {
+  reverseNameArray: [Task]
+  getHiddenData2: TaskHiddenData2
+}
+
+type TaskHiddenData2 {
+  hidden: String
+}
+
+type TaskItemQueryClassMethods {
+  getTaskItemsArray: [TaskItem]
+  getTaskItemsSingle: TaskItem
+}
+
+type Mutation {
+  models: MutationModels
+  classMethods: MutationClassMethods
+}
+
+type MutationModels {
+  Task(
+    """This will create a new element for Task"""
+    create: [TaskRequiredInput]
+
+    """This will update a new element for Task"""
+    update: [TaskUpdateInput]
+
+    """
+    This will find elements for Task and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [TaskSelectInput]
+
+    """This will delete a new element for Task"""
+    delete: [GQLTQueryTaskWhere]
+  ): [Task]
+  TaskItem(
+    """This will create a new element for TaskItem"""
+    create: [TaskItemRequiredInput]
+
+    """This will update a new element for TaskItem"""
+    update: [TaskItemUpdateInput]
+
+    """
+    This will find elements for TaskItem and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [TaskItemSelectInput]
+
+    """This will delete a new element for TaskItem"""
+    delete: [GQLTQueryTaskItemWhere]
+  ): [TaskItem]
+  Item(
+    """This will create a new element for Item"""
+    create: [ItemRequiredInput]
+
+    """This will update a new element for Item"""
+    update: [ItemUpdateInput]
+
+    """
+    This will find elements for Item and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [ItemSelectInput]
+
+    """This will delete a new element for Item"""
+    delete: [GQLTQueryItemWhere]
+  ): [Item]
+}
+
+""""""
+input TaskRequiredInput {
+  name: String!
+  nullCheck: String
+  intZeroCheck: Int
+  mutationCheck: String
+  options: TaskOptionsOptionsInput
+  options2: String
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for TaskItemsHasMany"""
+  items: TaskItemsHasManyInput
+
+  """This is the mutation object for TaskItemHasOne"""
+  item: TaskItemHasOneInput
+
+  """This is the mutation object for TaskBtmItemsBelongsToMany"""
+  btmItems: TaskBtmItemsBelongsToManyInput
+}
+
+input TaskOptionsOptionsInput {
+  hidden: String
+  hidden2: String
+}
+
+""""""
+input TaskItemsHasManyInput {
+  """This will create a new element with a relationship to the current Task"""
+  create: [TaskItemRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Task
+  """
+  update: [TaskItemsUpdate]
+
+  """
+  This will add any matching elements with a relationship to the current Task
+  """
+  add: [GQLTQueryTaskItemWhere]
+
+  """
+  This will replace the entire items set with the matching existing elements
+  """
+  set: [GQLTQueryTaskItemWhere]
+
+  """
+  This will remove the relationship from any matching elements from the current Task
+  """
+  remove: [GQLTQueryTaskItemWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Task
+  """
+  delete: [GQLTQueryTaskItemWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Task
+  """
+  restore: [GQLTQueryTaskItemWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [TaskItemsSelect]
+}
+
+""""""
+input TaskItemRequiredInput {
+  name: String!
+
+  """This a primary key for TaskItem"""
+  taskId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for TaskItemTaskBelongsTo"""
+  task: TaskItemTaskBelongsToInput
+}
+
+""""""
+input TaskItemTaskBelongsToInput {
+  """
+  This will create a new element with a relationship to the current TaskItem
+  """
+  create: TaskRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current TaskItem
+  """
+  update: TaskItemTaskUpdate
+
+  """
+  This will associate an existing matching element with the current TaskItem
+  """
+  set: GQLTQueryTaskWhere
+
+  """When true, this will disassociate the current task from the TaskItem"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current TaskItem
+  """
+  delete: GQLTQueryTaskWhere
+
+  """
+  This will restore the soft-deleted task related to the current TaskItem
+  """
+  restore: GQLTQueryTaskWhere
+
+  """
+  This will find the matching related task and run relationship mutations on it without modifying the element itself
+  """
+  select: TaskItemTaskSelect
+}
+
+""""""
+input TaskItemTaskUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryTaskWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskOptionalInput {
+  name: String
+  nullCheck: String
+  intZeroCheck: Int
+  mutationCheck: String
+  options: TaskOptionsOptionalOptions
+  options2: String
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for TaskItemsHasMany"""
+  items: TaskItemsHasManyInput
+
+  """This is the mutation object for TaskItemHasOne"""
+  item: TaskItemHasOneInput
+
+  """This is the mutation object for TaskBtmItemsBelongsToMany"""
+  btmItems: TaskBtmItemsBelongsToManyInput
+}
+
+input TaskOptionsOptionalOptions {
+  hidden: String
+  hidden2: String
+}
+
+""""""
+input TaskItemHasOneInput {
+  """This will create a new element with a relationship to the current Task"""
+  create: ItemRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Task
+  """
+  update: TaskItemUpdate
+
+  """This will associate an existing matching element with the current Task"""
+  set: GQLTQueryItemWhere
+
+  """When true, this will disassociate the current item from the Task"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Task
+  """
+  delete: GQLTQueryItemWhere
+
+  """This will restore the soft-deleted item related to the current Task"""
+  restore: GQLTQueryItemWhere
+
+  """
+  This will find the matching related item and run relationship mutations on it without modifying the element itself
+  """
+  select: TaskItemSelect
+}
+
+""""""
+input ItemRequiredInput {
+  """name comment"""
+  name: String!
+
+  """This a primary key for Item"""
+  parentId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for ItemHasOneHasOne"""
+  hasOne: ItemHasOneHasOneInput
+
+  """This is the mutation object for ItemBelongsToBelongsTo"""
+  belongsTo: ItemBelongsToBelongsToInput
+
+  """This is the mutation object for ItemChildrenHasMany"""
+  children: ItemChildrenHasManyInput
+
+  """This is the mutation object for ItemParentBelongsTo"""
+  parent: ItemParentBelongsToInput
+
+  """This is the mutation object for ItemTaskBelongsTo"""
+  task: ItemTaskBelongsToInput
+
+  """This is the mutation object for ItemBtmTasksBelongsToMany"""
+  btmTasks: ItemBtmTasksBelongsToManyInput
+}
+
+""""""
+input ItemHasOneHasOneInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: ItemRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: ItemHasOneUpdate
+
+  """This will associate an existing matching element with the current Item"""
+  set: GQLTQueryItemWhere
+
+  """When true, this will disassociate the current hasOne from the Item"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: GQLTQueryItemWhere
+
+  """This will restore the soft-deleted hasOne related to the current Item"""
+  restore: GQLTQueryItemWhere
+
+  """
+  This will find the matching related hasOne and run relationship mutations on it without modifying the element itself
+  """
+  select: ItemHasOneSelect
+}
+
+""""""
+input ItemHasOneUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemOptionalInput {
+  """name comment"""
+  name: String
+
+  """This a primary key for Item"""
+  parentId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for ItemHasOneHasOne"""
+  hasOne: ItemHasOneHasOneInput
+
+  """This is the mutation object for ItemBelongsToBelongsTo"""
+  belongsTo: ItemBelongsToBelongsToInput
+
+  """This is the mutation object for ItemChildrenHasMany"""
+  children: ItemChildrenHasManyInput
+
+  """This is the mutation object for ItemParentBelongsTo"""
+  parent: ItemParentBelongsToInput
+
+  """This is the mutation object for ItemTaskBelongsTo"""
+  task: ItemTaskBelongsToInput
+
+  """This is the mutation object for ItemBtmTasksBelongsToMany"""
+  btmTasks: ItemBtmTasksBelongsToManyInput
+}
+
+""""""
+input ItemBelongsToBelongsToInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: ItemRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: ItemBelongsToUpdate
+
+  """This will associate an existing matching element with the current Item"""
+  set: GQLTQueryItemWhere
+
+  """When true, this will disassociate the current belongsTo from the Item"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: GQLTQueryItemWhere
+
+  """
+  This will restore the soft-deleted belongsTo related to the current Item
+  """
+  restore: GQLTQueryItemWhere
+
+  """
+  This will find the matching related belongsTo and run relationship mutations on it without modifying the element itself
+  """
+  select: ItemBelongsToSelect
+}
+
+""""""
+input ItemBelongsToUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemBelongsToSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemChildrenHasManyInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: [ItemRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: [ItemChildrenUpdate]
+
+  """
+  This will add any matching elements with a relationship to the current Item
+  """
+  add: [GQLTQueryItemWhere]
+
+  """
+  This will replace the entire children set with the matching existing elements
+  """
+  set: [GQLTQueryItemWhere]
+
+  """
+  This will remove the relationship from any matching elements from the current Item
+  """
+  remove: [GQLTQueryItemWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: [GQLTQueryItemWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Item
+  """
+  restore: [GQLTQueryItemWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [ItemChildrenSelect]
+}
+
+""""""
+input ItemChildrenUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemChildrenSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemParentBelongsToInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: ItemRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: ItemParentUpdate
+
+  """This will associate an existing matching element with the current Item"""
+  set: GQLTQueryItemWhere
+
+  """When true, this will disassociate the current parent from the Item"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: GQLTQueryItemWhere
+
+  """This will restore the soft-deleted parent related to the current Item"""
+  restore: GQLTQueryItemWhere
+
+  """
+  This will find the matching related parent and run relationship mutations on it without modifying the element itself
+  """
+  select: ItemParentSelect
+}
+
+""""""
+input ItemParentUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemParentSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemTaskBelongsToInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: TaskRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: ItemTaskUpdate
+
+  """This will associate an existing matching element with the current Item"""
+  set: GQLTQueryTaskWhere
+
+  """When true, this will disassociate the current task from the Item"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: GQLTQueryTaskWhere
+
+  """This will restore the soft-deleted task related to the current Item"""
+  restore: GQLTQueryTaskWhere
+
+  """
+  This will find the matching related task and run relationship mutations on it without modifying the element itself
+  """
+  select: ItemTaskSelect
+}
+
+""""""
+input ItemTaskUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryTaskWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input ItemTaskSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input ItemBtmTasksBelongsToManyInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: [TaskRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: [ItemBtmTasksUpdate]
+
+  """
+  This will add any matching existing elements (with optional through attributes) to the current Item
+  """
+  add: [ItemBtmTasksAddThrough]
+
+  """
+  This will replace the entire btmTasks set with the matching existing elements (with optional through attributes)
+  """
+  set: [ItemBtmTasksAddThrough]
+
+  """
+  This will remove the relationship from any matching elements from the current Item
+  """
+  remove: [GQLTQueryTaskWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: [GQLTQueryTaskWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Item
+  """
+  restore: [GQLTQueryTaskWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [ItemBtmTasksSelect]
+}
+
+""""""
+input ItemBtmTasksUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryTaskWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input ItemBtmTasksAddThrough {
+  """Filter used to find the existing elements to associate"""
+  where: GQLTQueryTaskWhere
+
+  """
+  Attribute values to write on the join table for the associated elements
+  """
+  through: GQLTJson
+}
+
+"""The \`JSON\` scalar type represents raw JSON as values."""
+scalar GQLTJson
+
+""""""
+input ItemBtmTasksSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input ItemHasOneSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskItemUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskItemSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskBtmItemsBelongsToManyInput {
+  """This will create a new element with a relationship to the current Task"""
+  create: [ItemRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Task
+  """
+  update: [TaskBtmItemsUpdate]
+
+  """
+  This will add any matching existing elements (with optional through attributes) to the current Task
+  """
+  add: [TaskBtmItemsAddThrough]
+
+  """
+  This will replace the entire btmItems set with the matching existing elements (with optional through attributes)
+  """
+  set: [TaskBtmItemsAddThrough]
+
+  """
+  This will remove the relationship from any matching elements from the current Task
+  """
+  remove: [GQLTQueryItemWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Task
+  """
+  delete: [GQLTQueryItemWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Task
+  """
+  restore: [GQLTQueryItemWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [TaskBtmItemsSelect]
+}
+
+""""""
+input TaskBtmItemsUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskBtmItemsAddThrough {
+  """Filter used to find the existing elements to associate"""
+  where: GQLTQueryItemWhere
+
+  """
+  Attribute values to write on the join table for the associated elements
+  """
+  through: GQLTJson
+}
+
+""""""
+input TaskBtmItemsSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskItemTaskSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskItemsUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryTaskItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: TaskItemOptionalInput
+}
+
+""""""
+input TaskItemOptionalInput {
+  name: String
+
+  """This a primary key for TaskItem"""
+  taskId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+
+  """This is the mutation object for TaskItemTaskBelongsTo"""
+  task: TaskItemTaskBelongsToInput
+}
+
+""""""
+input TaskItemsSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskItemOptionalInput
+}
+
+""""""
+input TaskUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskItemUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryTaskItemWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: TaskItemOptionalInput
+}
+
+""""""
+input TaskItemSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskItemWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskItemOptionalInput
+}
+
+""""""
+input ItemUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+type MutationClassMethods {
+  Task: TaskMutationsClassMethods
+  TaskItem: TaskItemMutationsClassMethods
+  Item: ItemMutationsClassMethods
+}
+
+type TaskMutationsClassMethods {
+  reverseName(input: TaskReverseNameInput!): Task
+  reverseName2(input: TaskReverseName2Input!): Task
+}
+
+input TaskReverseNameInput {
+  amount: Int!
+}
+
+input TaskReverseName2Input {
+  amount: Int!
+}
+
+type TaskItemMutationsClassMethods {
+  getTaskItemsArray: [TaskItem]
+  getTaskItemsSingle: TaskItem
+}
+
+type ItemMutationsClassMethods {
+  """reverseName comment"""
+  reverseName: Boolean
+}"
+`;

@@ -8,6 +8,8 @@ import {
 import { capitalize } from "@azerothian/utilize/utils/word";
 import GQLManager from '../manager';
 import { Definitions, GqlizeOptions, SchemaCache, Definition } from '../types';
+import { bindField } from "./resolvers/bind";
+import { recordExternalType } from "./snapshot/ledger";
 
 
 
@@ -26,15 +28,12 @@ export default function createClassMethods(instance: GQLManager, definitions: De
     if (target) {
       const obj = await createClassMethodFields(instance, defName, definition, target, options, schemaCache, targetName);
       if (Object.keys(obj).length > 0) {
-        o[defName] = {
+        o[defName] = bindField({
           type: new GraphQLObjectType({
             name: `${defName}${capitalize(targetName)}ClassMethods`,
             fields: obj,
           }),
-          resolve() {
-            return {};
-          }
-        };
+        }, {kind: "container"}, {instance, options});
       }
     }
     return o;
@@ -49,12 +48,11 @@ export function createClassMethodFields(instance: GQLManager, defName: string, d
     after?: any;
   };
 }, options: GqlizeOptions, schemaCache: SchemaCache, targetName: string) {
-  return waterfall(Object.keys(query), async(methodName: string, o: { 
+  return waterfall(Object.keys(query), async(methodName: string, o: {
     [x: string]: {
       type: any;
       args: any;
       description: any;
-      resolve(source: any, args: any, context: any, info: any): Promise<any>; 
     };
   }) => {
     if (options.permission) {
@@ -70,17 +68,30 @@ export function createClassMethodFields(instance: GQLManager, defName: string, d
         }
       }
     }
-    const {type, args, before, after} = query[methodName];
+    const {type, args} = query[methodName];
     let outputType = (typeof type === "string") ? schemaCache.types[type] : type;
     if (!outputType) {
       return o;
+    }
+    const group = "classMethods" as const;
+    const exposeTarget = targetName as "query" | "mutations";
+    if (typeof type !== "string") {
+      recordExternalType(schemaCache, outputType, {
+        via: "definitionExpose", defName, group, target: exposeTarget, methodName, use: "type",
+      });
     }
     let newArgs;
     if (args) {
       newArgs = Object.keys(args).reduce((oa, argName) => {
         let arg = args[argName];
-        let argType = (arg.type instanceof String || typeof arg.type === "string") ? schemaCache.mutationInputFields[arg.type] : arg.type;
+        const isNamedRef = arg.type instanceof String || typeof arg.type === "string";
+        let argType = isNamedRef ? schemaCache.mutationInputFields[arg.type] : arg.type;
         if (argType) {
+          if (!isNamedRef) {
+            recordExternalType(schemaCache, argType, {
+              via: "definitionExpose", defName, group, target: exposeTarget, methodName, use: "arg", argName,
+            });
+          }
           oa[argName] = {
             ...arg,
             type: argType,
@@ -90,14 +101,16 @@ export function createClassMethodFields(instance: GQLManager, defName: string, d
       }, {} as any);
     }
 
-    o[methodName] = {
+    o[methodName] = bindField({
       type: outputType,
       args: newArgs,
       description: (definition.comments?.classMethods || {})[methodName],
-      async resolve(source: any, args: any, context: any, info: any) {
-        return instance.resolveClassMethod(defName, methodName, args, context, before, after);
-      },
-    };
+    }, {
+      kind: "classMethod",
+      defName,
+      methodName,
+      target: targetName as "query" | "mutations",
+    }, {instance, options});
     return o;
 
   }, {});

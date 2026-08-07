@@ -37,6 +37,26 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/where-variables.test.ts',
 ];
 
+// Functional suites re-run against a schema that has been through the artifact
+// (build -> snapshot -> JSON -> materialize). Keep this always-on in CI: it is
+// what stops a resolver binding from drifting between the live builder and the
+// loader. Excludes `schema-golden` and `__tests__/snapshot/*` — those assert the
+// build path itself, and `__tests__/graphql/*` unit-test the builders directly.
+const ROUNDTRIP_SUITES = [
+  '<rootDir>/__tests__/query.test.ts',
+  '<rootDir>/__tests__/query-eager.test.ts',
+  '<rootDir>/__tests__/query-count.test.ts',
+  '<rootDir>/__tests__/mutation.test.ts',
+  '<rootDir>/__tests__/mutation-relationships.test.ts',
+  '<rootDir>/__tests__/relay.test.ts',
+  '<rootDir>/__tests__/permission.test.ts',
+  '<rootDir>/__tests__/permission-helper.test.ts',
+  '<rootDir>/__tests__/comments.test.ts',
+  '<rootDir>/__tests__/include-leaf-model.test.ts',
+  '<rootDir>/__tests__/where-variables.test.ts',
+  '<rootDir>/__tests__/pageinfo.test.ts',
+];
+
 module.exports = {
   // Each postgres test file spins up an in-process PGlite (WASM) instance; too
   // many concurrent instances exhaust resources on high-core machines, so cap
@@ -73,6 +93,19 @@ module.exports = {
       testTimeout: 30000,
       setupFiles: ['<rootDir>/__tests__/setup/dialect-postgres.ts'],
       setupFilesAfterEnv: ['<rootDir>/__tests__/setup/teardown.ts'],
+    },
+    {
+      ...base,
+      displayName: 'roundtrip',
+      testMatch: ROUNDTRIP_SUITES,
+      setupFiles: ['<rootDir>/__tests__/setup/dialect-sqlite.ts'],
+      setupFilesAfterEnv: ['<rootDir>/__tests__/setup/teardown.ts'],
+      // Anchored exactly, so `__tests__/graphql/*` (which import
+      // `../../src/graphql/create-*`) keep hitting the real builders.
+      moduleNameMapper: {
+        '^\\.\\./src$': '<rootDir>/__tests__/setup/roundtrip-src.ts',
+        ...base.moduleNameMapper,
+      },
     },
   ],
 };

@@ -77,7 +77,7 @@ which now lives in `gqlize`) and is registered on an `Ormize` instance.
 | Package | Path | Responsibility |
 | --- | --- | --- |
 | [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise`/`sync`/`reset`, relationship wiring, the graphql-free resolution engine (`resolveFindAll`/`process*`/`resolve{Many,Single}Relationship`), and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
-| [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | GraphQL layer: `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema. Key files: `src/graphql/*` (builders), `src/types/gqlize-adapter.ts` (the `GqlizeAdapter` contract). |
+| [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | GraphQL layer: `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema. Key files: `src/graphql/*` (builders), `src/graphql/resolvers/*` (the resolver registry), `src/graphql/snapshot/*` (serialisation), `src/cli/*` (the `gqlize` binary), `src/types/gqlize-adapter.ts` (the `GqlizeAdapter` contract). |
 | [`@azerothian/ormize-zod4`](../packages/ormize-zod4) | `packages/ormize-zod4` | Zod v4 projection: `generateZodSchemas(orm, options)` → permission-gated `{ entity, create, update }` schemas per model. |
 | [`@azerothian/nestize`](../packages/nestize) | `packages/nestize` | NestJS REST + Swagger projection: `NestizeModule.forRoot(orm, options)` + `buildOpenApiDocument`/`setupSwagger`. Drives the graphql-free ormize engine over REST; request bodies validated with the ormize-zod4 schemas. |
 | [`@azerothian/ormize-adapter-sequelize`](../packages/ormize-adapter-sequelize) | `packages/ormize-adapter-sequelize` | Reference `GqlizeAdapter` implementation over Sequelize 6. Same `SequelizeAdapter` default export. Entry: `src/index.ts`; `src/type-mapper.ts`, `src/utils/where-ops.ts`, `src/utils/replace-id-deep.ts`. Typesystem binding in `src/types/orm.ts` (`defineModel`, `SequelizeModel`, `IORSequelizeModel`). |
@@ -87,6 +87,27 @@ which now lives in `gqlize`) and is registered on an `Ormize` instance.
 > **Runnable examples:** [`examples/gqlize-basic`](../examples/gqlize-basic) (GraphQL) and
 > [`examples/nestize-rest`](../examples/nestize-rest) (REST) build the same domain on one ormize
 > instance — see the [root README](../README.md#examples).
+
+### Schema serialisation subsystem (`packages/gqlize`)
+
+Three directories exist so a schema can be built once and rebuilt from an artifact later. The
+design property they all serve is **one resolver implementation, two callers**:
+
+| Path | Responsibility |
+| --- | --- |
+| `src/graphql/resolvers/` | Every resolver body, keyed by `kind` (`connection`, `singleRelationship`, `globalId`, `modelField`, `overrideOutput`, `instanceMethod`, `classMethod`, `mutationModel`, `container`, `nodeField`, `extend`). `bind.ts` exports `bindField(config, binding, ctx)` — the **single** point at which any resolver is attached to any field, and the place the `FieldBinding` descriptor is stamped onto `extensions.gqlize`. |
+| `src/graphql/snapshot/` | `ir.ts` (the serialisable `SchemaSnapshot`), `snapshot.ts` (`GraphQLSchema` → IR), `materialize.ts` (IR → `GraphQLSchema`), `fingerprint.ts`, `scalar-registry.ts`, `type-ref.ts`, `reachability.ts`, `ledger.ts`, `load.ts`. |
+| `src/cli/` | `args.ts` (`node:util.parseArgs`), `config.ts` (discovery + loading), `profiles.ts`, `commands/{build,print,check}.ts`, and `index.ts` — the shebang shell that turns `run()`'s return value into an exit status. |
+
+The live builder and the materializer both call `bindField`, so there is no second resolver
+implementation that could drift from the first. Enforcing that, the snapshotter **throws** rather
+than silently dropping anything it cannot describe: a `resolve`/`subscribe` with no binding, a
+non-`Node` `resolveType`/`isTypeOf`, a non-JSON-serialisable enum internal value, an unregistered
+scalar, or a non-representable default — each reported with its schema coordinate.
+
+The artifact is JSON rather than SDL because `printSchema` discards enum *internal* values (the
+`["name", "ASC"]` payloads behind `*OrderBy` members, fed straight to the adapter's `order`) and
+never prints applied directives. SDL is available as a secondary artifact for codegen and CI diffs.
 
 Root configuration files: `package.json` (scripts, `pnpm@9.15.9`, graphql override/patch),
 `pnpm-workspace.yaml` (`packages/*`, `examples/*`), `turbo.json` (task pipeline), `tsconfig.base.json`
@@ -143,6 +164,55 @@ Backend-only CRUD is available without building a schema: `await db.models.Task.
 The resulting `schema` is a standard `graphql` `GraphQLSchema` and is executed with the
 stock `graphql()` executor. A `schema.$sql2gql = { types }` property is attached for
 introspection of the generated types.
+
+### Schema artifacts (`@azerothian/gqlize/snapshot`)
+
+Step 5 can be split in two: build the schema once ahead of time, and rebuild an executable schema
+from the artifact at boot. The subpath `@azerothian/gqlize/snapshot` exports the whole surface —
+the `gqlize` CLI is a front-end over these and adds nothing a caller cannot do directly.
+
+```ts
+snapshotSchema(schema: GraphQLSchema, opts?: SnapshotOptions): SchemaSnapshot;
+materializeSchema(snapshot, orm, options?): Promise<GraphQLSchema>;
+loadSchema(artifactPath, orm, options?): Promise<GraphQLSchema>;   // read + parse + materialize
+readSnapshot(artifactPath): Promise<SchemaSnapshot>;               // read + parse only
+fingerprintDefinitions(orm, opts?): Fingerprint;
+compareFingerprints(a, b): string[];                               // names of the differing parts
+createScalarRegistry(extra?): ScalarRegistry;
+SNAPSHOT_FORMAT_VERSION: number;
+
+interface SnapshotOptions {
+  scalars?: Record<string, GraphQLScalarType>;
+  permissionProfile?: string;
+}
+interface MaterializeOptions extends SnapshotOptions {
+  onMismatch?: "throw" | "warn" | "rebuild";        // default "throw"
+  extendFactory?: (types: Record<string, GraphQLNamedType>) =>
+    { query?: GraphQLFieldConfigMap<any, any>; mutation?: GraphQLFieldConfigMap<any, any> };
+}
+```
+
+The lifecycle becomes: steps 1–4 unchanged (**the ormize instance is still mandatory** — it is the
+resolution engine the materialized schema binds to; the artifact replaces only type construction),
+then either `createSchema(db, options)` as above or `loadSchema(path, db, options)`.
+
+Two contracts are easy to get wrong and are therefore enforced rather than documented alone:
+
+- **Custom scalars must be passed at both ends.** Coercion is code and cannot be serialised, so the
+  same `scalars` map goes to `snapshotSchema` and `materializeSchema`. Omitting it at load throws
+  naming the scalar, rather than failing at request time.
+- **`options.extend` and `options.root` are never serialised.** They are arbitrary user field
+  configs with arbitrary resolvers; pass them at load exactly as you pass them to `createSchema`.
+  `ledger.extendFields` records which keys survived the build-time permission gate. When an extend
+  field must reference a *generated* type, use `extendFactory(types)` so it binds to the
+  materialized instance rather than a stale one.
+
+Staleness is detected by `fingerprintDefinitions`, which hashes models, fields, relationships,
+class methods, adapters, and the gqlize/graphql versions. It deliberately **excludes** the SQL
+dialect — building against sqlite in CI and serving postgres in production is a supported setup and
+does not change schema shape. It structurally **cannot** cover `options.permission`, which is a bag
+of closures; `permissionProfile` is an opaque stand-in id, and `gqlize check` (strict by default)
+closes the gap by rebuilding live and diffing the sorted SDL.
 
 ### Key `Ormize` (`GQLManager`) methods
 
@@ -614,10 +684,21 @@ each with its own subpath export:
   mutations, Relay connections, permissions, comments, the manager, per-builder units, and
   (in the adapter) Sequelize + filter behavior. Sample models: `Task`, `Item`, `TaskItem`,
   `Parent`, `Child`.
+- **Jest projects (`packages/gqlize`):** `sqlite` (everything), `postgres` (a subset, against
+  PGlite), and `roundtrip` — which re-runs the functional suites unmodified against a schema that
+  has been built, snapshotted to JSON, and materialized back. It does that by remapping the exact
+  specifier those suites import (`^\.\./src$`) to `__tests__/setup/roundtrip-src.ts`, whose
+  `createSchema` performs the round trip. The anchored match leaves the per-builder unit tests,
+  which import `../../src/graphql/create-*`, untouched. This project is the always-on gate against
+  the live builder and the materializer drifting apart, and is expected to stay green in CI.
 - **Runtime:** Node.js ≥ 24.
+- **Binary:** `@azerothian/gqlize` ships a `gqlize` command. `scripts/prepare-package.ts` sets
+  `bin: { gqlize: "./cjs/cli/index.js" }` — the CJS build, because it runs on every supported Node
+  without an `exports`/extension dance. SWC preserves the leading `#!/usr/bin/env node` verbatim, so
+  no post-processing step is needed.
 - **Publishing:** per-package `pnpm build` → `publish/` → `package:npm` / `package:yalc`.
-
-> There is currently no CI configuration in the repository.
+- **CI:** `.github/workflows/` — `ci.yml`, plus `release.yml` and `release-announce.yml`
+  (staged publishing to npmjs via OIDC trusted publishing).
 
 ---
 

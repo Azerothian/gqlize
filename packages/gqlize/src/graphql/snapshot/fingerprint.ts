@@ -1,0 +1,261 @@
+import { createHash } from "node:crypto";
+import { getNamedType, isEnumType, version as graphqlVersion } from "graphql";
+
+import GqlizeBinding from "../../manager";
+import type { GqlizeOptions } from "../../types";
+import { VERSION as gqlizeVersion } from "../../version";
+
+export const FINGERPRINT_FORMAT_VERSION = 1;
+
+/**
+ * A cheap, dialect-independent digest of everything that shapes the schema.
+ *
+ * Split into named buckets rather than one hash so a mismatch can say *what*
+ * moved — "models" is a model edit and needs a rebuild, "gqlizeVersion" is a
+ * dependency bump, and the two want very different reactions from an operator.
+ */
+export interface Fingerprint {
+  formatVersion: number;
+  gqlizeVersion: string;
+  graphqlVersion: string;
+  /** which adapter serves which definition — not the dialect */
+  adapters: string;
+  /** the definitions themselves: fields, associations, overrides, exposes */
+  models: string;
+  /** opaque, caller-supplied; the only handle we have on `options.permission` */
+  permissionProfile: string | null;
+  /** which permission predicates are present, and whether subscriptions are on */
+  optionsShape: string;
+}
+
+export interface FingerprintOptions {
+  /**
+   * Opaque id naming the permission configuration. `options.permission` is a bag
+   * of closures and cannot be hashed — this is the deliberate stand-in, and the
+   * one drift the fingerprint cannot detect on its own. `gqlize check --strict`
+   * closes the gap by rebuilding live and diffing the sorted SDL.
+   */
+  permissionProfile?: string;
+  /** the same options object handed to `createSchema` */
+  options?: GqlizeOptions;
+}
+
+/**
+ * Hash the live ormize definitions.
+ *
+ * Deliberately **excluded**: the SQL dialect (a CI job commonly builds against
+ * sqlite while production runs postgres, and the dialect does not change the
+ * schema's shape) and every hook/predicate body (they are closures). What is
+ * included is the projection the builders actually read.
+ */
+export function fingerprintDefinitions(orm: any, opts: FingerprintOptions = {}): Fingerprint {
+  const instance: any = orm instanceof GqlizeBinding ? orm : new GqlizeBinding(orm);
+  return {
+    formatVersion: FINGERPRINT_FORMAT_VERSION,
+    gqlizeVersion,
+    graphqlVersion,
+    adapters: hash(adapterProjection(instance)),
+    models: hash(modelProjection(instance)),
+    permissionProfile: opts.permissionProfile ?? null,
+    optionsShape: hash(optionsProjection(opts.options)),
+  };
+}
+
+/**
+ * Which fingerprint keys differ. Empty means the artifact is current.
+ *
+ * A missing fingerprint on either side is reported as the single key
+ * `"fingerprint"` rather than treated as a match — an artifact that carries no
+ * fingerprint has not been *checked*, and calling that "fresh" is the failure
+ * mode this whole mechanism exists to prevent.
+ */
+export function compareFingerprints(a?: Fingerprint | null, b?: Fingerprint | null): string[] {
+  if (!a || !b) {
+    return ["fingerprint"];
+  }
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].filter((key) => (a as any)[key] !== (b as any)[key]).sort();
+}
+
+/**
+ * Which *implementation* serves each definition — the adapter class, not its
+ * registration name and not its dialect.
+ *
+ * The adapter class is what supplies the type mapper and the filter / orderBy /
+ * default-list-arg builders, so swapping it genuinely reshapes the schema.
+ * The registration name is a routing label chosen by the caller (test fixtures
+ * commonly name it after the dialect), and the dialect is deliberately out of
+ * scope — a CI job that builds against sqlite must produce an artifact that
+ * loads against postgres.
+ */
+function adapterProjection(instance: any) {
+  const defsAdapters = instance.orm?.defsAdapters || {};
+  const adapters = instance.orm?.adapters || {};
+  return Object.fromEntries(Object.keys(defsAdapters).map((defName) =>
+    [defName, adapters[defsAdapters[defName]]?.constructor?.name ?? "unknown"]));
+}
+
+function modelProjection(instance: any) {
+  const defs = instance.getDefinitions() || {};
+  return Object.keys(defs).sort().map((defName) => {
+    const def = defs[defName] || {};
+    const fields = safe(() => instance.getFields(defName)) || {};
+    const associations = safe(() => instance.getAssociations(defName)) || {};
+    return {
+      name: def.name ?? defName,
+      comment: def.comment,
+      comments: def.comments,
+      ignoreFields: [...(def.ignoreFields || [])].sort(),
+      fields: Object.keys(fields).sort().map((key) =>
+        fieldProjection(instance, defName, key, fields[key])),
+      associations: Object.keys(associations).sort().map((key) => {
+        const a = associations[key] || {};
+        // `accessors` is derived from these, so hashing it would only add noise
+        return {
+          name: key,
+          target: a.target,
+          source: a.source,
+          associationType: a.associationType,
+          foreignKey: a.foreignKey,
+          targetKey: a.targetKey,
+          sourceKey: a.sourceKey,
+        };
+      }),
+      override: Object.keys(def.override || {}).sort().map((fieldName) => {
+        const o = def.override[fieldName] || {};
+        return {
+          fieldName,
+          description: o.description,
+          type: typeShape(o.type),
+          inputType: typeShape(o.inputType),
+          hasInput: typeof o.input === "function",
+          hasOutput: typeof o.output === "function",
+        };
+      }),
+      expose: exposeProjection(def.expose),
+    };
+  });
+}
+
+function fieldProjection(instance: any, defName: string, key: string, field: any = {}) {
+  return {
+    name: field.name ?? key,
+    type: fieldType(instance, defName, key, field),
+    allowNull: field.allowNull === true,
+    primaryKey: field.primaryKey === true,
+    foreignKey: field.foreignKey === true,
+    foreignTarget: field.foreignTarget,
+    description: field.description,
+    args: field.args ? Object.keys(field.args).sort() : undefined,
+    hasResolve: typeof field.resolve === "function",
+  };
+}
+
+/**
+ * The GraphQL type the builders would give this field — which is the only
+ * projection of a native column type that matters here, and the one that makes
+ * the fingerprint survive sqlite -> postgres. Enum members are appended because
+ * they are schema-visible but the type's name alone hides them.
+ */
+function fieldType(instance: any, defName: string, fieldName: string, field: any): string {
+  const gql = safe(() => instance.getGraphQLOutputType(defName, fieldName, field.type));
+  if (gql) {
+    const named: any = safe(() => getNamedType(gql));
+    if (named && isEnumType(named)) {
+      return `${String(gql)}<${named.getValues().map((v: any) => v.name).join(",")}>`;
+    }
+    return String(gql);
+  }
+  // Fall back to ormize's abstract descriptor before the native type: the
+  // descriptor is adapter-neutral, `String(nativeType)` is dialect-specific and
+  // would make the fingerprint flip on sqlite -> postgres for no real change.
+  const descriptor: any = safe(() => instance.getModelAdapter(defName)?.mapDataType?.(field.type));
+  if (descriptor) {
+    return `ormize:${descriptor.type}${descriptor.values ? `<${descriptor.values.join(",")}>` : ""}`;
+  }
+  return `native:${String(field.type)}`;
+}
+
+function exposeProjection(expose: any) {
+  if (!expose) {
+    return undefined;
+  }
+  const out: Record<string, any> = {};
+  for (const group of ["classMethods", "instanceMethods"] as const) {
+    for (const target of ["query", "mutations"] as const) {
+      const methods = expose[group]?.[target];
+      if (!methods) {
+        continue;
+      }
+      out[`${group}.${target}`] = Object.keys(methods).sort().map((methodName) => ({
+        name: methodName,
+        type: typeShape(methods[methodName]?.type),
+        args: Object.keys(methods[methodName]?.args || {}).sort().map((argName) => ({
+          name: argName,
+          type: typeShape(methods[methodName].args[argName]?.type),
+        })),
+      }));
+    }
+  }
+  return out;
+}
+
+/**
+ * Definitions hand the builders either a real GraphQL type or a bare config
+ * object that the builder wraps. Both carry a `name`; a config object also
+ * carries a literal `fields` map worth hashing, since editing it changes the
+ * schema. A thunked `fields` is skipped — calling it here could construct types
+ * as a side effect of a staleness check.
+ */
+function typeShape(type: any): any {
+  if (!type) {
+    return undefined;
+  }
+  if (typeof type !== "object" && typeof type !== "function") {
+    return String(type);
+  }
+  const shape: any = {name: type.name};
+  if (type.fields && typeof type.fields === "object") {
+    shape.fields = Object.keys(type.fields).sort();
+  }
+  return shape;
+}
+
+function optionsProjection(options?: GqlizeOptions) {
+  // Only the options that shape the *serialized* schema. `extend` and `root` are
+  // merged at load from the live options object, so a caller legitimately adding
+  // a `health` query locally must not read as a stale artifact.
+  return {
+    permission: Object.keys(options?.permission || {})
+      .filter((key) => typeof (options!.permission as any)[key] === "function")
+      .sort(),
+    subscriptions: Boolean(options?.subscriptions),
+  };
+}
+
+function safe<T>(fn: () => T): T | undefined {
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
+}
+
+function hash(value: unknown): string {
+  return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+/** JSON with object keys in sorted order, so the digest is stable across runs. */
+export function stableStringify(value: any): string {
+  if (value === undefined) {
+    return "null";
+  }
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const keys = Object.keys(value).filter((key) => value[key] !== undefined).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+}

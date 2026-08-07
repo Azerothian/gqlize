@@ -19,6 +19,7 @@ cleanly — that section is where working code breaks.
    - [`node(id)` goes through the authorized path](#nodeid-goes-through-the-authorized-path)
    - [Relay `pageInfo` is derived from the window's absolute position](#relay-pageinfo-is-derived-from-the-windows-absolute-position)
    - [Mutations run in a transaction](#mutations-run-in-a-transaction)
+   - [`createListObject` takes a data-source descriptor, not a resolver](#createlistobject-takes-a-data-source-descriptor-not-a-resolver)
 4. [The graphql patch](#4-the-graphql-patch)
 5. [New in 7.x](#5-new-in-7x)
 6. [Checklist](#6-checklist)
@@ -253,6 +254,36 @@ instead of leaving half-written rows.
 > see the in-flight mutation's rows, and their writes will not roll back with it. Use the transaction
 > supplied in the hook context.
 
+### `createListObject` takes a data-source descriptor, not a resolver
+
+Only affects code that imports the schema builders directly
+(`@azerothian/gqlize/graphql/create-list-object`). The ordinary
+`createSchema(orm, options)` surface is unchanged.
+
+The fifth parameter was a `resolveData` closure; it is now a `DataSourceDescriptor` — plain data
+describing *where* the page comes from, so the same connection can be rebuilt from a serialized
+schema (see [§5, schema artifacts](#5-new-in-7x)). The resolver body moved to
+`src/graphql/resolvers/connection.ts`.
+
+```ts
+// 6.x
+createListObject(instance, cache, "Task", TaskType,
+  async (args, context, info) => instance.resolveFindAll("Task", args, context, info));
+
+// 7.x
+createListObject(instance, cache, "Task", TaskType,
+  {source: "findAll", defName: "Task"});
+
+// ...and for a relationship-backed connection
+createListObject(instance, cache, "Task", TaskType,
+  {source: "manyRelationship", defName: "Item", relName: "tasks", targetDefName: "Task"});
+```
+
+The same rule applies anywhere a resolver is attached inside the builders: they go through
+`bindField(config, binding, ctx)`, which both installs the resolver and records the descriptor on
+`extensions.gqlize`. A field with a `resolve` but no descriptor makes `snapshotSchema` throw —
+deliberately, since the alternative is a materialized field that silently returns `undefined`.
+
 ## 4. The graphql patch
 
 6.x solved [graphql-spec #252](https://github.com/graphql/graphql-spec/issues/252) — nested mutation
@@ -299,6 +330,10 @@ Not required for migration, but this is what the split bought:
   `permission` config from role definitions instead of hand-written predicates.
 - **Abstract data types** — definitions can use the `DataType` enum, which adapters map to native
   types via `mapDataType` / `toNativeType`, so one definition works across adapters.
+- **Pre-generated schema artifacts** — `gqlize build` writes the schema to a reviewable JSON
+  artifact, and `loadSchema(path, orm, options)` rebuilds an executable `GraphQLSchema` from it plus
+  a live ormize instance. `gqlize check` fails CI when the artifact no longer matches the
+  definitions. See the [gqlize README](../packages/gqlize/README.md#pre-generated-schema-artifacts).
 
 ## 6. Checklist
 
@@ -311,6 +346,8 @@ Not required for migration, but this is what the split bought:
 - [ ] `enableRegexpOperators: true` set if you use `$regexp` and friends.
 - [ ] `where` / `orderBy` usage checked against your permission config.
 - [ ] Backward pagination (`last`/`before`) avoided — see the known issue above.
+- [ ] Direct `createListObject` callers switched from a `resolveData` closure to a data-source
+      descriptor.
 - [ ] The graphql patch applied if you rely on ordered nested mutations.
 
 For everything else, [**guide.md**](guide.md) is the 7.x usage guide and

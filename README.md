@@ -50,7 +50,7 @@ mutations, permissions, hooks, and more.
 | Package | Description |
 | --- | --- |
 | [`@azerothian/ormize`](packages/ormize) | GraphQL-free backend manager — `Ormize` class, `registerAdapter`, `define`/`addDefinition`, models, hooks, `initialise`/`sync`/`reset`, relationship wiring, and the definition typesystem. No GraphQL dependency. |
-| [`@azerothian/gqlize`](packages/gqlize) | GraphQL layer — `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema: object types, connections, queries, deep nested mutations, and permissions. |
+| [`@azerothian/gqlize`](packages/gqlize) | GraphQL layer — `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema: object types, connections, queries, deep nested mutations, and permissions. Also ships a **`gqlize` CLI** (`build` / `check` / `print`) that pre-generates the schema into a reviewable JSON artifact, plus `loadSchema` to rebuild an executable schema from it — see the [guide](docs/guide.md#5-pre-generated-schema-artifacts). |
 | [`@azerothian/ormize-adapter-sequelize`](packages/ormize-adapter-sequelize) | Sequelize adapter — the reference data-source implementation. Same `SequelizeAdapter` default export, same `defineModel`/`SequelizeModel` typesystem exports. |
 | [`@azerothian/ormize-adapter-valkey`](packages/ormize-adapter-valkey) | Valkey/Redis adapter — typed-JSON objects with self-maintained index/mapping structures (no keyspace scans), index-only `where` queries, foreign-key index maps for relationships, `MULTI`/`EXEC` transactions with a per-transaction overlay, and object expiry that cascades into the mappings. |
 | [`@azerothian/ormize-zod4`](packages/ormize-zod4) | Zod v4 projection — `generateZodSchemas(orm, options)` produces permission-gated entity/create/update schemas per model from the same ormize instance. |
@@ -68,7 +68,7 @@ domain on an in-memory SQLite ormize instance and can be started from the repo r
 
 | Example | What it shows | Run |
 | --- | --- | --- |
-| [`examples/gqlize-basic`](examples/gqlize-basic) | A GraphQL API (graphql-yoga + GraphiQL) from `createSchema(orm)`. | `pnpm --filter @azerothian/example-gqlize-basic start` |
+| [`examples/gqlize-basic`](examples/gqlize-basic) | A GraphQL API (graphql-yoga + GraphiQL) from `createSchema(orm)`, plus the same server booted off a pre-generated schema artifact. | `pnpm --filter @azerothian/example-gqlize-basic start` |
 | [`examples/nestize-rest`](examples/nestize-rest) | A NestJS REST API + Swagger UI from `NestizeModule.forRoot(orm)`. | `pnpm --filter @azerothian/example-nestize-rest start` |
 | [`examples/temporalize-worker`](examples/temporalize-worker) | Temporal workers (one per model queue) + a client, from `createWorkers(orm)`. Needs `temporal server start-dev`. | `pnpm --filter @azerothian/example-temporalize-worker start:worker` |
 | [`examples/cross-adapter-transaction`](examples/cross-adapter-transaction) | A coordinated `orm.transaction()` across SQLite **and** in-memory Postgres (a failure on one rolls back the other), plus `AsyncLocalStorage` context tracking. | `pnpm --filter @azerothian/example-cross-adapter-transaction start` |

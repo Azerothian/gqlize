@@ -16,6 +16,11 @@ import createMutationInput from "./create-mutation-input";
 import createSchemaCache from "./create-schema-cache";
 import GQLManager from '../manager';
 import { GqlizeOptions, SchemaCache } from '../types';
+import { bindField } from "./resolvers/bind";
+import { applyExtendFields } from "./extend";
+import { createLedger, setLedger } from "./snapshot/ledger";
+import { recordBuild } from "./snapshot/build-registry";
+import { GQLIZE_EXT } from "./resolvers/types";
 
 export function createModelTypes(instance: GQLManager, options: GqlizeOptions, nodeInterface: GraphQLInterfaceType, schemaCache: SchemaCache) {
   return async(defName: string, o: any) => {
@@ -35,9 +40,10 @@ export function createListObjects(instance: GQLManager, schemaCache: SchemaCache
           return o;
         }
       }
-      o[defName] = createListObject(instance, schemaCache, defName, schemaCache.types[defName], (source, args, context, info) => {
-        return instance.resolveFindAll(defName, source, args, context, info);
-      }, "", "");
+      o[defName] = createListObject(instance, schemaCache, defName, schemaCache.types[defName], {
+        source: "findAll",
+        defName,
+      }, "", "", undefined, undefined, options);
     }
     return o;
   };
@@ -73,7 +79,7 @@ function createMutationModels(instance: GQLManager, options: GqlizeOptions, sche
       deleteResult = isMutationAllowed(options.permission, defName, "delete");
       createResult = isMutationAllowed(options.permission, defName, "create");
       if (createResult || updateResult || deleteResult) {
-        o[defName] = await createMutationModel(instance, defName, schemaCache, createResult, updateResult, deleteResult);
+        o[defName] = await createMutationModel(instance, defName, schemaCache, createResult, updateResult, deleteResult, options);
       }
     }
     return o;
@@ -86,6 +92,10 @@ export async function createSchemaObjects(instance: GQLManager, options: GqlizeO
   const {subscriptions, extend = {}, root} = options;
   const definitions = instance.getDefinitions();
   const schemaCache = createSchemaCache();
+  const bindingContext = {instance, options};
+  // Rides on the schema cache: same per-build lifetime, and it is already
+  // threaded through every builder that can meet a user-supplied type.
+  const ledger = setLedger(schemaCache, createLedger());
 
   // Capture the configured permission on each adapter so its GraphQL type
   // builders (filter/order/include) exclude permission-denied fields and
@@ -118,42 +128,27 @@ export async function createSchemaObjects(instance: GQLManager, options: GqlizeO
 
 
   let queryRootFields: any = {
-    node: nodeField,
+    // The relay node field closes over a live id-fetcher that re-checks
+    // permissions per request; it is always rebuilt, never serialized.
+    node: bindField(nodeField, {kind: "nodeField"}, bindingContext),
   };
   let mutationRootFields: any = {};
   if (Object.keys(queryLists).length > 0) {
-    queryRootFields.models = {
+    queryRootFields.models = bindField({
       type: new GraphQLObjectType({
         name: "QueryModels",
         fields() {
           return queryLists;
         },
       }),
-      resolve() {
-        return {};
-      },
-    };
+    }, {kind: "container"}, bindingContext);
   }
   if (Object.keys(classMethodQueries).length > 0) {
-    queryRootFields.classMethods = {
+    queryRootFields.classMethods = bindField({
       type: new GraphQLObjectType({name: "QueryClassMethods", fields: classMethodQueries}),
-      resolve() {
-        return {};
-      },
-    };
+    }, {kind: "container"}, bindingContext);
   }
-  if (extend?.query) {
-    queryRootFields = await waterfall(Object.keys(extend.query), async(k, o) => {
-      if (options.permission?.queryExtension) {
-        const result = await options.permission.queryExtension(k, options.permission.options);
-        if (!result) {
-          return o;
-        }
-      }
-      o[k] = extend.query[k];
-      return o;
-    }, queryRootFields);
-  }
+  queryRootFields = await applyExtendFields(queryRootFields, extend?.query, "query", options, bindingContext, ledger);
   if (Object.keys(queryRootFields).length > 0) {
     rootSchema.query = new GraphQLObjectType({
       name: "RootQuery",
@@ -164,33 +159,16 @@ export async function createSchemaObjects(instance: GQLManager, options: GqlizeO
 
 
   if (Object.keys(mutationCollection).length > 0) {
-    mutationRootFields.models = {
+    mutationRootFields.models = bindField({
       type: new GraphQLObjectType({name: "MutationModels", fields: mutationCollection}),
-      resolve() {
-        return {};
-      },
-    };
+    }, {kind: "container"}, bindingContext);
   }
   if (Object.keys(classMethodMutations).length > 0) {
-    mutationRootFields.classMethods = {
+    mutationRootFields.classMethods = bindField({
       type: new GraphQLObjectType({name: "MutationClassMethods", fields: classMethodMutations}),
-      resolve() {
-        return {};
-      },
-    };
+    }, {kind: "container"}, bindingContext);
   }
-  if ((extend || {}).mutation) {
-    mutationRootFields = await waterfall(Object.keys(extend.mutation), async(k, o) => {
-      if (options.permission?.mutationExtension) {
-        const result = await options.permission.mutationExtension(k, options.permission.options);
-        if (!result) {
-          return o;
-        }
-      }
-      o[k] = extend.mutation[k];
-      return o;
-    }, mutationRootFields);
-  }
+  mutationRootFields = await applyExtendFields(mutationRootFields, extend?.mutation, "mutation", options, bindingContext, ledger);
   if (Object.keys(mutationRootFields).length > 0) {
     rootSchema.mutation = new GraphQLObjectType({
       name: "Mutation",
@@ -211,6 +189,9 @@ export async function createSchemaObjects(instance: GQLManager, options: GqlizeO
   // }, {});
 
   // const relayTypes = Object.keys(instance.getModels());
+  // Record the exact key set handed to the mapper rather than re-deriving it
+  // later — `node(id:)` and `__resolveType` break silently if it differs.
+  ledger.modelTypes = Object.keys(schemaCache.types);
   nodeTypeMapper.mapTypes(schemaCache.types);
 
   // const subscriptionRootFields = Object.assign({}, subscriptions);
@@ -233,6 +214,7 @@ export async function createSchemaObjects(instance: GQLManager, options: GqlizeO
   }
   return {
     types: schemaCache.types,
+    ledger,
     root: Object.assign(rootSchema, {...root})
   };
 }
@@ -272,7 +254,13 @@ export async function createSchema(dbInstance: GQLManager, options: GqlizeOption
   const schemaObjects = await createSchemaObjects(dbInstance, options);
   let schema;
   try {
-    schema = new GraphQLSchema(schemaObjects.root);
+    schema = new GraphQLSchema({
+      ...schemaObjects.root,
+      extensions: {
+        ...(schemaObjects.root.extensions || {}),
+        [GQLIZE_EXT]: schemaObjects.ledger,
+      },
+    });
   } catch(err) {
     const test = searchForType("Node", "", undefined, schemaObjects.root.query);
     //const firstInstance = searchForType(, "", schemaObjects.root.query)
@@ -282,5 +270,8 @@ export async function createSchema(dbInstance: GQLManager, options: GqlizeOption
   (schema as any).$sql2gql = {
     types: schemaObjects.types,
   };
+  // Lets `snapshotSchema(schema)` fingerprint the definitions later without the
+  // caller threading the orm back in. Off the hot path — a WeakMap set, no hashing.
+  recordBuild(schema, dbInstance, options);
   return schema;
 }
