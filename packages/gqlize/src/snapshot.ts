@@ -13,6 +13,11 @@ export {snapshotSchema, isJsonSerializable, type SnapshotOptions} from "./graphq
 export {materializeSchema, type MaterializeOptions} from "./graphql/snapshot/materialize";
 export {loadSchema, readSnapshot} from "./graphql/snapshot/load";
 export {
+  buildArtifact,
+  type BuildArtifactOptions,
+  type BuildArtifactResult,
+} from "./graphql/snapshot/build-artifact";
+export {
   fingerprintDefinitions,
   compareFingerprints,
   FINGERPRINT_FORMAT_VERSION,

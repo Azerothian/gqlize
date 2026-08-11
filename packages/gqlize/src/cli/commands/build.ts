@@ -1,10 +1,4 @@
-import { mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { gzipSync } from "node:zlib";
-import { printSchema } from "graphql";
-
-import { createSchema } from "../../index";
-import { snapshotSchema } from "../../graphql/snapshot/snapshot";
+import { buildArtifact } from "../../graphql/snapshot/build-artifact";
 import type { ParsedArgs } from "../args";
 import type { ResolvedConfig } from "../config";
 import { resolveProfiles, type ResolvedProfile } from "../profiles";
@@ -36,48 +30,24 @@ async function buildOne(
   orm: any,
   out: (line: string) => void,
 ) {
-  const schema = await createSchema(orm, profile.options);
-  const artifact = snapshotSchema(schema, {
+  const result = await buildArtifact(orm, {
+    out: profile.out,
+    sdl: profile.sdl,
+    pretty: profile.pretty,
     scalars: resolved.config.scalars,
     permissionProfile: profile.permissionProfile,
+    options: profile.options,
   });
-
-  const json = JSON.stringify(artifact, null, profile.pretty ? 2 : undefined);
-  const gzip = profile.out.endsWith(".gz");
-  const bytes = await writeAtomic(profile.out, gzip ? gzipSync(json) : Buffer.from(json, "utf8"));
 
   const label = profile.name ? `${profile.name}: ` : "";
   out(
-    `${label}${profile.out} — ${artifact.types.length} types, ` +
-      `${countFields(artifact)} fields, ${formatBytes(bytes)}${gzip ? " (gzip)" : ""}`,
+    `${label}${result.out} — ${result.typeCount} types, ` +
+      `${result.fieldCount} fields, ${formatBytes(result.bytes)}${result.gzip ? " (gzip)" : ""}`,
   );
 
-  if (profile.sdl) {
-    const sdlBytes = await writeAtomic(profile.sdl, Buffer.from(printSchema(schema), "utf8"));
-    out(`${label}${profile.sdl} — SDL sidecar, ${formatBytes(sdlBytes)}`);
+  if (result.sdl) {
+    out(`${label}${result.sdl.path} — SDL sidecar, ${formatBytes(result.sdl.bytes)}`);
   }
-}
-
-/**
- * Write via a sibling temp file plus `rename`.
- *
- * `rename` is atomic within a filesystem, so a reader (a running server, a CI
- * diff) never observes a half-written artifact, and a crash mid-write leaves
- * the previous good artifact in place rather than a truncated one.
- */
-async function writeAtomic(path: string, data: Buffer): Promise<number> {
-  await mkdir(dirname(path), {recursive: true});
-  const tmp = `${path}.tmp`;
-  await writeFile(tmp, data);
-  await rename(tmp, path);
-  return data.byteLength;
-}
-
-function countFields(artifact: any): number {
-  return artifact.types.reduce(
-    (total: number, type: any) => total + (type.fields?.length || type.values?.length || 0),
-    0,
-  );
 }
 
 function formatBytes(bytes: number) {

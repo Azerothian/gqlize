@@ -204,8 +204,27 @@ snapshotSchema(schema, opts?)                 // GraphQLSchema  -> SchemaSnapsho
 materializeSchema(snapshot, orm, options?)    // SchemaSnapshot -> GraphQLSchema
 loadSchema(path, orm, options?)               // read + parse + materialize
 readSnapshot(path)                            // read + parse only (.json / .json.gz)
+buildArtifact(orm, opts)                      // build + snapshot + write to disk
 fingerprintDefinitions(orm, opts?)            // Ormize -> Fingerprint
 compareFingerprints(a, b)                     // -> the names of the differing parts
+```
+
+`buildArtifact` is exactly what `gqlize build` calls per profile — build the schema, snapshot it,
+and write it to disk (gzipped if `out` ends in `.gz`, plus an SDL sidecar if `sdl` is given). Reach
+for it when you want an artifact from your own build script or task runner instead of shelling out
+to the CLI:
+
+```ts
+import { buildArtifact } from "@azerothian/gqlize/snapshot";
+
+const orm = await buildOrm(); // already initialise()d and sync()ed
+const { out, typeCount, fieldCount } = await buildArtifact(orm, {
+  out: "./generated/schema.json",
+  sdl: "./generated/schema.graphql",
+  permissionProfile: "admin",
+  options: { permission: adminPermission },
+});
+console.log(`wrote ${out}: ${typeCount} types, ${fieldCount} fields`);
 ```
 
 so a health probe or a bespoke CI gate needs no CLI at all:
