@@ -128,12 +128,17 @@ describe("gqlize CLI", () => {
       expect(stdout()).toContain("(gzip)");
     });
 
-    it("minifies with --no-pretty", async() => {
+    it("writes compact JSON by default, and indents under --pretty", async() => {
+      // an artifact is a build output, not a file anyone reads by hand: the
+      // indentation nearly doubles it for no runtime benefit. `--pretty` is
+      // still there for anyone diffing one by eye.
       const path = await config();
-      await run(["build", "-c", path, "-o", join(root, "pretty.json")], io());
-      await run(["build", "-c", path, "-o", join(root, "min.json"), "--no-pretty"], io());
+      await run(["build", "-c", path, "-o", join(root, "default.json")], io());
+      await run(["build", "-c", path, "-o", join(root, "pretty.json"), "--pretty"], io());
+      const min = await readFile(join(root, "default.json"), "utf8");
       const pretty = await readFile(join(root, "pretty.json"), "utf8");
-      const min = await readFile(join(root, "min.json"), "utf8");
+      expect(min).not.toContain("\n");
+      expect(pretty).toContain("\n  ");
       expect(min.length).toBeLessThan(pretty.length);
       expect(JSON.parse(min)).toEqual(JSON.parse(pretty));
     });

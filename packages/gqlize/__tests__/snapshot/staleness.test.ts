@@ -188,6 +188,34 @@ describe("materializeSchema staleness", () => {
       .resolves.toBeDefined();
   });
 
+  it("skips the check entirely under `checkStaleness: false`, but says so", async() => {
+    // The escape hatch for deployments that already proved freshness in CI. It
+    // has to actually skip the walk — computing the fingerprint and ignoring the
+    // answer would buy nothing, since the walk is the whole cost — and it has to
+    // be loud, because an unchecked load is indistinguishable from a fresh one.
+    const artifact = await artifactFor(await orm());
+    const changed = await orm(true);
+    await expect(materializeSchema(artifact, changed)).rejects.toThrow(/stale/i);
+
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const rebuilt = await materializeSchema(artifact, changed, {checkStaleness: false} as any);
+      // the artifact's shape, exactly as under `warn` — the model moved and the
+      // load did not notice, which is the deal being struck
+      expect((rebuilt.getType("Child") as any).getFields().extra).toBeUndefined();
+      expect(warn.mock.calls.flat().join(" ")).toMatch(/checkStaleness is false/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("still checks under `checkStaleness: true`, and by omission", async() => {
+    const artifact = await artifactFor(await orm());
+    await expect(materializeSchema(artifact, await orm(true), {checkStaleness: true} as any))
+      .rejects.toThrow(/stale/i);
+    await expect(materializeSchema(artifact, await orm(true))).rejects.toThrow(/stale/i);
+  });
+
   it("loads a fingerprint-less artifact, but says so", async() => {
     const db = await orm();
     const artifact = await artifactFor(db);

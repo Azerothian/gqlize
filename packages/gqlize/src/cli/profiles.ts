@@ -70,7 +70,7 @@ function build(resolved: ResolvedConfig, args: ParsedArgs, name?: string): Resol
       args.permissionProfile ?? profile.permissionProfile ?? config.permissionProfile ?? name,
     out: args.gzip && !out.endsWith(".gz") ? `${out}.gz` : out,
     sdl,
-    pretty: args.pretty ?? profile.pretty ?? config.pretty ?? true,
+    pretty: args.pretty ?? profile.pretty ?? config.pretty ?? false,
   };
 }
 

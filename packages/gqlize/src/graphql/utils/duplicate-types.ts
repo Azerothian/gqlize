@@ -26,20 +26,27 @@ export interface DuplicateOccurrence {
   origin?: string;
 }
 
+interface Claim {
+  instance: GraphQLNamedType;
+  path: string;
+}
+
 export function findDuplicateTypes(
   config: any,
   origins: Map<string, string> = new Map(),
 ): Map<string, DuplicateOccurrence[]> {
   /** name -> distinct instances, in discovery order */
-  const seen = new Map<string, {instance: GraphQLNamedType; path: string}[]>();
+  const seen = new Map<string, Claim[]>();
   const visited = new Set<GraphQLNamedType>();
+  /** types claimed but not yet descended into */
+  const pending: Claim[] = [];
 
-  function visit(value: unknown, path: string) {
+  function visit(value: unknown, path: string, claimed: Claim[]) {
     if (!value) {
       return;
     }
     if (Array.isArray(value)) {
-      value.forEach((entry, i) => visit(entry, `${path}[${i}]`));
+      value.forEach((entry, i) => visit(entry, `${path}[${i}]`, claimed));
       return;
     }
     let named: GraphQLNamedType | undefined;
@@ -60,28 +67,28 @@ export function findDuplicateTypes(
       return;
     }
     visited.add(named);
-    descend(named, path);
+    claimed.push({instance: named, path});
   }
 
-  function descend(type: GraphQLNamedType, path: string) {
+  function descend(type: GraphQLNamedType, path: string, claimed: Claim[]) {
     try {
       if (isObjectType(type) || isInterfaceType(type)) {
         for (const iface of type.getInterfaces()) {
-          visit(iface, `${path}/${type.name}`);
+          visit(iface, `${path}/${type.name}`, claimed);
         }
         for (const [key, field] of Object.entries(type.getFields())) {
-          visit(field.type, `${path}/${type.name}.${key}`);
+          visit(field.type, `${path}/${type.name}.${key}`, claimed);
           for (const arg of field.args || []) {
-            visit(arg.type, `${path}/${type.name}.${key}(${arg.name}:)`);
+            visit(arg.type, `${path}/${type.name}.${key}(${arg.name}:)`, claimed);
           }
         }
       } else if (isUnionType(type)) {
         for (const member of type.getTypes()) {
-          visit(member, `${path}/${type.name}`);
+          visit(member, `${path}/${type.name}`, claimed);
         }
       } else if (isInputObjectType(type)) {
         for (const [key, field] of Object.entries(type.getFields())) {
-          visit(field.type, `${path}/${type.name}.${key}`);
+          visit(field.type, `${path}/${type.name}.${key}`, claimed);
         }
       } else if (isEnumType(type) || isScalarType(type)) {
         // leaf
@@ -91,10 +98,28 @@ export function findDuplicateTypes(
     }
   }
 
-  visit(config?.query, "query");
-  visit(config?.mutation, "mutation");
-  visit(config?.subscription, "subscription");
-  visit(config?.types, "types");
+  /** reverse, so popping the stack walks children left to right */
+  function schedule(claimed: Claim[]) {
+    for (let i = claimed.length - 1; i >= 0; i--) {
+      pending.push(claimed[i]);
+    }
+  }
+
+  const roots: Claim[] = [];
+  visit(config?.query, "query", roots);
+  visit(config?.mutation, "mutation", roots);
+  visit(config?.subscription, "subscription", roots);
+  visit(config?.types, "types", roots);
+  schedule(roots);
+  // An explicit stack, not recursion: the one moment this diagnostic exists for
+  // is a failed `new GraphQLSchema`, and on a deeply chained schema the
+  // recursive form reported a stack overflow instead of the duplicate.
+  while (pending.length > 0) {
+    const next = pending.pop() as Claim;
+    const claimed: Claim[] = [];
+    descend(next.instance, next.path, claimed);
+    schedule(claimed);
+  }
 
   const duplicates = new Map<string, DuplicateOccurrence[]>();
   for (const [name, instances] of seen) {

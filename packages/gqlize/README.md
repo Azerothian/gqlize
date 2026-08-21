@@ -109,10 +109,29 @@ npx gqlize check      # exit 1 if the artifact no longer matches the definitions
 npx gqlize print      # the schema as SDL, live or --from-artifact
 ```
 
-**Build this for artifact availability, reviewability and determinism, not for speed.** The
-generator is a small part of a boot dominated by loading the driver and `initialise()`/`sync()`, and
-the loader still needs the ormize instance — it *is* the resolution engine. Measure before claiming
-a startup win.
+**Build this for artifact availability, reviewability and determinism — not for speed.** That is
+measured, not hedged. Both processes cold, on one machine (Node 24.19, graphql 17.0.2, models of
+8 fields each plus relay connections). `scripts/bench-artifact.ts` reproduces it —
+`pnpm bench:artifact -- --models 1000 --topology wide --artifact /tmp/bench.json`:
+
+| models | types | artifact | live `createSchema` | `JSON.parse` | `materializeSchema` | total load |
+|---:|---:|---:|---:|---:|---:|---:|
+| 150 | 3,913 | 3.05 MB | 93 ms | 16 ms | 113 ms | **129 ms** |
+| 500 | 13,013 | 10.19 MB | 234 ms | 59 ms | 270 ms | **329 ms** |
+| 1,000 | 26,013 | 20.39 MB | 436 ms | 94 ms | 580 ms | **674 ms** |
+
+Loading an artifact is 1.4–1.6× the cost of building the schema live, and that gap is structural
+rather than a missing optimisation: the output is a real `GraphQLSchema`, so both paths pay
+graphql-js type construction, and the loader pays a `JSON.parse` and a staleness walk on top of it.
+It does not remove the expensive step — it removes the *variable* one. What you get is a schema
+that is a reviewable build output: diffable in a PR, checkable in CI, identical on every boot.
+
+Neither number is usually the boot's problem. At 1,000 models the same process spends ~240 ms
+loading modules and ~1.9 s in `initialise()`/`sync()`. If cold start is what you are actually
+chasing, [`NODE_COMPILE_CACHE`](https://nodejs.org/api/module.html) (Node ≥ 22.8, or
+`module.enableCompileCache()` from code) takes this repo's cold process from 459 ms to 318 ms
+— 30% for one line, the same change that took
+[`tsc --version` from ~122 ms to ~48 ms](https://github.com/microsoft/TypeScript/pull/59720).
 
 The artifact is JSON, not SDL, and that is not a stylistic choice: `printSchema` discards enum
 *internal* values, which is where `TaskOrderBy.nameASC`'s `["name","ASC"]` payload lives, and it
@@ -207,6 +226,11 @@ await writeFile("./generated/schema.graphql", printSchema(schema));
 If all of that is what you want, `buildArtifact` ([below](#programmatic-api)) is exactly this block
 behind one call, and `gqlize build` is `buildArtifact` behind a CLI.
 
+Both write **compact JSON**. Indentation nearly doubles the file — 20.4 MB to 40.7 MB on a
+1,000-model schema — for an artifact that is machine-written and machine-read, and it costs about
+11% on `JSON.parse` at load. `gqlize build --pretty`, or `pretty: true` in the config, gets the
+indented form back for anyone diffing artifacts by eye; git's own diff does not need it.
+
 ### Loading it
 
 ```ts
@@ -260,6 +284,7 @@ console.log(artifact.formatVersion, artifact.types.length, artifact.fingerprint)
 | `scalars` | The same map `snapshotSchema` got. Omitting one throws naming the scalar, rather than failing at request time on coercion. |
 | `permissionProfile` | Compared against the artifact's — see [Staleness](#staleness) |
 | `onMismatch` | `"throw"` (default), `"warn"`, `"rebuild"` — see [Staleness](#staleness) |
+| `checkStaleness` | `false` skips the fingerprint walk — a deliberate trade, see [Staleness](#staleness) |
 | `extendFactory` | Late-bound `extend` / `root`, called once every type exists |
 
 `options.extend` and `options.root` are **not** serialized — they are arbitrary user field configs
@@ -349,6 +374,23 @@ permission drift went unchecked. Naming a different profile still throws.
 
 The fingerprint is deliberately dialect-invariant: building against SQLite in CI and serving
 Postgres in production is a normal setup, and the dialect does not affect schema shape.
+
+Computing it means walking every definition back through the adapter, which is not free: about 6 ms
+at 150 models and **79 ms at 1,000** — 13–21% of the load. `checkStaleness: false` skips the walk
+entirely rather than computing it and ignoring the result:
+
+```ts
+const schema = await loadSchema(artifact, orm, {
+  permission,
+  checkStaleness: false,        // CI already ran `gqlize check --strict` on this commit
+});
+```
+
+Take that trade only when something else guarantees the pair. `gqlize check --strict` in the same
+pipeline that produced the artifact is that something — it is a stronger check than the fingerprint
+anyway, since it diffs the whole SDL. Without it you are asserting freshness on trust, and a stale
+artifact loaded unchecked serves the wrong schema without complaint. It is never silent, for the
+same reason a missing fingerprint is not: the loader warns once on the way past.
 
 ### Programmatic API
 

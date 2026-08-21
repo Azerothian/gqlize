@@ -11,6 +11,7 @@ import {
   type GraphQLFieldConfigMap,
   type GraphQLNamedType,
   type GraphQLScalarType,
+  type GraphQLType,
 } from "graphql";
 
 import GqlizeBinding from "../../manager";
@@ -65,6 +66,19 @@ export interface MaterializeOptions {
    */
   onMismatch?: "throw" | "warn" | "rebuild";
   /**
+   * Whether to compare the artifact against the live definitions at load.
+   * Defaults to `true`, and leaving it there is the right answer for almost
+   * everyone: it is what makes `onMismatch` mean anything.
+   *
+   * Set it to `false` only where something else already guarantees the pair
+   * agree — CI ran `gqlize check --strict` against the same commit, and the
+   * artifact ships with the code that built it. The check re-walks every
+   * definition through the adapter on every boot, which is ~79ms on a
+   * 1,000-model schema; skipping it is the one meaningful load-time saving on
+   * offer, and it is a trade, not a free win. It warns on the way past.
+   */
+  checkStaleness?: boolean;
+  /**
    * Late-bound `extend` fields, called once every type exists so an extension
    * can reference a *materialized* type rather than a stale instance from
    * another build (which would collide on name at schema construction).
@@ -112,9 +126,19 @@ export async function materializeSchema(
     log.warn(`${message}; rebuilding live`);
     return buildLiveSchema(orm, options);
   }
-  const rebuilt = checkFingerprint(snapshot, orm, options, onMismatch);
-  if (rebuilt) {
-    return rebuilt;
+  if (options.checkStaleness === false) {
+    // Never silent, for the same reason a missing fingerprint is not: an
+    // unchecked load reads exactly like a fresh one until it doesn't.
+    log.warn(
+      "gqlize: checkStaleness is false; loading the artifact without comparing it to the live " +
+        "definitions. Nothing at runtime will tell you the two disagree — run `gqlize check " +
+        "--strict` against the same commit instead.",
+    );
+  } else {
+    const rebuilt = checkFingerprint(snapshot, orm, options, onMismatch);
+    if (rebuilt) {
+      return rebuilt;
+    }
   }
   const instance = new GqlizeBinding(orm) as any;
   const {extend = {}, root} = options;
@@ -201,6 +225,33 @@ export async function materializeSchema(
     return built;
   }
 
+  /**
+   * `decodeTypeRef` runs graphql's `parseType` over the SDL ref and allocates a
+   * fresh list/non-null wrapper chain every call, and the same few thousand ref
+   * strings recur across every field and argument in the schema — on a
+   * 1,000-model artifact that is ~372k parses of ~32k distinct strings.
+   *
+   * Per materialize call, deliberately. Type identity is per materialization: a
+   * module-level cache would hand one schema's instances to the next, which is
+   * precisely the duplicate-name failure this loader has to avoid. Within a
+   * single call it is sound — `lookup` already memoises into `typeMap`, so a ref
+   * always decodes to the same named type, and the `GraphQLList` /
+   * `GraphQLNonNull` wrappers around it are immutable and compared structurally.
+   *
+   * `coordinate` only ever appears in the failure message, and a failed decode
+   * caches nothing, so reusing the first caller's coordinate costs nothing.
+   */
+  const refCache = new Map<string, GraphQLType>();
+  function decodeRef(ref: string, coordinate: string): GraphQLType {
+    const cached = refCache.get(ref);
+    if (cached) {
+      return cached;
+    }
+    const decoded = decodeTypeRef(ref, lookup, coordinate);
+    refCache.set(ref, decoded);
+    return decoded;
+  }
+
   function construct(ir: NamedTypeIR): GraphQLNamedType {
     const description = ir.description;
     switch (ir.kind) {
@@ -268,7 +319,7 @@ export async function materializeSchema(
     for (const field of fields) {
       const coordinate = `${typeName}.${field.name}`;
       let config: any = {
-        type: decodeTypeRef(field.type, lookup, coordinate),
+        type: decodeRef(field.type, coordinate) as any,
         description: field.description,
         deprecationReason: field.deprecationReason,
         ...(field.args
@@ -294,7 +345,7 @@ export async function materializeSchema(
 
   function inputValue(iv: InputValueIR, coordinate: string) {
     return {
-      type: decodeTypeRef(iv.type, lookup, coordinate) as any,
+      type: decodeRef(iv.type, coordinate) as any,
       description: iv.description,
       deprecationReason: iv.deprecationReason,
       ...(iv.defaultLiteral !== undefined
