@@ -161,9 +161,29 @@ const schema = await loadSchema("./generated/schema.json", orm, {
 bundler import, S3, or a config service instead of the filesystem.
 
 `options.extend` and `options.root` are **not** serialized — they are arbitrary user field configs
-with arbitrary resolvers, so pass them at load exactly as you pass them to `createSchema`. When an
-extend field needs to reference a *generated* type, use `extendFactory(types)` so it binds to the
-materialized instance rather than a stale one.
+with arbitrary resolvers, so pass them at load exactly as you pass them to `createSchema`. Their
+resolvers survive by reference, on the root field and on every field of every type nested inside it.
+The ledger records which extend keys the build produced, so omitting one at load is an error naming
+the missing `extend.<target>.<key>` rather than a schema quietly missing a field.
+
+When an extend field needs to reference a *generated* type, use `extendFactory(types)` so it binds to
+the materialized instance rather than a stale one. It may also return `root`, which is how a
+subscription root built against generated types is supplied:
+
+```ts
+const schema = await loadSchema(artifact, orm, {
+  extendFactory: (types) => ({
+    query: { latest: { type: types.Task, resolve: () => ({}) } },
+    root: { subscription: buildSubscription(types.Task) },
+  }),
+});
+```
+
+A type the artifact defines cannot also be supplied live: every type name must map to exactly one
+instance, so passing a stale copy of a generated type through `extend` or `root` throws, naming the
+type, where each instance came from, and pointing here. User-authored types are the other way
+around — the artifact never contains one, so the instance you built is the instance the loaded
+schema uses, coercion and nested resolvers intact.
 
 ### Staleness
 
@@ -186,11 +206,17 @@ const schema = await loadSchema(artifact, orm, {
 ```
 
 **The one drift the fingerprint cannot see is permissions**, because `options.permission` is a bag
-of closures and closures cannot be hashed. Two mitigations: pass an opaque `permissionProfile` id
+of closures and closures cannot be hashed. Nothing about `options.permission` is fingerprinted for
+that reason — the load-time options object is built by the server, often per request, and differing
+from the build's says nothing about the artifact. Two mitigations: pass an opaque `permissionProfile` id
 (recorded in the fingerprint, so an `admin` artifact loaded under `anon` is caught), and run
 `gqlize check` in CI — by default it does not stop at the fingerprint, it builds the schema live,
 materializes the artifact, and diffs the sorted SDL. That catches *any* divergence, permissions
 included. `--no-strict` drops to the fingerprint-only comparison.
+
+`permissionProfile` is compared only when the load names one: staying silent about it is not a
+claim that it changed, so the artifact's value is carried forward and a warning notes that
+permission drift went unchecked. Naming a different profile still throws.
 
 The fingerprint is deliberately dialect-invariant: building against SQLite in CI and serving
 Postgres in production is a normal setup, and the dialect does not affect schema shape.

@@ -55,6 +55,18 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
           }, bindingContext);
         } else {
           const type = instance.getGraphQLOutputType(defName, key, fieldDef.type);
+          // Field args are passed through verbatim, so their types are whatever
+          // the user wrote — always external, and invisible to every other
+          // recording site.
+          Object.keys(fieldDef.args || {}).forEach((argName) => {
+            recordExternalType(schemaCache, fieldDef.args[argName]?.type, {
+              via: "definitionField",
+              defName,
+              fieldName: key,
+              use: "arg",
+              argName,
+            });
+          });
           const config = {
             type: fieldDef.allowNull ? type : new GraphQLNonNull(type as any),
             description: ((definition.comments || {}).fields || {})[key] || fieldDef.description,

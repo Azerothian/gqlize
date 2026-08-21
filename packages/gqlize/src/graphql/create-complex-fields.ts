@@ -25,6 +25,15 @@ export default function createComplexFieldsFunc(
             //target does not exist.. excluded from base types?
             return;
           }
+          if (options.permission?.queryInstanceMethods) {
+            const result = options.permission.queryInstanceMethods(defName, methodName, options.permission.options);
+            if (!result) {
+              return;
+            }
+          }
+          // Recorded *after* the permission gate: a denied method contributes no
+          // field, so its types are not in the schema and the loader must not be
+          // asked to re-derive them.
           if (typeof type !== "string") {
             recordExternalType(schemaCache, targetType, {
               via: "definitionExpose",
@@ -48,12 +57,6 @@ export default function createComplexFieldsFunc(
               argName,
             });
           });
-          if (options.permission?.queryInstanceMethods) {
-            const result = options.permission.queryInstanceMethods(defName, methodName, options.permission.options);
-            if (!result) {
-              return;
-            }
-          }
           fields[methodName] = bindField({
             type: targetType,
             args,

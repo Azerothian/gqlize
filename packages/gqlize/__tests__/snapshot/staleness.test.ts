@@ -102,8 +102,55 @@ describe("materializeSchema staleness", () => {
 
   it("names the permissionProfile in the message when that is what moved", async() => {
     const artifact = await artifactFor(await orm(), {permissionProfile: "admin"});
-    await expect(materializeSchema(artifact, await orm()))
+    await expect(materializeSchema(artifact, await orm(), {permissionProfile: "public"} as any))
       .rejects.toThrow(/pass the `permissionProfile` the artifact was built with/);
+  });
+
+  it("reports the differing values, not just the key", async() => {
+    const artifact = await artifactFor(await orm(), {permissionProfile: "admin"});
+    await expect(materializeSchema(artifact, await orm(), {permissionProfile: "public"} as any))
+      .rejects.toThrow(/permissionProfile \(artifact "admin", live "public"\)/);
+  });
+
+  it("carries the artifact's permissionProfile forward when the loader names none", async() => {
+    // The loading process builds its own options object and is not claiming the
+    // profile changed by staying silent about it. Comparing against `null` here
+    // made every CLI-built artifact report drift on its first load.
+    const db = await orm();
+    const artifact = await artifactFor(db, {permissionProfile: "admin"});
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(materializeSchema(artifact, db)).resolves.toBeDefined();
+      expect(warn.mock.calls.flat().join(" ")).toMatch(/permissionProfile/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("loads clean against an independently constructed options object", async() => {
+    // Nothing here is shared with the build: fresh closures, a different set of
+    // permission predicates, no profile named.
+    const db = await orm();
+    const artifact = await artifactFor(db, {
+      options: {permission: {model: () => true, field: () => true}},
+    });
+    await expect(materializeSchema(artifact, db, {
+      permission: {relationship: () => true},
+      onMismatch: "throw",
+    } as any)).resolves.toBeDefined();
+  });
+
+  it("loads clean with no options at all", async() => {
+    const db = await orm();
+    const artifact = await artifactFor(db, {options: {permission: {model: () => true}}});
+    await expect(materializeSchema(artifact, db)).resolves.toBeDefined();
+  });
+
+  it("still reports a genuine model change through the relaxed check", async() => {
+    // The relaxations above must not swallow real staleness.
+    const artifact = await artifactFor(await orm(), {permissionProfile: "admin"});
+    await expect(materializeSchema(artifact, await orm(true)))
+      .rejects.toThrow(/artifact is stale — models differs/);
   });
 
   it("passes when the loader supplies the matching permissionProfile", async() => {

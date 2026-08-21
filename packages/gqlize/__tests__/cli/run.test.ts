@@ -8,6 +8,7 @@ import {createInstance} from "../helper";
 import {createSchema} from "../../src";
 import {run} from "../../src/cli/run";
 import {VERSION} from "../../src/version";
+import {SNAPSHOT_FORMAT_VERSION} from "../../src/graphql/snapshot/ir";
 
 /**
  * End-to-end CLI tests: `run()` returns an exit code instead of calling
@@ -94,7 +95,7 @@ describe("gqlize CLI", () => {
       expect(await run(["build", "-c", path], io())).toEqual(0);
 
       const written = await artifact(join(root, "gqlize.schema.json"));
-      expect(written.formatVersion).toEqual(1);
+      expect(written.formatVersion).toEqual(SNAPSHOT_FORMAT_VERSION);
       expect(written.types.length).toBeGreaterThan(0);
       expect(written.fingerprint).toBeTruthy();
       expect(stdout()).toContain("gqlize.schema.json");
@@ -123,7 +124,7 @@ describe("gqlize CLI", () => {
       expect(await run(["build", "-c", path, "--gzip"], io())).toEqual(0);
       const written = join(root, "gqlize.schema.json.gz");
       expect((await readFile(written))[0]).toEqual(0x1f);
-      expect((await artifact(written)).formatVersion).toEqual(1);
+      expect((await artifact(written)).formatVersion).toEqual(SNAPSHOT_FORMAT_VERSION);
       expect(stdout()).toContain("(gzip)");
     });
 

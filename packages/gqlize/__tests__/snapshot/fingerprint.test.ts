@@ -180,12 +180,20 @@ describe("fingerprintDefinitions", () => {
   });
 
   describe("optionsShape", () => {
-    it("flips when the set of permission predicates changes", async() => {
+    it("ignores `permission` entirely, predicate set included", async() => {
+      // The projection covers only what reshapes the *serialized* artifact. A
+      // loading process routinely builds permission per request — a different set
+      // of predicates present at load says nothing about the artifact being
+      // stale, and hashing it made every such load report drift.
       const db = await orm();
       expect(compareFingerprints(
         fingerprintDefinitions(db, {options: {permission: {model: () => true}}}),
         fingerprintDefinitions(db, {options: {permission: {model: () => true, field: () => true}}}),
-      )).toEqual(["optionsShape"]);
+      )).toEqual([]);
+      expect(compareFingerprints(
+        fingerprintDefinitions(db, {options: {permission: {model: () => true}}}),
+        fingerprintDefinitions(db, {options: {}}),
+      )).toEqual([]);
     });
 
     it("does not flip on a different predicate *body*", async() => {
@@ -195,6 +203,33 @@ describe("fingerprintDefinitions", () => {
       expect(compareFingerprints(
         fingerprintDefinitions(db, {options: {permission: {model: () => true}}}),
         fingerprintDefinitions(db, {options: {permission: {model: () => false}}}),
+      )).toEqual([]);
+    });
+
+    it("flips on `subscriptions`, which does reshape the artifact", async() => {
+      const db = await orm();
+      expect(compareFingerprints(
+        fingerprintDefinitions(db, {options: {}}),
+        fingerprintDefinitions(db, {options: {subscriptions: true}}),
+      )).toEqual(["optionsShape"]);
+    });
+
+    it("survives an independently constructed options object", async() => {
+      // The build and the load never share an options object in practice: one is
+      // written in a build script, the other in the server's bootstrap. Nothing
+      // in the projection may depend on identity or on closures.
+      const db = await orm();
+      const buildOptions = {
+        permission: {model: () => true, field: () => true},
+        extend: {query: {health: {type: GraphQLString, resolve: () => "ok"}}},
+      };
+      const loadOptions = {
+        permission: {relationship: (): boolean => false},
+        root: {description: "Public API"},
+      };
+      expect(compareFingerprints(
+        fingerprintDefinitions(db, {options: buildOptions}),
+        fingerprintDefinitions(db, {options: loadOptions}),
       )).toEqual([]);
     });
 

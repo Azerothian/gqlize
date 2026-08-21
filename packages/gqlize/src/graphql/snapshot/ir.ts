@@ -2,7 +2,7 @@ import type { FieldBinding } from "../resolvers/types";
 import type { Fingerprint } from "./fingerprint";
 import type { GqlizeBuildLedger } from "./ledger";
 
-export const SNAPSHOT_FORMAT_VERSION = 1;
+export const SNAPSHOT_FORMAT_VERSION = 2;
 
 /**
  * A type reference in SDL syntax — `"Task"`, `"Task!"`, `"[Task!]!"`.
