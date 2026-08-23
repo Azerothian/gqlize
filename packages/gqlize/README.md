@@ -138,6 +138,56 @@ The artifact is JSON, not SDL, and that is not a stylistic choice: `printSchema`
 never prints applied directives. An SDL round-trip loses both, silently. SDL stays available as a
 secondary artifact for codegen and CI diffs.
 
+<details>
+<summary><strong>Why there is no faster artifact format</strong> — two rejected designs, with the numbers</summary>
+
+Both obvious ways to close the gap above have been built and measured, and neither works. The
+reason is the same in both cases, so it is worth stating once: **the deliverable is a
+`GraphQLSchema`** — a live JavaScript object graph of `GraphQLObjectType`s and their thunks — and
+constructing it is the bill. The artifact format only decides how the *instructions* for that
+construction arrive, and those were never the expensive part.
+
+**A native (Rust/napi) artifact reader.** Profiling a cold 500-model load: `JSON.parse` is 62 ms and
+a deep walk of every property in the parsed IR is 36 ms, out of a 332 ms load. A native reader that
+made *both* free would land at ~234 ms against a 237 ms live build — parity, not a win, before
+paying for a per-platform CI matrix and a JS fallback. This matches the published experience of the
+boundary itself: [simdjson's Node binding](https://github.com/luizperes/simdjson_nodejs) loses to
+`JSON.parse` on object-heavy documents because materialising the JS object graph eats the native
+gain, and [oxc abandoned returning objects](https://github.com/oxc-project/oxc/issues/2409) for the
+same reason.
+
+**A compiled schema module** — emitting the artifact as JavaScript that constructs the schema
+directly, the way Prisma generates a client, so V8 could cache the parse as bytecode. A complete
+emitter was written and produces a `validateSchema`-clean schema identical to the JSON path
+(`printSchema(lexicographicSortSchema(…))` equal across live, JSON and module). It is **2×
+slower**, and gets worse with scale:
+
+| 500 models / 13,013 types | JSON artifact | compiled module |
+|---|---:|---:|
+| `JSON.parse` / `import()` | 140 ms | 138 ms |
+| build the types | 47 ms | 243 ms |
+| `new GraphQLSchema` (forces the field thunks) | 317 ms | 644 ms |
+| **total** | **505 ms** | **1,030 ms** |
+| *at 1,000 models* | *823 ms* | *2,030 ms* |
+
+The premise was that a bytecode cache would pay for the bigger parse. It does — and it does not
+matter. `NODE_COMPILE_CACHE` halves the module's `import` (137 ms to 66 ms) and changes neither of
+the other two rows, because it only covers what V8 compiled *eagerly*; the schema lives in function
+bodies that V8 compiles lazily, on first call.
+
+And first call is the only call. That is the whole result: the JSON path runs **one** `fieldMap`
+function 13,000 times, which V8 optimises after the first few hundred, while the compiled module
+runs **13,000 distinct one-shot functions**, each paying compilation and none of them ever hot.
+Codegen trades hot shared code for cold unique code, which is the wrong trade when every line runs
+exactly once. Note too that `import`ing 8 MB of JavaScript costs the same as `JSON.parse`-ing 10 MB
+of JSON — so even emitting pure data literals instead of code saves nothing on the step it was
+meant to remove.
+
+If you want a faster boot, `checkStaleness: false` and `NODE_COMPILE_CACHE` are the two levers that
+are actually on the table, and both are documented above.
+
+</details>
+
 ### Config
 
 ```ts
