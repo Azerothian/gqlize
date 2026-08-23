@@ -61,6 +61,28 @@ function build(
         "live ormize instance does not have",
     );
   }
+  if (ref.via === "definitionWhereOperator") {
+    const type = (definition as any).whereOperatorTypes?.[ref.operator];
+    if (!type) {
+      throw new Error(
+        `gqlize: external type "${expectedName}" needs ` +
+          `${ref.defName}.whereOperatorTypes.${ref.operator}, which the live definition does not ` +
+          "have",
+      );
+    }
+    return type;
+  }
+  if (ref.via === "definitionField") {
+    const field: any = (instance.getFields(ref.defName) as any)?.[ref.fieldName];
+    const arg = field?.args?.[ref.argName];
+    if (!arg) {
+      throw new Error(
+        `gqlize: external type "${expectedName}" needs argument "${ref.argName}" on ` +
+          `${ref.defName}.${ref.fieldName}, which the live definition does not have`,
+      );
+    }
+    return arg.type;
+  }
   if (ref.via === "definitionOverride") {
     const override = definition.override?.[ref.fieldName];
     if (!override) {
@@ -141,8 +163,15 @@ function overrideInputType(
   return type;
 }
 
-function describeRef(ref: ExternalTypeRef): string {
-  return ref.via === "definitionOverride"
-    ? `${ref.defName}.override.${ref.fieldName} ${ref.use}`
-    : `${ref.defName}.expose.${ref.group}.${ref.target}.${ref.methodName} ${ref.use}`;
+export function describeRef(ref: ExternalTypeRef): string {
+  switch (ref.via) {
+    case "definitionOverride":
+      return `${ref.defName}.override.${ref.fieldName} ${ref.use}`;
+    case "definitionWhereOperator":
+      return `${ref.defName}.whereOperatorTypes.${ref.operator}`;
+    case "definitionField":
+      return `${ref.defName}.${ref.fieldName}(${ref.argName}:)`;
+    default:
+      return `${ref.defName}.expose.${ref.group}.${ref.target}.${ref.methodName} ${ref.use}`;
+  }
 }

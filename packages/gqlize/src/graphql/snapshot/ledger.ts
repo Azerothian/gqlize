@@ -25,6 +25,24 @@ export type ExternalTypeRef =
       methodName: string;
       use: "type" | "arg";
       argName?: string;
+    }
+  | {
+      /**
+       * A type declared on `definition.whereOperatorTypes` — the adapters fold
+       * these straight into the generated filter input, so the type reaches the
+       * schema without passing any gqlize builder that could record it.
+       */
+      via: "definitionWhereOperator";
+      defName: string;
+      operator: string;
+    }
+  | {
+      /** a type on `definition.define[field].args`, passed through verbatim */
+      via: "definitionField";
+      defName: string;
+      fieldName: string;
+      use: "arg";
+      argName: string;
     };
 
 /**
@@ -42,7 +60,7 @@ export interface GqlizeBuildLedger {
   scalars: Record<string, string>;
 }
 
-export const LEDGER_FORMAT_VERSION = 1;
+export const LEDGER_FORMAT_VERSION = 2;
 
 export function createLedger(): GqlizeBuildLedger {
   return {

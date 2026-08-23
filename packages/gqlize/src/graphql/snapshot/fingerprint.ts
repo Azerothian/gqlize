@@ -78,6 +78,28 @@ export function compareFingerprints(a?: Fingerprint | null, b?: Fingerprint | nu
 }
 
 /**
+ * The drift keys, with the differing values for the ones a human can read.
+ *
+ * `adapters` / `models` / `optionsShape` are digests: printing two sha256s says
+ * nothing. The version and profile keys are the ones where the value *is* the
+ * diagnosis ("built by 7.0.0-beta.5, loaded by 7.0.0-beta.6").
+ */
+export function describeDrift(
+  drift: string[],
+  artifact?: Fingerprint | null,
+  live?: Fingerprint | null,
+): string {
+  const readable = new Set(["formatVersion", "gqlizeVersion", "graphqlVersion", "permissionProfile"]);
+  return drift.map((key) => {
+    if (!readable.has(key) || !artifact || !live) {
+      return key;
+    }
+    return `${key} (artifact ${JSON.stringify((artifact as any)[key])}, live ` +
+      `${JSON.stringify((live as any)[key])})`;
+  }).join(", ");
+}
+
+/**
  * Which *implementation* serves each definition — the adapter class, not its
  * registration name and not its dialect.
  *
@@ -225,10 +247,15 @@ function optionsProjection(options?: GqlizeOptions) {
   // Only the options that shape the *serialized* schema. `extend` and `root` are
   // merged at load from the live options object, so a caller legitimately adding
   // a `health` query locally must not read as a stale artifact.
+  //
+  // `permission` is excluded for the same reason it has a `permissionProfile`
+  // stand-in: it is a bag of closures, and which predicates are *present* is not
+  // a property of the artifact. The loading process builds its own options
+  // object — commonly with a request-scoped permission bag, or none at all,
+  // because permissions were applied at build time — and hashing its key set
+  // made every such load report drift. `permissionProfile` is the deliberate
+  // handle on permission changes; `gqlize check --strict` is the real gate.
   return {
-    permission: Object.keys(options?.permission || {})
-      .filter((key) => typeof (options!.permission as any)[key] === "function")
-      .sort(),
     subscriptions: Boolean(options?.subscriptions),
   };
 }

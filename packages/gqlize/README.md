@@ -144,6 +144,69 @@ filename (`schema.admin.json`, `schema.anon.json`) so two profiles can never col
 Discovery order is `--config`, then the nearest `gqlize.config.{ts,mts,mjs,js,cjs}` walking up from
 the cwd, then a `"gqlize": "./path/to/config"` pointer in `package.json`.
 
+### Saving it
+
+`snapshotSchema(schema, opts?)` turns a built schema into a plain JSON-serializable object. Writing
+it out is yours to do — which is the point: the same object goes to a file, an S3 bucket, or a
+config service without the library taking a position on any of them.
+
+```ts
+import { writeFile } from "node:fs/promises";
+import { createSchema } from "@azerothian/gqlize";
+import { snapshotSchema } from "@azerothian/gqlize/snapshot";
+import { buildOrm } from "./src/orm";
+import { adminPermission } from "./src/permissions";
+import { Money } from "./src/scalars";
+
+async function build() {
+  const orm = await buildOrm();                 // already initialise()d and sync()ed
+  const schema = await createSchema(orm, { permission: adminPermission });
+
+  const artifact = snapshotSchema(schema, {
+    permissionProfile: "admin",                 // opaque id, checked at load
+    scalars: { Money },                         // the same map the load must pass
+  });
+
+  await writeFile("./generated/schema.json", JSON.stringify(artifact));
+}
+```
+
+The schema **must come from `createSchema`**. The builder attaches a ledger recording the
+user-supplied types and the relay model map, neither of which is re-derivable from the type system
+alone; a schema from anywhere else is rejected rather than silently snapshotted into something that
+will not load.
+
+| `SnapshotOptions` | |
+| --- | --- |
+| `scalars` | Custom scalars by name. Coercion is code, so these are named in the artifact and re-supplied at load — pass the same map to both ends. |
+| `permissionProfile` | Opaque id folded into the fingerprint. `options.permission` is closures and cannot be hashed, so this is the handle on "which permission set built this". |
+| `orm` | The instance to fingerprint. Normally unnecessary — a schema from `createSchema` remembers the instance it was built from. Pass one when the schema came from elsewhere, or `false` to skip the fingerprint entirely (the artifact then loads with no staleness check, and says so). |
+
+`snapshotSchema` is **fail loud**: anything it cannot describe throws at build time with the schema
+coordinate, rather than dropping it and failing in production on request-shaped input. That covers
+`isTypeOf` / `resolveType` (code), an enum internal value that is not JSON, a default value that
+cannot be encoded as a literal, and — most usefully — a resolver with no binding descriptor, which
+is how a hand-written resolver on a generated field gets caught.
+
+Compress it by writing gzip; the loader detects that by magic bytes, not by extension, so an
+artifact renamed by a deploy pipeline still loads:
+
+```ts
+import { gzipSync } from "node:zlib";
+await writeFile("./generated/schema.json.gz", gzipSync(JSON.stringify(artifact)));
+```
+
+An SDL sidecar for codegen and CI diffs is just `printSchema` — a secondary artifact, never the
+source of truth, for the reasons above:
+
+```ts
+import { printSchema } from "graphql";
+await writeFile("./generated/schema.graphql", printSchema(schema));
+```
+
+If all of that is what you want, `buildArtifact` ([below](#programmatic-api)) is exactly this block
+behind one call, and `gqlize build` is `buildArtifact` behind a CLI.
+
 ### Loading it
 
 ```ts
@@ -153,17 +216,103 @@ const orm = await buildOrm();
 const schema = await loadSchema("./generated/schema.json", orm, {
   permission: adminPermission,       // the same options you pass to createSchema
   permissionProfile: "admin",
+  scalars: { Money },
 });
 ```
 
-`loadSchema` reads `.json` or `.json.gz` (detected by content, not extension) and hands off to
-`materializeSchema(snapshot, orm, options)`, which is what to call when the artifact arrives from a
-bundler import, S3, or a config service instead of the filesystem.
+The ormize instance is not optional and is not a formality — it *is* the resolution engine. The
+artifact replaces the type-system construction step only; every resolver in the loaded schema goes
+back through the same `bindField` the live builder uses, against the live instance.
+
+`loadSchema` reads `.json` or `.json.gz` from disk and hands off to `materializeSchema`. When the
+artifact arrives some other way — a bundler import, object storage, a config service — call
+`materializeSchema` directly with the parsed object:
+
+```ts
+import { materializeSchema } from "@azerothian/gqlize/snapshot";
+import artifact from "./generated/schema.json";      // bundled at build time
+
+const schema = await materializeSchema(artifact, orm, { permission });
+```
+
+```ts
+const body = await s3.send(new GetObjectCommand({ Bucket, Key: "schema.json" }));
+const schema = await materializeSchema(
+  JSON.parse(await body.Body.transformToString()),
+  orm,
+  { permission, permissionProfile: "admin" },
+);
+```
+
+`readSnapshot(path)` is the read-and-parse half on its own, for inspecting an artifact without
+materializing it — a deploy gate that wants the fingerprint, or a script that counts types:
+
+```ts
+import { readSnapshot } from "@azerothian/gqlize/snapshot";
+
+const artifact = await readSnapshot("./generated/schema.json");
+console.log(artifact.formatVersion, artifact.types.length, artifact.fingerprint);
+```
+
+| Load option | |
+| --- | --- |
+| everything `createSchema` takes | `permission`, `subscriptions`, `extend`, `root`, … — passed exactly as at build |
+| `scalars` | The same map `snapshotSchema` got. Omitting one throws naming the scalar, rather than failing at request time on coercion. |
+| `permissionProfile` | Compared against the artifact's — see [Staleness](#staleness) |
+| `onMismatch` | `"throw"` (default), `"warn"`, `"rebuild"` — see [Staleness](#staleness) |
+| `extendFactory` | Late-bound `extend` / `root`, called once every type exists |
 
 `options.extend` and `options.root` are **not** serialized — they are arbitrary user field configs
-with arbitrary resolvers, so pass them at load exactly as you pass them to `createSchema`. When an
-extend field needs to reference a *generated* type, use `extendFactory(types)` so it binds to the
-materialized instance rather than a stale one.
+with arbitrary resolvers, so pass them at load exactly as you pass them to `createSchema`. Their
+resolvers survive by reference, on the root field and on every field of every type nested inside it.
+The ledger records which extend keys the build produced, so omitting one at load is an error naming
+the missing `extend.<target>.<key>` rather than a schema quietly missing a field.
+
+When an extend field needs to reference a *generated* type, use `extendFactory(types)` so it binds to
+the materialized instance rather than a stale one. It may also return `root`, which is how a
+subscription root built against generated types is supplied:
+
+```ts
+const schema = await loadSchema(artifact, orm, {
+  extendFactory: (types) => ({
+    query: { latest: { type: types.Task, resolve: () => ({}) } },
+    root: { subscription: buildSubscription(types.Task) },
+  }),
+});
+```
+
+A type the artifact defines cannot also be supplied live: every type name must map to exactly one
+instance, so passing a stale copy of a generated type through `extend` or `root` throws, naming the
+type, where each instance came from, and pointing here. User-authored types are the other way
+around — the artifact never contains one, so the instance you built is the instance the loaded
+schema uses, coercion and nested resolvers intact.
+
+Put together, an artifact-served server is the live one with `createSchema` swapped for `loadSchema`:
+
+```ts
+// src/server-artifact.ts
+import { createServer } from "node:http";
+import { join } from "node:path";
+import { createYoga } from "graphql-yoga";
+import { loadSchema } from "@azerothian/gqlize/snapshot";
+import { buildOrm } from "./orm";
+
+async function main() {
+  const orm = await buildOrm();
+  const artifact = join(__dirname, "..", "generated", "schema.json");
+  const schema = await loadSchema(artifact, orm, {
+    permission: adminPermission,
+    permissionProfile: "admin",
+    scalars: { Money },
+    onMismatch: process.env.NODE_ENV === "production" ? "throw" : "rebuild",
+  });
+
+  const yoga = createYoga({ schema, context: () => ({ instance: orm }) });
+  createServer(yoga).listen(4000);
+}
+
+main();
+```
 
 ### Staleness
 
@@ -186,11 +335,17 @@ const schema = await loadSchema(artifact, orm, {
 ```
 
 **The one drift the fingerprint cannot see is permissions**, because `options.permission` is a bag
-of closures and closures cannot be hashed. Two mitigations: pass an opaque `permissionProfile` id
+of closures and closures cannot be hashed. Nothing about `options.permission` is fingerprinted for
+that reason — the load-time options object is built by the server, often per request, and differing
+from the build's says nothing about the artifact. Two mitigations: pass an opaque `permissionProfile` id
 (recorded in the fingerprint, so an `admin` artifact loaded under `anon` is caught), and run
 `gqlize check` in CI — by default it does not stop at the fingerprint, it builds the schema live,
 materializes the artifact, and diffs the sorted SDL. That catches *any* divergence, permissions
 included. `--no-strict` drops to the fingerprint-only comparison.
+
+`permissionProfile` is compared only when the load names one: staying silent about it is not a
+claim that it changed, so the artifact's value is carried forward and a warning notes that
+permission drift went unchecked. Naming a different profile still throws.
 
 The fingerprint is deliberately dialect-invariant: building against SQLite in CI and serving
 Postgres in production is a normal setup, and the dialect does not affect schema shape.
@@ -247,6 +402,24 @@ const schema   = await materializeSchema(artifact, orm, { permission, scalars: {
 
 [`examples/gqlize-basic`](../../examples/gqlize-basic) has a working config and an artifact-served
 server (`pnpm schema:build && pnpm start:artifact`).
+
+### When it refuses
+
+Every one of these is deliberate: the artifact is a build output, and a build output that half-works
+is worse than one that stops. What each means:
+
+| Message | What happened |
+| --- | --- |
+| `schema has no build ledger` | `snapshotSchema` was handed a schema that did not come from `createSchema`. |
+| `<coordinate> has a resolver but no binding descriptor` | A resolver was attached to a generated field outside the builder — it is code, so it cannot be serialized. Move it to `extend`, or to the definition's `override` / `expose`. |
+| `<Type> defines isTypeOf` / `resolveType, which is code` | Same reason, at the type level. |
+| `enum value X.Y carries a non-JSON internal value` | An enum's internal value is a class instance, function, `undefined`, … Only JSON-representable values round-trip. |
+| `scalar "X" is not in the scalar registry` | A custom scalar was in the schema at build, or named by the artifact at load, without being in `scalars`. Pass the same map to both ends. |
+| `snapshot formatVersion N is not supported` | The artifact predates the running gqlize. Rebuild it. |
+| `the schema artifact is stale — <part> differs` | The definitions moved under the artifact. Rebuild it, or see [Staleness](#staleness) for `onMismatch`. |
+| `the artifact was built with extend.query.X, which the load-time options do not supply` | The build had an extend field the load does not. Pass it, via `extend` or `extendFactory`. |
+| `the schema contains more than one type per name` | A live type collided with one the artifact defines. The message names each instance's path and origin; if the live one is a generated type from another build, supply it through `extendFactory` so it binds to this schema's instance. |
+| `artifact carries no fingerprint` (warning) | Built with `orm: false`. It loads, unchecked. |
 
 ## Adapters
 

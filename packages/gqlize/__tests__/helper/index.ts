@@ -7,7 +7,12 @@ import Item from "./models/item";
 import Sequelize from "sequelize";
 import { createAdapterForDialect, registerTeardown } from "./dialect";
 
-export async function createInstance() {
+/**
+ * `extraDefinitions` exists so a test can exercise a definition shape without
+ * editing the shared models — `schema-golden.test.ts` pins the SDL these five
+ * produce, and any edit to them churns that snapshot for unrelated reasons.
+ */
+export async function createInstance(extraDefinitions: any[] = []) {
   const db = new Database();
   const { adapter, name, teardown } = await createAdapterForDialect();
   registerTeardown(teardown);
@@ -54,6 +59,7 @@ export async function createInstance() {
   db.addDefinition(TaskModel);
   db.addDefinition(TaskItemModel);
   db.addDefinition(Item);
+  extraDefinitions.forEach((definition) => db.addDefinition(definition));
 
   await db.initialise();
   await db.sync();

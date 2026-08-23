@@ -19,9 +19,10 @@ import GQLManager from '../manager';
 import { GqlizeOptions, SchemaCache } from '../types';
 import { bindField } from "./resolvers/bind";
 import { applyExtendFields } from "./extend";
-import { createLedger, setLedger } from "./snapshot/ledger";
+import { createLedger, recordExternalType, setLedger } from "./snapshot/ledger";
 import { recordBuild } from "./snapshot/build-registry";
 import { GQLIZE_EXT } from "./resolvers/types";
+import { enrichDuplicateTypeError } from "./utils/duplicate-types";
 
 export function createModelTypes(instance: GQLManager, options: GqlizeOptions, nodeInterface: GraphQLInterfaceType, schemaCache: SchemaCache) {
   return async(defName: string, o: any) => {
@@ -114,6 +115,19 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     if (adapter && typeof adapter.setBuildPermission === "function") {
       adapter.setBuildPermission(options.permission);
     }
+    // `whereOperatorTypes` is read straight off the definition by the adapters'
+    // filter builders, so a user type declared there reaches the schema without
+    // passing any gqlize builder that could record it. Record it here instead:
+    // it is user-authored, and an artifact that clones it duplicates the name
+    // against the live instance the same type reaches through any other path.
+    const whereOperatorTypes: Record<string, any> = (definitions[defName] as any)?.whereOperatorTypes || {};
+    Object.keys(whereOperatorTypes).forEach((operator) => {
+      recordExternalType(schemaCache, whereOperatorTypes[operator], {
+        via: "definitionWhereOperator",
+        defName,
+        operator,
+      });
+    });
   });
 
   const types = await waterfall(Object.keys(definitions),
@@ -243,36 +257,6 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
 }
 
 
-function searchForType(name: string, path: string, arr: any = {found: [], diff: []}, obj: any, typeCollection:any[] = []) {
-  if (typeCollection.indexOf(obj) > -1) {
-    return arr;
-  }
-  typeCollection.push(obj);
-  let oo = obj;
-  if (obj.ofType) {
-    oo = obj.ofType;
-  }
-  if (oo.toConfig) {
-    oo = oo.toConfig();
-  }
-
-  if (oo.name === name) {
-    if(arr.found.indexOf(oo) === -1) {
-      arr.found.push(oo);
-      arr.diff.push(`${path}/${oo.name}`);
-    }
-  }
-  if (oo.fields) {
-    const k = Object.keys(oo.fields);
-    for (let i = 0; i < k.length; i++) {
-      let {type} = oo.fields[k[i]];
-      searchForType(name, `${path}/${oo.name}/${k[i]}`, arr, type, typeCollection);
-    }
-  }
-  return arr;
-}
-
-
 export async function createSchema(dbInstance: GQLManager, options: GqlizeOptions = {}) {
   const schemaObjects = await createSchemaObjects(dbInstance, options);
   let schema;
@@ -285,9 +269,15 @@ export async function createSchema(dbInstance: GQLManager, options: GqlizeOption
       },
     });
   } catch(err) {
-    const test = searchForType("Node", "", undefined, schemaObjects.root.query);
-    //const firstInstance = searchForType(, "", schemaObjects.root.query)
-    throw err;
+    // A duplicate name here means two instances of one type reached the build —
+    // most often the same name declared twice across `extend`, `root` and a
+    // definition. Report where each one sits rather than graphql's bare name.
+    throw enrichDuplicateTypeError(
+      err,
+      schemaObjects.root,
+      new Map(),
+      "Check `options.extend` and `options.root` for a type whose name a definition also produces.",
+    );
   }
 
   (schema as any).$sql2gql = {

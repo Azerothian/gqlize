@@ -19,7 +19,9 @@ import { createSchema as buildSchema } from "../index";
 import createSchemaCache from "../create-schema-cache";
 import createNodeInterface from "../utils/create-node-interface";
 import { applyExtendFields } from "../extend";
-import { resolveExternalType } from "../external-types";
+import { describeRef, resolveExternalType } from "../external-types";
+import { enrichDuplicateTypeError } from "../utils/duplicate-types";
+import { collectLiveTypes, collectLiveTypesFromFields, type LiveType } from "./live-types";
 import { bindField, readBinding } from "../resolvers/bind";
 import { GQLIZE_EXT, type BindingContext } from "../resolvers/types";
 import {
@@ -31,7 +33,7 @@ import {
   type SchemaSnapshot,
 } from "./ir";
 import { recordBuild } from "./build-registry";
-import { compareFingerprints, fingerprintDefinitions } from "./fingerprint";
+import { compareFingerprints, describeDrift, fingerprintDefinitions } from "./fingerprint";
 import { createScalarRegistry, unknownScalarError } from "./scalar-registry";
 import { decodeTypeRef } from "./type-ref";
 
@@ -70,6 +72,12 @@ export interface MaterializeOptions {
   extendFactory?: (types: Record<string, GraphQLNamedType>) => {
     query?: GraphQLFieldConfigMap<any, any>;
     mutation?: GraphQLFieldConfigMap<any, any>;
+    /**
+     * Extra `GraphQLSchema` config — `subscription`, `types`. Same reason as the
+     * field maps: a subscription root that references this schema's model types
+     * has to be built after they exist, and `options.root` is evaluated before.
+     */
+    root?: Record<string, any>;
   };
 }
 
@@ -132,8 +140,45 @@ export async function materializeSchema(
   // The relay triple is always rebuilt live: the node interface's resolveType
   // and the id fetcher's per-request permission re-checks are closures.
   typeMap.set(nodeInterface.name, nodeInterface);
+
+  // Types gqlize builds itself. A live type may *reference* one of them, but its
+  // closure past that point belongs to the artifact — claiming it would leave
+  // the IR with nothing to build the model from.
+  const artifactOwned = new Set<string>([
+    ...(ledger.modelTypes || []).map((name) => (name.endsWith("[]") ? name.slice(0, -2) : name)),
+    snapshot.query,
+    ...(snapshot.mutation ? [snapshot.mutation] : []),
+  ]);
+  const skip = (name: string) => artifactOwned.has(name) || name === nodeInterface.name;
+
+  /**
+   * Every live type, and the *whole closure under each one*.
+   *
+   * The ledger records the type sitting directly in an `override` / `expose` /
+   * `whereOperatorTypes` slot, but a user type nested inside one of those is
+   * just as much the user's — and if it is also reachable through a serialized
+   * path it is in the IR too. Seeding the closure here means the IR clone is
+   * never constructed and both positions resolve to the one live instance.
+   */
+  const liveTypes = new Map<string, LiveType>();
   for (const [name, ref] of Object.entries(ledger.externalTypes || {})) {
-    typeMap.set(name, resolveExternalType(name, ref, instance, schemaCache));
+    const resolved = resolveExternalType(name, ref, instance, schemaCache);
+    if (!liveTypes.has(name)) {
+      liveTypes.set(name, {type: resolved, origin: `${describeRef(ref)}`});
+    }
+    collectLiveTypes(resolved, describeRef(ref), liveTypes, {skip});
+  }
+  // `extend` and `root` are supplied by the loading process, resolvers and all.
+  // They are never in the artifact, but the types inside them can be.
+  collectLiveTypesFromFields(extend?.query, "options.extend.query", liveTypes, {skip});
+  collectLiveTypesFromFields(extend?.mutation, "options.extend.mutation", liveTypes, {skip});
+  for (const [slot, value] of Object.entries(root || {})) {
+    collectLiveTypes(value, `options.root.${slot}`, liveTypes, {skip});
+  }
+  for (const [name, live] of liveTypes) {
+    if (!typeMap.has(name)) {
+      typeMap.set(name, live.type);
+    }
   }
 
   const irByName = new Map<string, NamedTypeIR>(snapshot.types.map((t) => [t.name, t]));
@@ -268,14 +313,14 @@ export async function materializeSchema(
   }
 
   const factory = options.extendFactory?.(Object.fromEntries(typeMap)) || {};
-  rootExtras.set(
-    snapshot.query,
-    await applyExtendFields({}, mergeExtend(extend?.query, factory.query), "query", options, ctx),
-  );
+  const extendQuery = mergeExtend(extend?.query, factory.query);
+  const extendMutation = mergeExtend(extend?.mutation, factory.mutation);
+  requireExtendFields(ledger, {query: extendQuery, mutation: extendMutation});
+  rootExtras.set(snapshot.query, await applyExtendFields({}, extendQuery, "query", options, ctx));
   if (snapshot.mutation) {
     rootExtras.set(
       snapshot.mutation,
-      await applyExtendFields({}, mergeExtend(extend?.mutation, factory.mutation), "mutation", options, ctx),
+      await applyExtendFields({}, extendMutation, "mutation", options, ctx),
     );
   }
 
@@ -293,15 +338,30 @@ export async function materializeSchema(
   if (snapshot.description) {
     rootSchema.description = snapshot.description;
   }
-  Object.assign(rootSchema, {...root});
+  // `factory.root` last: a root slot built against the materialized type map is
+  // the only way a subscription root can share this schema's model types.
+  Object.assign(rootSchema, {...root, ...factory.root});
 
-  const schema = new GraphQLSchema({
+  const schemaConfig = {
     ...rootSchema,
     extensions: {
       ...(rootSchema.extensions || {}),
       [GQLIZE_EXT]: ledger,
     },
-  });
+  };
+  let schema: GraphQLSchema;
+  try {
+    schema = new GraphQLSchema(schemaConfig);
+  } catch (err) {
+    throw enrichDuplicateTypeError(
+      err,
+      schemaConfig,
+      new Map([...liveTypes].map(([name, live]) => [name, live.origin])),
+      "A type the artifact defines cannot also be handed in through `options.extend` or " +
+        "`options.root`: build it with `extendFactory(types)` instead, which runs once every " +
+        "artifact type exists — or rebuild the artifact if the type moved into the definitions.",
+    );
+  }
 
   (schema as any).$sql2gql = {types: modelTypes};
   attachTypeHatches(snapshot, typeMap, configs);
@@ -332,16 +392,31 @@ function checkFingerprint(
     );
     return undefined;
   }
+  // The loading process builds its own options object, and `permissionProfile`
+  // is an opaque label rather than something derivable from it — a caller who
+  // does not name one is not claiming the profile changed. Carrying the
+  // artifact's value forward keeps that from reading as staleness on every
+  // load; naming a *different* one still reports drift.
+  const profileUnchecked =
+    options.permissionProfile === undefined && snapshot.fingerprint.permissionProfile != null;
   const live = fingerprintDefinitions(orm, {
-    permissionProfile: options.permissionProfile,
+    permissionProfile: options.permissionProfile ?? snapshot.fingerprint.permissionProfile ?? undefined,
     options,
   });
   const drift = compareFingerprints(snapshot.fingerprint, live);
   if (drift.length === 0) {
+    if (profileUnchecked) {
+      log.warn(
+        `gqlize: the artifact was built with permissionProfile ` +
+          `"${snapshot.fingerprint.permissionProfile}" and none was supplied at load — permission ` +
+          "drift is not being checked. Pass `permissionProfile` to check it, or `gqlize check " +
+          "--strict` to diff the schema itself.",
+      );
+    }
     return undefined;
   }
   const message =
-    `gqlize: the schema artifact is stale — ${drift.join(", ")} ` +
+    `gqlize: the schema artifact is stale — ${describeDrift(drift, snapshot.fingerprint, live)} ` +
     `${drift.length === 1 ? "differs" : "differ"} from the live definitions. Rebuild it` +
     (drift.includes("permissionProfile")
       ? ", or pass the `permissionProfile` the artifact was built with"
@@ -360,6 +435,38 @@ function checkFingerprint(
 
 function buildLiveSchema(orm: any, options: GqlizeOptions & MaterializeOptions) {
   return buildSchema(new GqlizeBinding(orm) as any, options);
+}
+
+/**
+ * `extend` fields are never serialized — they are arbitrary user configs with
+ * arbitrary resolvers, supplied again at load. Which means forgetting to pass
+ * them produces a schema that is quietly missing root fields, and the failure
+ * only surfaces later as "Cannot query field" against a schema that looks fine.
+ *
+ * The build recorded which keys survived its permission gate, so the loader can
+ * say so up front.
+ */
+function requireExtendFields(ledger: any, extend: any) {
+  const missing: string[] = [];
+  for (const target of ["query", "mutation"] as const) {
+    for (const key of ledger?.extendFields?.[target] || []) {
+      if (!extend?.[target] || !(key in extend[target])) {
+        missing.push(`extend.${target}.${key}`);
+      }
+    }
+  }
+  if (missing.length === 0) {
+    return;
+  }
+  const supplied = (["query", "mutation"] as const)
+    .flatMap((target) => Object.keys(extend?.[target] || {}).map((key) => `extend.${target}.${key}`));
+  throw new Error(
+    `gqlize: the artifact was built with ${missing.join(", ")}, which the load-time options do ` +
+      `not supply (${supplied.length ? `got ${supplied.join(", ")}` : "no extend fields were passed"}). ` +
+      "`extend` fields carry live resolvers and are never serialized — pass the same `extend` to " +
+      "`loadSchema`/`materializeSchema` as you passed to `createSchema`, or supply them from " +
+      "`extendFactory`.",
+  );
 }
 
 function mergeExtend(a: any, b: any) {
