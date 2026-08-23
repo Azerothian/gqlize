@@ -54,6 +54,15 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs(["-v"]).version).toEqual(true);
   });
 
+  it("ignores the package manager's own `--` separator", () => {
+    // `pnpm schema:build -- --pretty` forwards the separator verbatim; without
+    // this, everything after it is a positional and the command is rejected
+    expect(parseCliArgs(["build", "--", "--pretty"])).toMatchObject({
+      command: "build",
+      pretty: true,
+    });
+  });
+
   it("leaves `pretty` undefined so the config can decide", () => {
     expect(parseCliArgs(["build"]).pretty).toBeUndefined();
     expect(parseCliArgs(["build", "--pretty"]).pretty).toEqual(true);

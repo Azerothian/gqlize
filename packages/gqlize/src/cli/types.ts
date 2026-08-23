@@ -22,7 +22,7 @@ export interface GqlizeProfile {
   out?: string;
   /** optional SDL sidecar for codegen / CI diffs */
   sdl?: string;
-  /** pretty-print the artifact JSON (default true); `--no-pretty` overrides */
+  /** pretty-print the artifact JSON (default false); `--pretty` / `--no-pretty` override */
   pretty?: boolean;
 }
 

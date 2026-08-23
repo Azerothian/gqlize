@@ -56,9 +56,17 @@ const OPTIONS = {
 const COMMANDS: Command[] = ["build", "print", "check"];
 
 export function parseCliArgs(argv: string[]): ParsedArgs {
+  // npm and pnpm forward their own `--` separator into the script's argv, so
+  // `pnpm schema:build -- --pretty` arrives here as `["build", "--", "--pretty"]`.
+  // Node's parser treats everything past it as positional, which turns a command
+  // line the user wrote correctly into "expected one command, got 2".
+  const separator = argv.indexOf("--");
+  const args = separator === -1
+    ? argv
+    : [...argv.slice(0, separator), ...argv.slice(separator + 1)];
   let parsed;
   try {
-    parsed = parseArgs({args: argv, options: OPTIONS as any, allowPositionals: true, strict: true});
+    parsed = parseArgs({args, options: OPTIONS as any, allowPositionals: true, strict: true});
   } catch (err: any) {
     throw new UsageError(err.message);
   }
@@ -82,7 +90,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
     // `build` is the default command, so `gqlize --out x` does the obvious thing
     command: (name as Command) || "build",
     // bare `gqlize` is a request for help; `gqlize --out x` is not
-    help: Boolean(values.help) || argv.length === 0,
+    help: Boolean(values.help) || args.length === 0,
     version: Boolean(values.version),
     config: values.config as string | undefined,
     out: values.out as string | undefined,
@@ -123,7 +131,7 @@ Common
 build
   -o, --out <path>           artifact path (default: ./gqlize.schema.json)
       --sdl <path>           also write an SDL sidecar
-      --no-pretty            minify the artifact JSON
+      --pretty               indent the artifact JSON (default: compact)
       --gzip                 gzip the artifact (appends .gz if absent)
 
 print

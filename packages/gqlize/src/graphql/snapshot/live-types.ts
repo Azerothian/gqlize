@@ -49,7 +49,7 @@ export function collectLiveTypes(
   out: Map<string, LiveType>,
   opts: CollectOptions = {},
 ): Map<string, LiveType> {
-  visit(root, origin, out, opts);
+  walk(root, origin, out, opts);
   return out;
 }
 
@@ -65,20 +65,61 @@ export function collectLiveTypesFromFields(
 ): Map<string, LiveType> {
   for (const [key, config] of Object.entries(fields || {})) {
     const origin = `${originPrefix}.${key}`;
-    visit(config?.type, origin, out, opts);
+    walk(config?.type, origin, out, opts);
     for (const arg of Object.values<any>(config?.args || {})) {
-      visit(arg?.type, origin, out, opts);
+      walk(arg?.type, origin, out, opts);
     }
   }
   return out;
 }
 
-function visit(value: unknown, origin: string, out: Map<string, LiveType>, opts: CollectOptions) {
+/**
+ * One closure, walked off an explicit stack.
+ *
+ * Recursion here used to overflow on a schema whose models chain a few hundred
+ * deep — a shape `createSchema` builds without complaint, so the artifact path
+ * failed where the live path did not. Children are pushed in reverse so popping
+ * walks them left to right, preserving the order the recursive form claimed
+ * names in (which is what decides the recorded `origin` under first-writer-wins).
+ */
+function walk(root: unknown, origin: string, out: Map<string, LiveType>, opts: CollectOptions) {
+  const pending: LiveType[] = [];
+  const claimed: LiveType[] = [];
+  visit(root, origin, out, opts, claimed);
+  push(claimed, pending);
+  while (pending.length > 0) {
+    const next = pending.pop() as LiveType;
+    const children: LiveType[] = [];
+    try {
+      descend(next.type, next.origin, out, opts, children);
+    } catch {
+      // `getFields()` forces the type's thunk, and a user thunk may not be ready
+      // this early (that is what `extendFactory` is for). Claiming the type itself
+      // is still correct; the closure below it just falls back to the old
+      // behaviour rather than failing the load here.
+    }
+    push(children, pending);
+  }
+}
+
+function push(claimed: LiveType[], pending: LiveType[]) {
+  for (let i = claimed.length - 1; i >= 0; i--) {
+    pending.push(claimed[i]);
+  }
+}
+
+function visit(
+  value: unknown,
+  origin: string,
+  out: Map<string, LiveType>,
+  opts: CollectOptions,
+  claimed: LiveType[],
+) {
   if (!value) {
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((entry, i) => visit(entry, `${origin}[${i}]`, out, opts));
+    value.forEach((entry, i) => visit(entry, `${origin}[${i}]`, out, opts, claimed));
     return;
   }
   let named: GraphQLNamedType | undefined;
@@ -100,34 +141,33 @@ function visit(value: unknown, origin: string, out: Map<string, LiveType>, opts:
     return;
   }
   out.set(named.name, {type: named, origin});
-  try {
-    descend(named, origin, out, opts);
-  } catch {
-    // `getFields()` forces the type's thunk, and a user thunk may not be ready
-    // this early (that is what `extendFactory` is for). Claiming the type itself
-    // is still correct; the closure below it just falls back to the old
-    // behaviour rather than failing the load here.
-  }
+  claimed.push({type: named, origin});
 }
 
-function descend(type: GraphQLNamedType, origin: string, out: Map<string, LiveType>, opts: CollectOptions) {
+function descend(
+  type: GraphQLNamedType,
+  origin: string,
+  out: Map<string, LiveType>,
+  opts: CollectOptions,
+  claimed: LiveType[],
+) {
   if (isObjectType(type) || isInterfaceType(type)) {
     for (const iface of type.getInterfaces()) {
-      visit(iface, origin, out, opts);
+      visit(iface, origin, out, opts, claimed);
     }
     for (const field of Object.values(type.getFields())) {
-      visit(field.type, origin, out, opts);
+      visit(field.type, origin, out, opts, claimed);
       for (const arg of field.args || []) {
-        visit(arg.type, origin, out, opts);
+        visit(arg.type, origin, out, opts, claimed);
       }
     }
   } else if (isUnionType(type)) {
     for (const member of type.getTypes()) {
-      visit(member, origin, out, opts);
+      visit(member, origin, out, opts, claimed);
     }
   } else if (isInputObjectType(type)) {
     for (const field of Object.values(type.getFields())) {
-      visit(field.type, origin, out, opts);
+      visit(field.type, origin, out, opts, claimed);
     }
   } else if (isEnumType(type) || isScalarType(type)) {
     // leaf

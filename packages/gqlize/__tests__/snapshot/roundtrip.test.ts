@@ -1,6 +1,7 @@
 import {
   GraphQLObjectType,
   GraphQLString,
+  getNamedType,
   isEnumType,
   lexicographicSortSchema,
   printSchema,
@@ -109,6 +110,37 @@ describe("snapshot round-trip", () => {
       // thing SDL cannot do: coercion and nested resolvers survive
       expect(rebuilt.getType(name)).toBeDefined();
       expect(printSchema(lexicographicSortSchema(rebuilt))).toContain(name);
+    }
+  });
+
+  it("resolves every type reference to the schema's own instance", async() => {
+    // The loader memoises decoded type refs, so one `[Task!]!` string is parsed
+    // once and the resulting wrapper handed to every field that names it. That
+    // is only safe while the thing inside the wrapper is *this* schema's named
+    // type — a decode cached across materializations would hand out another
+    // schema's instances, which is gqlize#16 with extra steps.
+    const {rebuilt, artifact} = await roundtrip();
+
+    // the memo only means anything if refs actually repeat — assert they do,
+    // rather than passing vacuously if the IR ever stops sharing them
+    const refCounts = new Map<string, number>();
+    for (const type of artifact.types) {
+      for (const field of [...(type.fields || [])]) {
+        refCounts.set(field.type, (refCounts.get(field.type) || 0) + 1);
+      }
+    }
+    expect([...refCounts.values()].filter((n) => n > 1).length).toBeGreaterThan(0);
+
+    for (const [name, type] of Object.entries(rebuilt.getTypeMap())) {
+      if (name.startsWith("__") || !("getFields" in (type as any))) {
+        continue;
+      }
+      for (const field of Object.values<any>((type as any).getFields())) {
+        expect(getNamedType(field.type)).toBe(rebuilt.getType(getNamedType(field.type).name));
+        for (const arg of field.args || []) {
+          expect(getNamedType(arg.type)).toBe(rebuilt.getType(getNamedType(arg.type).name));
+        }
+      }
     }
   });
 

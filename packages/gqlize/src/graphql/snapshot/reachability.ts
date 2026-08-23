@@ -58,6 +58,11 @@ export function findNodeInterfaceName(schema: GraphQLSchema): string | undefined
  *
  * `extend` fields are skipped: they are arbitrary user configs supplied to
  * `createSchema`, and are merged again at load from the same options object.
+ *
+ * The walk runs off an explicit stack rather than recursing. A schema whose
+ * models chain model-to-model a few hundred deep is one `createSchema` builds
+ * without complaint, and the recursive form used to overflow the call stack
+ * on it — so the artifact could not be built for a schema that otherwise works.
  */
 export function collectSnapshotTypes(
   schema: GraphQLSchema,
@@ -66,6 +71,8 @@ export function collectSnapshotTypes(
   const nodeInterfaceName = findNodeInterfaceName(schema);
   const externalNames = new Set(Object.keys(ledger.externalTypes || {}));
   const seen = new Set<string>();
+  /** types claimed but not yet descended into */
+  const pending: GraphQLNamedType[] = [];
 
   const isBoundary = (type: GraphQLNamedType) =>
     isIntrospectionType(type) ||
@@ -73,42 +80,46 @@ export function collectSnapshotTypes(
     type.name === nodeInterfaceName ||
     externalNames.has(type.name);
 
-  function visitType(type: GraphQLType) {
-    visit(getNamedType(type));
-  }
-
-  function visit(type: GraphQLNamedType) {
-    if (seen.has(type.name) || isBoundary(type)) {
+  /** claim a type the first time it is reached, and queue it for descent */
+  function visit(type: GraphQLType, queue: GraphQLNamedType[]) {
+    const named = getNamedType(type);
+    if (seen.has(named.name) || isBoundary(named)) {
       return;
     }
-    seen.add(type.name);
-    descend(type);
+    seen.add(named.name);
+    queue.push(named);
   }
 
   function descend(type: GraphQLNamedType) {
+    const queue: GraphQLNamedType[] = [];
     if (isObjectType(type) || isInterfaceType(type)) {
       for (const iface of type.getInterfaces()) {
-        visit(iface);
+        visit(iface, queue);
       }
       for (const field of Object.values(type.getFields())) {
         if (readBinding(field as any)?.kind === "extend") {
           continue;
         }
-        visitType(field.type);
+        visit(field.type, queue);
         for (const arg of field.args || []) {
-          visitType(arg.type);
+          visit(arg.type, queue);
         }
       }
     } else if (isUnionType(type)) {
       for (const member of type.getTypes()) {
-        visit(member);
+        visit(member, queue);
       }
     } else if (isInputObjectType(type)) {
       for (const field of Object.values(type.getFields())) {
-        visitType(field.type);
+        visit(field.type, queue);
       }
     } else if (isEnumType(type) || isScalarType(type)) {
       // leaf
+    }
+    // pushed in reverse so that popping walks the children left to right, the
+    // order the recursive form had
+    for (let i = queue.length - 1; i >= 0; i--) {
+      pending.push(queue[i]);
     }
   }
 
@@ -116,8 +127,11 @@ export function collectSnapshotTypes(
   for (const root of [schema.getQueryType(), schema.getMutationType()]) {
     if (root && !seen.has(root.name)) {
       seen.add(root.name);
-      descend(root);
+      pending.push(root);
     }
+  }
+  while (pending.length > 0) {
+    descend(pending.pop() as GraphQLNamedType);
   }
 
   const types = Object.values(schema.getTypeMap()).filter((t) => seen.has(t.name));
