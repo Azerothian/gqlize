@@ -241,7 +241,10 @@ import {
   isOrmizeDataType,
   type AdapterCreateFunction,
   type AdapterDeleteFunction,
+  type AdapterListOptions,
+  type AdapterListRequest,
   type AdapterQueryOptions,
+  type AdapterRelationshipRequest,
   type AdapterRelationshipPage,
   type AdapterRow,
   type AdapterUpdateFunction,
@@ -894,14 +897,16 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   };
   processListArgsToOptions = async (
     defName: string,
-    args: ListArgs,
-    offset?: number,
-    _selection?: Selection,
-    whereOperators?: WhereOperators,
-    defaultOptions: AdapterQueryOptions = {},
-    selectedFields?: string[],
-    runHook?: RunHook
-  ) => {
+    request: AdapterListRequest,
+  ): Promise<AdapterListOptions> => {
+    const {
+      args,
+      offset,
+      whereOperators,
+      options: defaultOptions = {},
+      selectedFields,
+      runHook,
+    } = request as AdapterListRequest & {args: ListArgs; runHook?: RunHook};
     let limit,
       include: SequelizeInclude[] = [],
       order: SequelizeOrder[] = [],
@@ -991,27 +996,21 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       order = result.order;
       include = result.include;
     }
+    // `defaultOptions` first: everything after it is computed for *this* request
+    // and must win. `attributes` in particular is the permission-filtered column
+    // list (plus the inline-count expression), so a caller-supplied one silently
+    // overriding it would widen the query and drop the count.
     return {
-      getOptions: Object.assign(
-        {
-          order,
-          where,
-          limit,
-          offset,
-          include,
-          attributes: unique(attributes),
-        },
-        defaultOptions
-      ),
+      getOptions: Object.assign({}, defaultOptions, {
+        order,
+        where,
+        limit,
+        offset,
+        include,
+        attributes: unique(attributes),
+      }),
       countOptions: !this.hasInlineCountFeature()
-        ? Object.assign(
-            {
-              where,
-              attributes,
-              include,
-            },
-            defaultOptions
-          )
+        ? Object.assign({}, defaultOptions, {where, attributes, include})
         : undefined,
     };
   };
@@ -1250,11 +1249,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     _defName: string,
     relationship: Association,
     source: SequelizeRow,
-    _args: {[name: string]: any},
-    _context: RequestContext,
-    _selection: Selection,
-    options: AdapterQueryOptions
+    request: AdapterRelationshipRequest,
   ): Promise<SequelizeRow> => {
+    const options = request.options || {};
     // Both the eager-loaded value and the generated accessor are reached off the
     // instance by name — see {@link rowFields}.
     const fields = rowFields(source);
@@ -1291,13 +1288,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     defName: string,
     relationship: Association,
     source: SequelizeRow,
-    args: ListArgs,
-    offset: number | undefined,
-    whereOperators: WhereOperators | undefined,
-    selection: Selection,
-    options: AdapterQueryOptions,
-    countOnly?: boolean
+    request: AdapterRelationshipRequest,
   ): Promise<AdapterRelationshipPage> => {
+    const {whereOperators, options = {}, countOnly} = request;
+    const args = (request.args || {}) as ListArgs;
     // The eager-loaded value and the generated accessors are reached off the
     // instance by name — see {@link rowFields}.
     const fields = rowFields(source);
@@ -1335,14 +1329,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         models,
       };
     }
-    const { getOptions, countOptions } = await this.processListArgsToOptions(
-      defName,
-      args,
-      offset,
-      selection,
-      whereOperators,
-      options
-    );
+    // Forwards the whole request: the positional form this replaced passed six of
+    // eight arguments, so `selectedFields` and `runHook` were dropped here and a
+    // JOIN-include `beforeFind` never fired on the relationship path.
+    const { getOptions, countOptions } = await this.processListArgsToOptions(defName, request);
     const models = await fields[relationship.accessors.get](getOptions);
     let total;
     if (this.hasInlineCountFeature()) {

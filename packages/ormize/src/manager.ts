@@ -984,7 +984,10 @@ export default class Ormize<
     // adapter runs a count instead of a findAll (fires beforeCount natively); fire
     // afterCount here.
     const countOnly = Boolean(selection?.countOnly);
-    const result = await adapter.resolveManyRelationship(defName, association, source, a, offset, definition.whereOperators, selection as Selection, options, countOnly);
+    const result = await adapter.resolveManyRelationship(defName, association, source, {
+      args: a, offset, selection, whereOperators: definition.whereOperators, options, countOnly,
+      selectedFields: selection?.fields, runHook: this.runHook,
+    });
     if (countOnly && result) {
       result.total = await this.runHook(defName, "afterCount", result.total, options);
     }
@@ -1005,7 +1008,7 @@ export default class Ormize<
     const adapter = this.getModelAdapter(defName);
     const options = createResolveContext(context, selection, source);
     // afterFind for JOIN-eager single relations is fired by resolveFindAll's post-pass.
-    return adapter.resolveSingleRelationship(defName, association, source, args, context, selection as Selection, options);
+    return adapter.resolveSingleRelationship(defName, association, source, {args, selection, context, options});
   }
   /**
    * @param scope optional `{field, value}` equality filter merged into the built
@@ -1025,7 +1028,10 @@ export default class Ormize<
       a.include = selection.include;
     }
     const offset = cursorOffset(args);
-    const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, a, offset, selection as Selection, definition.whereOperators, options, selectedFields, this.runHook);
+    const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, {
+      args: a, offset, selection, whereOperators: definition.whereOperators, options, selectedFields,
+      runHook: this.runHook,
+    });
     if (scope) {
       if (!adapter.mergeFilterStatement) {
         throw new Error(`Adapter '${adapter.adapterName}' cannot scope a query and so cannot be the target of a cross-adapter relationship: it does not implement mergeFilterStatement`);
@@ -1069,6 +1075,12 @@ export default class Ormize<
     if (adapter.hasInlineCountFeature()) {
       total = await adapter.getInlineCount(models);
     } else {
+      // `countOptions` is only optional for adapters that count inline; the two
+      // are the same decision, so an adapter reaching here without one has a
+      // contract bug that would otherwise surface as an unfiltered count.
+      if (!countOptions) {
+        throw new Error(`Adapter '${adapter.adapterName}' has no inline count feature but returned no countOptions for '${defName}'`);
+      }
       total = await adapter.count(defName, countOptions);
     }
     return {

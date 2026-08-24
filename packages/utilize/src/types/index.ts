@@ -211,14 +211,58 @@ export interface OrmAdapter {
    * caller passes a {@link Selection} carrying any selected-field/count hints; the
    * raw execution `info` (if any) rides along on `selection.raw`.
    */
-  processListArgsToOptions(defName: string, args: {[name: string]: any}, offset: number | undefined, selection: Selection, whereOperators: WhereOperators | undefined, graphQLArgs: {getGraphQLArgs: () => {
-      context: any;
-      info: any;
-      source: any;
-  }}, selectedFields: string[] | undefined, runHook?: (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>): AdapterQueryOptions | Promise<AdapterQueryOptions>;
-  resolveManyRelationship(defName: string, association: Association, source: AdapterRow, args: {[name: string]: any}, offset: number | undefined, whereOperators: WhereOperators | undefined, selection: Selection, options: AdapterQueryOptions, countOnly?: boolean): Promise<AdapterRelationshipPage>;
-  resolveSingleRelationship(defName: string, association: Association, source: AdapterRow, args: {[name: string]: any}, context: any, selection: Selection, options: AdapterQueryOptions): Promise<AdapterRow>;
+  processListArgsToOptions(defName: string, request: AdapterListRequest): AdapterListOptions | Promise<AdapterListOptions>;
+  resolveManyRelationship(defName: string, association: Association, source: AdapterRow, request: AdapterRelationshipRequest): Promise<AdapterRelationshipPage>;
+  resolveSingleRelationship(defName: string, association: Association, source: AdapterRow, request: AdapterRelationshipRequest): Promise<AdapterRow>;
 }
+
+/**
+ * Everything an adapter needs to turn one list request into fetch options.
+ *
+ * Named fields rather than a positional tail. The 8-parameter form this replaces
+ * had already drifted apart in a way the compiler could not see: the contract
+ * named `graphQLArgs` at the position every implementation used for `options`,
+ * one internal caller passed 6 of the 8 and so silently dropped `selectedFields`
+ * and `runHook`, and test call sites carried runs of bare `undefined`.
+ */
+export interface AdapterListRequest {
+  /** The GraphQL-style list args — `where`, `orderBy`, `first`/`last`, `include`. */
+  args: {[name: string]: any};
+  /** Row offset, already resolved from a cursor by the caller. */
+  offset?: number;
+  /** What the caller wants fetched: selected fields, eager includes, count-only. */
+  selection?: Selection;
+  /** Per-field operator overrides applied when translating `where`. */
+  whereOperators?: WhereOperators;
+  /**
+   * Caller-supplied base options — the transaction handle, the request context.
+   * Values the adapter computes for this request (`attributes`, `include`,
+   * `limit`, ...) take precedence: they encode the permission-filtered column
+   * list, so letting a caller override them would widen the query.
+   */
+  options?: AdapterQueryOptions;
+  /** Scalar field names to fetch, when the caller has already resolved them. */
+  selectedFields?: string[];
+  /** Hook dispatcher, so options-building can fire `beforeFind` on eager includes. */
+  runHook?: (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>;
+}
+
+/** An {@link AdapterListRequest} for the rows hanging off one parent row. */
+export interface AdapterRelationshipRequest extends AdapterListRequest {
+  /** Resolve only `total`, skipping the rows. */
+  countOnly?: boolean;
+  /** The caller's request context (`resolveSingleRelationship` forwards it to hooks). */
+  context?: RequestContext;
+}
+
+/**
+ * What `processListArgsToOptions` returns: the options for the fetch, plus the
+ * options for a separate count query on backends without an inline count.
+ */
+export type AdapterListOptions = {
+  getOptions: AdapterQueryOptions;
+  countOptions?: AdapterQueryOptions;
+};
 
 /**
  * Backend-agnostic description of what a resolver wants fetched. Replaces the

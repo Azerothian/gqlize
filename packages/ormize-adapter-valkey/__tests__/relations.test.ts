@@ -92,7 +92,7 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
     if (assoc.associationType === "hasOne") {
       return one(assoc.target, { [assoc.foreignKey]: source[assoc.sourceKey || spk] });
     }
-    const { models } = await adapter.resolveManyRelationship(assoc.target, assoc, source, {}, 0, undefined, undefined, {}, false);
+    const { models } = await adapter.resolveManyRelationship(assoc.target, assoc, source, {args: {}, offset: 0});
     return models;
   }
 

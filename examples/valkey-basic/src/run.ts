@@ -19,7 +19,7 @@ async function main() {
 
     // 2. Relationship read via the foreign-key index map.
     const assoc = adapter.getAssociations("Item").tasks;
-    const tasks = await adapter.resolveManyRelationship("Task", assoc, box, {}, 0, undefined, undefined, {}, false);
+    const tasks = await adapter.resolveManyRelationship("Task", assoc, box, {args: {}, offset: 0});
     console.log("2) box.tasks (via itemId index) →", tasks.models.map((m: any) => m.name), `(total ${tasks.total})`);
 
     // 3. Expiry cascades to the index maps: expire `bag`, and it disappears from
