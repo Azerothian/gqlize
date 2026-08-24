@@ -71,7 +71,7 @@
     "@azerothian/gqlize": "^6.0.0",
     "@azerothian/ormize": "^6.0.0",
     "graphql-relay": "^0.10.0",
-    "sequelize": "^6.19.0"
+    "sequelize": "^6.35.1"
   },
   "dependencies": {
     "@azerothian/utilize": "workspace:*",

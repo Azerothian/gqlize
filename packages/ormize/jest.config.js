@@ -14,6 +14,8 @@ module.exports = {
     '^@azerothian/ormize-adapter-sequelize/(.*)$': '<rootDir>/../ormize-adapter-sequelize/src/$1',
     '^@azerothian/utilize$': '<rootDir>/../utilize/src/index.ts',
     '^@azerothian/utilize/(.*)$': '<rootDir>/../utilize/src/$1',
+    '^@azerothian/gqlize$': '<rootDir>/../gqlize/src/index.ts',
+    '^@azerothian/gqlize/(.*)$': '<rootDir>/../gqlize/src/$1',
     '^@azerothian/graphql-types$': '<rootDir>/../graphql-types/src/index.ts',
     '^@azerothian/graphql-types/(.*)$': '<rootDir>/../graphql-types/src/$1',
   },

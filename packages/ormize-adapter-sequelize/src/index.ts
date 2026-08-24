@@ -16,9 +16,8 @@ import logger from "@azerothian/utilize/utils/logger";
 import unique from "@azerothian/utilize/utils/unique";
 import { isFieldAllowed, isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
-import replaceIdDeep, {
-  replaceDefWhereOperators,
-} from "./utils/replace-id-deep";
+import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
+import { replaceDefWhereOperators } from "./utils/where-operators";
 const log = logger("gqlize::adapter::sequelize::");
 
 /**
