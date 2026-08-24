@@ -498,7 +498,7 @@ describe("mutations", () => {
       name: "task2",
     });
 
-    const taskItem = await TaskItem.create({
+    await TaskItem.create({
       name: "item1234",
     });
     const schema = await createSchema(instance);
@@ -703,7 +703,6 @@ describe("mutations", () => {
   });
   it("create inputs - with no PK defined", async() => {
     const instance = await createInstance();
-    const {TaskItem} = instance.models;
     const fields = instance.getFields("Task"); //TaskItem.$sqlgql.define;
     const schema = await createSchema(instance);
     const {data: {__type: {inputFields}}} = await graphql({schema, source:"query {__type(name:\"TaskRequiredInput\") { inputFields {name} }}"}) as any;
@@ -821,7 +820,7 @@ describe("mutations", () => {
     const startTask = await Task.create({
       name: "start",
     });
-    const endTask = await Task.create({
+    await Task.create({
       name: "end",
     });
     await TaskItem.create({
@@ -1400,7 +1399,7 @@ describe("2 degree mutation(nested)", () => {
 
     //when
     const res = await graphql({schema, source:mutation, variableValues}) as any;
-    let isChildStillExisting = await ChildModel.findOne({
+    await ChildModel.findOne({
       where: {id: child.id},
     });
 

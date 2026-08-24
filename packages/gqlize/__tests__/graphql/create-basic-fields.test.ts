@@ -14,7 +14,7 @@ import {
 import Sequelize from "sequelize";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import { Definition, GqlizeAdapter } from '../../src/types';
-import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
+import {test,expect} from "@jest/globals";
 
 test("createBasicFieldsFunc - empty define", async() => {
   const db = new GqlizeBinding(new Ormize());

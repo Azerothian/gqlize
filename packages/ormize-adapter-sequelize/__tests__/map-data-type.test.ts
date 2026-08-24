@@ -1,5 +1,5 @@
-import { test, describe, it, expect } from "@jest/globals";
-import Sequelize, { DataTypes } from "sequelize";
+import { describe, it, expect } from "@jest/globals";
+import { DataTypes } from "sequelize";
 import SequelizeAdapter from "../src/index";
 import { DataType, isOrmizeDataType, DataTypes as OrmizeDataTypes } from "@azerothian/utilize/types/data-type";
 

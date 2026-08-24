@@ -1,11 +1,9 @@
 import {
-  GraphQLString,
   GraphQLInputObjectType,
   GraphQLList,
   GraphQLInputFieldConfig,
   GraphQLInputType,
 } from "graphql";
-import property from "./utils/property";
 
 // Local equivalent of graphql's internal `jsutils/ObjMap` type. graphql v17
 // tightened its package `exports`, so the deep subpath is no longer importable;
@@ -14,58 +12,6 @@ type ObjMap<T> = { [key: string]: T };
 
 // To generate an strict model for query types instead of blank json types
 // this should fix apollo's variable cache issue
-
-// const valueFuncs = ["eq", "ne", "gte", "lte", "lt", "not", "is", "like",
-//   "notLike", "iLike", "notILike", "startsWith", "endsWith", "substring",
-//   "regexp", "notRegexp", "iRegexp", "notIRegexp",
-// ];
-// const arrayFuncs = ["or", "and", "any", "all"];
-
-// const arrayValues = ["in", "notIn", "contains", "contained",
-//   "between", "notBetween", "overlap", "adjacent", "strictLeft",
-//   "strictRight", "noExtendRight", "noExtendLeft",
-// ];
-
-export const defaultConfig = {
-  getFieldType() {
-    return GraphQLString;
-  },
-  valueFuncs: [
-    "eq",
-    "ne",
-    "gte",
-    "lte",
-    "lt",
-    "not",
-    "is",
-    "like",
-    "notLike",
-    "iLike",
-    "notILike",
-    "startsWith",
-    "endsWith",
-    "substring",
-    "regexp",
-    "notRegexp",
-    "iRegexp",
-    "notIRegexp",
-  ],
-  arrayFuncs: ["or", "and", "any", "all"],
-  arrayValues: [
-    "in",
-    "notIn",
-    "contains",
-    "contained",
-    "between",
-    "notBetween",
-    "overlap",
-    "adjacent",
-    "strictLeft",
-    "strictRight",
-    "noExtendRight",
-    "noExtendLeft",
-  ],
-};
 
 /**
  * What an adapter hands `createQueryType` to describe one model's `where` input.

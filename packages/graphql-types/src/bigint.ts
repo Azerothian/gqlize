@@ -1,4 +1,4 @@
-import { GraphQLScalarType, GraphQLError, Kind, StringValueNode } from "graphql";
+import { GraphQLScalarType, GraphQLError, Kind } from "graphql";
 
 
 // @ts-ignore

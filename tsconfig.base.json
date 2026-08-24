@@ -7,6 +7,9 @@
     "moduleDetection": "force",
     "allowImportingTsExtensions": false,
     "strict": true,
+    // Dead imports and locals are what this repo accumulated most of; `tsc` is
+    // already reading every file, so let it be the thing that keeps them out.
+    "noUnusedLocals": true,
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,

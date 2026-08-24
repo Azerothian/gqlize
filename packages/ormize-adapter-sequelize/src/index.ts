@@ -215,7 +215,6 @@ export type SequelizeInclude = Omit<IncludeOptions, "order" | "include"> & {
 /** Reaches the live GraphQL execution args from inside an options bag. */
 type GetGraphQLArgs = () => { context: RequestContext; info: unknown; source: unknown };
 
-// import jsonType from "@azerothian/graphql-types/json";
 import createQueryType, { type QueryTypeConfig } from "@azerothian/graphql-types/query";
 
 import {
@@ -223,13 +222,10 @@ import {
   GraphQLEnumType,
   GraphQLID,
   GraphQLList,
-  GraphQLObjectType,
-  GraphQLType,
   type GraphQLFieldConfigArgumentMap,
   type GraphQLInputFieldConfigMap,
   type GraphQLInputType,
 } from "graphql";
-// import {GraphQLObjectType} from "graphql";
 import { GraphQLInputObjectType } from "graphql";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {
@@ -320,7 +316,6 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     const SequelizeCtor = Sequelize as unknown as new (...args: SequelizeConnection) => Sequelize;
     this.sequelize = new SequelizeCtor(...config);
     this.options = adapterOptions;
-    // this.startupScript;
     this.startup = {
       drop: "",
       create: "",
@@ -406,14 +401,6 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   getTypeMapper = () => {
     return typeMapper;
   };
-  // getAccessors() {
-  //   return {
-  //     "findAll": "findAll",
-  //     "findOne": "findOne",
-  //     "create": "create",
-  //     "update": "update"
-  //   }
-  // }
   getFields = (modelName: string): { [fieldName: string]: DefinitionFieldMeta } => {
     const Model = this.sequelize.models[modelName];
     //TODO add filter for excluding or including fields
@@ -556,10 +543,6 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         hooks,
       }),
     });
-    // const hooks = [this.options.hooks || {}, schemaOptions.hooks || {}];
-    // schemaOptions = Object.assign(schemaOptions, {
-    //   hooks: generateHooks(hooks, def.name),
-    // });
     if(!newDef.name) {
       throw "Unable to create model with no name";
     }
@@ -641,7 +624,6 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     const model = this.model(defName);
     prototypeOf(model).Model = model;
-    // (model as any)._gqlmeta = {};
     model.definition = newDef;
 
     return model;
@@ -1025,7 +1007,6 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         },
         {} as { [relName: string]: { type: GraphQLInputObjectType } }
       );
-      // const queryConfig = this.createQueryConfig(definition);
       // The `relationships.length` check above is against the raw list, before
       // permission filtering. If every relationship is denied (or targets a denied
       // model) the field map is empty, and an input object with no fields is an
@@ -1094,7 +1075,6 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       // would accumulate entries across calls.
       attributes: SequelizeAttribute[] = [...(defaultOptions.attributes || [])],
       where;
-    // const Model = this.getModel(defName);
 
     // Always bound the page size — an absent first/last must not mean "no limit".
     const requestedPageSize = args.first != null ? args.first : args.last;
@@ -1134,7 +1114,6 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       }
     });
     if (this.hasInlineCountFeature()) {
-      // attributes.push(...this.getFields(defName).filter((f) => !f.primaryKey).map((f) => f.name))
       // Either form counts as already present: a plain column named
       // `full_count`, or the `[expression, "full_count"]` alias pair this pushes.
       const hasCountColumn = attributes.some((a) =>
@@ -1176,25 +1155,6 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       );
       order = result.order;
       include = result.include;
-      // include = await waterfall(args.include, (i, o) => {
-      //   return waterfall(Object.keys(i), async(relName, oo) => {
-      //     const inc = i[relName];
-      //     const rel = this.getRelationship(defName, relName);
-      //     const TargetModel =  this.sequelize.models[rel.target];
-      //     const {whereOperators} = TargetModel.definition;
-      //     if ((inc.orderBy || []).length > 0) {
-      //       order = order.concat(inc.orderBy.map((ob) => {
-      //         return [{model: TargetModel, as: relName}].concat(ob);
-      //       }));
-      //     }
-      //     return oo.concat([{
-      //       model: TargetModel,
-      //       required: inc.required,
-      //       as: relName,
-      //       where: await this.processFilterArgument(inc.where || {}, whereOperators),
-      //     }]);
-      //   }, o);
-      // }, []);
     }
     return {
       getOptions: Object.assign(
@@ -1376,10 +1336,8 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     defName: string,
     variableValues?: {[name: string]: any}
   ) => {
-    // const argNames = ["where", "include"];
     let { where, include, ...rest } = args;
     if (include) {
-      // const rels = this.getMetaObj(modelName, "relationships")
       rest.include = this.replaceIdInInclude(include, defName, variableValues);
     }
     if (where) {
@@ -1571,40 +1529,6 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     };
   };
 }
-
-// function generateHooks(hooks = [], schemaName) {
-//   return hooks.reduce((o, h) => {
-//     Object.keys(h).forEach((hookName) => {
-//       if (!o[hookName]) {
-//         o[hookName] = createHookQueue(hookName, hooks, schemaName);
-//       }
-//     });
-//     return o;
-//   }, {});
-// }
-
-// function createHookQueue(hookName, hooks, schemaName) {
-//   return function(init, options, error) {
-//     return hooks.reduce((promise, targetHooks) => {
-//       return promise.then(async(val) => {
-//         if (targetHooks[hookName]) {
-//           let result;
-//           if (Array.isArray(targetHooks[hookName])) {
-//             result = await waterfall(targetHooks[hookName], (hook, prevResult) => {
-//               return hook(prevResult, options, error, schemaName, hookName);
-//             }, val);
-//           } else {
-//             result = await targetHooks[hookName](val, options, error, schemaName, hookName);
-//           }
-//           if (result) {
-//             return result;
-//           }
-//         }
-//         return val;
-//       });
-//     }, Promise.resolve(init));
-//   };
-// }
 
 export function mergeFilterStatement(
   fieldName: string,

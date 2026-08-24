@@ -1,6 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
 import pluralize from "pluralize";
-import logger from "@azerothian/utilize/utils/logger";
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, HookMap, Model,
   OrmAdapter, Permission, Relationship, Selection, WhereOperators,
@@ -18,7 +17,6 @@ import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import * as G from "./graphql";
 import type { GqlizeAdapter } from "@azerothian/gqlize/types/gqlize-adapter";
 
-const log = logger("ormize::adapter::valkey::");
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 1000;

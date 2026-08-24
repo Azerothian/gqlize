@@ -10,7 +10,6 @@ import { isModelAllowed } from "@azerothian/utilize";
 import GQLManager from "../manager";
 import { ModelTypeHatch, SchemaCache } from '../types';
 
-
 export default async function createModelType(defName: string, instance: GQLManager, options: any, nodeInterface: any, schemaCache: SchemaCache, prefix = "") {
   if (!isModelAllowed(options.permission, defName)) {
     return undefined;
@@ -23,18 +22,11 @@ export default async function createModelType(defName: string, instance: GQLMana
   const obj = new GraphQLObjectType({
     name: `${prefix}${defName}`,
     description: definition.comment,
-    // isTypeOf(val) {
-    //   return instance.isTypeOf(defName, definition, val);
-    // },
     fields() {
       const basic = basicFields();
       const related = relatedFields();
       const complex = complexFields();
       return Object.assign({}, basic, related, complex);
-      // if (!f.id) {
-      //   throw new Error("id must be implemented");
-      // }
-      // return f;
     },
     interfaces() {
       const basic = basicFields();
@@ -49,7 +41,6 @@ export default async function createModelType(defName: string, instance: GQLMana
     complexFields: complexFields,
     relatedFields: relatedFields,
     fields: {},
-    // events: {before, after}
   };
   schemaCache.types[defName] = obj;
   schemaCache.types[`${defName}[]`] = new GraphQLList(obj);

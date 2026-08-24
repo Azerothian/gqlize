@@ -130,7 +130,6 @@ export default {
   }],
   whereOperators: {
     async hasNoItems(newWhere: any, findOptions: any) {
-      const {context} = findOptions;
       return {
         id: {
           [Op.notIn]: Sequelize.literal(`(SELECT DISTINCT("taskId") FROM "task-items")`)

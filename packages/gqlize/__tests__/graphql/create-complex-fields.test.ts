@@ -5,7 +5,7 @@ import GqlizeBinding from "../../src/manager";
 import {GraphQLObjectType, GraphQLInt, type GraphQLResolveInfo} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import { Definition, GqlizeAdapter } from '../../src/types';
-import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
+import {test,expect} from "@jest/globals";
 test("createComplexFieldsFunc - empty define", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {

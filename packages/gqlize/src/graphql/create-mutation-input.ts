@@ -11,7 +11,6 @@ import {capitalize} from "@azerothian/utilize/utils/word";
 import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
-import { Relationship } from '../types/index';
 import { recordExternalType } from "./snapshot/ledger";
 import { isBuiltInputType, type AuthoredTypeSlot } from "./utils/authored-type";
 

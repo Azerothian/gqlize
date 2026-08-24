@@ -169,7 +169,6 @@ export default class Ormize<
   /** Vestigial: initialised empty and never written. */
   hookmap: {[name: string]: unknown};
   globalHooks: {[hookName: string]: HookFunction[] | HookFunction};
-  // this.reference = {};
   cache:  Cache;
   defaultAdapter: string | undefined;
   constructor(options: GqlizeOptions = {}) {
@@ -185,7 +184,6 @@ export default class Ormize<
       o[hookName] = (options.globalHooks || {})[hookName] || [];
       return o;
     }, {} as {[hookName: string]: HookFunction[] | HookFunction});
-    // this.reference = {};
     this.cache = new Cache();
     this.defaultAdapter = undefined;
   }
@@ -266,7 +264,6 @@ export default class Ormize<
     const adapter = this.adapters[datasource];
     this.defsAdapters[def.name] = datasource
     
-    // this.hookmap[def.name] = this.generateHookMap(def.name);
 
     // Native Sequelize hooks are registered on the model; gqlize-only hooks
     // (e.g. afterCount) are composed for `runHook` but withheld from the adapter.
@@ -547,7 +544,6 @@ export default class Ormize<
         throw new Error(`Unknown relationship type ${rel.type}`);
     }
     this.relationships[def.name][rel.name].funcName = funcName;
-    // const {foreignKey} = rel.options;
     if (!foreignKey) {
       throw new Error(`For cross adapter relationships you must define a foreign key ${def.name} (${rel.type}) ${rel.model}: ${rel.name}`);
     }
@@ -1167,8 +1163,6 @@ export default class Ormize<
             }
 
             const [result] = await this.processCreate(targetName, source, {input: arg}, targetContext, selection);
-            // const targetAdapter = this.getModelAdapter(targetName);
-            // const k = this.getValueFromInstance(targetName, result, targetAdapter.getPrimaryKeyNameForModel(targetName));
 
             switch (association.associationType) {
               case "hasMany":
@@ -1180,13 +1174,11 @@ export default class Ormize<
                 break;
             }
 
-            // await this.processRelationshipMutation(targetDef, result, input, context, info);
           });
         }
         if (args.update) {
           await waterfall(args.update, async(arg: { where?: MutationFilter; limit?: number; input?: MutationInput }) => {
             const {where, limit, input} = arg;
-            // const [result] = await this.processUpdate(targetName, source, {input: arg}, context, info);
             const whereObj = await targetAdapter.processFilterArgument(translateFilter(where, targetGlobalKeys), targetDef.whereOperators, targetOptions);
             const targets = asList(await row[association.accessors.get]({
               limit,
@@ -1203,13 +1195,6 @@ export default class Ormize<
             }
             await Promise.all(targets.map(async(model: InstanceRow) => {
               const m = await targetAdapter.update(model, i, targetOptions);
-              // if (targetDef.after) {
-              //   m = await targetDef.after({
-              //     result: m, args, context, info,
-              //     modelDefinition: targetDef,
-              //     type: events.MUTATION_UPDATE,
-              //   });
-              // }
               const defName = targetDef.name as string;
               await this.processRelationshipMutation(defName, m, input as MutationInputTree, targetContext, selection);
               return m;
@@ -1221,7 +1206,6 @@ export default class Ormize<
             const targets = asList(await row[association.accessors.get](Object.assign({
               where: await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions),
             }, defaultOptions)));
-            // let i = await this.processInputs(targetName, input, source, args, context, info);
             await Promise.all(targets.map(async(model: InstanceRow) => {
               const defName = targetDef.name as string;
               await this.processRelationshipMutation(defName, model, input as MutationInputTree, targetContext, selection);
@@ -1233,13 +1217,6 @@ export default class Ormize<
                 });
               }
               await this.processDelete(defName, source, arg, targetContext, selection);
-              // if (targetDef.after) {
-              //   await targetDef.after({
-              //     result: model, args, context, info,
-              //     modelDefinition: targetDef,
-              //     type: events.MUTATION_DELETE,
-              //   });
-              // }
               return model;
             }));
           });
@@ -1435,13 +1412,6 @@ export default class Ormize<
     let result: AdapterRow;
     if (Object.keys(input).length > 0) {
       result = await processCreate(input, createResolveContext(context, selection, source));
-      // if (definition.after) {
-      //   result = definition.after({
-      //     result, args, context, info,
-      //     modelDefinition: definition,
-      //     type: events.MUTATION_CREATE,
-      //   });
-      // }
 
       if (result !== undefined && result !== null) {
         result = await this.processRelationshipMutation(defName, result, args.input, context, selection);
@@ -1475,7 +1445,6 @@ export default class Ormize<
         } else {
           o[k] = translateId(v);
         }
-        //o[k] = fromGlobalId(v).id;
       } else {
         o[k] = args.input[k];
       }
@@ -1495,13 +1464,6 @@ export default class Ormize<
 
     await waterfall(results, async(r: AdapterRow) => {
       await this.processRelationshipMutation(defName, r, args.input, context, selection);
-      // if (definition.after) {
-      //   await definition.after({
-      //     result: r, args, context, info,
-      //     modelDefinition: definition,
-      //     type: events.MUTATION_UPDATE,
-      //   });
-      // }
     });
 
     return results;
@@ -1550,14 +1512,7 @@ export default class Ormize<
     };
     const after = (model: AdapterRow) => {
       return model;
-      // if (!definition.after) {
 
-      // }
-      // return definition.after({
-      //   result: model, args, context, info,
-      //   modelDefinition: definition,
-      //   type: events.MUTATION_DELETE,
-      // });
     };
     return processDelete(where, createResolveContext(context, selection, source), before, after);
     });

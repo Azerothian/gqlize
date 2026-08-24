@@ -1,5 +1,5 @@
 import { ApplicationFailure } from "@temporalio/common";
-import { isAllowed, isFieldAllowed, isModelAllowed, isMutationAllowed } from "@azerothian/utilize";
+import { isAllowed, isFieldAllowed, isMutationAllowed } from "@azerothian/utilize";
 import type { Permission } from "@azerothian/utilize";
 import { ErrorType } from "./workflow-types";
 import type { CallerContext, PlainRow, WhereClause } from "./workflow-types";
@@ -50,15 +50,6 @@ export function assertPagination(limit: unknown, offset: unknown): void {
   if (offset !== undefined && (typeof offset !== "number" || !Number.isFinite(offset) || offset < 0)) {
     fail(ErrorType.Validation, "temporalize: 'offset' must be a non-negative integer");
   }
-}
-
-/** Resolve a model name from untrusted input, honoring `isModelAllowed`. */
-export function mustResolveModel(registry: { resolve(m: unknown): string | undefined }, model: unknown, permission?: Permission): string {
-  const name = registry.resolve(model);
-  if (!name || !isModelAllowed(permission, name)) {
-    fail(ErrorType.UnknownModel, `temporalize: unknown or not permitted model '${String(model)}'`);
-  }
-  return name;
 }
 
 export function assertWritable(readOnly?: boolean): void {
