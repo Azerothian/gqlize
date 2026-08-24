@@ -15,6 +15,16 @@ import replaceIdDeep, {
 } from "./utils/replace-id-deep";
 const log = logger("gqlize::adapter::sequelize::");
 
+/**
+ * A model prototype viewed as the plain object it is at runtime. Sequelize types
+ * it as `Model<any, any>`, which has no index signature — but installing
+ * relationship accessors and definition instance methods onto it *by name* is
+ * exactly what this adapter does.
+ */
+function prototypeOf(model: { prototype: unknown }): Record<string, unknown> {
+  return model.prototype as Record<string, unknown>;
+}
+
 // import jsonType from "@azerothian/graphql-types/json";
 import createQueryType from "@azerothian/graphql-types/query";
 
@@ -144,7 +154,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     funcName: string,
     func: any
   ) => {
-    this.sequelize.models[modelName].prototype[funcName] = func;
+    prototypeOf(this.sequelize.models[modelName])[funcName] = func;
   };
 
   addStaticFunction = (modelName: any, funcName: any, func: any) => {
@@ -378,12 +388,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (instanceMethods) {
       Object.keys(instanceMethods).forEach((instanceMethod) => {
         if (instanceMethods) {
-          this.sequelize.models[defName].prototype[instanceMethod] =
+          prototypeOf(this.sequelize.models[defName])[instanceMethod] =
             instanceMethods[instanceMethod];
         }
       });
     }
-    (this.sequelize.models[newDef.name].prototype as any).Model = this.sequelize.models[
+    prototypeOf(this.sequelize.models[newDef.name]).Model = this.sequelize.models[
       newDef.name
     ];
     // (this.sequelize.models[newDef.name] as any)._gqlmeta = {};
