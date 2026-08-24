@@ -5,3 +5,4 @@ export { default as createRoleBasedPermissions } from "./permissions";
 // the default, so this does not shadow the line above.
 export * from "./permissions";
 export * from "./gate";
+export * from "./guards";
