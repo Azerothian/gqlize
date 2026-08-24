@@ -16,7 +16,7 @@ const ops = Reflect.ownKeys(Op).reduce((ops, k) => {
  * Adapters use this to warn about such collisions at model-definition time.
  */
 export const reservedOperatorNames: ReadonlySet<string> = new Set(
-  Reflect.ownKeys(Op).filter((k) => typeof k === "string") as string[],
+  Reflect.ownKeys(Op).filter((k) => typeof k === "string"),
 );
 
 
@@ -31,7 +31,7 @@ function replaceKeyDeep(obj: any, keyMap: any) {
   return ([] as any[]).concat(Object.getOwnPropertySymbols(obj), Object.keys(obj)).reduce((memo, key)=> {
 
     // determine which key we are going to use
-    let targetKey = keyMap[key] ? keyMap[key] : key;
+    const targetKey = keyMap[key] ? keyMap[key] : key;
 
     if (Array.isArray(obj[key])) {
       // recurse if an array

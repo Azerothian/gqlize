@@ -335,6 +335,7 @@ function encodeDefault(
   } catch (err: any) {
     throw new Error(
       `gqlize: default value for ${coordinate} could not be encoded: ${err.message}`,
+      {cause: err},
     );
   }
   if (!literal) {
@@ -360,7 +361,7 @@ export function isJsonSerializable(value: unknown): boolean {
     return true;
   }
   if (type === "number") {
-    return Number.isFinite(value as number);
+    return Number.isFinite(value);
   }
   if (type !== "object") {
     return false;

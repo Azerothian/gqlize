@@ -1,6 +1,5 @@
 import Database from "../src/manager";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
-import { OrmAdapter } from "../src/types";
 import { describe, it, expect } from "@jest/globals";
 import Sequelize from "sequelize";
 
@@ -10,7 +9,7 @@ import Sequelize from "sequelize";
 async function buildOrm() {
   const db: any = new Database();
   db.registerAdapter(
-    new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) as OrmAdapter,
+    new SequelizeAdapter({}, { dialect: "sqlite", logging: false }),
     "sqlite",
   );
   await db.addDefinition({
@@ -67,8 +66,8 @@ describe("manager - transactions", () => {
 // failure, roll BOTH back — even though they are separate database connections.
 async function buildTwoAdapterOrm() {
   const db: any = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) as OrmAdapter, "sqlite");
-  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) as OrmAdapter, "sqlite2");
+  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite2");
   await db.addDefinition({ name: "Left", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } } as any, "sqlite");
   await db.addDefinition({ name: "Right", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } } as any, "sqlite2");
   await db.initialise();
@@ -106,7 +105,7 @@ describe("manager - ambient context tracking", () => {
   it("propagates the request context across async boundaries into hooks", async () => {
     let seenInHook: any;
     const db: any = new Database();
-    db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) as OrmAdapter, "sqlite");
+    db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
     await db.addDefinition({
       name: "Ctx",
       define: { name: { type: Sequelize.STRING, allowNull: false } },

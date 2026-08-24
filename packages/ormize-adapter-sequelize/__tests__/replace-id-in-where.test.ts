@@ -23,7 +23,7 @@ let db: Ormize;
 beforeAll(async () => {
   adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
   db = new Ormize().registerAdapter(adapter);
-  db.addDefinition({
+  await db.addDefinition({
     name: "Thing",
     define: {
       // A string primary key is the case the old guard corrupted; an

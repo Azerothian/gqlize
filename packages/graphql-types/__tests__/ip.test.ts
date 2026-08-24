@@ -30,7 +30,7 @@ describe("graphql-types - IP", () => {
   it.each(VALID)("accepts %s on every coercion path", (value) => {
     expect(IPType.serialize(value)).toBe(value);
     expect(IPType.parseValue(value)).toBe(value);
-    expect(IPType.parseLiteral!(parseLiteralNode(JSON.stringify(value)), undefined)).toBe(value);
+    expect(IPType.parseLiteral(parseLiteralNode(JSON.stringify(value)), undefined)).toBe(value);
   });
   it.each(INVALID)("rejects %s", (value) => {
     expect(() => IPType.parseValue(value)).toThrow(TypeError);
@@ -44,7 +44,7 @@ describe("graphql-types - IP", () => {
     expect(() => IPType.parseValue({})).toThrow(/Value is not string/);
   });
   it("parseLiteral rejects every non-string literal kind", () => {
-    expect(() => IPType.parseLiteral!(parseLiteralNode("123"), undefined)).toThrow(/Can only validate strings as IP addresses but got a: IntValue/);
-    expect(() => IPType.parseLiteral!(parseLiteralNode("[]"), undefined)).toThrow(/ListValue/);
+    expect(() => IPType.parseLiteral(parseLiteralNode("123"), undefined)).toThrow(/Can only validate strings as IP addresses but got a: IntValue/);
+    expect(() => IPType.parseLiteral(parseLiteralNode("[]"), undefined)).toThrow(/ListValue/);
   });
 });

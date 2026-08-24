@@ -13,14 +13,14 @@ import {
 } from "graphql";
 import Sequelize from "sequelize";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
-import { Definition, GqlizeAdapter } from '../../src/types';
+import { Definition } from '../../src/types';
 import {test,expect} from "@jest/globals";
 
 test("createBasicFieldsFunc - empty define", async() => {
   const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {},
@@ -43,7 +43,7 @@ test("createBasicFieldsFunc - define", async() => {
   const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {
@@ -74,7 +74,7 @@ test("createBasicFieldsFunc - define - override", async() => {
   const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {
@@ -137,7 +137,7 @@ test("createBasicFieldsFunc - define - with scalar", async() => {
   const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {
@@ -187,7 +187,7 @@ test("createBasicFieldsFunc - foreign keys", async() => {
   const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {},

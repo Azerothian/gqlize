@@ -142,12 +142,12 @@ export function toGraphQL(
   }
 
   if (sequelizeType instanceof ARRAY) {
-    let elementType = toGraphQL(sequelizeType.type, sequelizeTypes, modelName, fieldName);
+    const elementType = toGraphQL(sequelizeType.type, sequelizeTypes, modelName, fieldName);
     return new GraphQLList(elementType);
   }
 
   if (sequelizeType instanceof ENUM) {
-    let values = (sequelizeType.values || []).reduce((o: { [name: string]: { value: string } }, k: string) => {
+    const values = (sequelizeType.values || []).reduce((o: { [name: string]: { value: string } }, k: string) => {
       o[sanitizeEnumValue(k)] = {
         value: k,
       };
@@ -160,7 +160,7 @@ export function toGraphQL(
   }
 
   if (sequelizeType instanceof VIRTUAL) {
-    let returnType = sequelizeType.returnType
+    const returnType = sequelizeType.returnType
       ? toGraphQL(sequelizeType.returnType, sequelizeTypes)
       : GraphQLString;
     return returnType;

@@ -13,6 +13,9 @@ const PORT = 3005;
     schema,
     context: () => ({instance}),
   });
+  // node's RequestListener is declared void-returning and yoga's handler is
+  // async by design — yoga settles and reports its own errors.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
   const server = createServer(yoga);
   server.listen(PORT, () => {
     console.log("success", PORT, `http://localhost:${PORT}${yoga.graphqlEndpoint}`);

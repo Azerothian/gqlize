@@ -44,7 +44,7 @@ function staticsOf(model: SequelizeModelClass): Record<string, unknown> {
  * the association — so `Model` has no index signature describing them.
  */
 function rowFields(row: SequelizeRow): Record<string, any> {
-  return row as unknown as Record<string, any>;
+  return row;
 }
 
 
@@ -382,12 +382,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           // Opt-in that lets a pk/fk be set from client input (default: excluded
           // to prevent mass-assignment — see isStructurallyWritable).
           writable: attr.writable === true,
-        } as DefinitionFieldMeta;
+        };
         return fields;
       }, {} as { [key: string]: DefinitionFieldMeta });
       this.setMetaObj(modelName, "fields", fields);
     }
-    return this.getMetaObj(modelName, "fields") as { [key: string]: DefinitionFieldMeta };
+    return this.getMetaObj(modelName, "fields");
   };
   getAssociations = (modelName: string): { [relName: string]: Association } => {
     const Model = this.sequelize.models[modelName];
@@ -517,7 +517,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       }),
     });
     if(!newDef.name) {
-      throw "Unable to create model with no name";
+      throw new Error("Unable to create model with no name");
     }
     const defName = newDef.name;
     this.warnReservedFieldNames(defName, newDef.define);
@@ -554,7 +554,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   createSQLFunction = async (query: string, modelName: string | undefined, args: string[]) => {
     return (a: { [argName: string]: unknown }, _context: RequestContext) => {
       // security check?
-      let opts = {
+      const opts = {
         replacements: args.reduce(
           (o: { [argName: string]: unknown }, ar: string) => {
             o[ar] = a[ar] ? a[ar] : null;
@@ -576,7 +576,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   };
   generateSQLFunction = async (sqlFunc: SqlClassMethod) => {
     // PostgreSQL supported only atm?
-    let {
+    const {
       type = "query",
       schema = "public",
       functionName,
@@ -625,7 +625,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   createQueryConfig = (definition: SequelizeDefinition, permission?: Permission): QueryTypeConfig => {
     const defName = definition.name;
     if(!defName) {
-      throw "no name set";
+      throw new Error("no name set");
     }
     const perm = permission !== undefined ? permission : this._buildPermission;
     const fields = this.getFields(defName);
@@ -775,7 +775,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     this.createQueryConfig((definition ?? this.targetOf(defName)?.definition) as SequelizeDefinition, permission);
   orderableFields = (defName: string): string[] => Object.keys(this.getFields(defName));
   relationshipsOf = (defName: string, definition?: Definition): Relationship[] =>
-    (definition?.relationships || []) as Relationship[];
+    (definition?.relationships || []);
   /**
    * A relationship whose target lives on another adapter has no Sequelize model
    * here and no JOIN can reach it, so it is not includable — it is resolved by
@@ -819,7 +819,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * this class satisfies structurally.
    */
   processListArgsToOptions = (defName: string, request: AdapterListRequest): Promise<AdapterListOptions> =>
-    processListArgsToOptions(this as QueryOptionsHost, defName, request);
+    processListArgsToOptions(this, defName, request);
   processIncludeStatement(
     defName: string,
     includeStatements: IncludeMap[],
@@ -829,7 +829,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     runHook?: RunHook
   ) {
     return processIncludeStatement(
-      this as QueryOptionsHost, defName, includeStatements, order, options, parentRelsForOrder, runHook,
+      this, defName, includeStatements, order, options, parentRelsForOrder, runHook,
     );
   }
   async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): Promise<AdapterWhere> {
@@ -855,7 +855,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     return (arrIncludeVar || []).map(
       (iv) => {
         return Object.keys(iv).reduce((o, relName) => {
-          let { include, where, ...rest } = iv[relName];
+          const { include, where, ...rest } = iv[relName];
           o[relName] = rest;
           const rel = this.getAssociation(defName, relName);
           if (where) {
@@ -882,7 +882,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     defName: string,
     variableValues?: {[name: string]: any}
   ) => {
-    let { where, include, ...rest } = args;
+    const { where, include, ...rest } = args;
     if (include) {
       rest.include = this.replaceIdInInclude(include, defName, variableValues);
     }
@@ -901,7 +901,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // Sequelize's `count` is declared to return a grouped row array when the
     // options carry a `group`; ormize never counts by group, so the number
     // overload is the only one this can produce.
-    return Model.count(options) as Promise<number>;
+    return Model.count(options);
   };
   update = (
     source: SequelizeRow,
@@ -1000,7 +1000,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       return TargetModel.count({
         where: countWhere,
         getGraphQLArgs: options?.getGraphQLArgs,
-      } as AdapterQueryOptions) as Promise<number>;
+      } as AdapterQueryOptions);
     }
     return rowFields(source)[relationship.accessors.count]({ where, getGraphQLArgs: options?.getGraphQLArgs });
   };
@@ -1073,12 +1073,9 @@ export function mergeFilterStatement(
   match = true,
   originalWhere?: AdapterWhere
 ): AdapterWhere {
-  let targetOp = Op.eq;
-  if (Array.isArray(value)) {
-    targetOp = match ? Op.in : Op.notIn;
-  } else {
-    targetOp = match ? Op.eq : Op.ne;
-  }
+  const targetOp = Array.isArray(value)
+    ? (match ? Op.in : Op.notIn)
+    : (match ? Op.eq : Op.ne);
   const filter = {
     [fieldName]: {
       [targetOp]: value,

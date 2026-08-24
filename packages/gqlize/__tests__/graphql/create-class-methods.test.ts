@@ -4,14 +4,14 @@ import { createClassMethodFields } from "../../src/graphql/create-class-methods"
 import GqlizeBinding from "../../src/manager";
 import {GraphQLObjectType, GraphQLInt} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
-import { Definition, GqlizeAdapter } from '../../src/types';
+import { Definition } from '../../src/types';
 import {test, expect} from "@jest/globals";
 
 test("createClassMethodFields - mutations before/after hooks", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {},

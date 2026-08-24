@@ -12,7 +12,7 @@ test("manager - registerAdapter", () => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
   expect(db.adapters.sqlite).not.toBeUndefined();
 });
 
@@ -20,7 +20,7 @@ test("manager - registerAdapter - check default adapter", () => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
   expect(db.defaultAdapter).toEqual("sqlite");
 });
 
@@ -28,10 +28,10 @@ test("manager - registerAdapter - multi adapters", () => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite2");
+  }), "sqlite2");
   expect(db.defaultAdapter).toEqual("sqlite");
   expect(db.adapters.sqlite).not.toBeUndefined();
   expect(db.adapters.sqlite2).not.toBeUndefined();
@@ -41,7 +41,7 @@ test("manager - addDefinition", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
   await db.addDefinition(TaskDef);
   const name = TaskDef.name || "";
   expect(db.defs[name]).not.toBeUndefined();
@@ -265,7 +265,7 @@ test("manager - processSelect without input returns rows instead of throwing", a
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
   const parentDef: Definition = {
     name: "SelectParent",
     define: {

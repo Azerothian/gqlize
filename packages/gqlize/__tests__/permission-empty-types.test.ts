@@ -14,7 +14,9 @@ async function createInstance(definitions: any[]) {
   const { adapter, name, teardown } = await createAdapterForDialect();
   registerTeardown(teardown);
   db.registerAdapter(adapter, name);
-  definitions.forEach((definition) => db.addDefinition({ options: { timestamps: false }, ...definition }));
+  for (const definition of definitions) {
+    await db.addDefinition({ options: { timestamps: false }, ...definition });
+  }
   await db.initialise();
   await db.sync();
   return db;

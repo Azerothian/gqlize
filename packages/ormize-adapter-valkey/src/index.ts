@@ -94,6 +94,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       this.client = clientOrOptions;
     } else {
       // Lazily require ioredis so consumers that always inject a client need not install it.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- a constructor cannot await an `import()`
       const IORedis = require("ioredis");
       this.client = new (IORedis.default || IORedis)(clientOrOptions);
       this.ownsClient = true;
@@ -365,7 +366,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       if (obj[key] === undefined) {
         const dv = model.fields[key].defaultValue;
         if (dv !== undefined && (typeof dv !== "object" || dv === null)) {
-          obj[key] = typeof dv === "function" ? (dv as any)() : dv;
+          obj[key] = typeof dv === "function" ? dv() : dv;
         }
       }
     }

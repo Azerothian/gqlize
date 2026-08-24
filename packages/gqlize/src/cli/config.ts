@@ -129,7 +129,7 @@ async function importConfig(path: string): Promise<any> {
     if (isTypeScriptLoadFailure(err) && !process.env.GQLIZE_CLI_REEXEC) {
       await reexecThroughTsx(path);
     }
-    throw new Error(`gqlize: failed to load config ${path}: ${err.message}`);
+    throw new Error(`gqlize: failed to load config ${path}: ${err.message}`, {cause: err});
   }
 }
 

@@ -154,7 +154,7 @@ export class ValkeyTransaction implements Executor {
   async getObj(key: string): Promise<string | null> {
     if (this.objects.has(key)) {
       const v = this.objects.get(key)!;
-      return v === TOMBSTONE ? null : (v as string);
+      return v === TOMBSTONE ? null : (v);
     }
     return this.client.get(key);
   }
@@ -166,7 +166,7 @@ export class ValkeyTransaction implements Executor {
     return keys.map((k) => {
       if (this.objects.has(k)) {
         const v = this.objects.get(k)!;
-        return v === TOMBSTONE ? null : (v as string);
+        return v === TOMBSTONE ? null : (v);
       }
       return byKey.get(k) ?? null;
     });
@@ -186,7 +186,7 @@ export class ValkeyTransaction implements Executor {
   async getStr(key: string): Promise<string | null> {
     if (this.strs.has(key)) {
       const v = this.strs.get(key)!;
-      return v === TOMBSTONE ? null : (v as string);
+      return v === TOMBSTONE ? null : (v);
     }
     return this.client.get(key);
   }
@@ -217,13 +217,13 @@ export class ValkeyTransaction implements Executor {
   sadd(key: string, ...members: string[]) {
     if (!members.length) return;
     let a = this.sAdds.get(key); if (!a) { a = new Set(); this.sAdds.set(key, a); }
-    members.forEach((m) => { a!.add(m); this.sRems.get(key)?.delete(m); });
+    members.forEach((m) => { a.add(m); this.sRems.get(key)?.delete(m); });
     this.commands.push(["sadd", key, ...members]);
   }
   srem(key: string, ...members: string[]) {
     if (!members.length) return;
     let r = this.sRems.get(key); if (!r) { r = new Set(); this.sRems.set(key, r); }
-    members.forEach((m) => { r!.add(m); this.sAdds.get(key)?.delete(m); });
+    members.forEach((m) => { r.add(m); this.sAdds.get(key)?.delete(m); });
     this.commands.push(["srem", key, ...members]);
   }
   putStr(key: string, value: string, ttlMs?: number) {

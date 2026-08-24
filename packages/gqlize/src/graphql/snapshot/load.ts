@@ -36,16 +36,18 @@ export async function readSnapshot(artifactPath: string): Promise<SchemaSnapshot
   } catch (err: any) {
     throw new Error(
       `gqlize: could not read schema artifact "${artifactPath}": ${err.message}`,
+      {cause: err},
     );
   }
   if (buffer[0] === 0x1f && buffer[1] === 0x8b) {
-    buffer = (await gunzipAsync(buffer)) as Buffer;
+    buffer = (await gunzipAsync(buffer));
   }
   try {
     return JSON.parse(buffer.toString("utf8"));
   } catch (err: any) {
     throw new Error(
       `gqlize: schema artifact "${artifactPath}" is not valid JSON: ${err.message}`,
+      {cause: err},
     );
   }
 }

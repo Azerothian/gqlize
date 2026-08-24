@@ -44,7 +44,7 @@ export default function typeMapper(
     case DataType.Blob:
       return uploadType;
     case DataType.Array:
-      return new GraphQLList(typeMapper(desc.element as DataTypeDescriptor, modelName, fieldName));
+      return new GraphQLList(typeMapper(desc.element, modelName, fieldName));
     case DataType.Enum:
       return new GraphQLEnumType({
         name: `${modelName || ""}${fieldName || ""}Enum`,

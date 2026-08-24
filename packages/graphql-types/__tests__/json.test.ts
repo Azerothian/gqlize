@@ -3,7 +3,7 @@ import {ValueNode, parseValue as parseLiteralNode} from "graphql";
 import JSONType from "../src/json";
 
 const literal = (source: string, variables?: {[name: string]: unknown}) =>
-  JSONType.parseLiteral!(parseLiteralNode(source), variables);
+  JSONType.parseLiteral(parseLiteralNode(source), variables);
 
 describe("graphql-types - GQLTJson", () => {
   it("serializes as the identity — the value is already JSON", () => {
@@ -44,6 +44,6 @@ describe("graphql-types - GQLTJson", () => {
     // Every kind a real ValueNode can be is handled, so this fallback is only
     // reachable with a synthetic node — it exists so a future graphql adding a
     // value kind degrades to null instead of throwing.
-    expect(JSONType.parseLiteral!({kind: "FutureValue"} as unknown as ValueNode, undefined)).toBeNull();
+    expect(JSONType.parseLiteral({kind: "FutureValue"} as unknown as ValueNode, undefined)).toBeNull();
   });
 });

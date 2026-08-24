@@ -28,15 +28,15 @@ describe("graphql-types - GQLTBigInt", () => {
     expect(() => BigIntType.parseValue("nope")).toThrow(SyntaxError);
   });
   it("parseLiteral takes a string literal and keeps its precision", () => {
-    expect(BigIntType.parseLiteral!(parseLiteralNode(`"${PAST_SAFE}"`), undefined)).toBe(9007199254740993n);
+    expect(BigIntType.parseLiteral(parseLiteralNode(`"${PAST_SAFE}"`), undefined)).toBe(9007199254740993n);
   });
   it("parseLiteral rejects every other literal kind", () => {
     // An int literal is the tempting one: graphql would have already coerced it
     // through a Number by the time it got here, so it is refused outright.
     const int = parseLiteralNode("123");
     expect(int.kind).toBe(Kind.INT);
-    expect(() => BigIntType.parseLiteral!(int, undefined)).toThrow(/Can only validate strings as big integers but got a: IntValue/);
-    expect(() => BigIntType.parseLiteral!(parseLiteralNode("true"), undefined)).toThrow(/BooleanValue/);
+    expect(() => BigIntType.parseLiteral(int, undefined)).toThrow(/Can only validate strings as big integers but got a: IntValue/);
+    expect(() => BigIntType.parseLiteral(parseLiteralNode("true"), undefined)).toThrow(/BooleanValue/);
   });
   it("patches BigInt.prototype.toJSON so a bigint survives JSON.stringify", () => {
     // Importing this module mutates a global — the one `@ts-ignore` in the repo.

@@ -589,6 +589,7 @@ function parseDefault(literal: string, coordinate: string) {
     throw new Error(
       `gqlize: default value for ${coordinate} (${JSON.stringify(literal)}) is not a valid ` +
         `GraphQL const literal: ${err instanceof Error ? err.message : String(err)}`,
+      {cause: err},
     );
   }
 }
@@ -638,7 +639,7 @@ function attachTypeHatches(
   configs: Map<string, GraphQLFieldConfigMap<any, any>>,
 ) {
   for (const ir of snapshot.types) {
-    if (ir.kind !== "object" || !(ir as ObjectTypeIR).model) {
+    if (ir.kind !== "object" || !(ir as ObjectTypeIR).model) { // eslint-disable-line @typescript-eslint/no-unnecessary-type-assertion -- ts7 needs it
       continue;
     }
     const type = typeMap.get(ir.name);

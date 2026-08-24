@@ -278,7 +278,7 @@ export default function createRoleBasedPermissions(
       permission[gate] = predicate;
     }
   });
-  return permission as Permission;
+  return permission;
 }
 
 /** Every gate this helper can emit — the keys it is responsible for covering. */

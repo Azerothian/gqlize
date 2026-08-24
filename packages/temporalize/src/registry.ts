@@ -51,12 +51,12 @@ export class TemporalizeRegistry {
     if (!permission) {
       return (this.unscoped = this.unscoped || generateZodSchemas(this.orm, opts));
     }
-    const cached = this.byPermission.get(permission as object);
+    const cached = this.byPermission.get(permission);
     if (cached) {
       return cached;
     }
     const built = generateZodSchemas(this.orm, opts);
-    this.byPermission.set(permission as object, built);
+    this.byPermission.set(permission, built);
     return built;
   }
 }

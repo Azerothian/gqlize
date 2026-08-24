@@ -30,7 +30,7 @@ function parseFilter(raw: unknown): AdapterWhere | undefined {
     return undefined;
   }
   if (typeof raw === "object") {
-    return raw as AdapterWhere;
+    return raw;
   }
   try {
     return JSON.parse(String(raw));

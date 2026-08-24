@@ -30,7 +30,7 @@ export default async function print(
       ...profile.options,
       scalars: resolved.config.scalars,
       permissionProfile: profile.permissionProfile,
-    } as any)
+    })
     : await createSchema(orm, profile.options);
 
   out(printSchema(args.sorted ? lexicographicSortSchema(schema) : schema));

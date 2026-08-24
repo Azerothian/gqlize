@@ -62,7 +62,7 @@ export function createModelProxy<TInstance = PlainRow, TStatics = Record<string,
   const activities = proxyActivities<Record<string, AnyActivity>>(activityOptions);
 
   const namespace = (build: (model: string, method: string) => string) =>
-    new Proxy({} as Record<string, AnyActivity>, {
+    new Proxy({}, {
       get: (_t, method: string | symbol) =>
         typeof method === "string" ? (req: unknown) => activities[build(model, method)](req) : undefined,
     });

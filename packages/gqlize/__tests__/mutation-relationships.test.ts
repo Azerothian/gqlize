@@ -16,26 +16,26 @@ async function build() {
   registerTeardown(teardown);
   db.registerAdapter(adapter, name);
 
-  db.addDefinition({
+  await db.addDefinition({
     name: "Author",
     define: {name: {type: Sequelize.STRING, allowNull: false}},
     relationships: [{type: "hasMany", model: "Post", name: "posts", options: {foreignKey: "authorId"}}],
   });
-  db.addDefinition({
+  await db.addDefinition({
     name: "Tag",
     define: {name: {type: Sequelize.STRING, allowNull: false}},
     relationships: [{type: "belongsToMany", model: "Post", name: "posts", options: {through: {model: "PostTag"}, foreignKey: "tagId", otherKey: "postId"}}],
   });
   // through model with an extra column
-  db.addDefinition({name: "PostTag", define: {sortOrder: {type: Sequelize.INTEGER, allowNull: true}}});
+  await db.addDefinition({name: "PostTag", define: {sortOrder: {type: Sequelize.INTEGER, allowNull: true}}});
   // paranoid target (soft delete) for restore
-  db.addDefinition({
+  await db.addDefinition({
     name: "Comment",
     define: {body: {type: Sequelize.STRING, allowNull: false}},
     relationships: [{type: "belongsTo", model: "Post", name: "post", options: {foreignKey: "postId"}}],
     options: {paranoid: true},
   });
-  db.addDefinition({
+  await db.addDefinition({
     name: "Post",
     define: {title: {type: Sequelize.STRING, allowNull: false}},
     relationships: [
@@ -86,13 +86,13 @@ describe("relationship mutations", () => {
     await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { tags: { add: [{ where: { name: { eq: "tagone" } } }, { where: { name: { eq: "tagtwo" } } }] } } }) { id }
     } }`});
-    expect(await (post as any).countTags()).toEqual(2);
+    expect(await post.countTags()).toEqual(2);
 
     const rm = (await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { tags: { remove: [{ name: { eq: "tagone" } }] } } }) { id }
     } }`})) as any;
     validateResult(rm);
-    const names = (await (post as any).getTags()).map((t: any) => t.get("name")).sort();
+    const names = (await post.getTags()).map((t: any) => t.get("name")).sort();
     expect(names).toEqual(["tagtwo"]);
   });
 
@@ -103,14 +103,14 @@ describe("relationship mutations", () => {
     const [t1, t2] = await Promise.all([
       Tag.create({name: "tagone"}), Tag.create({name: "tagtwo"}), Tag.create({name: "tagthree"}),
     ]);
-    await (post as any).addTags([t1, t2]);
+    await post.addTags([t1, t2]);
     const schema = await createSchema(db, schemaOpts);
 
     const res = (await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { tags: { set: [{ where: { name: { eq: "tagthree" } } }] } } }) { id }
     } }`})) as any;
     validateResult(res);
-    const names = (await (post as any).getTags()).map((t: any) => t.get("name"));
+    const names = (await post.getTags()).map((t: any) => t.get("name"));
     expect(names).toEqual(["tagthree"]);
   });
 
@@ -142,7 +142,7 @@ describe("relationship mutations", () => {
       Post(update: { where: { title: { eq: "post1" } }, input: { comments: { set: [{ body: { eq: "commenttwo" } }] } } }) { id }
     } }`})) as any;
     validateResult(res);
-    const bodies = (await (post as any).getComments()).map((c: any) => c.get("body"));
+    const bodies = (await post.getComments()).map((c: any) => c.get("body"));
     expect(bodies).toEqual(["commenttwo"]);
   });
 
@@ -183,10 +183,10 @@ describe("relationship mutations", () => {
     // top-level select returns the found author, unchanged
     expect(res.data.models.Author.map((a: any) => a.name)).toEqual(["author1"]);
     // the selected post got the tag; its own title is unchanged
-    expect((await (keep as any).getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
+    expect((await keep.getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
     expect((await Post.findByPk(keep.get("id"))).get("title")).toEqual("keep");
     // the non-matching sibling post is untouched
-    expect(await (other as any).getTags()).toHaveLength(0);
+    expect(await other.getTags()).toHaveLength(0);
   });
 
   it("select: nested select is relationship-scoped (cannot reach unrelated records)", async () => {
@@ -208,8 +208,8 @@ describe("relationship mutations", () => {
       } }]) { id }
     } }`})) as any;
     validateResult(res);
-    expect(await (p2 as any).getTags()).toHaveLength(0);
-    expect(await (p1 as any).getTags()).toHaveLength(0);
+    expect(await p2.getTags()).toHaveLength(0);
+    expect(await p1.getTags()).toHaveLength(0);
   });
 
   it("select: scalar fields in the input are ignored (the selected rows are not modified)", async () => {
@@ -229,7 +229,7 @@ describe("relationship mutations", () => {
     validateResult(res);
 
     // the relationship mutation ran...
-    expect((await (post as any).getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
+    expect((await post.getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
     // ...but the scalar `title` was ignored — the selected row is NOT modified
     expect((await Post.findByPk(post.get("id"))).get("title")).toEqual("original");
     expect(res.data.models.Post.map((p: any) => p.title)).toEqual(["original"]);
@@ -252,7 +252,7 @@ describe("relationship mutations", () => {
       } }]) { id }
     } }`})) as any;
     validateResult(res);
-    expect((await (post as any).getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
+    expect((await post.getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
     expect((await Post.findByPk(post.get("id"))).get("title")).toEqual("post1");
   });
 });

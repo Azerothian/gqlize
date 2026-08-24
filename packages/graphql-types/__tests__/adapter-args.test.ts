@@ -72,7 +72,7 @@ function makeHost(opts: {
     orderableFields: (defName) => models[defName]?.order || [],
     relationshipsOf: (defName) => models[defName]?.relationships || [],
     // A model absent from `models` is another adapter's, so it has no target here.
-    targetOf: (modelName) => (models[modelName] ? {name: modelName, definition: {} as Definition} : undefined),
+    targetOf: (modelName) => (models[modelName] ? {name: modelName, definition: {}} : undefined),
   };
 }
 

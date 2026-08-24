@@ -4,13 +4,13 @@ import createComplexFieldsFunc from "../../src/graphql/create-complex-fields";
 import GqlizeBinding from "../../src/manager";
 import {GraphQLObjectType, GraphQLInt, type GraphQLResolveInfo} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
-import { Definition, GqlizeAdapter } from '../../src/types';
+import { Definition } from '../../src/types';
 import {test,expect} from "@jest/globals";
 test("createComplexFieldsFunc - empty define", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {},
@@ -51,7 +51,7 @@ test("createComplexFieldsFunc - before/after hooks", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {},

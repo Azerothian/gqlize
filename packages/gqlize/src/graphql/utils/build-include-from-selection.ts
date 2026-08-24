@@ -224,10 +224,11 @@ export function buildIncludeMapFromSelection(
     if (!association) {
       continue; // scalar / non-relationship field
     }
-    let sameAdapter = true;
+    let sameAdapter: boolean;
     try {
       sameAdapter = !parentAdapter || parentAdapter === instance.getModelAdapter(association.target);
-    } catch (e) {
+    } catch {
+      // No adapter for the target: treat it as local and let the include be built.
       sameAdapter = true;
     }
     if (!sameAdapter) {
@@ -245,7 +246,7 @@ export function buildIncludeMapFromSelection(
       if (fieldDef) {
         // Each value has already been coerced and validated against the
         // argument's declared type — see {@link IncludeFieldArgs}.
-        fieldArgs = (getArgumentValues(fieldDef, sel, info.variableValues) || {}) as IncludeFieldArgs;
+        fieldArgs = (getArgumentValues(fieldDef, sel, info.variableValues) || {});
       }
     } catch (e) {
       fieldArgs = {};
