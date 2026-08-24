@@ -14,7 +14,7 @@ import { executeQuery, processFilterArgument, matchWhere } from "./query";
 import { ttlToScore, getExpiry, setExpiry } from "./expiry";
 import { mapDataType, toNativeType } from "./data-type-mapper";
 import typeMapper from "./type-mapper";
-import replaceIdDeep from "./utils/replace-id-deep";
+import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import * as G from "./graphql";
 import type { GqlizeAdapter } from "@azerothian/gqlize/types/gqlize-adapter";
 

@@ -1,18 +1,28 @@
-
-import {fromGlobalId} from "graphql-relay";
-import waterfall from "@azerothian/utilize/utils/waterfall";
-import {Op} from "sequelize";
-
-import { OKind, objVisit, BREAK } from "@vostro/object-visit";
+import { fromGlobalId } from "graphql-relay";
+import { OKind, objVisit } from "@vostro/object-visit";
 
 /**
- * Decode a value as a Relay global id, but ONLY when it actually looks like one.
+ * Rewrite Relay global ids into raw ids inside a `where` tree.
  *
- * `fromGlobalId` base64-decodes and splits `Type:id`. The previous code decoded
- * any string matching the base64 charset, so a legitimate ID-typed filter value
- * like "ABCD1234" (valid base64, but not a global id) was silently mangled into
- * garbage, causing filters to miss rows. A genuine global id yields a non-empty
- * type AND id; anything else is left untouched.
+ * This is the single implementation shared by every adapter: the GraphQL layer
+ * hands adapters a filter whose id-typed values are still opaque global ids, and
+ * each adapter needs them decoded before the filter reaches the datastore.
+ * Keeping one copy is not just tidiness — the guard below was fixed twice and
+ * missed once, which is exactly the failure a shared module prevents.
+ */
+
+/** Cheap pre-filter: anything that is not base64-shaped cannot be a global id. */
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+/**
+ * Decode a value as a Relay global id, but ONLY when it actually is one.
+ *
+ * `fromGlobalId` base64-decodes and splits `Type:id`, and it does not fail on
+ * input that merely decodes to bytes. Testing the base64 *charset* alone is
+ * therefore not enough: a legitimate ID-typed filter value like "ABCD1234" or
+ * "deadbeef" is valid base64, so it was silently decoded into binary garbage and
+ * the filter matched nothing — no error, no log, just missing rows. A genuine
+ * global id yields a non-empty type AND id; anything else is left untouched.
  */
 function tryDecodeGlobalId(node: string): string | null {
   try {
@@ -26,46 +36,51 @@ function tryDecodeGlobalId(node: string): string | null {
   return null;
 }
 
-export default function replaceIdDeep(obj: any, keyMap: string[], variableValues: any) {
+/**
+ * @param obj            the where tree, or a function producing one from `variableValues`
+ * @param globalKeys     field names whose values are global ids (primary/foreign keys)
+ * @param variableValues GraphQL variables. Opaque here — this function never reads
+ *                       them, it only forwards them to a function-valued `obj`, and
+ *                       typing them concretely would pin the signature to one of the
+ *                       several shapes callers hold (`GraphQLResolveInfo`'s readonly
+ *                       record, an adapter's plain object).
+ *
+ * Generic in the tree type so it satisfies `Selection["translateFilter"]`: only leaf
+ * string values change, so the shape the caller passed in is the shape it gets back.
+ *
+ * Everything beneath a `globalKeys` field is eligible for decoding, which is what
+ * makes operator wrappers work: `{id: {in: [...]}}` decodes the array members.
+ */
+export default function replaceIdDeep<W>(
+  obj: W,
+  globalKeys: string[],
+  variableValues?: unknown,
+): W {
   if (obj instanceof Function) {
-    obj = obj(variableValues);
+    obj = obj(variableValues) as W;
   }
+  // A single flag rather than a stack: `globalKeys` hold scalars and operator
+  // wrappers, never another global key, so the regions cannot nest.
   let tagged = false;
-  const result = objVisit(obj, {
-    [OKind.ARRAY]: {
-      enter(node, key, parent, path, ancestors) {
-        if(key && !tagged && keyMap.indexOf(`${key}`) > -1) {
-          tagged = true;          
-        }
-        return node;
-      },
-      leave(node, key, parent, path, ancestors) {
-        if (tagged && keyMap.indexOf(`${key}`) > -1) {
-          tagged = false;
-        } 
-        return node;
-      }
-    },
-    [OKind.OBJECT]: {
-      enter(node, key, parent, path, ancestors) {
-        if(key && !tagged && keyMap.indexOf(`${key}`) > -1) {
-          tagged = true;          
-        }
-        return node;
-      },
-      leave(node, key, parent, path, ancestors) {
-        if (tagged && keyMap.indexOf(`${key}`) > -1) {
-          tagged = false;
-        } 
-        return node;
-      }
-    },
+  const enter = (node: unknown, key: string | number | undefined) => {
+    if (key !== undefined && !tagged && globalKeys.indexOf(`${key}`) > -1) {
+      tagged = true;
+    }
+    return node;
+  };
+  const leave = (node: unknown, key: string | number | undefined) => {
+    if (tagged && globalKeys.indexOf(`${key}`) > -1) {
+      tagged = false;
+    }
+    return node;
+  };
+  return objVisit(obj, {
+    [OKind.ARRAY]: { enter, leave },
+    [OKind.OBJECT]: { enter, leave },
     [OKind.FIELD]: {
-      enter(node, key, parent, path, ancestors) {
-        if (key && !tagged && keyMap.indexOf(`${key}`) > -1) {
-          tagged = true;          
-        }
-        if (tagged && typeof node === "string" && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(node)) {
+      enter(node: unknown, key: string | number | undefined) {
+        enter(node, key);
+        if (tagged && typeof node === "string" && BASE64.test(node)) {
           const decoded = tryDecodeGlobalId(node);
           if (decoded !== null) {
             return decoded;
@@ -73,76 +88,7 @@ export default function replaceIdDeep(obj: any, keyMap: string[], variableValues
         }
         return node;
       },
-      leave(node, key, parent, path, ancestors) {
-        if (tagged && keyMap.indexOf(`${key}`) > -1) {
-          tagged = false;
-        } 
-        return node;
-      }
-    }
-  });
-  return result;
+      leave,
+    },
+  }) as W;
 }
-
-
-// function getProperties(obj: any): any {
-//   return [...Object.keys(obj), ...Object.getOwnPropertySymbols(obj)];
-// }
-// function hasUserPrototype(obj: any) {
-//   if (!obj) {
-//     return false;
-//   }
-//   return Object.getPrototypeOf(obj) !== Object.prototype;
-// }
-// async function checkObjectForWhereOps(value: any[], keyMap: any, params: any): Promise<any> {
-//   if (Array.isArray(value)) {
-//     return Promise.all(value.map((val) => {
-//       return checkObjectForWhereOps(val, keyMap, params);
-//     }));
-//   } else if (hasUserPrototype(value)) {
-//     return value;
-//   } else if (Object.prototype.toString.call(value) === "[object Object]") {
-//     return replaceDefWhereOperators(value, keyMap, params);
-//   } else {
-//     return value;
-//   }
-// }
-
-// export async function replaceDefWhereOperators(obj: any, keyMap: any, options: any) {
-//   return waterfall(getProperties(obj), async(key, memo) => {
-//     if (keyMap[key]) {
-//       const newWhereObj = await keyMap[key](memo, options, obj[key]);
-//       delete memo[key];
-//       memo = getProperties(newWhereObj).reduce((m: any, newKey: any) => {
-//         if (m[newKey]) {
-//           const newValue = {
-//             [newKey]: newWhereObj[newKey],
-//           };
-//           if (Array.isArray(m[newKey])) {
-//             m[newKey] = m[newKey].concat(newValue);
-//           } else if (m[Op.and]) {
-//             m[Op.and] = m[Op.and].concat(newValue);
-//           } else if (m.and) { //Cover both before and after replaceWhereOps
-//             m.and = m.and.concat(newValue);
-//           } else {
-//             const prevValue = {
-//               [newKey]: m[newKey],
-//             };
-//             m[Op.and] = [prevValue, newValue];
-//           }
-//         } else {
-//           m[newKey] = newWhereObj[newKey];
-//         }
-//         return m;
-//       }, memo);
-//       memo = await checkObjectForWhereOps(memo, keyMap, options);
-//     } else {
-//       memo[key] = await checkObjectForWhereOps(memo[key], keyMap, options);
-//     }
-//     // return the modified object
-//     return memo;
-
-//   }, Object.assign({}, obj));
-// }
-
-
