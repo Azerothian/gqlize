@@ -11,6 +11,8 @@ import {
   UseFilters,
 } from "@nestjs/common";
 import { NestizeService } from "../nestize.service";
+import type { SelectBody } from "../nestize.service";
+import type { PlainRow, RestQuery, RestRequest } from "../types";
 import { ZodExceptionFilter } from "../zod-exception.filter";
 
 /**
@@ -33,7 +35,7 @@ export class NestizeController {
 
   // 1. literal `select` before `/:resource/:id`
   @Post(":resource/select")
-  select(@Param("resource") resource: string, @Body() body: any, @Req() req: any) {
+  select(@Param("resource") resource: string, @Body() body: SelectBody, @Req() req: RestRequest) {
     return this.service.select(resource, body, req);
   }
 
@@ -42,8 +44,8 @@ export class NestizeController {
   classQuery(
     @Param("resource") resource: string,
     @Param("method") method: string,
-    @Query() query: any,
-    @Req() req: any
+    @Query() query: RestQuery,
+    @Req() req: RestRequest
   ) {
     return this.service.callClassMethod(resource, method, query, "query", req);
   }
@@ -52,8 +54,8 @@ export class NestizeController {
   classMutation(
     @Param("resource") resource: string,
     @Param("method") method: string,
-    @Body() body: any,
-    @Req() req: any
+    @Body() body: unknown,
+    @Req() req: RestRequest
   ) {
     return this.service.callClassMethod(resource, method, body, "mutation", req);
   }
@@ -64,8 +66,8 @@ export class NestizeController {
     @Param("resource") resource: string,
     @Param("id") id: string,
     @Param("method") method: string,
-    @Body() body: any,
-    @Req() req: any
+    @Body() body: unknown,
+    @Req() req: RestRequest
   ) {
     return this.service.callInstanceMethod(resource, id, method, body, req);
   }
@@ -76,8 +78,8 @@ export class NestizeController {
     @Param("resource") resource: string,
     @Param("id") id: string,
     @Param("relation") relation: string,
-    @Query() query: any,
-    @Req() req: any
+    @Query() query: RestQuery,
+    @Req() req: RestRequest
   ) {
     return this.service.relationGet(resource, id, relation, query, req);
   }
@@ -87,8 +89,8 @@ export class NestizeController {
     @Param("resource") resource: string,
     @Param("id") id: string,
     @Param("relation") relation: string,
-    @Body() body: any,
-    @Req() req: any
+    @Body() body: unknown,
+    @Req() req: RestRequest
   ) {
     return this.service.relationMutate(resource, id, relation, body, req);
   }
@@ -99,35 +101,35 @@ export class NestizeController {
     @Param("id") id: string,
     @Param("relation") relation: string,
     @Param("relId") relId: string,
-    @Req() req: any
+    @Req() req: RestRequest
   ) {
     return this.service.relationRemove(resource, id, relation, relId, req);
   }
 
   // 8. single read
   @Get(":resource/:id")
-  findOne(@Param("resource") resource: string, @Param("id") id: string, @Req() req: any) {
+  findOne(@Param("resource") resource: string, @Param("id") id: string, @Req() req: RestRequest) {
     return this.service.findOne(resource, id, req);
   }
 
   // 9-12. collection
   @Get(":resource")
-  list(@Param("resource") resource: string, @Query() query: any, @Req() req: any) {
+  list(@Param("resource") resource: string, @Query() query: RestQuery, @Req() req: RestRequest) {
     return this.service.list(resource, query, req);
   }
 
   @Post(":resource")
-  create(@Param("resource") resource: string, @Body() body: any, @Req() req: any) {
+  create(@Param("resource") resource: string, @Body() body: PlainRow, @Req() req: RestRequest) {
     return this.service.create(resource, body, req);
   }
 
   @Patch(":resource")
-  update(@Param("resource") resource: string, @Query() query: any, @Body() body: any, @Req() req: any) {
+  update(@Param("resource") resource: string, @Query() query: RestQuery, @Body() body: PlainRow, @Req() req: RestRequest) {
     return this.service.update(resource, query, body, req);
   }
 
   @Delete(":resource")
-  remove(@Param("resource") resource: string, @Query() query: any, @Req() req: any) {
+  remove(@Param("resource") resource: string, @Query() query: RestQuery, @Req() req: RestRequest) {
     return this.service.remove(resource, query, req);
   }
 }

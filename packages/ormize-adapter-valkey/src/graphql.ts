@@ -1,8 +1,28 @@
-import { GraphQLID, GraphQLList, GraphQLEnumType, GraphQLInputObjectType, GraphQLBoolean } from "graphql";
-import createQueryType from "@azerothian/graphql-types/query";
+import {
+  GraphQLID, GraphQLList, GraphQLEnumType, GraphQLInputObjectType, GraphQLBoolean,
+  type GraphQLFieldConfigArgumentMap, type GraphQLInputFieldConfigMap, type GraphQLInputType,
+} from "graphql";
+import createQueryType, { type QueryTypeConfig } from "@azerothian/graphql-types/query";
 import { isFieldAllowed, isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
+import type { Definition, OrderEntry, Permission } from "@azerothian/utilize/types/index";
 import typeMapper from "./type-mapper";
 import { ValkeyModel } from "./model";
+
+/**
+ * What these builders need off the adapter. Structural rather than importing
+ * `ValkeyAdapter` itself: it is `./index` that imports this module, and naming
+ * only the members actually used keeps the dependency one-directional — and the
+ * list honest about how much of the adapter these reach into.
+ */
+export interface GraphQLTypeHost {
+  /** The permission captured for the duration of a schema build, if any. */
+  _buildPermission?: Permission;
+  getMetaObj(defName: string, key: string): unknown;
+  setMetaObj(defName: string, key: string, value: unknown): void;
+  model(defName: string): ValkeyModel;
+  /** Absent for a target that lives on another adapter — see `getIncludeGraphQLType`. */
+  getModel(defName: string): unknown;
+}
 
 /** Only indexed / unique / primary / foreign-key fields are filterable — nothing
  *  else can be searched without a keyspace scan. */
@@ -10,18 +30,21 @@ function filterableFields(model: ValkeyModel): string[] {
   return Object.keys(model.fields).filter((k) => model.isSearchable(k) || model.fields[k].foreignKey);
 }
 
-export function createQueryConfig(model: ValkeyModel, permission: any): any {
+export function createQueryConfig(model: ValkeyModel, permission?: Permission): QueryTypeConfig {
   const defName = model.name;
-  const f: any = {};
+  const f: {[fieldName: string]: GraphQLInputType} = {};
   for (const k of filterableFields(model)) {
     if (!isFieldAllowed(permission, defName, k)) continue;
     const field = model.fields[k];
     f[k] = field.primaryKey || field.foreignKey ? GraphQLID : typeMapper(field.type, `GQLTWhere${defName}`, k);
   }
-  const iso: any = {};
+  const iso: {[operatorName: string]: GraphQLInputType} = {};
   if (model.definition.whereOperators) {
     for (const k of Object.keys(model.definition.whereOperators)) {
-      iso[k] = model.definition.whereOperatorTypes?.[k] || GraphQLBoolean;
+      // `whereOperatorTypes` is the author's own operator -> GraphQL type map;
+      // `Definition` leaves its values open because it must not name a graphql
+      // type, so it is narrowed here, where it is read.
+      iso[k] = (model.definition.whereOperatorTypes?.[k] as GraphQLInputType) || GraphQLBoolean;
     }
   }
   return {
@@ -34,19 +57,24 @@ export function createQueryConfig(model: ValkeyModel, permission: any): any {
   };
 }
 
-export function getFilterGraphQLType(adapter: any, defName: string, _definition: any, permission?: any): any {
+export function getFilterGraphQLType(
+  adapter: GraphQLTypeHost, defName: string, _definition?: Definition, permission?: Permission,
+): GraphQLInputObjectType {
   const perm = permission !== undefined ? permission : adapter._buildPermission;
   if (!adapter.getMetaObj(defName, "queryType")) {
     adapter.setMetaObj(defName, "queryType", createQueryType(createQueryConfig(adapter.model(defName), perm)));
   }
-  return adapter.getMetaObj(defName, "queryType");
+  return adapter.getMetaObj(defName, "queryType") as GraphQLInputObjectType;
 }
 
-export function getOrderByGraphQLType(adapter: any, defName: string, permission?: any): any {
+/** Undefined when permissions deny every orderable field — see below. */
+export function getOrderByGraphQLType(
+  adapter: GraphQLTypeHost, defName: string, permission?: Permission,
+): GraphQLList<GraphQLEnumType> | undefined {
   const perm = permission !== undefined ? permission : adapter._buildPermission;
   if (!adapter.getMetaObj(defName, "orderByType")) {
-    const model: ValkeyModel = adapter.model(defName);
-    const values = Object.keys(model.fields).reduce((o: any, fieldName) => {
+    const model = adapter.model(defName);
+    const values = Object.keys(model.fields).reduce((o: {[enumValueName: string]: {value: OrderEntry}}, fieldName) => {
       if (!isFieldAllowed(perm, defName, fieldName)) return o;
       o[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
       o[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
@@ -61,14 +89,18 @@ export function getOrderByGraphQLType(adapter: any, defName: string, permission?
       })));
     }
   }
-  return adapter.getMetaObj(defName, "orderByType");
+  return adapter.getMetaObj(defName, "orderByType") as GraphQLList<GraphQLEnumType> | undefined;
 }
 
-export function getIncludeGraphQLType(adapter: any, defName: string, _definition: any, permission?: any): any {
+/** Undefined when the model has no includable relationship — see below. */
+export function getIncludeGraphQLType(
+  adapter: GraphQLTypeHost, defName: string, _definition?: Definition, permission?: Permission,
+): GraphQLInputObjectType | undefined {
   const perm = permission !== undefined ? permission : adapter._buildPermission;
-  const model: ValkeyModel = adapter.model(defName);
-  if (!adapter.getMetaObj(defName, "includeType") && (model.relationships || []).length > 0) {
-    const fields = model.relationships.reduce((o: any, relationship: any) => {
+  const model = adapter.model(defName);
+  const relationships = model.relationships || [];
+  if (!adapter.getMetaObj(defName, "includeType") && relationships.length > 0) {
+    const fields = relationships.reduce((o: GraphQLInputFieldConfigMap, relationship) => {
       if (!isRelationshipAllowed(perm, defName, relationship.name, relationship.model)) return o;
       // A relationship whose target model is denied has no output type in the
       // schema either, so it must not be includable.
@@ -82,7 +114,7 @@ export function getIncludeGraphQLType(adapter: any, defName: string, _definition
         type: new GraphQLInputObjectType({
           name: `GQLT${defName}Include${relationship.name}Object`,
           fields: () => {
-            const includeFields: any = {
+            const includeFields: GraphQLInputFieldConfigMap = {
               required: { type: GraphQLBoolean },
               separate: { type: GraphQLBoolean },
               where: { type: getFilterGraphQLType(adapter, targetName, adapter.model(targetName).definition, permission) },
@@ -101,12 +133,14 @@ export function getIncludeGraphQLType(adapter: any, defName: string, _definition
       adapter.setMetaObj(defName, "includeType", new GraphQLInputObjectType({ name: `GQLT${defName}Include`, fields }));
     }
   }
-  return adapter.getMetaObj(defName, "includeType");
+  return adapter.getMetaObj(defName, "includeType") as GraphQLInputObjectType | undefined;
 }
 
-export function getDefaultListArgs(adapter: any, defName: string, definition: any, permission?: any): any {
+export function getDefaultListArgs(
+  adapter: GraphQLTypeHost, defName: string, definition?: Definition, permission?: Permission,
+): GraphQLFieldConfigArgumentMap {
   const includeType = getIncludeGraphQLType(adapter, defName, definition, permission);
-  const retVal: any = { where: { type: getFilterGraphQLType(adapter, defName, definition, permission) } };
+  const retVal: GraphQLFieldConfigArgumentMap = { where: { type: getFilterGraphQLType(adapter, defName, definition, permission) } };
   if (includeType) retVal.include = { type: includeType };
   return retVal;
 }

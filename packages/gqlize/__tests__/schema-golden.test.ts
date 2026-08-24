@@ -3,6 +3,12 @@ import {describe, it, expect} from "@jest/globals";
 
 import {createInstance} from "./helper";
 import {createSchema} from "../src";
+import type {SchemaHatch} from "../src/types";
+import {GQLIZE_EXT} from "../src/graphql/resolvers/types";
+import type {GqlizeBuildLedger} from "../src/graphql/snapshot/ledger";
+
+/** The two escape hatches a built schema carries, neither in the graphql type system. */
+type BuiltSchema = GraphQLSchema & {$sql2gql?: SchemaHatch};
 
 /**
  * The refactor gate.
@@ -42,9 +48,9 @@ describe("golden schema", () => {
   it("records a build ledger of user-supplied types", async() => {
     const instance = await createInstance();
     const schema = await createSchema(instance);
-    const ledger = (schema.extensions as any).gqlize;
+    const ledger = schema.extensions[GQLIZE_EXT] as GqlizeBuildLedger;
 
-    expect(ledger.modelTypes).toEqual(Object.keys((schema as any).$sql2gql.types));
+    expect(ledger.modelTypes).toEqual(Object.keys((schema as BuiltSchema).$sql2gql!.types));
     expect(ledger.externalTypes).toMatchSnapshot("external types");
     // every recorded name must actually be in the schema
     for (const name of Object.keys(ledger.externalTypes)) {
@@ -81,7 +87,7 @@ describe("golden schema", () => {
       extend,
       permission: {queryExtension: (key) => key !== "secret"},
     });
-    const ledger = (schema.extensions as any).gqlize;
+    const ledger = schema.extensions[GQLIZE_EXT] as GqlizeBuildLedger;
 
     expect(ledger.extendFields).toEqual({query: ["health"], mutation: []});
     expect(schema.getQueryType()?.getFields().health).toBeDefined();

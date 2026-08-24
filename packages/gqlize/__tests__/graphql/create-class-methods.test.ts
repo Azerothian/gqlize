@@ -1,6 +1,7 @@
 import { Ormize as Database } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { createClassMethodFields } from "../../src/graphql/create-class-methods";
+import GqlizeBinding from "../../src/manager";
 import {GraphQLObjectType, GraphQLInt} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import { Definition, GqlizeAdapter } from '../../src/types';
@@ -50,7 +51,9 @@ test("createClassMethodFields - mutations before/after hooks", async() => {
     fields: {}
   });
   const mutations = itemDef.expose?.classMethods?.mutations || {};
-  const fields = await createClassMethodFields(db, itemDef.name || "", itemDef, mutations, {}, schemaCache, "mutations");
+  // The builders take the binding, not the raw backend — it is a transparent
+  // wrapper, so this is the same object the live schema build passes.
+  const fields = await createClassMethodFields(new GqlizeBinding(db), itemDef.name || "", itemDef, mutations, {}, schemaCache, "mutations");
   const result = await fields.testClassMethod.resolve({}, {amount: 1}, {}, {});
   expect(result).toEqual(102);
 });

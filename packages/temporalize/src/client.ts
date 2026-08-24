@@ -1,4 +1,5 @@
 import type { Client, WorkflowHandle, WorkflowStartOptions } from "@temporalio/client";
+import type { Ormize } from "@azerothian/ormize";
 import { buildQueueMap } from "./queue";
 import type { QueueMap, TemporalizeOptions } from "./types";
 import type {
@@ -10,6 +11,7 @@ import type {
   FindArgs,
   InstanceMethodArgs,
   MethodArgs,
+  PlainRow,
   SelectArgs,
   UpdateArgs,
 } from "./workflow-types";
@@ -41,7 +43,7 @@ type Call<T> = ActivityRequest<T> & {
   workflowOptions?: Partial<WorkflowStartOptions>;
 };
 
-export interface ModelClient<TRow = any> {
+export interface ModelClient<TRow = PlainRow> {
   /** Task queue this model's work is dispatched to. */
   queue: string;
   create(req: Call<CreateArgs>): Promise<TRow[]>;
@@ -52,18 +54,24 @@ export interface ModelClient<TRow = any> {
   update(req: Call<UpdateArgs>): Promise<TRow[]>;
   destroy(req: Call<DestroyArgs>): Promise<TRow[]>;
   select(req: Call<SelectArgs>): Promise<TRow[]>;
-  classMethod(method: string, req: Call<MethodArgs>): Promise<any>;
-  instanceMethod(method: string, req: Call<InstanceMethodArgs>): Promise<any>;
-  /** Fire-and-forget: start the workflow and return its handle without waiting. */
-  start(op: string, req: Call<any>, method?: string): Promise<WorkflowHandle>;
+  classMethod(method: string, req: Call<MethodArgs>): Promise<unknown>;
+  instanceMethod(method: string, req: Call<InstanceMethodArgs>): Promise<unknown>;
+  /**
+   * Fire-and-forget: start the workflow and return its handle without waiting.
+   *
+   * `op` is a plain string rather than a union because the extra members carried
+   * by each op's args are additive — `PlainRow` accepts them all.
+   */
+  start(op: string, req: Call<PlainRow>, method?: string): Promise<WorkflowHandle>;
 }
 
 /** Accepts a live ormize instance or a pre-built (JSON) queue map. */
-function toQueueMap(target: any, options: TemporalizeOptions): QueueMap {
-  if (target && target.byModel && target.byQueue) {
+function toQueueMap(target: Ormize | QueueMap, options: TemporalizeOptions): QueueMap {
+  const map = target as Partial<QueueMap>;
+  if (target && map.byModel && map.byQueue) {
     return target as QueueMap;
   }
-  return buildQueueMap(target, options);
+  return buildQueueMap(target as Ormize, options);
 }
 
 /**
@@ -77,7 +85,7 @@ function toQueueMap(target: any, options: TemporalizeOptions): QueueMap {
  * await t.model("Task").create({ context: { userId, role }, input: { name: "alpha" } });
  * ```
  */
-export function createTemporalizeClient(client: Client, target: any, options: TemporalizeClientOptions = {}) {
+export function createTemporalizeClient(client: Client, target: Ormize | QueueMap, options: TemporalizeClientOptions = {}) {
   const queueMap = toQueueMap(target, options);
   const idPrefix = options.workflowIdPrefix ?? "temporalize-";
 
@@ -89,7 +97,7 @@ export function createTemporalizeClient(client: Client, target: any, options: Te
     return queue;
   };
 
-  const startOptions = (model: string, op: string, req: Call<any>): WorkflowStartOptions => {
+  const startOptions = (model: string, op: string, req: Call<PlainRow>): WorkflowStartOptions => {
     return Object.assign(
       {
         taskQueue: queueFor(model),
@@ -100,15 +108,17 @@ export function createTemporalizeClient(client: Client, target: any, options: Te
     );
   };
 
-  const args = (model: string, req: Call<any>, method?: string) => {
-    const { workflowId, workflowOptions, ...rest } = req as any;
+  const args = (model: string, req: Call<PlainRow>, method?: string) => {
+    // `workflowId`/`workflowOptions` steer the *client*; everything else is the
+    // workflow's own input and is forwarded verbatim.
+    const { workflowId, workflowOptions, ...rest } = req;
     return [Object.assign({ model }, method ? { method } : {}, rest)];
   };
 
-  const execute = (model: string, op: string, req: Call<any>, method?: string) =>
+  const execute = (model: string, op: string, req: Call<PlainRow>, method?: string) =>
     client.workflow.execute(WORKFLOW_FOR[op], Object.assign(startOptions(model, op, req), { args: args(model, req, method) }));
 
-  const model = <TRow = any>(name: string): ModelClient<TRow> => ({
+  const model = <TRow = PlainRow>(name: string): ModelClient<TRow> => ({
     queue: queueFor(name),
     create: (req) => execute(name, "create", req),
     findAll: (req) => execute(name, "findAll", req),

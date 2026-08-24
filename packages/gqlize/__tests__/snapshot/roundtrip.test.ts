@@ -5,13 +5,19 @@ import {
   isEnumType,
   lexicographicSortSchema,
   printSchema,
+  type GraphQLNamedType,
   type GraphQLSchema,
+  type GraphQLType,
 } from "graphql";
 import {describe, it, expect} from "@jest/globals";
 
 import {createInstance} from "../helper";
 import {createSchema} from "../../src";
 import {materializeSchema, snapshotSchema} from "../../src/snapshot";
+import type {SchemaHatch} from "../../src/types";
+
+/** `$sql2gql` hangs off the schema instance rather than the type system. */
+type BuiltSchema = GraphQLSchema & {$sql2gql?: SchemaHatch};
 
 /**
  * The gate that makes the whole design safe.
@@ -136,9 +142,13 @@ describe("snapshot round-trip", () => {
         continue;
       }
       for (const field of Object.values<any>((type as any).getFields())) {
-        expect(getNamedType(field.type)).toBe(rebuilt.getType(getNamedType(field.type).name));
+        // `getNamedType` is overloaded on nullable input; annotate so the
+        // non-nullable overload is the one selected for an `any` argument.
+        const fieldType: GraphQLNamedType = getNamedType(field.type as GraphQLType);
+        expect(fieldType).toBe(rebuilt.getType(fieldType.name));
         for (const arg of field.args || []) {
-          expect(getNamedType(arg.type)).toBe(rebuilt.getType(getNamedType(arg.type).name));
+          const argType: GraphQLNamedType = getNamedType(arg.type as GraphQLType);
+          expect(argType).toBe(rebuilt.getType(argType.name));
         }
       }
     }
@@ -147,11 +157,11 @@ describe("snapshot round-trip", () => {
   it("rebuilds the relay model map exactly", async() => {
     const {live, rebuilt} = await roundtrip();
 
-    expect(Object.keys((rebuilt as any).$sql2gql.types))
-      .toEqual(Object.keys((live as any).$sql2gql.types));
+    expect(Object.keys((rebuilt as BuiltSchema).$sql2gql!.types))
+      .toEqual(Object.keys((live as BuiltSchema).$sql2gql!.types));
     // `node(id:)` and __resolveType break silently if this diverges
-    expect(String((rebuilt as any).$sql2gql.types["Task[]"]))
-      .toEqual(String((live as any).$sql2gql.types["Task[]"]));
+    expect(String((rebuilt as BuiltSchema).$sql2gql!.types["Task[]"]))
+      .toEqual(String((live as BuiltSchema).$sql2gql!.types["Task[]"]));
   });
 
   it("carries the ledger onto the rebuilt schema", async() => {

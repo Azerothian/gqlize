@@ -31,7 +31,10 @@ import {
   GraphQLFloat,
   GraphQLEnumType,
   GraphQLList,
+  type GraphQLInputType,
+  type GraphQLOutputType,
 } from "graphql";
+import type { NativeDataType } from "@azerothian/utilize/types/index";
 
 import jsonType from "@azerothian/graphql-types/json";
 import dateType from "@azerothian/graphql-types/date";
@@ -39,18 +42,34 @@ import uploadType from "@azerothian/graphql-types/upload";
 
 import {capitalize} from "@azerothian/utilize/utils/word";
 
-export default function typeMapper(type: any, modelName: any, fieldName: any) {
+/**
+ * The mapper `SequelizeAdapter.getTypeMapper` hands back. Returns a type that is
+ * valid in both variances — a scalar, an enum, or a list of one — because the
+ * same mapper builds output fields and `where` input fields alike.
+ */
+export default function typeMapper(
+  type: NativeDataType,
+  modelName: string,
+  fieldName: string,
+): GraphQLInputType & GraphQLOutputType {
   return toGraphQL(type, Sequelize, modelName, fieldName);
 }
 
 /**
  * Checks the type of the sequelize data type and
- * returns the corresponding type in GraphQL
- * @param  {Object} sequelizeType
- * @param  {Object} sequelizeTypes
- * @return {Function} GraphQL type declaration
+ * returns the corresponding type in GraphQL.
+ *
+ * `sequelizeTypes` is the DataTypes namespace to discriminate against — passed in
+ * rather than imported so a caller can supply a dialect-specific one — and it is
+ * read purely as a bag of constructors to `instanceof` against, which is what
+ * {@link SequelizeDataTypeNamespace} names.
  */
-export function toGraphQL(sequelizeType: any, sequelizeTypes: any, modelName?: string, fieldName?: string): any {
+export function toGraphQL(
+  sequelizeType: NativeDataType,
+  sequelizeTypes: SequelizeDataTypeNamespace,
+  modelName?: string,
+  fieldName?: string,
+): GraphQLInputType & GraphQLOutputType {
   const {
     BOOLEAN,
     ENUM,
@@ -128,7 +147,7 @@ export function toGraphQL(sequelizeType: any, sequelizeTypes: any, modelName?: s
   }
 
   if (sequelizeType instanceof ENUM) {
-    let values = sequelizeType.values.reduce((o: { [x: string]: { value: any; }; }, k: any) => {
+    let values = (sequelizeType.values || []).reduce((o: { [name: string]: { value: string } }, k: string) => {
       o[sanitizeEnumValue(k)] = {
         value: k,
       };
@@ -153,18 +172,52 @@ export function toGraphQL(sequelizeType: any, sequelizeTypes: any, modelName?: s
   if (sequelizeType instanceof BLOB) {
     return uploadType;
   }
+  // Nothing matched, so no `instanceof` narrowed it — but a live Sequelize type
+  // always carries one of these two, and naming the type is the whole point of
+  // the message.
+  const unmatched = sequelizeType as Partial<NarrowedNativeType>;
   throw new Error(
-    `Unable to convert ${sequelizeType.key ||
-      sequelizeType.toSql()} to a GraphQL type`
+    `Unable to convert ${unmatched?.key ||
+      unmatched?.toSql?.()} to a GraphQL type`
   );
 
   function sanitizeEnumValue(value: string) {
     return value
       .trim()
-      .replace(/([^_a-zA-Z0-9])/g, (_: any, p: string) => specialCharsMap.get(p) || " ")
+      .replace(/([^_a-zA-Z0-9])/g, (_: string, p: string) => specialCharsMap.get(p) || " ")
       .split(" ")
-      .map((v: string | undefined, i: any) => (i ? capitalize(v) : v))
+      .map((v: string, i: number) => (i ? capitalize(v) : v))
       .join("")
       .replace(/(^\d)/, "_$1");
   }
+}
+
+/**
+ * The Sequelize DataTypes namespace, seen as what this module actually uses it
+ * for: a bag of constructors to `instanceof` a live type against. Sequelize's own
+ * typings give each member a distinct constructor signature, which `instanceof`
+ * does not need and which would make the destructuring above a list of twenty-six
+ * separate narrowings for no gain.
+ */
+export type SequelizeDataTypeNamespace = {
+  [K in SequelizeTypeName]: abstract new (...args: never[]) => NarrowedNativeType;
+};
+
+/** The DataTypes this module discriminates against — exactly what it destructures. */
+type SequelizeTypeName =
+  | "BOOLEAN" | "ENUM" | "FLOAT" | "REAL" | "CHAR" | "DECIMAL" | "DOUBLE"
+  | "INTEGER" | "BIGINT" | "STRING" | "TEXT" | "UUID" | "DATE" | "DATEONLY"
+  | "TIME" | "ARRAY" | "VIRTUAL" | "JSON" | "JSONB" | "GEOMETRY" | "UUIDV4"
+  | "BLOB" | "MACADDR" | "CIDR" | "INET";
+
+/** What `instanceof` leaves behind: the members this module reads off a live type. */
+interface NarrowedNativeType {
+  /** ARRAY's element type. */
+  type?: NativeDataType;
+  /** ENUM's declared members. */
+  values?: string[];
+  /** VIRTUAL's declared return type. */
+  returnType?: NativeDataType;
+  key?: string;
+  toSql(): string;
 }

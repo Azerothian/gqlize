@@ -3,7 +3,7 @@ import Sequelize from "sequelize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 // import ItemDef from "./models/item";
 import TaskDef from "./helper/models/task";
-import { OrmAdapter } from "../src/types";
+import { Definition, OrmAdapter } from "../src/types";
 // import TaskItemDef from "./models/task-item";
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
@@ -257,3 +257,45 @@ test("manager - processRelationship - belongsTo - multi adapter", async() => {
   expect(test.getParent).toBeDefined();
 });
 
+
+test("manager - processSelect without input returns rows instead of throwing", async() => {
+  // `select` doubles as a find when no `input` is supplied. Every matched row is
+  // still walked for nested relationship mutations, and that walk used to index
+  // the absent input per association.
+  const db = new Database();
+  db.registerAdapter(new SequelizeAdapter({}, {
+    dialect: "sqlite",
+  }) as OrmAdapter, "sqlite");
+  const parentDef: Definition = {
+    name: "SelectParent",
+    define: {
+      name: {type: Sequelize.STRING, allowNull: false},
+    },
+    relationships: [{
+      type: "hasMany",
+      model: "SelectChild",
+      name: "children",
+      options: {foreignKey: "parentId"},
+    }],
+  };
+  const childDef: Definition = {
+    name: "SelectChild",
+    define: {
+      name: {type: Sequelize.STRING, allowNull: true},
+    },
+    relationships: [{
+      type: "belongsTo",
+      model: "SelectParent",
+      name: "parent",
+      options: {foreignKey: "parentId"},
+    }],
+  };
+  await db.addDefinition(parentDef);
+  await db.addDefinition(childDef);
+  await db.initialise();
+  await db.sync({force: true});
+  await db.processCreate("SelectParent", null, {input: {name: "a"}}, {});
+
+  const rows = await db.processSelect("SelectParent", null, {where: {name: "a"}}, {});
+  expect(rows.length).toEqual(1);
+});

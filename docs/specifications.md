@@ -368,8 +368,9 @@ Extra query fields may be injected via `options.extend.query`.
 | `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**. |
 | `classMethods` | Per-model exposed **mutation** class methods (`MutationClassMethods`). |
 
-Extra mutation fields may be injected via `options.extend.mutation`. Subscriptions are
-supported via `options.subscriptions`.
+Extra mutation fields may be injected via `options.extend.mutation`. Subscriptions are not
+generated: `options.subscriptions` is accepted and ignored (the generator is commented out —
+§13), so a subscription root has to be hand-written and merged in through `options.root`.
 
 ### Field builders (per model type)
 
@@ -538,22 +539,33 @@ corresponding schema element.
 | `model(defName, options)` | Whether the model type is generated at all. |
 | `query(defName, options)` | The list query for a model. |
 | `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` | Mutation operations. |
-| `mutationCreateInput` / `mutationUpdateInput` (field, fieldName, options) | Individual input fields. |
+| `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
-| `relationship(relName, targetName, options)` | Relationship fields. |
+| `relationship(defName, relName, targetName, options)` | Relationship fields. |
 | `queryClassMethods` / `mutationClassMethods` | Exposed class methods. |
 | `queryInstanceMethods` | Exposed instance-method query fields. |
-| `queryExtension` / `mutationExtension` | `options.extend.*` fields. |
+| `queryExtension` / `mutationExtension` (fieldName, options) | `options.extend.*` fields. The first argument is the extend field key, not a model name. |
 
 A shared `options.permission.options` value is threaded into every callback.
 
+This table is the whole set. `PERMISSION_KEYS` in `packages/utilize/src/gate.ts` is the
+machine-readable copy, and `createSchemaObjects` warns when a bag carries a key outside it —
+worth flagging because an absent predicate means *allow*, so an unread key fails open. There
+is no `subscription` callback while subscriptions remain unimplemented (§13).
+
 ### Role-based helper
 
-`packages/gqlize/src/permission-helper.ts` provides
+`packages/utilize/src/permissions.ts` provides
 `createRoleBasedPermissions(role, rules, options)`, which compiles an allow/deny rules tree
 (merged with defaults via `deepmerge`, honoring `defaultDeny` and `allow`/`deny` leaves)
 into the `permission` object above — so consumers can declare permissions per role rather
-than writing every callback by hand.
+than writing every callback by hand. It emits only callbacks from the table above; a rules
+key nothing reads is warned about rather than silently compiled into a dead predicate.
+
+Two rules keys feed more than one callback: `extensions` is accepted as a synonym for both
+`queryExtension` and `mutationExtension`, and `mutationCreateInput` / `mutationUpdateInput`
+fall back to `field` when unspecified, so a role that can read a field can also write it.
+The more specific key wins wherever both express an opinion.
 
 ---
 
@@ -672,7 +684,7 @@ each with its own subpath export:
 ## 11. Build, Test & Tooling
 
 - **Orchestration:** Turborepo + pnpm. Root scripts: `build` (`turbo run build`), `test`
-  (`turbo run test`), `typecheck` (`tsc -b`), `watch`.
+  (`turbo run test`), `typecheck` (`tsc -b && turbo run typecheck`), `watch`.
 - **Compilation:** **SWC** emits two module formats per package into a `publish/` dir —
   `import` → ESM (extensions fixed by each package's `scripts/fix-esm-extensions.ts`),
   `require` → CJS. Type declarations via `tsc`. A `bun` export condition serves the raw
@@ -691,6 +703,21 @@ each with its own subpath export:
   `createSchema` performs the round trip. The anchored match leaves the per-builder unit tests,
   which import `../../src/graphql/create-*`, untouched. This project is the always-on gate against
   the live builder and the materializer drifting apart, and is expected to stay green in CI.
+- **Typecheck:** two programs, both run by the root `typecheck` script and one CI step.
+  `tsc -b` builds the composite `src` projects (each package's `tsconfig.json` is
+  `include: ["src/**/*"]`, so it never sees a test file). `turbo run typecheck` then runs each
+  package's `tsc -p tsconfig.test.json`, a `noEmit` program over `src` **and** `__tests__`.
+  That second program matters because Jest compiles with `@swc/jest`, which strips types
+  without checking them — without it a test could call a function with the wrong arity, or pass
+  the wrong object, and nothing would ever say so. Notes on its shape:
+  - `rootDir` is `../..`: `paths` resolves sibling packages to their **source**, so the program
+    genuinely spans the workspace and needs no built declarations — every package's check runs
+    in parallel with no `dependsOn`.
+  - `types: ["node", "jest"]` is set explicitly because pnpm installs `@types/*` per package.
+  - `ormize-adapter-sequelize` additionally runs `tsc -p tsconfig.test-d.json`, the `strict: true`
+    program over `src/types` + `__tests__/types` that backs its `@ts-expect-error` assertions.
+    `tsconfig.test.json` excludes `__tests__/types` there, since a file cannot satisfy
+    `@ts-expect-error` under two different strictness settings at once.
 - **Runtime:** Node.js ≥ 24.
 - **Binary:** `@azerothian/gqlize` ships a `gqlize` command. `scripts/prepare-package.ts` sets
   `bin: { gqlize: "./cjs/cli/index.js" }` — the CJS build, because it runs on every supported Node

@@ -6,6 +6,32 @@
 // with side effects, and both halves have to agree on activity names — so the
 // naming functions live here as pure string builders.
 
+/**
+ * The caller-supplied context every activity and workflow carries. Deliberately
+ * `any`: its shape belongs to the application, and temporalize only passes it
+ * through (see {@link ActivityRequest}). This module may not import, so it
+ * cannot name `PermissionContext` from `@azerothian/utilize` — it is the same
+ * idea.
+ */
+export type CallerContext = any;
+
+/**
+ * A backend `where` clause: field names mapped to a value or an operator object.
+ * The operator vocabulary belongs to the adapter, so only the shape is described
+ * here.
+ */
+export type WhereClause = { [field: string]: unknown };
+
+/** A primary-key value as it survives JSON serialization into workflow input. */
+export type PrimaryKeyValue = string | number;
+
+/**
+ * A row as it leaves an activity: plain JSON, projected to the permitted fields.
+ * Every generic below defaults to this, so an untyped `ModelActivities` is still
+ * usable while a typed definition can be threaded through instead.
+ */
+export type PlainRow = { [column: string]: unknown };
+
 /** CRUD operations generated for every model. */
 export const CRUD_OPS = [
   "create",
@@ -62,32 +88,32 @@ export function instanceMethodActivityName(model: string, method: string): strin
  * the caller's identity and role on it is the whole point; a missing or
  * non-object `context` fails the activity non-retryably.
  */
-export type ActivityRequest<T = {}> = { context: any } & T;
+export type ActivityRequest<T = {}> = { context: CallerContext } & T;
 
 /** Sort entry: `"name"` or `["name", "DESC"]`. */
 export type OrderEntry = string | [string, string];
 
 export type FindArgs = {
-  where?: any;
+  where?: WhereClause;
   orderBy?: OrderEntry[];
   limit?: number;
   offset?: number;
 };
 
-export type FindAllResult<TRow = any> = { total: number; rows: TRow[] };
+export type FindAllResult<TRow = PlainRow> = { total: number; rows: TRow[] };
 
-export type CreateArgs<TInput = any> = { input: TInput };
+export type CreateArgs<TInput = PlainRow> = { input: TInput };
 
-export type UpdateArgs<TInput = any> = {
+export type UpdateArgs<TInput = PlainRow> = {
   input: TInput;
-  where?: any;
+  where?: WhereClause;
   limit?: number;
   /** Required to run an unscoped (empty `where`) bulk update. */
   all?: boolean;
 };
 
 export type DestroyArgs = {
-  where?: any;
+  where?: WhereClause;
   /** Required to run an unscoped (empty `where`) bulk delete. */
   all?: boolean;
 };
@@ -97,18 +123,18 @@ export type DestroyArgs = {
  * (`create`/`update`/`delete`/`add`/`set`/`remove`/`restore`) from `input`
  * against each match without writing the matched rows themselves.
  */
-export type SelectArgs<TInput = any> = {
+export type SelectArgs<TInput = PlainRow> = {
   input: TInput;
-  where?: any;
+  where?: WhereClause;
   limit?: number;
   all?: boolean;
 };
 
-export type ByPkArgs = { id: any };
+export type ByPkArgs = { id: PrimaryKeyValue };
 
-export type MethodArgs = { args?: any };
+export type MethodArgs = { args?: unknown };
 
-export type InstanceMethodArgs = { id: any; args?: any };
+export type InstanceMethodArgs = { id: PrimaryKeyValue; args?: unknown };
 
 /**
  * Shape of the per-model activity surface, for `proxyActivities` typing.
@@ -116,7 +142,7 @@ export type InstanceMethodArgs = { id: any; args?: any };
  * typed ormize definition can be threaded straight through:
  * `ModelActivities<TaskInstance, TaskStatics>`.
  */
-export type ModelActivities<TInstance = any, TStatics = Record<string, any>> = {
+export type ModelActivities<TInstance = PlainRow, TStatics = Record<string, unknown>> = {
   create(req: ActivityRequest<CreateArgs<Partial<TInstance>>>): Promise<TInstance[]>;
   findAll(req: ActivityRequest<FindArgs>): Promise<FindAllResult<TInstance>>;
   findOne(req: ActivityRequest<FindArgs>): Promise<TInstance | null>;
@@ -126,10 +152,10 @@ export type ModelActivities<TInstance = any, TStatics = Record<string, any>> = {
   destroy(req: ActivityRequest<DestroyArgs>): Promise<TInstance[]>;
   select(req: ActivityRequest<SelectArgs>): Promise<TInstance[]>;
   classMethods: {
-    [K in keyof TStatics]: (req: ActivityRequest<MethodArgs>) => Promise<any>;
+    [K in keyof TStatics]: (req: ActivityRequest<MethodArgs>) => Promise<unknown>;
   };
   instanceMethods: {
-    [name: string]: (req: ActivityRequest<InstanceMethodArgs>) => Promise<any>;
+    [name: string]: (req: ActivityRequest<InstanceMethodArgs>) => Promise<unknown>;
   };
 };
 
@@ -145,4 +171,4 @@ export const ErrorType = {
 } as const;
 
 /** Argument shape of the generic, model-agnostic workflows in `./workflows`. */
-export type WorkflowRequest<T = {}> = { model: string; context: any } & T;
+export type WorkflowRequest<T = {}> = { model: string; context: CallerContext } & T;

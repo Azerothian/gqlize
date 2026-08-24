@@ -9,6 +9,7 @@ import {
   GraphQLString,
   GraphQLObjectType,
   GraphQLScalarType,
+  assertNonNullType,
 } from "graphql";
 import Sequelize from "sequelize";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
@@ -35,7 +36,7 @@ test("createBasicFieldsFunc - empty define", async() => {
   expect(fields).toBeDefined();
   expect(fields.id).toBeDefined();
   expect(fields.id.type).toBeInstanceOf(GraphQLNonNull);
-  expect(fields.id.type.ofType).toEqual(GraphQLID);
+  expect(assertNonNullType(fields.id.type).ofType).toEqual(GraphQLID);
 });
 
 test("createBasicFieldsFunc - define", async() => {
@@ -64,7 +65,7 @@ test("createBasicFieldsFunc - define", async() => {
   expect(fields).toBeDefined();
   expect(fields.name).toBeDefined();
   expect(fields.name.type).toBeInstanceOf(GraphQLNonNull);
-  expect(fields.name.type.ofType).toEqual(GraphQLString);
+  expect(assertNonNullType(fields.name.type).ofType).toEqual(GraphQLString);
   // expect(fields.name.description).toEqual("Hello");
 });
 
@@ -124,7 +125,7 @@ test("createBasicFieldsFunc - define - override", async() => {
   expect(fields).toBeDefined();
   expect(fields.nonnull).toBeDefined();
   expect(fields.nonnull.type).toBeInstanceOf(GraphQLNonNull);
-  expect(fields.nonnull.type.ofType).toBeInstanceOf(GraphQLObjectType);
+  expect(assertNonNullType(fields.nonnull.type).ofType).toBeInstanceOf(GraphQLObjectType);
   // expect(fields.nonnull.description).toEqual("Override");
 
   expect(fields.nullable).toBeDefined();
@@ -174,7 +175,7 @@ test("createBasicFieldsFunc - define - with scalar", async() => {
   expect(fields).toBeDefined();
   expect(fields.nonnull).toBeDefined();
   expect(fields.nonnull.type).toBeInstanceOf(GraphQLNonNull);
-  expect(fields.nonnull.type.ofType).toEqual(GraphQLString);
+  expect(assertNonNullType(fields.nonnull.type).ofType).toEqual(GraphQLString);
   // expect(fields.nonnull.description).toEqual("Override");
   expect(fields.nullable).toBeDefined();
   expect(fields.nullable.type).toEqual(GraphQLString);

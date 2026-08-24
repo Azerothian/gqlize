@@ -206,7 +206,7 @@ describe("snapshotSchema — the real fixture", () => {
         relationship: (d: string, r: string) => !(d === "Task" && r === "items"),
         queryClassMethods: (d: string, m: string) => m !== "getHiddenData",
       },
-    } as any);
+    });
     const snap = snapshotSchema(schema);
 
     expect(JSON.parse(JSON.stringify(snap))).toEqual(snap);

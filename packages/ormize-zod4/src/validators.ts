@@ -1,29 +1,43 @@
 import { z } from "zod";
 import { DataType } from "@azerothian/ormize";
+import type { FieldValidators } from "@azerothian/utilize";
 
 // Translate a Sequelize `validate` block into Zod refinements. Best-effort: a
 // documented common subset is mapped; unknown validators are ignored (never
 // throw), so generated schemas stay permissive rather than wrong.
 
+/** The `{args}` wrapper Sequelize accepts around a validator's value. */
+type ArgsWrapper = { args?: unknown };
+
+/** `v.args` if `v` is the wrapper form, otherwise `undefined`. */
+function argsOf(v: unknown): unknown {
+  return typeof v === "object" && v !== null ? (v as ArgsWrapper).args : undefined;
+}
+
 /** Normalize a sequelize validator value to a number (handles `n`, `{args:[n]}`, `[n]`). */
-function toNumber(v: any): number | undefined {
+function toNumber(v: unknown): number | undefined {
   if (typeof v === "number") return v;
   if (typeof v === "string" && v.trim() !== "" && !isNaN(Number(v))) return Number(v);
-  if (v && Array.isArray(v.args)) return toNumber(v.args[0]);
+  const args = argsOf(v);
+  if (Array.isArray(args)) return toNumber(args[0]);
   if (Array.isArray(v)) return toNumber(v[0]);
   return undefined;
 }
 
 /** Normalize `len` to `[min?, max?]` (handles `[min,max]`, `{args:[min,max]}`, `{args:[[min,max]]}`). */
-function lenBounds(v: any): [number | undefined, number | undefined] {
-  let a: any = Array.isArray(v) ? v : v && Array.isArray(v.args) ? v.args : [];
+function lenBounds(v: unknown): [number | undefined, number | undefined] {
+  const args = argsOf(v);
+  let a: unknown[] = Array.isArray(v) ? v : Array.isArray(args) ? args : [];
   if (Array.isArray(a[0])) a = a[0];
   return [toNumber(a[0]), toNumber(a[1])];
 }
 
 /** Regex source (handles `is: /re/`, `is: "re"`, `is: { args: [/re/] }`). */
-function regexOf(v: any): RegExp | undefined {
-  const raw = v && !Array.isArray(v) && v.args ? v.args[0] : v;
+function regexOf(v: unknown): RegExp | undefined {
+  const args = argsOf(v);
+  // Indexed rather than `Array.isArray`-guarded so the wrapper form behaves
+  // exactly as it did untyped: any truthy `args` is indexed at 0.
+  const raw = !Array.isArray(v) && args ? (args as Record<number, unknown>)[0] : v;
   if (raw instanceof RegExp) return raw;
   if (typeof raw === "string") {
     try {
@@ -35,16 +49,16 @@ function regexOf(v: any): RegExp | undefined {
   return undefined;
 }
 
-function truthy(v: any): boolean {
+function truthy(v: unknown): boolean {
   // Sequelize enables a flag validator with `true` or `{ msg }`.
-  return v === true || (v && typeof v === "object");
+  return v === true || (typeof v === "object" && v !== null);
 }
 
 /**
  * Apply translated validators to a base Zod schema. Only string/number bases are
  * refined; other types are returned unchanged.
  */
-export function applyValidators(schema: z.ZodTypeAny, validate: any, baseType: DataType): z.ZodTypeAny {
+export function applyValidators(schema: z.ZodTypeAny, validate: FieldValidators | undefined, baseType: DataType): z.ZodTypeAny {
   if (!validate || typeof validate !== "object") return schema;
 
   const isStringBase = baseType === DataType.String || baseType === DataType.BigInt || baseType === DataType.Decimal;

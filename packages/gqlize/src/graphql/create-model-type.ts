@@ -8,7 +8,7 @@ import createRelatedFieldsFunc from "./create-related-fields";
 import createComplexFieldsFunc from "./create-complex-fields";
 import { isModelAllowed } from "@azerothian/utilize";
 import GQLManager from "../manager";
-import { SchemaCache } from '../types';
+import { ModelTypeHatch, SchemaCache } from '../types';
 
 
 export default async function createModelType(defName: string, instance: GQLManager, options: any, nodeInterface: any, schemaCache: SchemaCache, prefix = "") {
@@ -44,7 +44,7 @@ export default async function createModelType(defName: string, instance: GQLMana
       return [];
     },
   });
-  (obj as any).$sql2gql = {
+  (obj as GraphQLObjectType & {$sql2gql?: ModelTypeHatch}).$sql2gql = {
     basicFields: basicFields,
     complexFields: complexFields,
     relatedFields: relatedFields,

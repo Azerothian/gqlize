@@ -1,10 +1,10 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
+import type { Ormize } from "@azerothian/ormize";
 import { generateZodSchemas } from "@azerothian/ormize-zod4";
+import type { GeneratedZodSchemas, ZodObjectMap } from "@azerothian/ormize-zod4";
 import { isModelAllowed } from "@azerothian/utilize";
 import { NESTIZE_OPTIONS, ORMIZE, type NestizeOptions } from "./types";
-
-type ZodObjectMap = { [modelName: string]: z.ZodObject<any> };
 
 /**
  * Computes the entity/create/update Zod schemas once (from the initialised ormize
@@ -14,7 +14,7 @@ type ZodObjectMap = { [modelName: string]: z.ZodObject<any> };
  */
 @Injectable()
 export class NestizeSchemaRegistry {
-  private schemas!: { entity: ZodObjectMap; create: ZodObjectMap; update: ZodObjectMap };
+  private schemas!: GeneratedZodSchemas;
   // Null-prototype map: the `:resource` URL segment is attacker-controlled, so a
   // plain object would let keys like `constructor`/`__proto__`/`hasOwnProperty`
   // resolve to inherited members instead of `undefined`, bypassing the
@@ -22,11 +22,11 @@ export class NestizeSchemaRegistry {
   private resourceMap: { [resource: string]: string } = Object.create(null);
 
   constructor(
-    @Inject(ORMIZE) private readonly orm: any,
+    @Inject(ORMIZE) private readonly orm: Ormize,
     @Inject(NESTIZE_OPTIONS) private readonly options: NestizeOptions
   ) {
     this.schemas = generateZodSchemas(this.orm, { permission: this.options.permission });
-    const defs = (this.orm.getDefinitions && this.orm.getDefinitions()) || {};
+    const defs = this.orm.getDefinitions() || {};
     for (const name of Object.keys(defs)) {
       if (!isModelAllowed(this.options.permission, name)) {
         continue;
@@ -49,17 +49,17 @@ export class NestizeSchemaRegistry {
     return Object.keys(this.schemas.entity);
   }
 
-  entity(name: string): z.ZodObject<any> | undefined {
+  entity(name: string): z.ZodObject<z.ZodRawShape> | undefined {
     return this.schemas.entity[name];
   }
-  create(name: string): z.ZodObject<any> | undefined {
+  create(name: string): z.ZodObject<z.ZodRawShape> | undefined {
     return this.schemas.create[name];
   }
-  update(name: string): z.ZodObject<any> | undefined {
+  update(name: string): z.ZodObject<z.ZodRawShape> | undefined {
     return this.schemas.update[name];
   }
 
-  all(): { entity: ZodObjectMap; create: ZodObjectMap; update: ZodObjectMap } {
+  all(): GeneratedZodSchemas {
     return this.schemas;
   }
 }

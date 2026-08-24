@@ -21,6 +21,53 @@ function parseWithScores(flat: string[]): Map<string, number> {
   return m;
 }
 
+/**
+ * The subset of an ioredis-compatible client this adapter actually calls.
+ *
+ * Structural rather than `import type { Redis } from "ioredis"`: the package is
+ * required lazily so a caller injecting their own client need not install it,
+ * and any client carrying these commands — a Valkey client, a test double, a
+ * recording `Proxy` — is equally valid here. Keeping it structural is also what
+ * keeps this list honest: it is exactly the command surface the adapter uses,
+ * and adding a command to the adapter means adding it here.
+ */
+export interface ValkeyClient {
+  get(key: string): Promise<string | null>;
+  mget(...keys: string[]): Promise<(string | null)[]>;
+  zrange(key: string, start: number, stop: number, withScores: "WITHSCORES"): Promise<string[]>;
+  smembers(key: string): Promise<string[]>;
+  pttl(key: string): Promise<number>;
+  incr(key: string): Promise<number>;
+  set(key: string, value: string): Promise<unknown>;
+  set(key: string, value: string, px: "PX", ttlMs: number): Promise<unknown>;
+  del(key: string): Promise<unknown>;
+  zadd(key: string, score: string, member: string): Promise<unknown>;
+  zrem(key: string, member: string): Promise<unknown>;
+  sadd(key: string, ...members: string[]): Promise<unknown>;
+  srem(key: string, ...members: string[]): Promise<unknown>;
+  pexpire(key: string, ttlMs: number): Promise<unknown>;
+  persist(key: string): Promise<unknown>;
+  multi(): ValkeyPipeline;
+  /** Optional: only called for a client this adapter opened itself. */
+  quit?(): Promise<unknown>;
+}
+
+/**
+ * A queued `MULTI` batch. Only `exec` is declared: the commands are queued by
+ * name from the buffered {@link ValkeyCommand} tuples, so listing them here as
+ * methods would be a second copy of that list with nothing checking the two
+ * agree.
+ */
+export interface ValkeyPipeline {
+  exec(): Promise<unknown>;
+}
+
+/**
+ * One buffered write, as `[command, ...args]` — the exact argument list handed
+ * back to the client on `commit`.
+ */
+export type ValkeyCommand = [command: string, ...args: (string | number)[]];
+
 export interface Executor {
   readonly buffered: boolean;
   // reads
@@ -47,10 +94,10 @@ export interface Executor {
 /** Immediate, non-transactional execution. Writes are fire-and-collect promises. */
 export class DirectExecutor implements Executor {
   readonly buffered = false;
-  private pending: Promise<any>[] = [];
-  constructor(private client: any) {}
+  private pending: Promise<unknown>[] = [];
+  constructor(private client: ValkeyClient) {}
 
-  private track(p: Promise<any>): void {
+  private track(p: Promise<unknown>): void {
     this.pending.push(p);
   }
   /** Await all in-flight writes issued since the last flush. */
@@ -99,9 +146,9 @@ export class ValkeyTransaction implements Executor {
   private zRems = new Map<string, Set<string>>();
   private sAdds = new Map<string, Set<string>>();
   private sRems = new Map<string, Set<string>>();
-  private commands: any[][] = [];
+  private commands: ValkeyCommand[] = [];
 
-  constructor(private client: any) {}
+  constructor(private client: ValkeyClient) {}
 
   // ---- reads (overlay over store) ----
   async getObj(key: string): Promise<string | null> {
@@ -195,7 +242,15 @@ export class ValkeyTransaction implements Executor {
     if (!this.commands.length) return;
     const multi = this.client.multi();
     for (const [method, ...args] of this.commands) {
-      multi[method](...args);
+      // Queued by name: `ValkeyPipeline` deliberately declares only `exec`, so
+      // the lookup is dynamic and checked here rather than by the compiler. A
+      // client missing one of these fails on the first `commit` that uses it,
+      // which is more useful than a `TypeError` deeper in the driver.
+      const queue = (multi as unknown as {[command: string]: ((...args: (string | number)[]) => unknown) | undefined})[method];
+      if (typeof queue !== "function") {
+        throw new Error(`valkey: client pipeline has no "${method}" command`);
+      }
+      queue.apply(multi, args);
     }
     this.commands = [];
     await multi.exec();

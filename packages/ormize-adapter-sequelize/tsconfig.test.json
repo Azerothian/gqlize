@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    // The program spans the workspace: `paths` resolves sibling packages to
+    // their source, so every one of them is a "source file" of this program.
+    "rootDir": "../..",
+    "types": ["node", "jest"]
+  },
+  "include": ["src/**/*", "__tests__/**/*"],
+  // `__tests__/types` is the `tsc -p tsconfig.test-d.json` program, which runs
+  // the same files under `strict: true`. Checking them twice under two
+  // different strictness settings makes every `@ts-expect-error` in there
+  // unsatisfiable in one pass or the other.
+  "exclude": ["node_modules", ".tsbuild", "lib", "cjs", "publish", "__tests__/types"]
+}

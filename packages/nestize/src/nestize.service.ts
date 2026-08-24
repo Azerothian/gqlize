@@ -14,12 +14,33 @@ import {
   isMutationAllowed,
   isRelationshipAllowed,
 } from "@azerothian/utilize";
+import type { AdapterWhere, Association } from "@azerothian/utilize";
+import type { MutationInputTree, Ormize } from "@azerothian/ormize";
 import { NestizeSchemaRegistry } from "./schema-registry";
-import { NESTIZE_OPTIONS, ORMIZE, type NestizeOptions } from "./types";
+import {
+  NESTIZE_OPTIONS,
+  ORMIZE,
+  type NestizeOptions,
+  type PlainRow,
+  type RestQuery,
+  type RestRequest,
+} from "./types";
 import { parseListQuery, parseWhere } from "./query";
+
+/** A list response: `total` always, `rows` unless the caller asked to count only. */
+export type ListResult = { total: number; rows?: unknown };
 
 /** Kind of `_actions` call, derived from the HTTP verb (GET → query, POST → mutation). */
 export type MethodKind = "query" | "mutation";
+
+/** Body of `POST /:resource/select`. */
+export type SelectBody = {
+  input?: MutationInputTree;
+  where?: AdapterWhere;
+  limit?: number;
+  /** Required to run an unscoped (empty `where`) bulk select-mutation. */
+  all?: boolean;
+} | undefined;
 
 /**
  * Generic REST facade over the graphql-free ormize resolution engine. Every method
@@ -31,7 +52,7 @@ export type MethodKind = "query" | "mutation";
 @Injectable()
 export class NestizeService {
   constructor(
-    @Inject(ORMIZE) private readonly orm: any,
+    @Inject(ORMIZE) private readonly orm: Ormize,
     @Inject(NESTIZE_OPTIONS) private readonly options: NestizeOptions,
     private readonly registry: NestizeSchemaRegistry
   ) {}
@@ -61,7 +82,7 @@ export class NestizeService {
    * a non-empty filter is required unless the caller explicitly opts in via
    * `?all=true` (or `all: true` in a select body).
    */
-  private assertScopedMutation(where: any, optIn: boolean): void {
+  private assertScopedMutation(where: unknown, optIn: boolean): void {
     const hasFilter = where && typeof where === "object" && Object.keys(where).length > 0;
     if (!hasFilter && !optIn) {
       throw new BadRequestException(
@@ -76,14 +97,15 @@ export class NestizeService {
    * password hash) and use the row count as a boolean oracle to read its value,
    * even though the field never appears in a response body.
    */
-  private assertFilterAllowed(name: string, where: any): void {
+  private assertFilterAllowed(name: string, where: unknown): void {
     if (!where || typeof where !== "object") {
       return;
     }
+    const clause = where as AdapterWhere;
     const logical = new Set(["and", "or", "not"]);
-    for (const key of Object.keys(where)) {
+    for (const key of Object.keys(clause)) {
       if (logical.has(key.toLowerCase())) {
-        const branch = where[key];
+        const branch = clause[key];
         if (Array.isArray(branch)) {
           branch.forEach((c) => this.assertFilterAllowed(name, c));
         } else {
@@ -98,7 +120,7 @@ export class NestizeService {
   }
 
   /** Validate that every `orderBy` field is permitted for the model. */
-  private assertOrderAllowed(name: string, orderBy: any): void {
+  private assertOrderAllowed(name: string, orderBy: unknown): void {
     if (!Array.isArray(orderBy)) {
       return;
     }
@@ -116,22 +138,26 @@ export class NestizeService {
     return (keys && keys[0]) || "id";
   }
 
-  private coerceId(id: any): any {
+  private coerceId(id: unknown): unknown {
     if (typeof id === "string" && /^\d+$/.test(id)) {
       return Number(id);
     }
     return id;
   }
 
-  private toPlain(v: any): any {
+  private toPlain(v: unknown): unknown {
     if (Array.isArray(v)) {
       return v.map((x) => this.toPlain(x));
     }
-    if (v && typeof v.toJSON === "function") {
-      return v.toJSON();
+    // Duck-typed rather than instance-checked: the ORM instance type belongs to
+    // the adapter, and nestize only knows that one of these two escape hatches
+    // yields plain JSON.
+    const instance = v as { toJSON?: () => unknown; get?: (options: { plain: boolean }) => unknown };
+    if (v && typeof instance.toJSON === "function") {
+      return instance.toJSON();
     }
-    if (v && typeof v.get === "function") {
-      return v.get({ plain: true });
+    if (v && typeof instance.get === "function") {
+      return instance.get({ plain: true });
     }
     return v;
   }
@@ -146,7 +172,7 @@ export class NestizeService {
    * otherwise be serialized straight from the raw ORM instance. When no schema
    * exists for the model (nothing gated), the value is returned unchanged.
    */
-  private project(name: string, v: any): any {
+  private project(name: string, v: unknown): unknown {
     if (Array.isArray(v)) {
       return v.map((x) => this.project(name, x));
     }
@@ -157,33 +183,37 @@ export class NestizeService {
     if (!schema) {
       return v;
     }
+    const row = v as PlainRow;
     const allowed = new Set(Object.keys(schema.shape));
-    const out: any = {};
-    for (const key of Object.keys(v)) {
+    const out: PlainRow = {};
+    for (const key of Object.keys(row)) {
       if (allowed.has(key)) {
-        out[key] = v[key];
+        out[key] = row[key];
       }
     }
     return out;
   }
 
   /** Serialize an ORM instance/list to plain JSON, filtered to allowed fields. */
-  private present(name: string, v: any): any {
+  private present(name: string, v: unknown): unknown {
     return this.project(name, this.toPlain(v));
   }
 
   /** Load the raw model instance for a pk (needed for relationship accessors). */
-  private async loadInstance(name: string, id: any, req: any): Promise<any> {
+  private async loadInstance(name: string, id: unknown, req: RestRequest): Promise<PlainRow> {
     const pk = this.pkName(name);
-    const args: any = { where: { [pk]: { eq: this.coerceId(id) } }, first: 1 };
+    const args = { where: { [pk]: { eq: this.coerceId(id) } }, first: 1 };
     const { models } = await this.orm.resolveFindAll(name, null, args, { req });
     if (!models || models.length === 0) {
       throw new NotFoundException(`${name} '${id}' not found`);
     }
-    return models[0];
+    // An adapter row is opaque by contract, so the engine hands it back as
+    // `unknown`. Callers here read a relationship accessor or method off it by
+    // name, which is exactly what the raw instance is loaded for.
+    return models[0] as PlainRow;
   }
 
-  private relationOrThrow(name: string, relation: string): any {
+  private relationOrThrow(name: string, relation: string): Association {
     if (this.options.includeRelations === false) {
       throw new NotFoundException(`Unknown relation '${relation}'`);
     }
@@ -199,7 +229,7 @@ export class NestizeService {
 
   // --- collection ------------------------------------------------------------
 
-  async list(resource: string, query: any, req: any): Promise<any> {
+  async list(resource: string, query: RestQuery, req: RestRequest): Promise<ListResult> {
     const name = this.mustResolve(resource);
     const { args, count } = parseListQuery(query);
     this.assertFilterAllowed(name, args.where);
@@ -212,13 +242,13 @@ export class NestizeService {
     return { total, rows: this.present(name, models) };
   }
 
-  async findOne(resource: string, id: any, req: any): Promise<any> {
+  async findOne(resource: string, id: unknown, req: RestRequest): Promise<unknown> {
     const name = this.mustResolve(resource);
     const row = await this.loadInstance(name, id, req);
     return this.present(name, row);
   }
 
-  async create(resource: string, body: any, req: any): Promise<any> {
+  async create(resource: string, body: PlainRow, req: RestRequest): Promise<unknown> {
     this.assertWritable();
     const name = this.mustResolve(resource);
     if (!isMutationAllowed(this.permission, name, "create")) {
@@ -227,11 +257,13 @@ export class NestizeService {
     const schema = this.registry.create(name);
     const input = schema ? schema.parse(body) : body;
     const results = await this.orm.processCreate(name, null, { input }, { req });
+    // `processCreate` always returns a list; a single-row create is unwrapped so
+    // the REST response is the resource itself rather than a one-element array.
     const plain = this.present(name, results);
-    return plain.length === 1 ? plain[0] : plain;
+    return Array.isArray(plain) && plain.length === 1 ? plain[0] : plain;
   }
 
-  async update(resource: string, query: any, body: any, req: any): Promise<any> {
+  async update(resource: string, query: RestQuery, body: PlainRow, req: RestRequest): Promise<unknown> {
     this.assertWritable();
     const name = this.mustResolve(resource);
     if (!isMutationAllowed(this.permission, name, "update")) {
@@ -247,7 +279,7 @@ export class NestizeService {
     return this.present(name, results);
   }
 
-  async remove(resource: string, query: any, req: any): Promise<any> {
+  async remove(resource: string, query: RestQuery, req: RestRequest): Promise<{ deleted: unknown }> {
     this.assertWritable();
     const name = this.mustResolve(resource);
     if (!isMutationAllowed(this.permission, name, "delete")) {
@@ -260,7 +292,7 @@ export class NestizeService {
     return { deleted: this.present(name, deleted) };
   }
 
-  async select(resource: string, body: any, req: any): Promise<any> {
+  async select(resource: string, body: SelectBody, req: RestRequest): Promise<{ rows: unknown }> {
     const name = this.mustResolve(resource);
     const { input, where, limit } = body || {};
     this.assertFilterAllowed(name, where);
@@ -281,7 +313,7 @@ export class NestizeService {
 
   // --- relationships ---------------------------------------------------------
 
-  async relationGet(resource: string, id: any, relation: string, query: any, req: any): Promise<any> {
+  async relationGet(resource: string, id: unknown, relation: string, query: RestQuery, req: RestRequest): Promise<unknown> {
     const name = this.mustResolve(resource);
     const assoc = this.relationOrThrow(name, relation);
     const source = await this.loadInstance(name, id, req);
@@ -295,7 +327,7 @@ export class NestizeService {
     return { total, rows: this.present(assoc.target, models) };
   }
 
-  async relationMutate(resource: string, id: any, relation: string, body: any, req: any): Promise<any> {
+  async relationMutate(resource: string, id: unknown, relation: string, body: unknown, req: RestRequest): Promise<unknown> {
     this.assertWritable();
     const name = this.mustResolve(resource);
     this.relationOrThrow(name, relation);
@@ -313,7 +345,7 @@ export class NestizeService {
     return this.present(name, results);
   }
 
-  async relationRemove(resource: string, id: any, relation: string, relId: any, req: any): Promise<any> {
+  async relationRemove(resource: string, id: unknown, relation: string, relId: unknown, req: RestRequest): Promise<unknown> {
     this.assertWritable();
     const name = this.mustResolve(resource);
     const assoc = this.relationOrThrow(name, relation);
@@ -323,7 +355,7 @@ export class NestizeService {
     const single = assoc.associationType === "belongsTo" || assoc.associationType === "hasOne";
     const pk = this.pkName(name);
     const where = { [pk]: { eq: this.coerceId(id) } };
-    let subOp: any;
+    let subOp: unknown;
     if (single) {
       subOp = { remove: true };
     } else {
@@ -341,7 +373,7 @@ export class NestizeService {
 
   // --- class / instance methods (`_actions`) ---------------------------------
 
-  async callClassMethod(resource: string, method: string, args: any, kind: MethodKind, req: any): Promise<any> {
+  async callClassMethod(resource: string, method: string, args: unknown, kind: MethodKind, req: RestRequest): Promise<unknown> {
     const name = this.mustResolve(resource);
     if (kind === "mutation") {
       this.assertWritable();
@@ -349,29 +381,30 @@ export class NestizeService {
     if (!this.options.expose?.classMethods) {
       throw new NotFoundException(`Class methods not exposed for ${name}`);
     }
-    const gate = kind === "mutation" ? (this.permission as any)?.mutationClassMethods : (this.permission as any)?.queryClassMethods;
-    if (!isAllowed(gate, name, method, (this.permission as any)?.options)) {
+    const gate = kind === "mutation" ? this.permission?.mutationClassMethods : this.permission?.queryClassMethods;
+    if (!isAllowed(gate, name, method, this.permission?.options)) {
       throw new ForbiddenException(`Method '${method}' not allowed for ${name}`);
     }
     const result = await this.orm.resolveClassMethod(name, method, args, { req });
     return this.toPlain(result);
   }
 
-  async callInstanceMethod(resource: string, id: any, method: string, args: any, req: any): Promise<any> {
+  async callInstanceMethod(resource: string, id: unknown, method: string, args: unknown, req: RestRequest): Promise<unknown> {
     this.assertWritable();
     const name = this.mustResolve(resource);
     if (!this.options.expose?.instanceMethods) {
       throw new NotFoundException(`Instance methods not exposed for ${name}`);
     }
-    const gate = (this.permission as any)?.queryInstanceMethods;
-    if (!isAllowed(gate, name, method, (this.permission as any)?.options)) {
+    const gate = this.permission?.queryInstanceMethods;
+    if (!isAllowed(gate, name, method, this.permission?.options)) {
       throw new ForbiddenException(`Method '${method}' not allowed for ${name}`);
     }
     const row = await this.loadInstance(name, id, req);
-    if (typeof row[method] !== "function") {
+    const instanceMethod = row[method];
+    if (typeof instanceMethod !== "function") {
       throw new NotFoundException(`Unknown method '${method}' on ${name}`);
     }
-    const result = await row[method](args, { req });
+    const result = await instanceMethod.call(row, args, { req });
     return this.toPlain(result);
   }
 }

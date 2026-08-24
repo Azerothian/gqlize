@@ -254,9 +254,9 @@ describe("extend fields through loadSchema", () => {
     const live = await createSchema(instance, {extend});
     const artifact = JSON.parse(JSON.stringify(snapshotSchema(live)));
 
-    await expect(materializeSchema(artifact, instance, {} as any))
+    await expect(materializeSchema(artifact, instance, {}))
       .rejects.toThrow(/extend\.query\.health/);
-    await expect(materializeSchema(artifact, instance, {} as any))
+    await expect(materializeSchema(artifact, instance, {}))
       .rejects.toThrow(/never serialized/);
   });
 
@@ -268,7 +268,7 @@ describe("extend fields through loadSchema", () => {
 
     const rebuilt = await materializeSchema(artifact, instance, {
       extendFactory: () => extend,
-    } as any);
+    });
     expect(printSchema(rebuilt)).toEqual(printSchema(live));
   });
 });
@@ -287,7 +287,7 @@ describe("a live type that collides with one the artifact owns", () => {
     });
     const attempt = materializeSchema(artifact, instance, {
       extend: {query: {stale: {type: staleTask, resolve: () => ({})}}},
-    } as any);
+    });
 
     await expect(attempt).rejects.toThrow(/more than one type per name/);
     await expect(attempt).rejects.toThrow(/"Task"/);
@@ -317,7 +317,7 @@ describe("root slots", () => {
 
     const rebuilt = await materializeSchema(artifact, instance, {
       extendFactory: (types: any) => ({root: {subscription: subscriptionFor(types.Task)}}),
-    } as any);
+    });
 
     expect(rebuilt.getSubscriptionType()?.name).toEqual("Subscription");
     // one `Task`, shared between the query and subscription roots

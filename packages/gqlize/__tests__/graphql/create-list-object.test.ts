@@ -25,7 +25,9 @@ test("createListObject", async() => {
   await db.sync();
   const {nodeInterface} = createNodeInterface(db);
   const schemaCache = createSchemaCache();
-  schemaCache.types.Item = createModelType(itemDef.name, db, {}, nodeInterface, schemaCache);
+  // `createModelType` is async, and returns undefined when the model is
+  // permission-denied. Neither was visible while the cache was `any`.
+  schemaCache.types.Item = (await createModelType(itemDef.name, db, {}, nodeInterface, schemaCache))!;
   //(instance, schemaCache, targetDefName, targetType, data, prefix = "", suffix = "")
   const listObject = createListObject(db, schemaCache, itemDef.name, schemaCache.types.Item, {
     source: "findAll",
@@ -33,7 +35,7 @@ test("createListObject", async() => {
   }, "", "");
   expect(listObject.type).toBeInstanceOf(GraphQLObjectType);
   expect(listObject.resolve).toBeInstanceOf(Function);
-  expect(listObject.extensions.gqlize).toEqual({
+  expect(listObject.extensions!.gqlize).toEqual({
     kind: "connection",
     connectionName: "Item",
     targetDefName: "Item",

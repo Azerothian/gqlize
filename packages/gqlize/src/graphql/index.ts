@@ -7,7 +7,7 @@ import {
 import createNodeInterface from "./utils/create-node-interface";
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import { isModelAllowed, isMutationAllowed } from "@azerothian/utilize";
+import { PERMISSION_KEYS, isModelAllowed, isMutationAllowed, unknownPermissionKeys } from "@azerothian/utilize";
 import createModelType from "./create-model-type";
 import createListObject from "./create-list-object";
 import createClassMethods from "./create-class-methods";
@@ -16,13 +16,48 @@ import createMutationInput from "./create-mutation-input";
 import createSchemaCache from "./create-schema-cache";
 import computeVisibleModels from "./utils/visible-models";
 import GQLManager from '../manager';
-import { GqlizeOptions, SchemaCache } from '../types';
+import { GqlizeOptions, GqlizeAdapter, SchemaCache, SchemaHatch } from '../types';
 import { bindField } from "./resolvers/bind";
 import { applyExtendFields } from "./extend";
 import { createLedger, recordExternalType, setLedger } from "./snapshot/ledger";
 import { recordBuild } from "./snapshot/build-registry";
 import { GQLIZE_EXT } from "./resolvers/types";
 import { enrichDuplicateTypeError } from "./utils/duplicate-types";
+
+/**
+ * Deliberately `console.warn` and not the `debug`-based logger, for the same
+ * reason the artifact loader gives (`snapshot/materialize.ts`): `debug` is
+ * silent unless `DEBUG` is set, which would make an unread permission predicate
+ * an invisible event — the exact thing this check exists to surface.
+ */
+const log = {
+  warn: (message: string) => console.warn(message), // eslint-disable-line no-console
+};
+
+/**
+ * Report permission keys that no builder will ever read.
+ *
+ * An absent predicate means ALLOW, so a misspelled key does not fail closed —
+ * it produces a schema quietly more permissive than its author intended. Warn
+ * rather than throw: the schema is still valid, and failing a build over a
+ * stray key would be a worse trade than a loud message.
+ *
+ * Exported because `materializeSchema` needs the same check: the artifact path
+ * never runs this builder, but it still takes a live `options.permission` (for
+ * `applyExtendFields` and the `node(id:)` fetcher), so a typo is exactly as
+ * invisible there.
+ */
+export function warnUnknownPermissionKeys(options: GqlizeOptions) {
+  const unknown = unknownPermissionKeys(options.permission);
+  if (unknown.length === 0) {
+    return;
+  }
+  log.warn(
+    `gqlize: options.permission has ${unknown.length === 1 ? "a key" : "keys"} nothing reads — ` +
+      `${unknown.join(", ")}. An absent predicate means ALLOW, so ${unknown.length === 1 ? "this key gates" : "these keys gate"} ` +
+      `nothing and the schema is more permissive than it looks. Accepted keys: ${PERMISSION_KEYS.join(", ")}.`,
+  );
+}
 
 export function createModelTypes(instance: GQLManager, options: GqlizeOptions, nodeInterface: GraphQLInterfaceType, schemaCache: SchemaCache) {
   return async(defName: string, o: any) => {
@@ -84,6 +119,8 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   const rootSchema: any = {};
   const definitions = instance.getDefinitions();
 
+  warnUnknownPermissionKeys(gqlizeOptions);
+
   // Permissions can deny every field of a model, which would emit an output type
   // with no fields — an invalid GraphQL type. Resolve which models still have a
   // visible field and fold the answer back into the permission bag as a stricter
@@ -111,10 +148,8 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   // relationships — otherwise a hidden field stays filterable/orderable and a
   // denied relationship stays joinable (information-disclosure oracle).
   Object.keys(definitions).forEach((defName) => {
-    const adapter: any = instance.getModelAdapter(defName);
-    if (adapter && typeof adapter.setBuildPermission === "function") {
-      adapter.setBuildPermission(options.permission);
-    }
+    const adapter = instance.getModelAdapter(defName) as GqlizeAdapter | undefined;
+    adapter?.setBuildPermission?.(options.permission);
     // `whereOperatorTypes` is read straight off the definition by the adapters'
     // filter builders, so a user type declared there reaches the schema without
     // passing any gqlize builder that could record it. Record it here instead:
@@ -280,7 +315,7 @@ export async function createSchema(dbInstance: GQLManager, options: GqlizeOption
     );
   }
 
-  (schema as any).$sql2gql = {
+  (schema as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql = {
     types: schemaObjects.types,
   };
   // Lets `snapshotSchema(schema)` fingerprint the definitions later without the

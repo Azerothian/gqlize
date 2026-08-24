@@ -1,7 +1,8 @@
 import {
-  GraphQLInputObjectType, GraphQLNonNull, GraphQLScalarType, GraphQLEnumType, GraphQLList, GraphQLInt,
+  GraphQLNonNull, GraphQLList, GraphQLInt,
   GraphQLID, GraphQLBoolean,
 } from "graphql";
+import type { GraphQLNullableInputType } from "graphql";
 import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
@@ -12,6 +13,7 @@ import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
 import { Relationship } from '../types/index';
 import { recordExternalType } from "./snapshot/ledger";
+import { isBuiltInputType, type AuthoredTypeSlot } from "./utils/authored-type";
 
 /** Whether a relationship may appear on a create/update input object. */
 function isRelationshipInputAllowed(options: GqlizeOptions, defName: string, relName: string, forceOptional: boolean) {
@@ -66,7 +68,9 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       const overrideFieldDefinition = definition.override[fieldName];
 
       if (overrideFieldDefinition) {
-        const type = overrideFieldDefinition.inputType || overrideFieldDefinition.type;
+        // Both forms an author may write carry a `name`; only the config form
+        // carries `fields`, which is read in the build branch below.
+        const type = (overrideFieldDefinition.inputType || overrideFieldDefinition.type) as AuthoredTypeSlot;
         let name = type.name;
         if (!overrideFieldDefinition.inputType) {
           name = `${type.name}${capitalize(fieldName)}Input`;
@@ -74,14 +78,11 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         if (forceOptional) {
           name = `${capitalize(type.name)}Optional${capitalize(fieldName)}`;
         }
-        let inputType;
-        if (!(overrideFieldDefinition.type instanceof GraphQLInputObjectType) &&
-          !(overrideFieldDefinition.type instanceof GraphQLScalarType) &&
-          !(overrideFieldDefinition.type instanceof GraphQLEnumType)) {
-          inputType = createGQLInputObject(name, type.fields, schemaCache, comment);
-        } else {
-          inputType = type;
-        }
+        // The guard reads `type`, not `inputType`, exactly as before: an override
+        // that supplies a built `inputType` supplies a built `type` alongside it.
+        const inputType: GraphQLNullableInputType = isBuiltInputType(overrideFieldDefinition.type)
+          ? type as unknown as GraphQLNullableInputType
+          : createGQLInputObject(name, type.fields, schemaCache, comment);
         recordExternalType(schemaCache, inputType, {
           via: "definitionOverride",
           defName,
@@ -269,7 +270,6 @@ export default function createMutationInput(instance: GQLManager, defName: strin
   const fields = instance.getFields(defName);
   const associations = instance.getAssociations(defName);
   const definition = instance.getDefinition(defName);
-  let required, optional;
   // Permissions can leave a model with nothing writable at all; the resulting
   // input object would have no fields and make the whole schema invalid, so it
   // is not built and the mutations that would take it are omitted.
@@ -277,21 +277,17 @@ export default function createMutationInput(instance: GQLManager, defName: strin
     hasInputFields(defName, fields, associations, mutableDefNames, true, options);
   const doNotSkipCreate = isMutationAllowed(options.permission, defName, "create") &&
     hasInputFields(defName, fields, associations, mutableDefNames, false, options);
-  if (doNotSkipCreate) {
-    required = createGQLInputObject(`${defName}RequiredInput`, function() {
-      return generateInputFields(instance, defName, definition, fields, associations, inputTypes, schemaCache, false, options);
-    }, schemaCache, "");
-  }
-  if (doNotSkipUpdate) {
-    optional = createGQLInputObject(`${defName}OptionalInput`, function() {
-      return generateInputFields(instance, defName, definition, fields, associations, inputTypes, schemaCache, true, options);
-    }, schemaCache, "");
-  }
+  const required = doNotSkipCreate ? createGQLInputObject(`${defName}RequiredInput`, function() {
+    return generateInputFields(instance, defName, definition, fields, associations, inputTypes, schemaCache, false, options);
+  }, schemaCache, "") : undefined;
+  const optional = doNotSkipUpdate ? createGQLInputObject(`${defName}OptionalInput`, function() {
+    return generateInputFields(instance, defName, definition, fields, associations, inputTypes, schemaCache, true, options);
+  }, schemaCache, "") : undefined;
   const filterType = instance.getFilterGraphQLType(defName);
   return {
     required, optional,
-    create: (doNotSkipCreate) ? new GraphQLList(required) : undefined,
-    update: (doNotSkipUpdate) ? new GraphQLList(createGQLInputObject(`${defName}UpdateInput`, {
+    create: required ? new GraphQLList(required) : undefined,
+    update: optional ? new GraphQLList(createGQLInputObject(`${defName}UpdateInput`, {
       where: {
         type: filterType,
         description: "If provided this will restrict to changes to only the elements that match",
@@ -307,7 +303,7 @@ export default function createMutationInput(instance: GQLManager, defName: strin
     }, schemaCache, "")) : undefined,
     // `select` finds matching elements and runs relationship mutations on them
     // (via `input`) without modifying the elements themselves.
-    select: (doNotSkipUpdate) ? new GraphQLList(createGQLInputObject(`${defName}SelectInput`, {
+    select: optional ? new GraphQLList(createGQLInputObject(`${defName}SelectInput`, {
       where: {
         type: filterType,
         description: "Filter used to find the existing elements to run relationship mutations on",

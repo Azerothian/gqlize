@@ -1,4 +1,5 @@
 import type { NativeConnection, Worker, WorkerOptions } from "@temporalio/worker";
+import type { Ormize } from "@azerothian/ormize";
 import { createActivities } from "./activities";
 import { buildQueueMap } from "./queue";
 import { TemporalizeRegistry } from "./registry";
@@ -53,7 +54,7 @@ export interface TemporalizeWorkers {
  * `@temporalio/worker` is imported lazily — it loads a native addon, and callers
  * that only build activities or drive a client should not pay for it.
  */
-export async function createWorkers(orm: any, options: CreateWorkersOptions = {}): Promise<TemporalizeWorkers> {
+export async function createWorkers(orm: Ormize, options: CreateWorkersOptions = {}): Promise<TemporalizeWorkers> {
   const { Worker } = await import("@temporalio/worker");
   const queueMap = buildQueueMap(orm, options);
   const registry = new TemporalizeRegistry(orm, options);

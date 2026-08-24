@@ -6,20 +6,52 @@
 // Discrimination mirrors the groupings in `./type-mapper.ts` (native -> GraphQL),
 // but uses the cheaper `.key` string rather than `instanceof`.
 
-import { DataTypes as SequelizeDataTypes } from "sequelize";
+import { DataTypes as SequelizeDataTypes, type DataType as SequelizeDataType } from "sequelize";
 import {
   DataType,
   DataTypeDescriptor,
   DataTypes,
 } from "@azerothian/utilize/types/data-type";
+import type { NativeDataType } from "@azerothian/utilize/types/index";
 
-function keyOf(nativeType: any): string {
-  const k = nativeType?.key ?? nativeType?.constructor?.key;
+/**
+ * A native Sequelize type as this module produces one. Sequelize's own
+ * `DataType` also admits a raw SQL string; `toNativeType` never returns that
+ * form, and excluding it is what lets its result feed straight back into
+ * `DataTypes.ARRAY(...)`.
+ */
+export type NativeSequelizeType = Exclude<SequelizeDataType, string>;
+
+/**
+ * The members this module reads off a native Sequelize DataType. A
+ * {@link NativeDataType} is opaque by contract, so the narrowing happens here,
+ * once, rather than at each `switch` arm — and the list doubles as the record of
+ * exactly how much of Sequelize's internal DataType shape this depends on.
+ */
+type NativeTypeShape = {
+  key?: unknown;
+  /** ENUM's declared members. */
+  values?: unknown;
+  /** ARRAY's element type. */
+  type?: NativeDataType;
+  /** VIRTUAL's declared return type. */
+  returnType?: NativeDataType;
+  constructor?: { key?: unknown };
+};
+
+function shapeOf(nativeType: NativeDataType): NativeTypeShape {
+  return (nativeType ?? {}) as NativeTypeShape;
+}
+
+function keyOf(nativeType: NativeDataType): string {
+  const t = shapeOf(nativeType);
+  const k = t.key ?? t.constructor?.key;
   return typeof k === "string" ? k.toUpperCase() : "";
 }
 
 /** Read: classify a live Sequelize DataType instance into an abstract descriptor. */
-export function mapDataType(nativeType: any): DataTypeDescriptor {
+export function mapDataType(nativeType: NativeDataType): DataTypeDescriptor {
+  const native = shapeOf(nativeType);
   switch (keyOf(nativeType)) {
     case "BOOLEAN":
       return DataTypes.Boolean;
@@ -51,11 +83,11 @@ export function mapDataType(nativeType: any): DataTypeDescriptor {
     case "INET":
       return DataTypes.String;
     case "ENUM":
-      return DataTypes.Enum(...((nativeType?.values as string[]) || []));
+      return DataTypes.Enum(...(Array.isArray(native.values) ? (native.values as string[]) : []));
     case "ARRAY":
-      return DataTypes.Array(mapDataType(nativeType?.type));
+      return DataTypes.Array(mapDataType(native.type));
     case "VIRTUAL":
-      return nativeType?.returnType ? mapDataType(nativeType.returnType) : DataTypes.String;
+      return native.returnType ? mapDataType(native.returnType) : DataTypes.String;
     case "JSON":
     case "JSONB":
     case "GEOMETRY":
@@ -70,7 +102,7 @@ export function mapDataType(nativeType: any): DataTypeDescriptor {
 }
 
 /** Write: convert an authored abstract descriptor into a native Sequelize DataType. */
-export function toNativeType(descriptor: DataTypeDescriptor): any {
+export function toNativeType(descriptor: DataTypeDescriptor): NativeSequelizeType {
   switch (descriptor.type) {
     case DataType.String:
       return SequelizeDataTypes.STRING;

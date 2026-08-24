@@ -1,10 +1,16 @@
 /* eslint-disable no-underscore-dangle */
 import {
   Model,
+  ModelAttributeColumnOptions,
+  ModelAttributes,
   ModelCtor,
+  ModelOptions,
   Op,
   QueryTypes,
   Sequelize,
+  type Association as NativeAssociation,
+  type IncludeOptions,
+  type Options as SequelizeOptions,
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
 import unique from "@azerothian/utilize/utils/unique";
@@ -15,8 +21,203 @@ import replaceIdDeep, {
 } from "./utils/replace-id-deep";
 const log = logger("gqlize::adapter::sequelize::");
 
+/**
+ * A model prototype viewed as the plain object it is at runtime. Sequelize types
+ * it as `Model<any, any>`, which has no index signature — but installing
+ * relationship accessors and definition instance methods onto it *by name* is
+ * exactly what this adapter does.
+ */
+function prototypeOf(model: { prototype: unknown }): Record<string, unknown> {
+  return model.prototype as Record<string, unknown>;
+}
+
+/**
+ * The statics of a model class, by name — the counterpart of {@link prototypeOf}.
+ * A definition's `classMethods` are installed onto the class by name, which
+ * `ModelCtor` (no index signature, and rightly so) cannot describe.
+ */
+function staticsOf(model: SequelizeModelClass): Record<string, unknown> {
+  return model as unknown as Record<string, unknown>;
+}
+
+/**
+ * A fetched row seen as the plain object it is at runtime. Relationship
+ * accessors (`getTasks`, `countTasks`) and eager-loaded relationship values are
+ * reached off an instance by name, and they exist only once Sequelize has wired
+ * the association — so `Model` has no index signature describing them.
+ */
+function rowFields(row: SequelizeRow): Record<string, any> {
+  return row as unknown as Record<string, any>;
+}
+
+/**
+ * A model class, augmented with the two statics this adapter installs on it:
+ * `createModel` stamps the authored definition onto the class, and
+ * `createRelationship` builds `relationships` up on it as each one is wired.
+ * Sequelize's `ModelCtor` knows about neither.
+ *
+ * Both are declared non-optional rather than `?`: every model reaching this
+ * adapter's read paths came out of `createModel`, which installs `definition`
+ * before it returns. A model without one is a wiring error, not a case for every
+ * read site to branch on.
+ */
+export type SequelizeModelClass = ModelCtor<Model<any, any>> & {
+  definition: SequelizeDefinition;
+  relationships: { [relName: string]: SequelizeRelationship };
+};
+
+/**
+ * A wired relationship as this adapter records it on the model class: the
+ * arguments `createRelationship` was given, plus `rel` — the live Sequelize
+ * association object it produced. Nothing here reads `rel` back; it is kept
+ * because it is the only handle onto the native association.
+ */
+export type SequelizeRelationship = {
+  name: string;
+  type: string;
+  source: string;
+  target: string;
+  options: Relationship["options"];
+  rel: unknown;
+};
+
+/**
+ * A row as this adapter produces and consumes it: a Sequelize model instance.
+ * The contract calls a row `AdapterRow` (`unknown`) because no caller may assume
+ * a shape — but the adapter that produced it may, which is precisely why
+ * `OrmAdapter` is declared with method syntax rather than function properties.
+ */
+export type SequelizeRow = Model<any, any>;
+
+/**
+ * A column as ormize authors one: Sequelize's own attribute options plus the two
+ * flags this project adds. Declared here rather than as a module augmentation
+ * because they are read by this adapter, never by Sequelize.
+ */
+type OrmizeColumnOptions = ModelAttributeColumnOptions & {
+  /** Keeps the column out of relay global-id translation — see `getGlobalKeys`. */
+  ignoreGlobalKey?: boolean;
+  /** Opts a primary/foreign key back into client-writable mutation input. */
+  writable?: boolean;
+};
+
+/**
+ * A live Sequelize association plus the three members its public typings omit.
+ * `accessors` exists on every association at runtime (it is how Sequelize names
+ * the generated `getTasks`/`countTasks` methods). `sourceKey`/`targetKey` exist
+ * only on the association kinds that have one — a `hasMany` has a source key, a
+ * `belongsTo` a target key — which is why both are optional here and defaulted
+ * where they are read.
+ */
+type NativeAssociationInternals = NativeAssociation & {
+  accessors: Association["accessors"];
+  sourceKey?: string;
+  targetKey?: string;
+  /** The resolved column name behind `identifier`, when they differ. */
+  identifierField?: string;
+};
+
+/**
+ * This adapter's own options — the first constructor argument. Closed, so a
+ * misspelled key is a compile error rather than a setting that silently does
+ * nothing; everything Sequelize itself understands belongs in the *second*
+ * argument.
+ */
+export type SequelizeAdapterOptions = {
+  /** Attributes merged under every definition's own `define` map. */
+  defaultAttr?: ModelAttributes;
+  /** Model options merged under every definition's own `options`. */
+  defaultModel?: ModelOptions;
+  /** Skip the window-function row count even on a dialect that supports it. */
+  disableInlineCount?: boolean;
+  /** Opt in to the regex where-operators — see the ReDoS note in `createQueryConfig`. */
+  enableRegexpOperators?: boolean;
+};
+
+/**
+ * The argument list forwarded verbatim to Sequelize's own constructor. Sequelize
+ * declares it as a set of positional overloads, and a spread argument cannot be
+ * resolved against overloads — so the accepted shapes are named here, where a
+ * caller's arguments are still checked against them.
+ */
+export type SequelizeConnection =
+  | []
+  | [options: SequelizeOptions]
+  | [uri: string, options?: SequelizeOptions]
+  | [database: string, username: string, options?: SequelizeOptions]
+  | [database: string, username: string, password?: string, options?: SequelizeOptions];
+
+/**
+ * An attribute map as it arrives at `resolveAttributeTypes`: either Sequelize's
+ * own {@link ModelAttributes} or a definition's fields carrying abstract ormize
+ * type tokens, whose `type` is deliberately `unknown`.
+ */
+export type AuthoredAttributes = { [fieldName: string]: unknown };
+
+/**
+ * The list arguments this adapter reads off a field's args bag. Open, because
+ * everything not named here is forwarded verbatim — which is also why the
+ * contract declares this parameter as an open bag.
+ */
+export type ListArgs = {
+  first?: number;
+  last?: number;
+  orderBy?: SequelizeOrder[];
+  where?: AdapterWhere;
+  include?: IncludeMap[];
+  [arg: string]: unknown;
+};
+
+/**
+ * The hook dispatcher ormize threads down so a JOIN-loaded include can still
+ * fire the child model's `beforeFind` — see `processIncludeStatement`. Typed as
+ * the contract declares it: the hook name selects the value's shape, so neither
+ * it nor the return can be narrowed here.
+ */
+export type RunHook = (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>;
+
+/** An association prefix in an ORDER BY entry — Sequelize's `{model, as}` form. */
+export type SequelizeOrderPrefix = { model: SequelizeModelClass; as: string };
+
+/**
+ * One ORDER BY entry as this adapter builds one: the association prefixes needed
+ * to reach the column, then the column and its direction. Sequelize's own
+ * `OrderItem` is a union of fixed-length tuples, which cannot describe an entry
+ * assembled by spreading a variable number of prefixes onto an authored
+ * `[column, direction]` pair.
+ */
+export type SequelizeOrder = (SequelizeOrderPrefix | string)[];
+
+/**
+ * One selected column: a name, or the `[expression, alias]` pair the inline
+ * count is pushed on as.
+ */
+export type SequelizeAttribute = string | [ReturnType<Sequelize["literal"]>, string];
+
+/**
+ * One eager-load entry. Sequelize's own `IncludeOptions`, with three members
+ * restated: `order` and `include` because they are built here in this adapter's
+ * own shapes, and `getGraphQLArgs` because a `separate` include runs as its own
+ * query — so the accessor has to ride on the include for the child model's find
+ * hooks to reach the GraphQL args at all.
+ */
+export type SequelizeInclude = Omit<IncludeOptions, "order" | "include"> & {
+  order?: SequelizeOrder[];
+  include?: SequelizeInclude[];
+  /**
+   * `separate` only. Sequelize's `IncludeOptions` declares `limit` but not
+   * `offset`, though a separate include is run as its own query and honours it —
+   * which is what makes per-parent pagination of a `hasMany` possible at all.
+   */
+  offset?: number;
+  getGraphQLArgs?: GetGraphQLArgs;
+};
+
+/** Reaches the live GraphQL execution args from inside an options bag. */
+type GetGraphQLArgs = () => { context: RequestContext; info: unknown; source: unknown };
+
 // import jsonType from "@azerothian/graphql-types/json";
-import createQueryType from "@azerothian/graphql-types/query";
+import createQueryType, { type QueryTypeConfig } from "@azerothian/graphql-types/query";
 
 import {
   GraphQLBoolean,
@@ -25,11 +226,39 @@ import {
   GraphQLList,
   GraphQLObjectType,
   GraphQLType,
+  type GraphQLFieldConfigArgumentMap,
+  type GraphQLInputFieldConfigMap,
+  type GraphQLInputType,
 } from "graphql";
 // import {GraphQLObjectType} from "graphql";
 import { GraphQLInputObjectType } from "graphql";
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import { Association, WhereOperators, DefinitionFieldMeta, DataTypeDescriptor, Selection, isOrmizeDataType } from '@azerothian/utilize/types/index';
+import {
+  isOrmizeDataType,
+  type AdapterCreateFunction,
+  type AdapterDeleteFunction,
+  type AdapterQueryOptions,
+  type AdapterRelationshipPage,
+  type AdapterRow,
+  type AdapterUpdateFunction,
+  type AdapterTransaction,
+  type AdapterTransactionHandle,
+  type AdapterWhere,
+  type Association,
+  type DataTypeDescriptor,
+  type Definition,
+  type DefinitionFieldMeta,
+  type HookMap,
+  type IncludeDescriptor,
+  type IncludeMap,
+  type NativeDataType,
+  type OrderEntry,
+  type Permission,
+  type RequestContext,
+  type Relationship,
+  type Selection,
+  type WhereOperators,
+} from '@azerothian/utilize/types/index';
 import type { GqlizeAdapter } from '@azerothian/gqlize/types/gqlize-adapter';
 import { mapDataType as mapDataTypeImpl, toNativeType as toNativeTypeImpl } from "./data-type-mapper";
 import { SequelizeDefinition, SqlClassMethod } from "./types";
@@ -47,16 +276,16 @@ export const MAX_PAGE_SIZE = 1000;
  * Coerce a client-supplied page size to a safe, bounded integer: falls back to
  * DEFAULT_PAGE_SIZE when absent/NaN/non-positive, and caps at MAX_PAGE_SIZE.
  */
-function clampPageSize(value: any): number {
-  const n = parseInt(value, 10);
+function clampPageSize(value: unknown): number {
+  const n = parseInt(String(value), 10);
   if (!Number.isFinite(n) || n <= 0) {
     return DEFAULT_PAGE_SIZE;
   }
   return Math.min(n, MAX_PAGE_SIZE);
 }
 
-function safeStringify(value: any) {
-  const seen = new Set();
+function safeStringify(value: unknown) {
+  const seen = new Set<unknown>();
   return JSON.stringify(
     value,
     (k, v) => {
@@ -75,19 +304,22 @@ function safeStringify(value: any) {
 export default class SequelizeAdapter implements GqlizeAdapter {
   adapterName: string;
   sequelize: Sequelize;
-  options: any;
+  options: SequelizeAdapterOptions;
   startup: { drop: string; create: string };
-  meta: { [modelName: string]: { [objName: string]: any } };
+  meta: { [modelName: string]: { [key: string]: unknown } };
   /**
    * Phantom brand identifying the typesystem base URI for this adapter. Never
    * set at runtime; `BaseOf<SequelizeAdapter>` reads it so `db.define(...)`
    * produces Sequelize-typed models. See `./types/orm`.
    */
   declare readonly __base?: import("./types/orm").IORSequelizeModel;
-  constructor(adapterOptions = {}, ...config: any) {
+  constructor(adapterOptions: SequelizeAdapterOptions = {}, ...config: SequelizeConnection) {
     //allows the adaptor to have the same config options as sequelize
     this.adapterName = "sequelize";
-    this.sequelize = new Sequelize(...config);
+    // See {@link SequelizeConnection}: the spread goes through a single-signature
+    // view of the constructor because the overload set cannot resolve one.
+    const SequelizeCtor = Sequelize as unknown as new (...args: SequelizeConnection) => Sequelize;
+    this.sequelize = new SequelizeCtor(...config);
     this.options = adapterOptions;
     // this.startupScript;
     this.startup = {
@@ -101,10 +333,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       await this.getORM().query(this.startup.create);
     }
   };
-  sync = async (options?: any) => {
+  sync = async (options?: AdapterQueryOptions) => {
      await this.getORM().sync(options);
   };
-  reset = async (options?: any) => {
+  reset = async (options?: AdapterQueryOptions) => {
     if (this.startup.drop !== "") {
       await this.getORM().query(this.startup.drop);
     }
@@ -122,7 +354,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * threaded to nested queries via the resolve context (see the ormize manager),
    * so a multi-step mutation either fully applies or fully rolls back.
    */
-  transaction = (cb: (t: any) => Promise<any>): Promise<any> => {
+  transaction = <T>(cb: (t: AdapterTransactionHandle) => Promise<T>): Promise<T> => {
     return this.sequelize.transaction(cb);
   };
   /**
@@ -131,7 +363,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * `handle` is a Sequelize `Transaction`, threaded onto operation options as
    * `{ transaction }`.
    */
-  beginTransaction = async () => {
+  beginTransaction = async (): Promise<AdapterTransaction> => {
     const t = await this.sequelize.transaction();
     return {
       handle: t,
@@ -140,21 +372,25 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     };
   };
   addInstanceFunction = (
-    modelName: string ,
+    modelName: string,
     funcName: string,
-    func: any
+    func: (...args: any[]) => any
   ) => {
-    this.sequelize.models[modelName].prototype[funcName] = func;
+    prototypeOf(this.sequelize.models[modelName])[funcName] = func;
   };
 
-  addStaticFunction = (modelName: any, funcName: any, func: any) => {
-    (this.sequelize.models as any)[modelName][funcName] = func;
+  addStaticFunction = (modelName: string, funcName: string, func: (...args: any[]) => any) => {
+    staticsOf(this.model(modelName))[funcName] = func;
   };
   getModel = (modelName: string) => {
     return this.sequelize.models[modelName];
   };
-  getModels = () => {
-    return this.sequelize.models as any;
+  getModels = (): { [modelName: string]: ModelCtor<Model<any, any>> } => {
+    return this.sequelize.models;
+  };
+  /** {@link getModel}, seen through the statics this adapter installs — see {@link SequelizeModelClass}. */
+  private model = (modelName: string): SequelizeModelClass => {
+    return this.sequelize.models[modelName] as SequelizeModelClass;
   };
   getMetaObj = <T>(modelName: string, metaName: string): T => {
     if(!this.meta[modelName]) {
@@ -162,7 +398,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return this.meta[modelName][metaName] as T;
   };
-  setMetaObj = (modelName: string, metaName: string, value: any) => {
+  setMetaObj = (modelName: string, metaName: string, value: unknown) => {
     if(!this.meta[modelName]) {
       this.meta[modelName] = {};
     }
@@ -179,24 +415,31 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   //     "update": "update"
   //   }
   // }
-  getFields = (modelName: string) => {
+  getFields = (modelName: string): { [fieldName: string]: DefinitionFieldMeta } => {
     const Model = this.sequelize.models[modelName];
     //TODO add filter for excluding or including fields
     if (!this.getMetaObj(modelName, "fields")) {
       const fieldNames = Object.keys(Model.rawAttributes);
       const fields = fieldNames.reduce((fields, key) => {
-        const attr = Model.rawAttributes[key];
+        const attr = Model.rawAttributes[key] as OrmizeColumnOptions;
+        // `_dataTypeChanges` is a Sequelize internal (a column whose declared
+        // type the dialect had to rewrite), so it is absent from the public
+        // typings; a missing one simply means no column was rewritten.
+        const dataTypeChanges = (Model as unknown as {
+          _dataTypeChanges?: { [fieldName: string]: unknown };
+        })._dataTypeChanges;
         const autoPopulated =
           attr.autoIncrement === true ||
           attr.defaultValue !== undefined ||
-          !!(Model as any)._dataTypeChanges[key]; //eslint-disable-line
+          !!dataTypeChanges?.[key];
         const allowNull = attr.allowNull === true;
         const foreignKey = !!attr.references;
         let foreignTarget;
         if (foreignKey) {
           foreignTarget = Object.keys(Model.associations)
             .filter((assocKey) => {
-              return Model.associations[assocKey].identifier === key || (Model.associations[assocKey] as any).identifierField === key;
+              const assoc = Model.associations[assocKey] as NativeAssociationInternals;
+              return assoc.identifier === key || assoc.identifierField === key;
             })
             .map((assocKey) => {
               return Model.associations[assocKey].target.name;
@@ -207,7 +450,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             if (process.env.NODE_ENV !== "production") {
               const jsonAssociations = safeStringify(Model.associations);
               const jsonRelationships = safeStringify(
-                (Model as any).relationships
+                (Model as SequelizeModelClass).relationships
               );
               message = `Model: ${modelName} - Unable to find ${key} identifier field association in the model associations \n ---Associations--- ${jsonAssociations}\n ---Relationships--- ${jsonRelationships}`;
             }
@@ -225,10 +468,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           foreignKey,
           foreignTarget,
           autoPopulated,
-          ignoreGlobalKey: (attr as any).ignoreGlobalKey,
+          ignoreGlobalKey: attr.ignoreGlobalKey,
           // Opt-in that lets a pk/fk be set from client input (default: excluded
           // to prevent mass-assignment — see isStructurallyWritable).
-          writable: (attr as any).writable === true,
+          writable: attr.writable === true,
         } as DefinitionFieldMeta;
         return fields;
       }, {} as { [key: string]: DefinitionFieldMeta });
@@ -244,7 +487,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     associations = Object.keys(Model.associations).reduce(
       (rels, key) => {
-        const assoc = Model.associations[key] as any;
+        const assoc = Model.associations[key] as NativeAssociationInternals;
         const { associationType } = assoc;
         rels[key] = {
           name: key,
@@ -254,9 +497,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             .charAt(0)
             .toLowerCase()}${associationType.slice(1)}`,
           foreignKey: assoc.foreignKey,
-          targetKey: assoc.targetKey, // TODO: not in types?
-          sourceKey: assoc.sourceKey, // TODO: not in types?
-          accessors: assoc.accessors, // TODO: not in types?
+          // Sequelize defines these only on the association kinds that have one:
+          // a `hasMany` carries a source key, a `belongsTo` a target key. An
+          // {@link Association} reports *resolved* keys, so an absent one falls
+          // back to the primary key of the model it names — which is exactly what
+          // Sequelize itself defaults to when the author omits it.
+          targetKey: assoc.targetKey || assoc.target.primaryKeyAttribute,
+          sourceKey: assoc.sourceKey || assoc.source.primaryKeyAttribute,
+          accessors: assoc.accessors,
         };
         return rels;
       },
@@ -266,36 +514,43 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     return associations;
     
   };
-  getAssociation = (modelName: any, assocName: string) => {
+  getAssociation = (modelName: string, assocName: string) => {
     const rels = this.getAssociations(modelName);
     return rels[assocName];
   };
   /** Read: classify a native Sequelize DataType instance into an abstract descriptor. */
-  mapDataType = (nativeType: any): DataTypeDescriptor => mapDataTypeImpl(nativeType);
+  mapDataType = (nativeType: NativeDataType): DataTypeDescriptor => mapDataTypeImpl(nativeType);
   /** Write: convert an abstract type descriptor/token into a native Sequelize DataType. */
-  toNativeType = (descriptor: DataTypeDescriptor): any => toNativeTypeImpl(descriptor);
+  toNativeType = (descriptor: DataTypeDescriptor): NativeDataType => toNativeTypeImpl(descriptor);
   /**
    * Convert any authored abstract ormize type tokens in an attribute map to
    * native Sequelize types. Native types (e.g. `Sequelize.STRING`) and fields
    * without a token `type` pass through unchanged (backward compatible).
    */
-  resolveAttributeTypes = (attributes: { [name: string]: any }): { [name: string]: any } => {
-    const out: { [name: string]: any } = {};
+  resolveAttributeTypes = (attributes: AuthoredAttributes): ModelAttributes => {
+    const out: AuthoredAttributes = {};
     for (const key of Object.keys(attributes)) {
       const attr = attributes[key];
       if (isOrmizeDataType(attr)) {
         // Shorthand form: `field: DataTypes.String`
         out[key] = this.toNativeType(attr);
-      } else if (attr && typeof attr === "object" && isOrmizeDataType(attr.type)) {
+      } else if (attr && typeof attr === "object") {
         // Object form: `field: { type: DataTypes.String, allowNull: false }`
-        out[key] = Object.assign({}, attr, { type: this.toNativeType(attr.type) });
+        const { type } = attr as { type?: unknown };
+        out[key] = isOrmizeDataType(type)
+          ? Object.assign({}, attr, { type: this.toNativeType(type) })
+          : attr;
       } else {
         out[key] = attr;
       }
     }
-    return out;
+    // Every entry is now either untouched — already a Sequelize attribute — or
+    // one whose token `type` has just been converted to a native one. The
+    // compiler cannot see that: what came in were `DefinitionField`s, whose
+    // `type` is `unknown` by design (see {@link AuthoredAttributes}).
+    return out as ModelAttributes;
   };
-  createModel = async (def: SequelizeDefinition, hooks?: any): Promise<any> => {
+  createModel = async (def: SequelizeDefinition, hooks?: HookMap): Promise<SequelizeModelClass> => {
     const { defaultAttr, defaultModel } = this.options;
     const newDef = Object.assign({}, def, {
       options: Object.assign({}, defaultModel, def.options, {
@@ -346,7 +601,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         this.sequelize.models[newDef.name].removeAttribute("id");
       }
       if (newDef.removeAttributes) {
-        newDef.removeAttributes.forEach((attr: any) => {
+        newDef.removeAttributes.forEach((attr) => {
           this.sequelize.models[defName].removeAttribute(attr);
         });
       }
@@ -361,14 +616,16 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       await Promise.all(
         Object.keys(classMethods).map(async (classMethod) => {
           if (classMethods) {
+            const statics = staticsOf(this.model(defName));
             if (isFunction(classMethods[classMethod])) {
-              (this.sequelize.models[defName] as any)[classMethod] =
-                classMethods[classMethod];
+              statics[classMethod] = classMethods[classMethod];
             } else {
-              (this.sequelize.models[defName] as any)[
-                classMethod
-              ] = await this.generateSQLFunction(
-                classMethods[classMethod] as any
+              // Not a function, so it is a {@link SqlClassMethod} descriptor —
+              // a raw query or a Postgres function call — compiled into a static
+              // here. `Definition.classMethods` names only the function form, so
+              // the descriptor form is narrowed at this one branch.
+              statics[classMethod] = await this.generateSQLFunction(
+                classMethods[classMethod] as unknown as SqlClassMethod
               );
             }
           }
@@ -378,25 +635,24 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (instanceMethods) {
       Object.keys(instanceMethods).forEach((instanceMethod) => {
         if (instanceMethods) {
-          this.sequelize.models[defName].prototype[instanceMethod] =
+          prototypeOf(this.sequelize.models[defName])[instanceMethod] =
             instanceMethods[instanceMethod];
         }
       });
     }
-    (this.sequelize.models[newDef.name].prototype as any).Model = this.sequelize.models[
-      newDef.name
-    ];
-    // (this.sequelize.models[newDef.name] as any)._gqlmeta = {};
-    (this.sequelize.models[newDef.name] as any).definition = newDef;
+    const model = this.model(defName);
+    prototypeOf(model).Model = model;
+    // (model as any)._gqlmeta = {};
+    model.definition = newDef;
 
-    return this.sequelize.models[newDef.name] as any;
+    return model;
   };
-  createSQLFunction = async (query: string, modelName: string, args: any[]) => {
-    return (a: { [x: string]: any }, context: any) => {
+  createSQLFunction = async (query: string, modelName: string | undefined, args: string[]) => {
+    return (a: { [argName: string]: unknown }, _context: RequestContext) => {
       // security check?
       let opts = {
         replacements: args.reduce(
-          (o: { [x: string]: any }, ar: string | number) => {
+          (o: { [argName: string]: unknown }, ar: string) => {
             o[ar] = a[ar] ? a[ar] : null;
             return o;
           },
@@ -405,7 +661,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         type: QueryTypes.SELECT,
       } as {
         model: ModelCtor<Model<any, any>>;
-        replacements: any;
+        replacements: { [argName: string]: unknown };
         type: QueryTypes;
       };
       if (modelName) {
@@ -434,7 +690,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           q = query;
         } else {
           q = `SELECT * FROM "${schema}"."${functionName}"(${args
-            .map((s: any) => `:${s}`, "")
+            .map((s: string) => `:${s}`)
             .join(",")});`;
         }
     }
@@ -444,8 +700,8 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   // include type builders below fall back to it when no explicit permission is
   // threaded through, so denied fields/relationships are consistently excluded
   // regardless of which build path reaches a given model first.
-  _buildPermission: any = undefined;
-  setBuildPermission = (permission: any) => {
+  _buildPermission: Permission | undefined = undefined;
+  setBuildPermission = (permission: Permission | undefined) => {
     if (permission !== this._buildPermission) {
       // The meta cache is keyed by model name alone, but these three types are
       // derived from the permission bag. Building a second schema off the same
@@ -462,7 +718,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     this._buildPermission = permission;
   };
 
-  createQueryConfig = (definition: SequelizeDefinition, permission?: any): any => {
+  createQueryConfig = (definition: SequelizeDefinition, permission?: Permission): QueryTypeConfig => {
     const defName = definition.name;
     if(!defName) {
       throw "no name set";
@@ -487,7 +743,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         );
       }
       return o;
-    }, {} as { [key: string]: any });
+    }, {} as { [fieldName: string]: GraphQLInputType });
     const rels = this.getAssociations(defName);
     f = Object.keys(rels).reduce((o, k) => {
       const field = rels[k];
@@ -501,19 +757,19 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       return o;
     }, f);
 
-    let iso = {} as { [key: string]: any };
+    let iso = {} as { [operatorName: string]: GraphQLInputType };
     if (definition.whereOperators) {
       iso = Object.keys(definition.whereOperators).reduce((o, k) => {
-        if (definition.whereOperatorTypes && (definition.whereOperatorTypes || {})[k]) {
-          o[k] = definition.whereOperatorTypes[k];
-        } else {
-          o[k] = GraphQLBoolean;
-        }
+        const declared = definition.whereOperatorTypes?.[k];
+        // `whereOperatorTypes` is the author's own map of operator -> GraphQL
+        // type; `Definition` leaves its values open because it must not name a
+        // graphql type, so it is narrowed here, where it is read.
+        o[k] = (declared as GraphQLInputType) || GraphQLBoolean;
         return o;
       }, iso);
     }
     return {
-      modelName: definition.name,
+      modelName: defName,
       fields: f,
       isolatedFields: iso,
       valueFuncs: [
@@ -535,7 +791,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         // patterns (e.g. Postgres `~`/`~*`), a catastrophic-backtracking pattern
         // is a ReDoS vector, so they are excluded unless the adapter is
         // constructed with `{ enableRegexpOperators: true }`.
-        ...((this.options as any)?.enableRegexpOperators
+        ...(this.options.enableRegexpOperators
           ? ["regexp", "notRegexp", "iRegexp", "notIRegexp"]
           : []),
       ],
@@ -561,17 +817,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     sourceModel: string ,
     name: string,
     type: string,
-    options: {through?: {model?: any}} = {}
+    options: Relationship["options"] = {}
   ) => {
-    let model = this.sequelize.models[targetModel];
-    if (!(model as any).relationships) {
-      (model as any).relationships = {};
+    const model = this.model(targetModel);
+    if (!model.relationships) {
+      model.relationships = {};
     }
     try {
-      if (options.through) {
-        if (options.through.model) {
-          options.through.model = this.sequelize.models[options.through.model as any];
-        }
+      // `through` may also be a bare model name, which Sequelize accepts as-is.
+      // Only the object form carries a `model` to resolve — the previous
+      // unguarded property read simply found `undefined` on the string.
+      if (typeof options.through === "object" && options.through?.model) {
+        (options.through as {model?: unknown}).model = this.sequelize.models[options.through.model];
       }
       const opts = Object.assign(
         {
@@ -579,13 +836,21 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         },
         options
       );
-      (model as any).relationships[name] = {
+      // `type` names one of Sequelize's association builders (`belongsTo`,
+      // `hasMany`, ...) and is called by name off the model class, so the lookup
+      // is dynamic — see {@link staticsOf}. An unknown one is a definition error
+      // and is reported by the `catch` below.
+      const build = staticsOf(model)[type];
+      if (typeof build !== "function") {
+        throw new Error(`SequelizeAdapter: "${type}" is not a relationship type`);
+      }
+      model.relationships[name] = {
         name: name,
         type: type,
         source: sourceModel,
         target: targetModel,
         options: opts,
-        rel: (model as any)[type](this.sequelize.models[sourceModel], opts),
+        rel: build.call(model, this.sequelize.models[sourceModel], opts),
       };
     } catch (err) {
       log.error("Error Mapping relationship", {
@@ -605,10 +870,8 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   };
   createFunctionForFind = (modelName: string) => {
     const model = this.sequelize.models[modelName];
-    return function(value: any, filterKey: any, singular: boolean) {
-      return (options: {
-        where?: any
-      } = {}) => {
+    return function(value: unknown, filterKey: string, singular: boolean) {
+      return (options: AdapterQueryOptions = {}) => {
         const opts = Object.assign({}, options, {
           where: mergeFilterStatement(filterKey, value, true, options.where),
         });
@@ -626,13 +889,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return [this.sequelize.models[modelName].primaryKeyAttribute];
   };
-  getValueFromInstance(data: any, keyName: string | number) {
-    if (data.dataValues) {
-      return data.dataValues[keyName];
+  getValueFromInstance(data: SequelizeRow, keyName: string) {
+    const fields = rowFields(data);
+    if (fields.dataValues) {
+      return fields.dataValues[keyName];
     }
-    return data[keyName];
+    return fields[keyName];
   }
-  getFilterGraphQLType = (defName: any, definition: any, permission?: any) => {
+  getFilterGraphQLType = (defName: string, definition: Definition, permission?: Permission): GraphQLInputObjectType => {
     if (!this.getMetaObj(defName, "queryType")) {
       this.setMetaObj(
         defName,
@@ -642,7 +906,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return this.getMetaObj(defName, "queryType") as GraphQLInputObjectType;
   };
-  getOrderByGraphQLType = (defName: any, permission?: any) => {
+  getOrderByGraphQLType = (defName: string, permission?: Permission): GraphQLInputObjectType => {
     if (!this.getMetaObj(defName, "orderByType")) {
       const perm = permission !== undefined ? permission : this._buildPermission;
       const fields = this.getFields(defName);
@@ -655,7 +919,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         o[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
         o[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
         return o;
-      }, {} as { [key: string]: any });
+      }, {} as { [enumValueName: string]: { value: [string, "ASC" | "DESC"] } });
       // An enum with no values is an invalid GraphQL type. When permissions deny
       // every orderable field, leave the meta unset so callers omit `orderBy`
       // entirely rather than emitting an empty `${defName}OrderBy`.
@@ -677,23 +941,24 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   };
 
   getIncludeGraphQLType = (
-    defName: any,
-    definition: { relationships: any[] },
-    permission?: any
+    defName: string,
+    definition: Definition,
+    permission?: Permission
   ): GraphQLInputObjectType => {
     const perm = permission !== undefined ? permission : this._buildPermission;
+    const relationships = definition.relationships || [];
     if (
       !this.getMetaObj(defName, "includeType") &&
-      (definition.relationships || []).length > 0
+      relationships.length > 0
     ) {
-      const fields = definition.relationships.reduce(
+      const fields = relationships.reduce(
         (
-          o: { [x: string]: { type: GraphQLInputObjectType } },
-          relationship: { model: any; name: string | number }
+          o: { [relName: string]: { type: GraphQLInputObjectType } },
+          relationship: Relationship
         ) => {
           // Skip relationships the permission layer denies — otherwise a denied
           // association stays joinable/orderable via `include`.
-          if (!isRelationshipAllowed(perm, defName, relationship.name as string, relationship.model)) {
+          if (!isRelationshipAllowed(perm, defName, relationship.name, relationship.model)) {
             return o;
           }
           // A relationship whose target model is denied has no output type in the
@@ -715,7 +980,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             type: new GraphQLInputObjectType({
               name: `GQLT${defName}Include${relationship.name}Object`,
               fields: () => {
-                const includeFields: any = {
+                const includeFields: GraphQLInputFieldConfigMap = {
                   required: {
                     type: GraphQLBoolean,
                   },
@@ -725,7 +990,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
                   where: {
                     type: this.getFilterGraphQLType(
                       targetModel.name,
-                      (targetModel as any).definition,
+                      (targetModel as SequelizeModelClass).definition,
                       permission
                     ),
                   },
@@ -745,7 +1010,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
                 // only expose the nested `include` field when one exists.
                 const nestedIncludeType = this.getIncludeGraphQLType(
                   targetModel.name,
-                  (targetModel as any).definition,
+                  (targetModel as SequelizeModelClass).definition,
                   permission
                 );
                 if (nestedIncludeType) {
@@ -759,7 +1024,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           };
           return o;
         },
-        {} as {[key: string]: any}
+        {} as { [relName: string]: { type: GraphQLInputObjectType } }
       );
       // const queryConfig = this.createQueryConfig(definition);
       // The `relationships.length` check above is against the raw list, before
@@ -777,9 +1042,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return this.getMetaObj(defName, "includeType");
   };
-  getDefaultListArgs = (defName: any, definition: any, permission?: any) => {
+  getDefaultListArgs = (defName: string, definition: Definition, permission?: Permission): GraphQLFieldConfigArgumentMap => {
     const includeType = this.getIncludeGraphQLType(defName, definition, permission);
-    const retVal: any = {
+    const retVal: GraphQLFieldConfigArgumentMap = {
       where: {
         type: this.getFilterGraphQLType(defName, definition, permission),
       },
@@ -801,33 +1066,34 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       dialect === "postgres" || dialect === "mssql" || dialect === "sqlite"
     );
   };
-  getInlineCount = async(values: any[]) => {
-    let fullCount =
-      values[0] &&
-      (values[0].dataValues || values[0]).full_count &&
-      parseInt((values[0].dataValues || values[0]).full_count, 10);
-    if (!values[0]) {
-      fullCount = 0;
+  getInlineCount = async(values: SequelizeRow[]) => {
+    // The count rides along as a `full_count` column on every row of the page
+    // (a window function — see `processListArgsToOptions`), so the first row is
+    // enough. It is not a declared attribute, hence the plain-object view.
+    const first = values[0] ? rowFields(values[0]) : undefined;
+    const row = first ? (first.dataValues || first) : undefined;
+    if (!row || !row.full_count) {
+      return 0;
     }
-    return fullCount;
+    return parseInt(row.full_count, 10);
   };
   processListArgsToOptions = async (
-    defName: any,
-    args: { first?: any; last?: any; orderBy?: any[]; where?: any; include?: any },
-    offset?: any,
-    selection?: Selection,
-    whereOperators?: any,
-    defaultOptions: any = {},
-    selectedFields?: string | string[] | undefined,
-    runHook?: (defName: string, hookName: string, value: any, ...args: any) => Promise<any>
+    defName: string,
+    args: ListArgs,
+    offset?: number,
+    _selection?: Selection,
+    whereOperators?: WhereOperators,
+    defaultOptions: AdapterQueryOptions = {},
+    selectedFields?: string[],
+    runHook?: RunHook
   ) => {
     let limit,
-      include = [],
-      order = [],
+      include: SequelizeInclude[] = [],
+      order: SequelizeOrder[] = [],
       // Clone rather than alias: the array is mutated in place below
       // (unshift/push), so aliasing a caller-provided `defaultOptions.attributes`
       // would accumulate entries across calls.
-      attributes = [...(defaultOptions.attributes || [])],
+      attributes: SequelizeAttribute[] = [...(defaultOptions.attributes || [])],
       where;
     // const Model = this.getModel(defName);
 
@@ -857,21 +1123,25 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             }
           }
         }
-        attributes.unshift(field.name);
+        // `DefinitionFieldMeta.name` is optional because a user-authored field
+        // carries none — the adapter fills it in. Either way the map is keyed by
+        // field name, so `key` is the same value.
+        attributes.unshift(field.name || key);
       }
     });
-    this.getPrimaryKeyNameForModel(defName).forEach((key: any) => {
+    this.getPrimaryKeyNameForModel(defName).forEach((key) => {
       if (key) {
         attributes.unshift(key);
       }
     });
     if (this.hasInlineCountFeature()) {
       // attributes.push(...this.getFields(defName).filter((f) => !f.primaryKey).map((f) => f.name))
-      if (
-        attributes.filter(
-          (a: string | string[]) => a.indexOf("full_count") > -1
-        ).length === 0
-      ) {
+      // Either form counts as already present: a plain column named
+      // `full_count`, or the `[expression, "full_count"]` alias pair this pushes.
+      const hasCountColumn = attributes.some((a) =>
+        typeof a === "string" ? a.indexOf("full_count") > -1 : a[1] === "full_count"
+      );
+      if (!hasCountColumn) {
         if (this.sequelize.getDialect() === "postgres") {
           attributes.push([
             this.sequelize.literal("COUNT(*) OVER()"),
@@ -895,10 +1165,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (args.where) {
       where = await this.processFilterArgument(args.where, whereOperators, defaultOptions);
     }
-    if ((args.include || []).length > 0) {
+    const includeStatements = args.include || [];
+    if (includeStatements.length > 0) {
       const result = await this.processIncludeStatement(
         defName,
-        args.include,
+        includeStatements,
         order,
         defaultOptions,
         [],
@@ -951,12 +1222,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     };
   };
   async processIncludeStatement(
-    defName: any,
-    includeStatements: any,
-    order: any,
-    options: any,
-    parentRelsForOrder: any = [],
-    runHook?: (defName: string, hookName: string, value: any, ...args: any) => Promise<any>
+    defName: string,
+    includeStatements: IncludeMap[],
+    order: SequelizeOrder[],
+    options: AdapterQueryOptions,
+    parentRelsForOrder: SequelizeOrderPrefix[] = [],
+    runHook?: RunHook
   ) {
     let orders = order;
     const incs = await waterfall(
@@ -967,9 +1238,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           async (relName, oo) => {
             const inc = i[relName];
             const rel = this.getAssociation(defName, relName);
-            const TargetModel = this.sequelize.models[rel.target];
-            const targetDefName = (TargetModel as any).definition.name;
-            const { whereOperators } = (TargetModel as any).definition;
+            const TargetModel = this.model(rel.target);
+            const targetDefName = TargetModel.definition.name as string;
+            const { whereOperators } = TargetModel.definition;
             const orderAssocPrefix = { model: TargetModel, as: relName };
             // A `separate` include runs as its own batched root query, so its
             // ordering/limit/offset live on the include entry itself rather than
@@ -980,7 +1251,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             if (!separate && (inc.orderBy || []).length > 0) {
               orders = [
                 ...orders,
-                ...inc.orderBy.map((ob: any) => {
+                ...inc.orderBy.map((ob: OrderEntry) => {
                   return [...parentRelsForOrder, orderAssocPrefix, ...ob];
                 }),
               ];
@@ -994,7 +1265,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
                 whereOperators,
                 options
               ),
-            } as any;
+            } as SequelizeInclude;
             if (separate) {
               retVal.separate = true;
               if ((inc.orderBy || []).length > 0) {
@@ -1016,7 +1287,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
               // beforeFind for a JOIN include, so fire it manually with only this
               // relation's `where` and merge any change back into the include's
               // where (keeping the filter part of the single combined query).
-              const hookOptions: any = { where: retVal.where, getGraphQLArgs: options?.getGraphQLArgs };
+              const hookOptions: AdapterQueryOptions = { where: retVal.where, getGraphQLArgs: options?.getGraphQLArgs };
               const res = await runHook(targetDefName, "beforeFind", hookOptions);
               if (res && res.where !== undefined) {
                 retVal.where = res.where;
@@ -1048,7 +1319,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       order: orders,
     };
   }
-  async processFilterArgument(where: any, whereOperators: any, options: any) {
+  async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): Promise<AdapterWhere> {
     const w = replaceWhereOperators(where);
     if (whereOperators) {
       return replaceDefWhereOperators(w, whereOperators, options);
@@ -1058,7 +1329,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   getAllArgsToReplaceId() {
     return ["where", "include"];
   }
-  getGlobalKeys = (defName: any) => {
+  getGlobalKeys = (defName: string) => {
     const fields = this.getFields(defName);
     return Object.keys(fields).filter((key) => {
       return (
@@ -1067,17 +1338,17 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       );
     });
   };
-  replaceIdInWhere = (where: any, defName: any, variableValues: any) => {
+  replaceIdInWhere = (where: AdapterWhere | undefined, defName: string, variableValues?: {[name: string]: any}) => {
     const globalKeys = this.getGlobalKeys(defName);
     return replaceIdDeep(where, globalKeys, variableValues);
   };
   replaceIdInInclude = (
-    arrIncludeVar: any[],
-    defName: any,
-    variableValues: any
+    arrIncludeVar: Selection["include"],
+    defName: string,
+    variableValues?: {[name: string]: any}
   ) => {
-    return arrIncludeVar.map(
-      (iv: { [x: string]: { [x: string]: any; include: any; where: any } }) => {
+    return (arrIncludeVar || []).map(
+      (iv) => {
         return Object.keys(iv).reduce((o, relName) => {
           let { include, where, ...rest } = iv[relName];
           o[relName] = rest;
@@ -1097,14 +1368,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             );
           }
           return o;
-        }, {} as { [key: string]: any });
+        }, {} as { [relName: string]: IncludeDescriptor });
       }
     );
   };
   replaceIdInArgs = (
-    args: { [x: string]: any; where: any; include: any },
-    defName: any,
-    variableValues: any
+    args: { [name: string]: any },
+    defName: string,
+    variableValues?: {[name: string]: any}
   ) => {
     // const argNames = ["where", "include"];
     let { where, include, ...rest } = args;
@@ -1118,40 +1389,39 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     return rest;
   };
 
-  findAll = (defName: string, options: any) => {
+  findAll = (defName: string, options: AdapterQueryOptions): Promise<SequelizeRow[]> => {
     const Model = this.sequelize.models[defName];
     return Model.findAll(options);
   };
-  count = (defName: string, options: any) => {
+  count = (defName: string, options: AdapterQueryOptions): Promise<number> => {
     const Model = this.sequelize.models[defName];
-    return Model.count(options) as any;
+    // Sequelize's `count` is declared to return a grouped row array when the
+    // options carry a `group`; ormize never counts by group, so the number
+    // overload is the only one this can produce.
+    return Model.count(options) as Promise<number>;
   };
   update = (
-    source: { update: (arg0: any, arg1: any) => any },
-    input: any,
-    options: any
-  ) => {
+    source: SequelizeRow,
+    input: { [field: string]: any },
+    options: AdapterQueryOptions
+  ): Promise<SequelizeRow> => {
     return source.update(input, options);
   };
-  getCreateFunction = (defName: string | number) => {
+  getCreateFunction = (defName: string): AdapterCreateFunction => {
     const Model = this.sequelize.models[defName];
-    return (input: any, options: any) => {
+    return (input, options) => {
       return Model.create(input, options);
     };
   };
-  getUpdateFunction = (defName: string | number, whereOperators: any) => {
+  getUpdateFunction = (defName: string, whereOperators: WhereOperators | undefined): AdapterUpdateFunction => {
     const Model = this.sequelize.models[defName];
-    return async (
-      where: any,
-      processInput: (arg0: any) => any,
-      options: any
-    ) => {
+    return async (where, processInput, options) => {
       const items = await Model.findAll({
         where: await this.processFilterArgument(where, whereOperators, options),
         ...options,
       });
       return Promise.all(
-        items.map(async (i: { update: (arg0: any, arg1: any) => any }) => {
+        items.map(async (i) => {
           const input = await processInput(i);
           if (Object.keys(input).length > 0) {
             return i.update(input, options);
@@ -1161,14 +1431,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       );
     };
   };
-  getDeleteFunction = (defName: string | number, whereOperators: any) => {
+  getDeleteFunction = (defName: string, whereOperators: WhereOperators | undefined): AdapterDeleteFunction => {
     const Model = this.sequelize.models[defName];
-    return async (
-      where: any,
-      options: any,
-      before: (arg0: any) => any,
-      after: (arg0: any) => any
-    ) => {
+    return async (where, options, before, after) => {
       const items = await Model.findAll({
         where: await this.processFilterArgument(where, whereOperators, options),
         ...options,
@@ -1176,56 +1441,94 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       // Destroy serially and await each one before resolving — returning the array
       // of un-awaited promises previously let callers (and subsequent queries) run
       // before the deletes completed, which was both a correctness bug and a flake.
-      const results = [];
-      for (let item of items as { destroy: (arg0: any) => any }[]) {
-        item = await before(item);
-        await item.destroy(options);
-        item = await after(item);
-        results.push(item);
+      const results: AdapterRow[] = [];
+      for (const item of items) {
+        // `before`/`after` are declared over the contract's opaque
+        // {@link AdapterRow}, not this adapter's row: they are arrow-syntax
+        // aliases, so a narrowed *return* would not survive the variance flip.
+        // What comes back is still the row that went in.
+        const beforeDestroy = (await before(item)) as SequelizeRow;
+        await beforeDestroy.destroy(options);
+        results.push(await after(beforeDestroy));
       }
       return results;
     };
   };
   mergeFilterStatement(
-    fieldName: any,
-    value: any,
+    fieldName: string,
+    value: unknown,
     match: boolean | undefined,
-    originalWhere: any
-  ) {
+    originalWhere: AdapterWhere | undefined
+  ): AdapterWhere {
     return mergeFilterStatement(fieldName, value, match, originalWhere);
   }
-  resolveSingleRelationship = async (defName: string, relationship: Association, source: any, args: any, context: any, selection: Selection, options: any) => {
-    if (source[relationship.name]) {
-      return source[relationship.name];
+  resolveSingleRelationship = async (
+    _defName: string,
+    relationship: Association,
+    source: SequelizeRow,
+    _args: {[name: string]: any},
+    _context: RequestContext,
+    _selection: Selection,
+    options: AdapterQueryOptions
+  ): Promise<SequelizeRow> => {
+    // Both the eager-loaded value and the generated accessor are reached off the
+    // instance by name — see {@link rowFields}.
+    const fields = rowFields(source);
+    if (fields[relationship.name]) {
+      return fields[relationship.name];
     }
-    return source[relationship.accessors.get](options);
+    return fields[relationship.accessors.get](options);
   };
   // Count a relationship for its `total`. For hasMany, count the target directly
   // with the foreign-key filter so the child's beforeCount hook fires (Sequelize's
   // hasMany count accessor runs via findAll, which would fire beforeFind instead).
   // belongsToMany and others use the through-table-aware association accessor.
-  countRelationship = async (relationship: Association, source: any, where: any, options: any) => {
+  countRelationship = async (
+    relationship: Association,
+    source: SequelizeRow,
+    where: AdapterWhere,
+    options: AdapterQueryOptions
+  ): Promise<number> => {
     if (relationship.associationType === "hasMany") {
       const TargetModel = this.sequelize.models[relationship.target];
-      const sourceKey = relationship.sourceKey || (source.constructor as any).primaryKeyAttribute;
-      const countWhere = Object.assign({}, where, { [relationship.foreignKey]: source.get(sourceKey) });
-      return TargetModel.count({ where: countWhere, getGraphQLArgs: options?.getGraphQLArgs } as any);
+      const countWhere = Object.assign({}, where, {
+        [relationship.foreignKey]: source.get(relationship.sourceKey),
+      });
+      // `getGraphQLArgs` is this project's own addition to the options bag — the
+      // hooks read it off `options`; Sequelize itself ignores it.
+      return TargetModel.count({
+        where: countWhere,
+        getGraphQLArgs: options?.getGraphQLArgs,
+      } as AdapterQueryOptions) as Promise<number>;
     }
-    return source[relationship.accessors.count]({ where, getGraphQLArgs: options?.getGraphQLArgs });
+    return rowFields(source)[relationship.accessors.count]({ where, getGraphQLArgs: options?.getGraphQLArgs });
   };
-  resolveManyRelationship = async (defName: string, relationship: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, selection: Selection, options: any, countOnly?: boolean) => {
-    if (countOnly && !(source[relationship.name] !== undefined && source[relationship.name] !== null)) {
+  resolveManyRelationship = async (
+    defName: string,
+    relationship: Association,
+    source: SequelizeRow,
+    args: ListArgs,
+    offset: number | undefined,
+    whereOperators: WhereOperators | undefined,
+    selection: Selection,
+    options: AdapterQueryOptions,
+    countOnly?: boolean
+  ): Promise<AdapterRelationshipPage> => {
+    // The eager-loaded value and the generated accessors are reached off the
+    // instance by name — see {@link rowFields}.
+    const fields = rowFields(source);
+    if (countOnly && !(fields[relationship.name] !== undefined && fields[relationship.name] !== null)) {
       // Only `total` requested: run a count instead of fetching rows.
       const where = await this.processFilterArgument(args.where || {}, whereOperators, options);
       const total = await this.countRelationship(relationship, source, where, options);
       return { total, models: [] };
     }
-    if (source[relationship.name] !== undefined && source[relationship.name] !== null) {
+    if (fields[relationship.name] !== undefined && fields[relationship.name] !== null) {
       // Eager-loaded at the root level (JOIN or `separate:true`). The rows are
       // already filtered/sorted/limited, so return them — but when a per-parent
       // limit was applied the loaded length is the page size, not the true total,
       // so fetch an accurate count (fires the child's beforeCount natively).
-      const val = source[relationship.name];
+      const val = fields[relationship.name];
       const models = Array.isArray(val) ? val : [val];
       let total = models.length;
       if (args && (args.first != null || args.last != null)) {
@@ -1256,12 +1559,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       whereOperators,
       options
     );
-    const models = await source[relationship.accessors.get](getOptions);
+    const models = await fields[relationship.accessors.get](getOptions);
     let total;
     if (this.hasInlineCountFeature()) {
       total = await this.getInlineCount(models);
     } else {
-      total = await source[relationship.accessors.count](countOptions);
+      total = await fields[relationship.accessors.count](countOptions);
     }
     return {
       total,
@@ -1305,11 +1608,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
 // }
 
 export function mergeFilterStatement(
-  fieldName: any,
-  value: any,
+  fieldName: string,
+  value: unknown,
   match = true,
-  originalWhere?: any
-): any {
+  originalWhere?: AdapterWhere
+): AdapterWhere {
   let targetOp = Op.eq;
   if (Array.isArray(value)) {
     targetOp = match ? Op.in : Op.notIn;
@@ -1329,7 +1632,7 @@ export function mergeFilterStatement(
   return filter;
 }
 
-function isFunction(functionToCheck: any) {
+function isFunction(functionToCheck: unknown) {
   if (functionToCheck) {
     const type = {}.toString.call(functionToCheck);
     return type === "[object Function]" || type === "[object AsyncFunction]";

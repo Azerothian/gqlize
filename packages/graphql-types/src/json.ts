@@ -31,38 +31,50 @@ import {
   GraphQLString,
   Kind,
   ValueNode,
+  EnumValueNode,
+  ListValueNode,
+  ObjectValueNode,
+  VariableNode,
 } from "graphql";
 
 
-const astToJson: { [kind: string]: (ast: any, variables?: any) => any } = {
-  [Kind.INT](ast: ValueNode, variables?: any) {
+/** What graphql passes as `parseLiteral`'s second argument. */
+type VariableValues = { readonly [name: string]: unknown } | null | undefined;
+
+/**
+ * The map's `ast` parameter stays `any` on purpose: dispatch is by `ast.kind` at
+ * runtime, so no single node type describes every entry. Each handler names the
+ * node it actually accepts, which is where the checking that matters happens.
+ */
+const astToJson: { [kind: string]: (ast: any, variables?: VariableValues) => unknown } = {
+  [Kind.INT](ast: ValueNode, variables?: VariableValues) {
     return GraphQLInt.parseLiteral(ast, variables);
   },
-  [Kind.FLOAT](ast: ValueNode, variables?: any) {
+  [Kind.FLOAT](ast: ValueNode, variables?: VariableValues) {
     return GraphQLFloat.parseLiteral(ast, variables);
   },
-  [Kind.BOOLEAN](ast: ValueNode, variables?: any) {
+  [Kind.BOOLEAN](ast: ValueNode, variables?: VariableValues) {
     return GraphQLBoolean.parseLiteral(ast, variables);
   },
-  [Kind.STRING](ast: ValueNode, variables?: any) {
+  [Kind.STRING](ast: ValueNode, variables?: VariableValues) {
     return GraphQLString.parseLiteral(ast, variables);
   },
-  [Kind.ENUM](ast: { value: any; }) {
+  [Kind.ENUM](ast: EnumValueNode) {
     return String(ast.value);
   },
-  [Kind.LIST](ast: { values: any[]; }, variables?: any): any {
-    return ast.values.map((astItem: ValueNode) => {
+  [Kind.LIST](ast: ListValueNode, variables?: VariableValues): unknown[] {
+    return ast.values.map((astItem) => {
       return JSONType.parseLiteral(astItem, variables);
     });
   },
-  [Kind.OBJECT](ast: { fields: any[]; }, variables?: any) {
-    let obj: any = {};
-    ast.fields.forEach((field: { name: { value: any; }; value: ValueNode; }) => {
+  [Kind.OBJECT](ast: ObjectValueNode, variables?: VariableValues) {
+    const obj: { [name: string]: unknown } = {};
+    ast.fields.forEach((field) => {
       obj[field.name.value] = JSONType.parseLiteral(field.value, variables);
     });
     return obj;
   },
-  [Kind.VARIABLE](ast: { name: { value: any; }; }, variables?: any) {
+  [Kind.VARIABLE](ast: VariableNode, variables?: VariableValues) {
     // graphql-js passes the query variables as parseLiteral's second argument,
     // so a variable nested inside a JSON literal is resolved to its value here.
     return variables ? variables[ast.name.value] : undefined;

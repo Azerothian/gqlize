@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll } from "@jest/globals";
 import { buildOpenApiDocument } from "../src";
+import type { Ormize } from "@azerothian/ormize";
 import { buildOrm } from "./helper";
+import type { Permission } from "@azerothian/utilize";
 
 describe("nestize - buildOpenApiDocument", () => {
-  let orm: any;
+  let orm: Ormize;
   beforeAll(async () => {
     orm = await buildOrm();
   });
@@ -26,11 +28,13 @@ describe("nestize - buildOpenApiDocument", () => {
 
   it("respects a permission that denies Task.name in create input", () => {
     // `mutationCreateInput` gates create-input fields (isInputFieldAllowed).
-    const permission: any = {
+    const permission: Permission = {
       mutationCreateInput: (model: string, field: string) => !(model === "Task" && field === "name"),
     };
     const doc = buildOpenApiDocument(orm, { permission });
-    const createProps = doc.components.schemas.TaskCreateInput.properties || {};
+    // The document is emitted as open JSON — see `JsonObject` in openapi.ts — so
+    // a test that reaches into a schema node says what it expects to find.
+    const createProps = (doc.components.schemas.TaskCreateInput.properties || {}) as Record<string, unknown>;
     expect(createProps.name).toBeUndefined();
   });
 

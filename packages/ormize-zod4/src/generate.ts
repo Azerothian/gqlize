@@ -9,6 +9,8 @@ import {
 import { descriptorToZod } from "./type-mapper";
 import { applyValidators } from "./validators";
 import { GeneratedZodSchemas, GenerateOptions, ZodObjectMap } from "./types";
+import type { Ormize } from "@azerothian/ormize";
+import type { DefinitionField } from "@azerothian/utilize";
 
 /**
  * Generate Zod v4 `entity` / `create` / `update` schemas from a live, initialised
@@ -18,10 +20,10 @@ import { GeneratedZodSchemas, GenerateOptions, ZodObjectMap } from "./types";
  * The ormize instance MUST be initialised (`await orm.initialise()`) first — the
  * field metadata is read from the materialized backend models.
  */
-export function generateZodSchemas(orm: any, options: GenerateOptions = {}): GeneratedZodSchemas {
+export function generateZodSchemas(orm: Ormize, options: GenerateOptions = {}): GeneratedZodSchemas {
   const { permission, includeRelations = true, translateValidators = true } = options;
 
-  const defs = (orm.getDefinitions && orm.getDefinitions()) || {};
+  const defs = orm.getDefinitions() || {};
   const allNames = Object.keys(defs);
   if (allNames.length === 0) {
     throw new Error(
@@ -39,12 +41,13 @@ export function generateZodSchemas(orm: any, options: GenerateOptions = {}): Gen
     const ignore = new Set<string>(def.ignoreFields || []);
     const authored = def.define || {};
 
-    let fields: { [f: string]: any };
+    let fields: { [fieldName: string]: DefinitionField };
     try {
       fields = orm.getFields(name) || {};
-    } catch (e: any) {
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
       throw new Error(
-        `generateZodSchemas: could not read fields for "${name}". Ensure \`await orm.initialise()\` has run. (${e?.message || e})`
+        `generateZodSchemas: could not read fields for "${name}". Ensure \`await orm.initialise()\` has run. (${detail})`
       );
     }
     const fieldNames = Object.keys(fields).filter((f) => !ignore.has(f));
@@ -69,7 +72,7 @@ export function generateZodSchemas(orm: any, options: GenerateOptions = {}): Gen
       if (fields[fieldName].allowNull) s = s.nullable();
       entityShape[fieldName] = s;
     }
-    if (includeRelations && orm.getAssociations) {
+    if (includeRelations) {
       const associations = orm.getAssociations(name) || {};
       for (const relName of Object.keys(associations)) {
         const assoc = associations[relName];

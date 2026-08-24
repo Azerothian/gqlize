@@ -211,7 +211,7 @@ describe("eager resolution (root-level include from selection)", () => {
     await Item.create({name: "granddrop", parentId: childKeep.get("id")});
 
     const schema = await createSchema(instance);
-    const cap = captureQueries(instance, "Item");
+    const cap = captureQueries(instance);
     const result = (await graphql({
       schema,
       source: `query { models {
@@ -316,13 +316,13 @@ describe("eager resolution (root-level include from selection)", () => {
     } }`;
 
     // JOIN (default, no pagination): folds into the parent query.
-    const joinCap = captureQueries(instance, "Item");
+    const joinCap = captureQueries(instance);
     const joinResult = (await graphql({schema, source: selection("")})) as any;
     validateResult(joinResult);
     const joinSelects = joinCap.selects().length;
 
     // separate:true forced via the include arg — same selection, same data.
-    const sepCap = captureQueries(instance, "Item");
+    const sepCap = captureQueries(instance);
     const sepResult = (await graphql({
       schema,
       source: selection(", include: { children: { separate: true } }"),

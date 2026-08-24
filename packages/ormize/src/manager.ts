@@ -4,7 +4,8 @@ import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Model, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
-import { OrmAdapter, DataTypeDescriptor, Selection } from '@azerothian/utilize/types/index';
+import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, NativeDataType,
+  RequestContext, Selection, IncludeMap, FindAllArgs } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import Events from "./events";
 import OrmizeTransaction from "./transaction";
@@ -62,6 +63,92 @@ const gqlizeHookList = [
   "afterCount",
 ];
 
+/**
+ * A lifecycle hook: it receives the value flowing through the operation plus
+ * whatever the emitting site passes along, and returns the value to carry on
+ * with. `any` on the tail is the variadic pass-through case — the extra
+ * arguments differ per hook and ormize only relays them.
+ */
+export type HookFunction = (value: any, ...args: any[]) => any;
+
+/**
+ * An adapter row seen through its dynamically-named members: the relationship
+ * accessors an adapter installs (`addFiles`, `setItem`, ...), `dataValues`,
+ * `restore`. {@link AdapterRow} is `unknown` by contract, so the engine narrows
+ * to this at the points that have to reach a member whose name is only known at
+ * runtime.
+ */
+type InstanceRow = { [member: string]: any };
+
+/**
+ * A relationship after ormize has wired it, as stored in {@link Ormize.relationships}.
+ *
+ * `internal` says whether the source and target share an adapter — a `true`
+ * relationship was handed to the adapter to create natively, and the keys below
+ * it are the adapter's business. `false` means ormize resolves it itself, and
+ * everything from `funcName` down is what it needs to do that.
+ */
+export type WiredRelationship = {
+  sourceAdapter: OrmAdapter;
+  targetAdapter: OrmAdapter;
+  type: Relationship["type"];
+  model: string;
+  name: string;
+  options: Relationship["options"];
+  internal?: boolean;
+  /** Cross-adapter only: the accessor installed on the source model (`getFiles`). */
+  funcName?: string;
+  foreignKey?: string;
+  sourceKey?: string;
+  targetKey?: string;
+  /** `belongsToMany` only — see {@link Association.through}. */
+  through?: string;
+  otherKey?: string;
+};
+
+/**
+ * The options bag ormize builds for an adapter call. `getGraphQLArgs` is what
+ * hooks read to reach the caller's context and — under gqlize — the execution
+ * `info`, so it is the one member every adapter can count on being there.
+ */
+export type ResolveOptions = AdapterQueryOptions & {
+  getGraphQLArgs: () => { context: RequestContext; info: unknown; source: AdapterRow };
+};
+
+/** A caller-supplied filter, before relay global ids have been translated out of it. */
+export type MutationFilter = AdapterWhere;
+
+/** A caller-supplied field bag for a create or an update. */
+export type MutationInput = { [field: string]: unknown };
+
+/**
+ * The relationship sub-mutations for one relationship, as they arrive nested in a
+ * create/update input: `{files: {create: [...], add: [...]}}`. Every operation is
+ * optional, and the singular forms (`belongsTo`/`hasOne`) take a single filter
+ * where a collection takes a list of them.
+ */
+export type RelationshipMutation = {
+  create?: MutationInput[];
+  update?: { where?: MutationFilter; limit?: number; input?: MutationInput }[];
+  delete?: MutationFilter[];
+  /** `true` to detach a singular relationship; filters to detach from a collection. */
+  remove?: true | MutationFilter[];
+  /** `belongsToMany` entries are `{where, through}`; other collections pass the filter directly. */
+  add?: (MutationFilter | { where?: MutationFilter; through?: MutationInput })[];
+  set?: MutationFilter | (MutationFilter | { where?: MutationFilter; through?: MutationInput })[];
+  restore?: MutationFilter | MutationFilter[];
+  select?: { where?: MutationFilter; input?: MutationInput } | { where?: MutationFilter; input?: MutationInput }[];
+};
+
+/**
+ * A mutation input as the engine reads it: scalar columns alongside a
+ * {@link RelationshipMutation} under each relationship name. The two cannot be
+ * told apart structurally, so `processInputs` allow-lists the scalars by field
+ * name and `processRelationshipMutation` picks out the relationships by
+ * association name.
+ */
+export type MutationInputTree = { [name: string]: unknown };
+
 export default class Ormize<
   TModels extends Record<string, any> = { [name: string]: any },
   TBase extends IORBase = IORBase,
@@ -75,11 +162,13 @@ export default class Ormize<
   private _pendingDefs: { def: Definition; adapterName?: string }[] = [];
   /** Join models a cross-adapter `belongsToMany` needs and nobody registered; created in `initialise()`. */
   private _joinModels: {[name: string]: {source: string, target: string, foreignKey: string, otherKey: string, sourceKey: string, targetKey: string}} = {};
-  relationships: {[name: string]: any};
-  globalKeys: {[name: string]: any};
+  relationships: {[defName: string]: {[relName: string]: WiredRelationship}};
+  /** Vestigial: initialised empty and never written. */
+  globalKeys: {[name: string]: unknown};
   hooks: {[defName: string]: HookMap};
-  hookmap: {[name: string]: any};
-  globalHooks: {[name: string]: any};
+  /** Vestigial: initialised empty and never written. */
+  hookmap: {[name: string]: unknown};
+  globalHooks: {[hookName: string]: HookFunction[] | HookFunction};
   // this.reference = {};
   cache:  Cache;
   defaultAdapter: string | undefined;
@@ -95,24 +184,24 @@ export default class Ormize<
     this.globalHooks = hookList.reduce((o, hookName) => {
       o[hookName] = (options.globalHooks || {})[hookName] || [];
       return o;
-    }, {} as {[name: string]: any});
+    }, {} as {[hookName: string]: HookFunction[] | HookFunction});
     // this.reference = {};
     this.cache = new Cache();
     this.defaultAdapter = undefined;
   }
-  addHook = (hookName: string, hook: any) => {
-    this.globalHooks[hookName].push(hook);
+  addHook = (hookName: string, hook: HookFunction) => {
+    (this.globalHooks[hookName] as HookFunction[]).push(hook);
   }
-  addHookObject = (hooks: { [x: string]: any; }) => {
+  addHookObject = (hooks: { [hookName: string]: HookFunction }) => {
     return Object.keys(hooks).forEach((h) => {
       const hook = hooks[h];
       return this.addHook(h, hook);
     });
   }
-  unshiftHook = (hookName: string, hook: any) => {
-    this.globalHooks[hookName].unshift(hook);
+  unshiftHook = (hookName: string, hook: HookFunction) => {
+    (this.globalHooks[hookName] as HookFunction[]).unshift(hook);
   }
-  unshiftHookObject = (hooks: { [x: string]: any; }) => {
+  unshiftHookObject = (hooks: { [hookName: string]: HookFunction }) => {
     return Object.keys(hooks).forEach((h) => {
       const hook = hooks[h];
       return this.unshiftHook(h, hook);
@@ -157,7 +246,7 @@ export default class Ormize<
       TBase
     >;
   }
-  getDefinitionHooks = async(defName: any) => {
+  getDefinitionHooks = async(defName: string): Promise<HookMap> => {
     const def = this.getDefinition(defName);
     return (def.hooks || def.options?.hooks) || {};
   }
@@ -193,15 +282,15 @@ export default class Ormize<
     (this.models as Record<string, any>)[def.name] = await adapter.createModel(def, nativeHooks);
   }
 
-  createHook(hookName: string, def: Definition) {
-    return async(first: any, ...args: any) => {
-      const hooks = await this.getDefinitionHooks(def.name);
+  createHook(hookName: string, def: Definition): HookFunction {
+    return async(first: any, ...args: any[]) => {
+      const hooks = await this.getDefinitionHooks(def.name as string);
       let v = first;
       if (hooks[hookName]) {
         const hook = hooks[hookName];
         if (Array.isArray(hook)) {
           if (hooks[hookName].length > 0) {
-            v = await waterfall(hook, async(hook: (...arg0: any) => any, f: any) => {
+            v = await waterfall(hook, async(hook: HookFunction, f: any) => {
               return hook(f, ...args);
             }, v);
           }
@@ -211,10 +300,10 @@ export default class Ormize<
       }
       if (this.globalHooks[hookName]) {
         if (this.globalHooks[hookName] instanceof Function) {
-          v = await this.globalHooks[hookName](def.name, v, ...args);
+          v = await (this.globalHooks[hookName] as HookFunction)(def.name, v, ...args);
         } else if (Array.isArray(this.globalHooks[hookName])) {
           if (this.globalHooks[hookName].length > 0) {
-            v = await waterfall(this.globalHooks[hookName], async(hook: (defName: any, arg1: any, ...arg2: any) => any, f: any) => {
+            v = await waterfall(this.globalHooks[hookName], async(hook: HookFunction, f: any) => {
               return hook(def.name, f, ...args);
             }, v);
           }
@@ -230,10 +319,12 @@ export default class Ormize<
    * not fire itself — e.g. a child model's beforeFind/afterFind for JOIN-loaded
    * relations, or afterCount. A no-op (returns `value`) when no such hook exists.
    */
-  runHook = async(defName: string, hookName: string, value: any, ...args: any) => {
+  runHook = async <T = unknown>(defName: string, hookName: string, value: T, ...args: unknown[]): Promise<T> => {
     const hooks = this.hooks[defName];
     if (hooks && hooks[hookName]) {
-      return (hooks[hookName] as (...a: any) => any)(value, ...args);
+      // A waterfall hook is trusted to hand back what it was given: the caller
+      // named the shape, and there is nothing here that could check the claim.
+      return (hooks[hookName] as HookFunction)(value, ...args);
     }
     return value;
   }
@@ -244,7 +335,7 @@ export default class Ormize<
    * them on the eager-loaded values. `separate` entries are skipped (they fired
    * natively via their own query). Recurses into nested JOIN includes.
    */
-  applyEagerAfterFind = async(planMap: any, instances: any[], options: any): Promise<void> => {
+  applyEagerAfterFind = async(planMap: IncludeMap | undefined, instances: AdapterRow[], options: AdapterQueryOptions): Promise<void> => {
     if (!planMap || !Array.isArray(instances) || instances.length === 0) {
       return;
     }
@@ -254,7 +345,10 @@ export default class Ormize<
         continue;
       }
       const nested = desc.include && desc.include[0];
-      for (const inst of instances) {
+      for (const row of instances) {
+        // Eager-loaded values are read off the row by relationship name, and an
+        // adapter row is opaque by contract — see {@link InstanceRow}.
+        const inst = row as InstanceRow;
         if (!inst) {
           continue;
         }
@@ -287,16 +381,16 @@ export default class Ormize<
   getDefinitions = () => {
     return this.defs;
   }
-  getDefinition = (defName: string | number) => {
+  getDefinition = (defName: string) => {
     return this.defs[defName];
   }
-  getGlobalKeys = (defName: any) => {
+  getGlobalKeys = (defName: string) => {
     const fields = this.getFields(defName);
     return Object.keys(fields).filter((key) => {
       return (fields[key].foreignKey || fields[key].primaryKey) && !fields[key].ignoreGlobalKey;
     });
   }
-  getFields = (defName: any) => {
+  getFields = (defName: string) => {
     const adapter = this.getModelAdapter(defName);
     //TODO: add cross adapter fields
     return adapter.getFields(defName);
@@ -330,22 +424,24 @@ export default class Ormize<
     return associations;
   }
   /** Build an {@link Association} descriptor for an ormize-wired cross-adapter relationship. */
-  private buildCrossAdapterAssociation(defName: string, rel: any): Association {
+  private buildCrossAdapterAssociation(defName: string, rel: WiredRelationship): Association {
     const nameCap = capitalize(rel.name);
     const singCap = capitalize(pluralize.singular(rel.name));
     return {
       name: rel.name,
       target: rel.model,
       source: defName,
-      foreignKey: rel.foreignKey,
-      sourceKey: rel.sourceKey,
-      targetKey: rel.targetKey,
+      // Only a cross-adapter relationship is described this way, and wiring one
+      // resolves every join key and the accessor name before it gets here.
+      foreignKey: rel.foreignKey as string,
+      sourceKey: rel.sourceKey as string,
+      targetKey: rel.targetKey as string,
       associationType: rel.type,
       crossAdapter: true,
       through: rel.through,
       otherKey: rel.otherKey,
       accessors: {
-        get: rel.funcName,
+        get: rel.funcName as string,
         set: `set${nameCap}`,
         add: `add${singCap}`,
         addMultiple: `add${nameCap}`,
@@ -373,7 +469,7 @@ export default class Ormize<
    * therefore swaps in the coordinator's handle for the adapter about to be
    * called, or drops it when there is no coordinator to ask.
    */
-  private optionsForAdapter = async(fromDefName: string, toDefName: string, options: any) => {
+  private optionsForAdapter = async <T extends AdapterQueryOptions | undefined>(fromDefName: string, toDefName: string, options: T): Promise<T> => {
     if (this.defsAdapters[fromDefName] === this.defsAdapters[toDefName] || !options || options.transaction === undefined) {
       return options;
     }
@@ -384,7 +480,9 @@ export default class Ormize<
     } else {
       o.transaction = handle;
     }
-    return o;
+    // Same keys as what came in, one of them re-pointed — so the caller keeps the
+    // certainty it had about whether it handed over an options bag at all.
+    return o as T;
   }
   /**
    * Convert an adapter-native type (e.g. `Sequelize.DataTypes.STRING`) into the
@@ -392,7 +490,7 @@ export default class Ormize<
    * sole/first registered adapter). e.g. `mapDataType(Sequelize.DataTypes.STRING)`
    * → `{ type: DataType.String }`.
    */
-  mapDataType = (nativeType: any, adapterName?: string): DataTypeDescriptor => {
+  mapDataType = (nativeType: NativeDataType, adapterName?: string): DataTypeDescriptor => {
     const name = adapterName || this.defaultAdapter || Object.keys(this.adapters)[0];
     const adapter = name ? this.adapters[name] : undefined;
     if (!adapter) {
@@ -419,7 +517,7 @@ export default class Ormize<
       name: rel.name,
       options: rel.options,
     };
-    let {foreignKey} = rel.options;
+    const {foreignKey} = rel.options;
     if (targetAdapter === sourceAdapter) {
       this.relationships[def.name][rel.name].internal = true;
       //TODO: populate foreignKey/sourceKeys if not provided
@@ -453,7 +551,7 @@ export default class Ormize<
     if (!foreignKey) {
       throw new Error(`For cross adapter relationships you must define a foreign key ${def.name} (${rel.type}) ${rel.model}: ${rel.name}`);
     }
-    let sourceKey = rel.options?.sourceKey || sourcePrimaryKeyName;
+    const sourceKey = rel.options?.sourceKey || sourcePrimaryKeyName;
     // `targetKey` is the column on the target that a belongsTo points at; it
     // defaults to the target's primary key.
     const targetKey = rel.options?.targetKey || targetAdapter.getPrimaryKeyNameForModel(rel.model)[0];
@@ -468,7 +566,11 @@ export default class Ormize<
       this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, this.crossAdapterBtmGetter(association));
     } else {
       const findFunc = await targetAdapter.createFunctionForFind(rel.model);
-      const adaptOptions = (options: any) => this.optionsForAdapter(def.name, rel.model, options);
+      // Captured out of the closure: the `!def.name` guard at the top of this
+      // method narrows the property, but that narrowing does not survive into a
+      // callback.
+      const defName = def.name;
+      const adaptOptions = (options: AdapterQueryOptions | undefined) => this.optionsForAdapter(defName, rel.model, options);
       // The proxy reads its join value off `this`, which is a *source* instance —
       // so the read goes through the source adapter, not the target's. `belongsTo`
       // keeps the key on the source and points at the target's `targetKey`; the
@@ -535,13 +637,13 @@ export default class Ormize<
         },
         options: {timestamps: false},
         relationships: [],
-      } as any, adapterName);
+      }, adapterName);
     }
   }
   /** The abstract type of a model's key column, for a generated join model to mirror. */
   private keyType(defName: string, keyName: string): DataTypeDescriptor {
     const adapter = this.getModelAdapter(defName);
-    const field: any = adapter.getFields(defName)[keyName];
+    const field = adapter.getFields(defName)[keyName];
     return field?.type ? adapter.mapDataType(field.type) : DataTypes.String;
   }
   /** The reciprocal `belongsToMany`'s foreign key — the join column pointing at the target. */
@@ -568,7 +670,7 @@ export default class Ormize<
    * else in them (`where`, `limit`, `paranoid`, …) describes the *target* query
    * that these keys go on to scope, and would be nonsense against the join model.
    */
-  private crossAdapterBtmKeys = async(association: Association, source: any, options?: any): Promise<any[]> => {
+  private crossAdapterBtmKeys = async(association: Association, source: AdapterRow, options?: AdapterQueryOptions): Promise<unknown[]> => {
     const throughName = association.through as string;
     const sourceValue = this.getModelAdapter(association.source).getValueFromInstance(source, association.sourceKey);
     if (sourceValue === undefined || sourceValue === null) {
@@ -580,8 +682,8 @@ export default class Ormize<
       where: this.filterMerger(throughName)(association.foreignKey, sourceValue, true, undefined),
       ...(opts?.transaction !== undefined ? {transaction: opts.transaction} : {}),
     });
-    const keys: any[] = [];
-    const seen = new Set<any>();
+    const keys: unknown[] = [];
+    const seen = new Set<unknown>();
     for (const edge of edges) {
       const value = throughAdapter.getValueFromInstance(edge, association.otherKey as string);
       if (value === undefined || value === null || seen.has(value)) {
@@ -601,7 +703,7 @@ export default class Ormize<
   private crossAdapterBtmGetter(association: Association) {
     const self = this;
     const targetAdapter = this.getModelAdapter(association.target);
-    return async function(this: Model, options?: any) {
+    return async function(this: InstanceRow, options?: AdapterQueryOptions) {
       const keys = await self.crossAdapterBtmKeys(association, this, options);
       if (keys.length === 0) {
         return [];
@@ -628,24 +730,24 @@ export default class Ormize<
    */
   private crossAdapterWriteAccessors(association: Association, sourceAdapter: OrmAdapter, targetAdapter: OrmAdapter) {
     const {foreignKey, sourceKey, targetKey, accessors} = association;
-    const list = (targets: any) => (Array.isArray(targets) ? targets : [targets]).filter((t) => t !== undefined && t !== null);
+    const list = (targets: AdapterRow | AdapterRow[]) => (Array.isArray(targets) ? targets : [targets]).filter((t) => t !== undefined && t !== null);
     // Callers build one options object for the source's adapter; writes aimed at
     // the target's adapter need its own transaction handle instead.
-    const forTarget = (options: any) => this.optionsForAdapter(association.source, association.target, options);
+    const forTarget = (options: AdapterQueryOptions | undefined) => this.optionsForAdapter(association.source, association.target, options);
     if (association.associationType === "belongsTo") {
       // The key lives on the source: pointing it elsewhere is a write to `this`.
-      const set = async function(this: Model, target: any, options?: any) {
+      const set = async function(this: InstanceRow, target: AdapterRow, options?: AdapterQueryOptions) {
         const value = target ? targetAdapter.getValueFromInstance(target, targetKey) : null;
-        return sourceAdapter.update(this, {[foreignKey]: value}, options);
+        return sourceAdapter.update(this, {[foreignKey]: value}, options as AdapterQueryOptions);
       };
-      const clear = async function(this: Model, _target?: any, options?: any) {
-        return sourceAdapter.update(this, {[foreignKey]: null}, options);
+      const clear = async function(this: InstanceRow, _target?: AdapterRow, options?: AdapterQueryOptions) {
+        return sourceAdapter.update(this, {[foreignKey]: null}, options as AdapterQueryOptions);
       };
       return {
         [accessors.set]: set,
         [accessors.add]: set,
         [accessors.remove]: clear,
-        [accessors.count]: async function(this: Model) {
+        [accessors.count]: async function(this: InstanceRow) {
           return sourceAdapter.getValueFromInstance(this, foreignKey) === null ? 0 : 1;
         },
       };
@@ -659,22 +761,22 @@ export default class Ormize<
       const otherKey = association.otherKey as string;
       // Resolved on use, not on wiring: a join model ormize generates itself is
       // only defined once every relationship has been read.
-      const edgeWhere = (sourceValue: any, targetValues?: any) => {
+      const edgeWhere = (sourceValue: unknown, targetValues?: unknown) => {
         const merge = self.filterMerger(throughName);
         const where = merge(foreignKey, sourceValue, true, undefined);
         return targetValues === undefined ? where : merge(otherKey, targetValues, true, where);
       };
       // Only the transaction crosses over: the rest of the caller's options describe
       // the source's or the target's query, not the join model's.
-      const forThrough = async(options: any) => {
+      const forThrough = async(options: AdapterQueryOptions | undefined) => {
         const opts = await self.optionsForAdapter(association.source, throughName, options);
         return opts?.transaction !== undefined ? {transaction: opts.transaction} : {};
       };
-      const link = async function(this: Model, targets: any, options?: any) {
+      const link = async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
         const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
         // `through` carries attribute values for the join row itself (the columns a
         // join table has beyond its two keys).
-        const attributes = (options || {}).through || {};
+        const attributes: MutationInput = (options || {}).through || {};
         const opts = await forThrough(options);
         const throughAdapter = self.getModelAdapter(throughName);
         for (const target of list(targets)) {
@@ -687,11 +789,11 @@ export default class Ormize<
           }
         }
       };
-      const unlinkWhere = async(where: any, options: any) => {
+      const unlinkWhere = async(where: AdapterWhere, options: AdapterQueryOptions | undefined) => {
         const opts = await forThrough(options);
-        await self.getModelAdapter(throughName).getDeleteFunction(throughName, undefined)(where, opts, (r: any) => r, (r: any) => r);
+        await self.getModelAdapter(throughName).getDeleteFunction(throughName, undefined)(where, opts, (r) => r, (r) => r);
       };
-      const unlink = async function(this: Model, targets: any, options?: any) {
+      const unlink = async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
         const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
         const targetValues = list(targets).map((t) => targetAdapter.getValueFromInstance(t, targetKey));
         if (targetValues.length === 0) {
@@ -705,21 +807,21 @@ export default class Ormize<
         [accessors.remove]: unlink,
         [accessors.removeMultiple]: unlink,
         // `set` replaces the whole collection: drop every join row, then relink.
-        [accessors.set]: async function(this: Model, targets: any, options?: any) {
+        [accessors.set]: async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
           await unlinkWhere(edgeWhere(sourceAdapter.getValueFromInstance(this, sourceKey)), options);
           return link.call(this, targets, options);
         },
-        [accessors.count]: async function(this: Model, options?: any) {
+        [accessors.count]: async function(this: InstanceRow, options?: AdapterQueryOptions) {
           return (await self.crossAdapterBtmKeys(association, this, options)).length;
         },
       };
     }
     // hasMany/hasOne: the key lives on each target, so (un)linking writes there.
-    const relink = (value: (self: Model) => any) => async function(this: Model, targets: any, options?: any) {
+    const relink = (value: (self: InstanceRow) => unknown) => async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
       const fk = value(this);
       const opts = await forTarget(options);
       for (const target of list(targets)) {
-        await targetAdapter.update(target, {[foreignKey]: fk}, opts);
+        await targetAdapter.update(target, {[foreignKey]: fk}, opts as AdapterQueryOptions);
       }
     };
     const link = relink((self) => sourceAdapter.getValueFromInstance(self, sourceKey));
@@ -730,20 +832,20 @@ export default class Ormize<
       [accessors.remove]: unlink,
       [accessors.removeMultiple]: unlink,
       // `set` replaces the whole collection: drop the ones no longer in it, then link.
-      [accessors.set]: async function(this: Model, targets: any, options?: any) {
+      [accessors.set]: async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
         const next = list(targets);
         const nextKeys = new Set(next.map((t) => targetAdapter.getValueFromInstance(t, targetKey)));
-        const current = await (this as any)[accessors.get](options);
+        const current = await this[accessors.get](options);
         const opts = await forTarget(options);
         for (const existing of list(current)) {
           if (!nextKeys.has(targetAdapter.getValueFromInstance(existing, targetKey))) {
-            await targetAdapter.update(existing, {[foreignKey]: null}, opts);
+            await targetAdapter.update(existing, {[foreignKey]: null}, opts as AdapterQueryOptions);
           }
         }
         return link.call(this, next, options);
       },
-      [accessors.count]: async function(this: Model, options?: any) {
-        return list(await (this as any)[accessors.get](options)).length;
+      [accessors.count]: async function(this: InstanceRow, options?: AdapterQueryOptions) {
+        return list(await this[accessors.get](options)).length;
       },
     };
   }
@@ -754,26 +856,31 @@ export default class Ormize<
    * it via `addInstanceFunction`, and those with neither simply go without —
    * the GraphQL and `resolveXRelationship` paths do not depend on it.
    */
-  private addProxyAccessor(sourceAdapter: OrmAdapter, defName: string, modelClass: any, funcName: string, func: any) {
+  private addProxyAccessor(sourceAdapter: OrmAdapter, defName: string, modelClass: Model | undefined, funcName: string, func: (...args: any[]) => any) {
     if (modelClass?.prototype) {
-      modelClass.prototype[funcName] = func;
+      // Installing by name onto a prototype the adapter's own types describe
+      // without an index signature — see {@link Model.prototype}.
+      (modelClass.prototype as Record<string, unknown>)[funcName] = func;
       return;
     }
     if (sourceAdapter.addInstanceFunction) {
       sourceAdapter.addInstanceFunction(defName, funcName, func);
     }
   }
-  createProxyFunction(adapter: OrmAdapter, sourceKey: string, filterKey: string, singular: boolean, findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((...args: any) => any), adaptOptions?: (options: any) => Promise<any>)  {
-    return async function(this: Model, options?: any) {
-      const keyValue = adapter.getValueFromInstance(this, sourceKey);
+  createProxyFunction(adapter: OrmAdapter, sourceKey: string, filterKey: string, singular: boolean, findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((options: AdapterQueryOptions) => Promise<AdapterRow>), adaptOptions?: (options: AdapterQueryOptions | undefined) => Promise<AdapterQueryOptions | undefined>)  {
+    return async function(this: InstanceRow, options?: AdapterQueryOptions) {
+      // The join key — whatever column `sourceKey` names, so its type belongs to
+      // the definition, not to this layer. `getValueFromInstance` returns
+      // `unknown` for that reason; the find function takes it as given.
+      const keyValue = adapter.getValueFromInstance(this, sourceKey) as string;
       // The find runs on the *target's* adapter while `options` were built for the
       // source's, so any transaction handle in them has to be swapped first.
       const opts = adaptOptions ? await adaptOptions(options) : options;
       return findFunc(keyValue, filterKey, singular)
-        .call(this, opts);
+        .call(this, opts as AdapterQueryOptions);
     };
   }
-  getValueFromInstance = (defName: any, data: any, keyName: any) => {
+  getValueFromInstance = (defName: string, data: AdapterRow, keyName: string): unknown => {
     if (!data) {
       return undefined;
     }
@@ -792,7 +899,7 @@ export default class Ormize<
     await Promise.all(Object.keys(this.defs).map((defName) => {
       const def = this.defs[defName];
       const sourceAdapter = this.getModelAdapter(defName);
-      return waterfall(def.relationships, async(rel: any) =>
+      return waterfall(def.relationships, async(rel: Relationship) =>
         this.processRelationship(def, sourceAdapter, rel));
     }));
     await this.generateJoinModels();
@@ -801,19 +908,21 @@ export default class Ormize<
       return adapter.initialise();
     }));
   }
-  reset = async(options: any) => {
+  reset = async(options?: AdapterQueryOptions) => {
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       return adapter.reset(options);
     }));
   }
-  sync = async(options?: any) => {
+  sync = async(options?: AdapterQueryOptions) => {
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       return adapter.sync(options);
     }));
   }
-  resolveClassMethod = async(defName: any, methodName: string | number, args: any, context: any, before?: any, after?: any) => {
+  resolveClassMethod = async(defName: string, methodName: string, args: unknown, context: RequestContext,
+    before?: (args: unknown, context: RequestContext) => unknown,
+    after?: (result: unknown, context: RequestContext) => unknown) => {
     const Model = this.getModel(defName);
     if(before) {
       args = await before(args, context);
@@ -824,8 +933,10 @@ export default class Ormize<
     }
     return result;
   }
-  isTypeOf = (defName: any, definition: any, value: any) => {
-    const Model = this.getModel(defName) as any;
+  isTypeOf = (defName: string, _definition: Definition, value: unknown): boolean => {
+    // `getModel` returns the adapter's model handle, which for a class-based
+    // adapter is the constructor `instanceof` needs.
+    const Model = this.getModel(defName) as unknown as abstract new (...args: any[]) => unknown;
     const isType = value instanceof Model;
     return isType;
   }
@@ -850,7 +961,7 @@ export default class Ormize<
    * adapters' `mergeFilterStatement` turns into an `in`) and reading it costs a
    * query of its own.
    */
-  private crossAdapterScope = async(association: Association, source: any, options?: any) => {
+  private crossAdapterScope = async(association: Association, source: AdapterRow, options?: AdapterQueryOptions) => {
     if (association.associationType === "belongsToMany") {
       return {field: association.targetKey, value: await this.crossAdapterBtmKeys(association, source, options)};
     }
@@ -867,7 +978,7 @@ export default class Ormize<
    * {@link resolveFindAll} keeps `where`, ordering, pagination, count-only and
    * the target model's own hooks behaving exactly as they do at the root.
    */
-  private resolveCrossAdapterRelationship = async(defName: string, association: Association, source: any, args: any, context: any, selection?: Selection) => {
+  private resolveCrossAdapterRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) => {
     const scope = await this.crossAdapterScope(association, source, context);
     const empty = scope.value === undefined || scope.value === null
       || (Array.isArray(scope.value) && scope.value.length === 0);
@@ -879,7 +990,7 @@ export default class Ormize<
     const targetContext = await this.optionsForAdapter(association.source, defName, context);
     return this.resolveFindAll(defName, source, args, targetContext, selection, scope);
   }
-  resolveManyRelationship = async(defName: string, association: Association, source: Model, args: any, context: any, selection?: Selection) => {
+  resolveManyRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) => {
     if (association.crossAdapter) {
       return this.resolveCrossAdapterRelationship(defName, association, source, args, context, selection);
     }
@@ -892,7 +1003,7 @@ export default class Ormize<
     // adapter runs a count instead of a findAll (fires beforeCount natively); fire
     // afterCount here.
     const countOnly = Boolean(selection?.countOnly);
-    const result = await adapter.resolveManyRelationship(defName, association, source, a, offset, definition.whereOperators, selection as any, options, countOnly);
+    const result = await adapter.resolveManyRelationship(defName, association, source, a, offset, definition.whereOperators, selection as Selection, options, countOnly);
     if (countOnly && result) {
       result.total = await this.runHook(defName, "afterCount", result.total, options);
     }
@@ -901,7 +1012,7 @@ export default class Ormize<
     // query and the separate path both fire it natively.
     return result;
   }
-  resolveSingleRelationship = async(defName: string, association: Association, source: any, args: any, context: any, selection?: Selection) => {
+  resolveSingleRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) => {
     if (association.crossAdapter) {
       // `countOnly` is inferred from a connection's selection set; a singular
       // relation has no `edges`, so the inference misreads it. It always wants
@@ -913,14 +1024,14 @@ export default class Ormize<
     const adapter = this.getModelAdapter(defName);
     const options = createResolveContext(context, selection, source);
     // afterFind for JOIN-eager single relations is fired by resolveFindAll's post-pass.
-    return adapter.resolveSingleRelationship(defName, association, source, args, context, selection as any, options);
+    return adapter.resolveSingleRelationship(defName, association, source, args, context, selection as Selection, options);
   }
   /**
    * @param scope optional `{field, value}` equality filter merged into the built
    * query on top of the caller's `where`. Used to scope a cross-adapter
    * relationship to its join key.
    */
-  resolveFindAll = async(defName: any, source: any, args: { after?: { index: number; }; before?: { index: number; }; limit?: any; }, context: any, selection?: Selection, scope?: {field: string, value: any}) => {
+  resolveFindAll = async(defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection, scope?: {field: string, value: unknown}) => {
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
     const options = createResolveContext(context, selection, source);
@@ -929,11 +1040,11 @@ export default class Ormize<
     // The eager-include plan is built by the caller (gqlize, from the GraphQL
     // selection set) and passed via `selection.include`; apply it when the args
     // don't already carry one.
-    if (selection?.include && !(a as any).include) {
-      (a as any).include = selection.include;
+    if (selection?.include && !a.include) {
+      a.include = selection.include;
     }
     const offset = cursorOffset(args);
-    const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, a, offset, selection as any, definition.whereOperators, options, selectedFields, this.runHook);
+    const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, a, offset, selection as Selection, definition.whereOperators, options, selectedFields, this.runHook);
     if (scope) {
       if (!adapter.mergeFilterStatement) {
         throw new Error(`Adapter '${adapter.adapterName}' cannot scope a query and so cannot be the target of a cross-adapter relationship: it does not implement mergeFilterStatement`);
@@ -955,20 +1066,20 @@ export default class Ormize<
     if (Boolean(selection?.countOnly)) {
       const countOnlyOptions = countOptions || {
         where: getOptions.where,
-        include: (getOptions.include || []).filter((i: any) => i.required && !i.separate),
+        include: (getOptions.include || []).filter((i: {required?: boolean, separate?: boolean}) => i.required && !i.separate),
         getGraphQLArgs: getOptions.getGraphQLArgs,
       };
       let total = await adapter.count(defName, countOnlyOptions);
       total = await this.runHook(defName, "afterCount", total, countOnlyOptions);
       return { total, models: [] };
     }
-    let models = (await adapter.findAll(defName, getOptions)).filter((m: any) => (m !== undefined && m !== null));
+    const models = (await adapter.findAll(defName, getOptions)).filter((m) => (m !== undefined && m !== null));
 
     // Sequelize does not fire a child model's afterFind for JOIN-loaded includes.
     // Walk the built include plan and fire afterFind for each JOIN (non-separate)
     // relation on the loaded instances before the nested field resolvers read them;
     // separate/cross-adapter relations fire it natively via their own query.
-    const plan = (a as any).include && (a as any).include[0];
+    const plan = (a.include as IncludeMap[] | undefined)?.[0];
     if (plan) {
       await this.applyEagerAfterFind(plan, models, options);
     }
@@ -983,7 +1094,7 @@ export default class Ormize<
       total, models,
     };
   }
-  processInputs = async(defName: any, input: { [x: string]: any; }, args: any, context: any, info: any, model?: any) => {
+  processInputs = async(defName: string, input: MutationInputTree, args: unknown, context: RequestContext, info: unknown, model?: AdapterRow): Promise<MutationInput> => {
     const definition = this.getDefinition(defName);
     const fields = this.getFields(defName);
     // Allow-list scalar input to writable columns. `isStructurallyWritable`
@@ -996,10 +1107,10 @@ export default class Ormize<
         o[key] = input[key];
       }
       return o;
-    }, {} as any);
+    }, {} as MutationInput);
 
     if (definition.override) {
-      i = await waterfall(Object.keys(definition.override), async(key: string | number, o: { [x: string]: any; }) => {
+      i = await waterfall(Object.keys(definition.override), async(key: string, o: MutationInput) => {
         if (definition.override) {
           const input = definition.override[key].input;
           if (input) {
@@ -1014,14 +1125,21 @@ export default class Ormize<
     }
     return i;
   }
-  processRelationshipMutation = async(defName: any, source: any, input: any, context: any, selection?: Selection) => {
-    const translateFilter = selection?.translateFilter || ((w: any) => w);
+  processRelationshipMutation = async(defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, selection?: Selection) => {
+    if (!input) {
+      // A select with no `input` is a plain find — there is nothing nested to
+      // apply. Reading `input[key]` per association would throw on the way past.
+      return source;
+    }
+    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
     // A collection's getter returns an array, a singular relationship's returns one
     // record or null — every branch below treats what it got back as a list.
-    const asList = (res: any) => Array.isArray(res) ? res : (res ? [res] : []);
+    const asList = (res: unknown): InstanceRow[] => Array.isArray(res) ? res : (res ? [res] : []);
     const associations = this.getAssociations(defName);
     const defaultOptions = createResolveContext(context, selection, source);
-    await waterfall(Object.keys(associations), async(key: string, o: any) => {
+    // The relationship accessors are reached off the row by name — see {@link InstanceRow}.
+    const row = source as InstanceRow;
+    await waterfall(Object.keys(associations), async(key: string) => {
       const association = associations[key];
       const targetName = association.target;
       const targetAdapter = this.getModelAdapter(targetName);
@@ -1035,11 +1153,11 @@ export default class Ormize<
         // it for a relationship the mutation actually touches.)
         const targetOptions = await this.optionsForAdapter(defName, targetName, defaultOptions);
         const targetContext = await this.optionsForAdapter(defName, targetName, context);
-        const args = input[key];
+        const args = input[key] as RelationshipMutation;
         const singular = association.associationType === "belongsTo" || association.associationType === "hasOne";
         const isBtm = association.associationType === "belongsToMany";
         if (args.create) {
-          await waterfall(args.create, async(arg: any) => {
+          await waterfall(args.create, async(arg: MutationInput) => {
             if (targetDef.before) {
               arg = await targetDef.before({
                 params: arg, args, context, info: selection?.raw,
@@ -1055,10 +1173,10 @@ export default class Ormize<
             switch (association.associationType) {
               case "hasMany":
               case "belongsToMany":
-                await source[association.accessors.add](result, defaultOptions);
+                await row[association.accessors.add](result, defaultOptions);
                 break;
               default:
-                await source[association.accessors.set](result, defaultOptions);
+                await row[association.accessors.set](result, defaultOptions);
                 break;
             }
 
@@ -1066,16 +1184,16 @@ export default class Ormize<
           });
         }
         if (args.update) {
-          await waterfall(args.update, async(arg: { where: any; limit: any; input: any; }) => {
+          await waterfall(args.update, async(arg: { where?: MutationFilter; limit?: number; input?: MutationInput }) => {
             const {where, limit, input} = arg;
             // const [result] = await this.processUpdate(targetName, source, {input: arg}, context, info);
             const whereObj = await targetAdapter.processFilterArgument(translateFilter(where, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-            const targets = asList(await source[association.accessors.get]({
+            const targets = asList(await row[association.accessors.get]({
               limit,
               where: whereObj,
               ...defaultOptions
             }));
-            let i = await this.processInputs(targetName, input, source, args, targetContext, selection?.raw);
+            let i: MutationInput = await this.processInputs(targetName, input as MutationInputTree, args, targetContext, selection?.raw);
             if (targetDef.before) {
               i = await targetDef.before({
                 params: input, args, context, info: selection?.raw,
@@ -1083,8 +1201,8 @@ export default class Ormize<
                 type: Events.MUTATION_UPDATE,
               });
             }
-            await Promise.all(targets.map(async(model: any) => {
-              let m = await targetAdapter.update(model, i, targetOptions);
+            await Promise.all(targets.map(async(model: InstanceRow) => {
+              const m = await targetAdapter.update(model, i, targetOptions);
               // if (targetDef.after) {
               //   m = await targetDef.after({
               //     result: m, args, context, info,
@@ -1092,21 +1210,21 @@ export default class Ormize<
               //     type: events.MUTATION_UPDATE,
               //   });
               // }
-              const defName = targetDef.name;
-              await this.processRelationshipMutation(defName, m, input, targetContext, selection);
+              const defName = targetDef.name as string;
+              await this.processRelationshipMutation(defName, m, input as MutationInputTree, targetContext, selection);
               return m;
             }));
           });
         }
         if (args.delete) {
-          await waterfall(args.delete, async(arg: any) => {
-            const targets = asList(await source[association.accessors.get](Object.assign({
+          await waterfall(args.delete, async(arg: MutationFilter) => {
+            const targets = asList(await row[association.accessors.get](Object.assign({
               where: await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions),
             }, defaultOptions)));
             // let i = await this.processInputs(targetName, input, source, args, context, info);
-            await Promise.all(targets.map(async(model: any) => {
-              const defName = targetDef.name;
-              await this.processRelationshipMutation(defName, model, input, targetContext, selection);
+            await Promise.all(targets.map(async(model: InstanceRow) => {
+              const defName = targetDef.name as string;
+              await this.processRelationshipMutation(defName, model, input as MutationInputTree, targetContext, selection);
               if (targetDef.before) {
                 await targetDef.before({
                   params: model, args, context, info: selection?.raw,
@@ -1130,16 +1248,18 @@ export default class Ormize<
           if (singular) {
             // belongsTo/hasOne: disassociate by nulling the relationship.
             if (args.remove === true) {
-              await source[association.accessors.set](null, defaultOptions);
+              await row[association.accessors.set](null, defaultOptions);
             }
           } else {
-            await waterfall(args.remove, async(arg: any) => {
+            // The list forms are the collection branch of each pair — a singular
+            // relationship takes one filter, and is handled above.
+            await waterfall(args.remove as MutationFilter[], async(arg: MutationFilter) => {
               const where = await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions);
               const results = await targetAdapter.findAll(targetName, Object.assign({
                 where,
               }, targetOptions));
               if (results.length > 0) {
-                return source[association.accessors.removeMultiple](results, defaultOptions);
+                return row[association.accessors.removeMultiple](results, defaultOptions);
               }
               return undefined;
             });
@@ -1147,17 +1267,18 @@ export default class Ormize<
         }
 
         if (args.add) {
-          await waterfall(args.add, async(arg: any) => {
+          await waterfall(args.add, async(arg: MutationFilter | { where?: MutationFilter; through?: MutationInput }) => {
             // belongsToMany add entries are `{ where, through }`; other collections
             // pass the filter directly.
-            const filter = isBtm ? (arg || {}).where : arg;
-            const through = isBtm ? (arg || {}).through : undefined;
+            const entry = (arg || {}) as { where?: MutationFilter; through?: MutationInput };
+            const filter = isBtm ? entry.where : (arg as MutationFilter);
+            const through = isBtm ? entry.through : undefined;
             const where = await targetAdapter.processFilterArgument(translateFilter(filter, targetGlobalKeys), targetDef.whereOperators, targetOptions);
             const results = await targetAdapter.findAll(targetName, Object.assign({
               where,
             }, targetOptions));
             if (results.length > 0) {
-              return source[association.accessors.addMultiple](results, through !== undefined ? Object.assign({through}, defaultOptions) : defaultOptions);
+              return row[association.accessors.addMultiple](results, through !== undefined ? Object.assign({through}, defaultOptions) : defaultOptions);
             }
             return undefined;
           });
@@ -1166,41 +1287,42 @@ export default class Ormize<
         if (args.set !== undefined && args.set !== null) {
           if (singular) {
             // belongsTo/hasOne: associate one existing record found by filter.
-            const where = await targetAdapter.processFilterArgument(translateFilter(args.set, targetGlobalKeys), targetDef.whereOperators, targetOptions);
+            const where = await targetAdapter.processFilterArgument(translateFilter(args.set as MutationFilter, targetGlobalKeys), targetDef.whereOperators, targetOptions);
             const found = await targetAdapter.findAll(targetName, Object.assign({where, limit: 1}, targetOptions));
-            await source[association.accessors.set](found[0] || null, defaultOptions);
+            await row[association.accessors.set](found[0] || null, defaultOptions);
           } else {
             // Collections: replace the entire set with all matching existing records.
-            const all: any[] = [];
-            let through: any;
-            await waterfall(args.set, async(arg: any) => {
-              const filter = isBtm ? (arg || {}).where : arg;
-              if (isBtm && (arg || {}).through !== undefined) {
-                through = arg.through;
+            const all: AdapterRow[] = [];
+            let through: MutationInput | undefined;
+            await waterfall(args.set as (MutationFilter | { where?: MutationFilter; through?: MutationInput })[], async(arg: MutationFilter | { where?: MutationFilter; through?: MutationInput }) => {
+              const entry = (arg || {}) as { where?: MutationFilter; through?: MutationInput };
+              const filter = isBtm ? entry.where : (arg as MutationFilter);
+              if (isBtm && entry.through !== undefined) {
+                through = entry.through;
               }
               const where = await targetAdapter.processFilterArgument(translateFilter(filter, targetGlobalKeys), targetDef.whereOperators, targetOptions);
               const results = await targetAdapter.findAll(targetName, Object.assign({where}, targetOptions));
               all.push(...results);
               return undefined;
             });
-            await source[association.accessors.set](all, through !== undefined ? Object.assign({through}, defaultOptions) : defaultOptions);
+            await row[association.accessors.set](all, through !== undefined ? Object.assign({through}, defaultOptions) : defaultOptions);
           }
         }
 
         if (args.restore !== undefined && args.restore !== null) {
           // Restore soft-deleted (paranoid) related records scoped to this relationship.
-          const restoreByFilter = async(arg: any) => {
+          const restoreByFilter = async(arg: MutationFilter) => {
             const where = await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-            const res = await source[association.accessors.get](Object.assign({where, paranoid: false}, defaultOptions));
+            const res = await row[association.accessors.get](Object.assign({where, paranoid: false}, defaultOptions));
             const records = asList(res);
             await Promise.all(records
-              .filter((r: any) => r && r.deletedAt)
-              .map((r: any) => r.restore(targetOptions)));
+              .filter((r) => r && r.deletedAt)
+              .map((r) => r.restore(targetOptions)));
           };
           if (singular) {
-            await restoreByFilter(args.restore);
+            await restoreByFilter(args.restore as MutationFilter);
           } else {
-            await waterfall(args.restore, restoreByFilter);
+            await waterfall(args.restore as MutationFilter[], restoreByFilter);
           }
         }
 
@@ -1210,18 +1332,18 @@ export default class Ormize<
           // them via `arg.input`. The selected records themselves are NOT modified —
           // no field write, no create/update/delete; scalar fields in `input` are
           // ignored (only relationship sub-mutations are applied).
-          const selectByFilter = async(arg: any) => {
+          const selectByFilter = async(arg: { where?: MutationFilter; input?: MutationInput }) => {
             const where = await targetAdapter.processFilterArgument(translateFilter(arg.where, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-            const res = await source[association.accessors.get](Object.assign({where}, defaultOptions));
+            const res = await row[association.accessors.get](Object.assign({where}, defaultOptions));
             const records = asList(res);
-            await waterfall(records, async(m: any) => {
-              await this.processRelationshipMutation(targetDef.name, m, arg.input, targetContext, selection);
+            await waterfall(records, async(m: InstanceRow) => {
+              await this.processRelationshipMutation(targetDef.name as string, m, arg.input as MutationInputTree, targetContext, selection);
             });
           };
           if (singular) {
-            await selectByFilter(args.select);
+            await selectByFilter(args.select as { where?: MutationFilter; input?: MutationInput });
           } else {
-            await waterfall(args.select, selectByFilter);
+            await waterfall(args.select as { where?: MutationFilter; input?: MutationInput }[], selectByFilter);
           }
         }
       }
@@ -1235,7 +1357,7 @@ export default class Ormize<
    * coordinator rather than opening a new one. See {@link OrmizeTransaction} for
    * the best-effort (non-two-phase-commit) guarantee.
    */
-  transaction = async <T = any>(fn: (tx: OrmizeTransaction) => Promise<T>): Promise<T> => {
+  transaction = async <T = unknown>(fn: (tx: OrmizeTransaction) => Promise<T>): Promise<T> => {
     const current = getStore();
     if (current?.transaction) {
       return fn(current.transaction);
@@ -1254,13 +1376,13 @@ export default class Ormize<
   }
 
   /** Run `fn` with an ambient request `context`, readable via `getContext()`. */
-  runWithContext = <T = any>(context: any, fn: () => T): T => {
+  runWithContext = <T = unknown>(context: RequestContext, fn: () => T): T => {
     const current = getStore();
     return store.run({ ...(current || {}), context }, fn);
   }
 
   /** The ambient request context for the current async scope, if any. */
-  getContext = (): any => {
+  getContext = (): RequestContext => {
     return getStore()?.context;
   }
 
@@ -1277,7 +1399,7 @@ export default class Ormize<
    * - An explicit `context.transaction` (with no coordinator) is honoured as-is,
    *   and an adapter without transaction support just runs the callback directly.
    */
-  withTransaction = async(defName: any, context: any, fn: (ctx: any) => Promise<any>): Promise<any> => {
+  withTransaction = async <T>(defName: string, context: RequestContext, fn: (ctx: RequestContext) => Promise<T>): Promise<T> => {
     const adapterName = this.defsAdapters[defName];
     const active = getStore()?.transaction;
     if (active) {
@@ -1287,16 +1409,16 @@ export default class Ormize<
     if (context && context.transaction) {
       return fn(context);
     }
-    const adapter: any = this.adapters[adapterName];
+    const adapter = this.adapters[adapterName];
     if (!adapter || (typeof adapter.beginTransaction !== "function" && typeof adapter.transaction !== "function")) {
       return fn(context);
     }
     return this.transaction(async() => this.withTransaction(defName, context, fn));
   }
 
-  processCreate = async(defName: any, source: any, args: { input: any; }, context: any, selection?: Selection) => {
-    return this.withTransaction(defName, context, async(context: any) => {
-    const translateFilter = selection?.translateFilter || ((w: any) => w);
+  processCreate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+    return this.withTransaction(defName, context, async(context: RequestContext) => {
+    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
     const processCreate = adapter.getCreateFunction(defName);
@@ -1310,7 +1432,7 @@ export default class Ormize<
         type: Events.MUTATION_CREATE,
       });
     }
-    let result;
+    let result: AdapterRow;
     if (Object.keys(input).length > 0) {
       result = await processCreate(input, createResolveContext(context, selection, source));
       // if (definition.after) {
@@ -1331,20 +1453,22 @@ export default class Ormize<
     });
   }
 
-  processUpdate = async(defName: any, source: any, args: { input: { [x: string]: any; }; where: any; limit: any; }, context: any, selection?: Selection) => {
-    return this.withTransaction(defName, context, async(context: any) => {
-    const translateFilter = selection?.translateFilter || ((w: any) => w);
-    const translateId = selection?.translateId || ((v: any) => v);
+  processUpdate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+    return this.withTransaction(defName, context, async(context: RequestContext) => {
+    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
+    const translateId = selection?.translateId || ((v: unknown) => v);
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
     const processUpdate = adapter.getUpdateFunction(defName, definition.whereOperators);
     const globalKeys = this.getGlobalKeys(defName);
 
-    let i = Object.keys(args.input).reduce((o, k) => {
+    let i: MutationInput = Object.keys(args.input).reduce((o, k) => {
       if (globalKeys.indexOf(k) > -1) {
         let v = args.input[k];
-        if (typeof args.input[k] === "function") {
-          v = args.input[k](selection?.variableValues);
+        // A global-id argument may arrive as a thunk over the operation's
+        // variables — gqlize defers relay id translation that way.
+        if (typeof v === "function") {
+          v = v(selection?.variableValues);
         }
         if (v === null || v === undefined) {
           o[k] = null;
@@ -1356,7 +1480,7 @@ export default class Ormize<
         o[k] = args.input[k];
       }
       return o;
-    }, {} as any);
+    }, {} as MutationInput);
     const where = translateFilter(args.where, globalKeys);
     if (definition.before) {
       i = await definition.before({
@@ -1365,11 +1489,11 @@ export default class Ormize<
         type: Events.MUTATION_UPDATE,
       });
     }
-    const results = await processUpdate(where, (model: any) => {
+    const results = await processUpdate(where, (model) => {
       return this.processInputs(defName, i, args, context, selection?.raw, model);
     }, createResolveContext(context, selection, source, {limit: args.limit}));
 
-    await waterfall(results, async(r: any) => {
+    await waterfall(results, async(r: AdapterRow) => {
       await this.processRelationshipMutation(defName, r, args.input, context, selection);
       // if (definition.after) {
       //   await definition.after({
@@ -1383,9 +1507,9 @@ export default class Ormize<
     return results;
     });
   }
-  processSelect = async(defName: any, source: any, args: { input: any; where: any; limit: any; }, context: any, selection?: Selection) => {
-    return this.withTransaction(defName, context, async(context: any) => {
-    const translateFilter = selection?.translateFilter || ((w: any) => w);
+  processSelect = async(defName: string, source: AdapterRow, args: { input?: MutationInputTree; where?: MutationFilter; limit?: number }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+    return this.withTransaction(defName, context, async(context: RequestContext) => {
+    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
     // Find matching elements and run relationship mutations on them via `args.input`
     // WITHOUT modifying the elements themselves (no field write / lifecycle change);
     // scalar fields in `input` are ignored. Returns the found rows so the caller can
@@ -1400,21 +1524,21 @@ export default class Ormize<
       options,
     );
     const results = await adapter.findAll(defName, Object.assign({where, limit: args.limit}, options));
-    await waterfall(results, async(r: any) => {
+    await waterfall(results, async(r: AdapterRow) => {
       await this.processRelationshipMutation(defName, r, args.input, context, selection);
     });
     return results;
     });
   }
-  processDelete = async(defName: any, source: any, args: any, context: any, selection?: Selection) => {
-    return this.withTransaction(defName, context, async(context: any) => {
-    const translateFilter = selection?.translateFilter || ((w: any) => w);
+  processDelete = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+    return this.withTransaction(defName, context, async(context: RequestContext) => {
+    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
     const processDelete = adapter.getDeleteFunction(defName, definition.whereOperators);
     const globalKeys = this.getGlobalKeys(defName);
     const where = translateFilter(args, globalKeys);
-    const before = (model: any) => {
+    const before = (model: AdapterRow) => {
       if (!definition.before) {
         return model;
       }
@@ -1424,7 +1548,7 @@ export default class Ormize<
         type: Events.MUTATION_DELETE,
       });
     };
-    const after = (model: any) => {
+    const after = (model: AdapterRow) => {
       return model;
       // if (!definition.after) {
 
@@ -1445,8 +1569,8 @@ export default class Ormize<
 // Hooks read `options.getGraphQLArgs().info`; gqlize sets `selection.raw` to the
 // real GraphQLResolveInfo so that behaviour is identical, while ormize itself
 // stays graphql-free (it only forwards the opaque `raw`).
-function createResolveContext(context: any, selection: any, source: any, options: any = {}) {
-  const base: any = {
+function createResolveContext(context: RequestContext, selection: Selection | undefined, source: AdapterRow, options: AdapterQueryOptions = {}): ResolveOptions {
+  const base: ResolveOptions = {
     getGraphQLArgs() {
       return {
         context,
@@ -1466,7 +1590,7 @@ function createResolveContext(context: any, selection: any, source: any, options
 
 // Cursor-based offset from decoded `after`/`before` args (shared by the top-level
 // list resolver and the relationship resolver).
-function cursorOffset(args: any) {
+function cursorOffset(args: FindAllArgs) {
   if (args.after) {
     return args.after.index + 1;
   }

@@ -1,9 +1,13 @@
 import { v4 as uuidv4 } from "uuid";
 import pluralize from "pluralize";
 import logger from "@azerothian/utilize/utils/logger";
+import type {
+  AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, HookMap, Model,
+  OrmAdapter, Permission, Relationship, Selection, WhereOperators,
+} from "@azerothian/utilize/types/index";
 import { Keys } from "./keys";
 import { ValkeyModel } from "./model";
-import { DirectExecutor, Executor, ValkeyTransaction } from "./transaction";
+import { DirectExecutor, Executor, ValkeyTransaction, type ValkeyClient } from "./transaction";
 import { serialize, deserialize } from "./serialize";
 import { planIndexes, addToIndexes, removeFromIndexes, reindex } from "./indexes";
 import { executeQuery, processFilterArgument, matchWhere } from "./query";
@@ -12,20 +16,56 @@ import { mapDataType, toNativeType } from "./data-type-mapper";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "./utils/replace-id-deep";
 import * as G from "./graphql";
+import type { GqlizeAdapter } from "@azerothian/gqlize/types/gqlize-adapter";
 
 const log = logger("ormize::adapter::valkey::");
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 1000;
-function clampPageSize(v: any): number {
-  const n = parseInt(v, 10);
+function clampPageSize(v: unknown): number {
+  const n = parseInt(String(v), 10);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_PAGE_SIZE;
   return Math.min(n, MAX_PAGE_SIZE);
 }
 
-function looksLikeClient(x: any): boolean {
-  return !!x && typeof x.get === "function" && typeof x.set === "function" && typeof x.multi === "function";
+function looksLikeClient(x: unknown): x is ValkeyClient {
+  const c = x as Partial<ValkeyClient> | null | undefined;
+  return !!c && typeof c.get === "function" && typeof c.set === "function" && typeof c.multi === "function";
 }
+
+/**
+ * A row as this adapter makes them: the deserialized object, decorated by
+ * {@link ValkeyAdapter.tag} with a hidden model tag and the instance API.
+ *
+ * Parameters below are typed with this rather than the contract's opaque
+ * {@link AdapterRow} deliberately — see the note on {@link OrmAdapter}: no
+ * *caller* may assume a row's shape, but the adapter that produced it knows
+ * exactly what it is and re-narrows on the way back in.
+ */
+export type ValkeyRow = { [field: string]: any };
+
+/**
+ * What this adapter itself reads out of its first constructor argument. Closed,
+ * not an open bag: `prefix` is the only option there is, so a misspelled one
+ * should be a compile error rather than a silently unprefixed keyspace.
+ */
+export type ValkeyAdapterOptions = { prefix?: string };
+
+/**
+ * What the constructor takes in place of a ready client: whatever `ioredis`'s
+ * own constructor takes — a URL or its options object. Opaque on purpose:
+ * `ioredis` is required lazily so a caller injecting a client need not install
+ * it, and the value is passed straight through unread either way.
+ */
+export type ValkeyConnection = string | { [option: string]: unknown };
+
+/**
+ * An {@link Association} as this adapter reports it, plus the two join-model
+ * keys a `belongsToMany` is resolved through (`fkA` points at the source record,
+ * `fkB` at the target). Sequelize carries those inside its own association
+ * object; here the join is an ordinary indexed record, so they ride along.
+ */
+export type ValkeyAssociation = Association & { fkA?: string; fkB?: string };
 
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 /** Sequelize-style accessor name parts for a relation: capitalized name + singular. */
@@ -38,15 +78,15 @@ function relNames(name: string): { nameCap: string; singCap: string } {
  * driven exclusively by index/mapping structures (never a keyspace scan). See the
  * package README + docs/guide.md.
  */
-export default class ValkeyAdapter {
+export default class ValkeyAdapter implements GqlizeAdapter {
   adapterName = "valkey";
-  client: any;
-  options: any;
+  client: ValkeyClient;
+  options: ValkeyAdapterOptions;
   keys: Keys;
   models: { [name: string]: ValkeyModel } = {};
   private ownsClient = false;
 
-  constructor(adapterOptions: any = {}, clientOrOptions?: any) {
+  constructor(adapterOptions: ValkeyAdapterOptions = {}, clientOrOptions?: ValkeyClient | ValkeyConnection) {
     this.options = adapterOptions;
     this.keys = new Keys(adapterOptions.prefix || "ormize");
     if (looksLikeClient(clientOrOptions)) {
@@ -62,7 +102,7 @@ export default class ValkeyAdapter {
   getORM = () => this.client;
 
   // ---- executor selection ----
-  private execFor(options: any): { ex: Executor; finish: () => Promise<void> } {
+  private execFor(options?: AdapterQueryOptions): { ex: Executor; finish: () => Promise<void> } {
     const tx = options?.transaction;
     if (tx instanceof ValkeyTransaction) {
       return { ex: tx, finish: async () => {} };
@@ -78,9 +118,9 @@ export default class ValkeyAdapter {
   }
 
   // ---- GraphQL type-builder support (gqlize) ----
-  meta: { [model: string]: { [key: string]: any } } = {};
-  _buildPermission: any = undefined;
-  setBuildPermission = (permission: any) => {
+  meta: { [model: string]: { [key: string]: unknown } } = {};
+  _buildPermission: Permission | undefined = undefined;
+  setBuildPermission = (permission: Permission | undefined) => {
     if (permission !== this._buildPermission) {
       // These three types are derived from the permission bag but cached by
       // model name alone — a second schema build under a different permission
@@ -94,23 +134,23 @@ export default class ValkeyAdapter {
     this._buildPermission = permission;
   };
   getMetaObj = (model: string, key: string) => this.meta[model]?.[key];
-  setMetaObj = (model: string, key: string, value: any) => {
+  setMetaObj = (model: string, key: string, value: unknown) => {
     (this.meta[model] = this.meta[model] || {})[key] = value;
   };
   getTypeMapper = () => typeMapper;
-  getFilterGraphQLType = (defName: string, definition: any, permission?: any) => G.getFilterGraphQLType(this, defName, definition, permission);
-  getOrderByGraphQLType = (defName: string, permission?: any) => G.getOrderByGraphQLType(this, defName, permission);
-  getIncludeGraphQLType = (defName: string, definition: any, permission?: any) => G.getIncludeGraphQLType(this, defName, definition, permission);
-  getDefaultListArgs = (defName: string, definition: any, permission?: any) => G.getDefaultListArgs(this, defName, definition, permission);
+  getFilterGraphQLType = (defName: string, definition: Definition, permission?: Permission) => G.getFilterGraphQLType(this, defName, definition, permission);
+  getOrderByGraphQLType = (defName: string, permission?: Permission) => G.getOrderByGraphQLType(this, defName, permission);
+  getIncludeGraphQLType = (defName: string, definition: Definition, permission?: Permission) => G.getIncludeGraphQLType(this, defName, definition, permission);
+  getDefaultListArgs = (defName: string, definition: Definition, permission?: Permission) => G.getDefaultListArgs(this, defName, definition, permission);
 
   // ---- relay global-id rewriting (gqlize passes global ids for id/fk fields) ----
   getGlobalKeys = (defName: string): string[] => {
     const m = this.model(defName);
     return Object.keys(m.fields).filter((k) => (m.fields[k].primaryKey || m.fields[k].foreignKey) && !m.fields[k].ignoreGlobalKey);
   };
-  replaceIdInWhere = (where: any, defName: string) => replaceIdDeep(where, this.getGlobalKeys(defName));
-  replaceIdInInclude = (include: any, _defName: string) => include;
-  replaceIdInArgs = async (args: any, defName: string) => {
+  replaceIdInWhere = (where: AdapterWhere | undefined, defName: string) => replaceIdDeep(where, this.getGlobalKeys(defName));
+  replaceIdInInclude = (include: Selection["include"], _defName: string) => include;
+  replaceIdInArgs = async (args: { [name: string]: any }, defName: string) => {
     if (args?.where) {
       return { ...args, where: this.replaceIdInWhere(args.where, defName) };
     }
@@ -119,8 +159,8 @@ export default class ValkeyAdapter {
 
   // ---- lifecycle ----
   initialise = async () => { /* ioredis connects lazily */ };
-  sync = async (_options?: any) => { /* indexes are lazy; nothing to migrate */ };
-  reset = async (_options?: any) => {
+  sync = async (_options?: AdapterQueryOptions) => { /* indexes are lazy; nothing to migrate */ };
+  reset = async (_options?: AdapterQueryOptions) => {
     // Scoped clear (no KEYS/SCAN): walk each model's `ids` and drop everything it references.
     const { ex, finish } = this.execFor({});
     for (const name of Object.keys(this.models)) {
@@ -137,20 +177,24 @@ export default class ValkeyAdapter {
   };
 
   // ---- model definition ----
-  createModel = async (def: any, _hooks?: any) => {
-    const model: any = new ValkeyModel(def);
-    this.models[def.name] = model;
-    const name = def.name;
+  createModel = async (def: Definition, _hooks?: HookMap) => {
+    // The model is a `ValkeyModel` plus the statics installed just below and the
+    // user's own class methods — dynamic by nature, which is exactly what
+    // {@link Model}'s index signature describes. The constructor is also what
+    // rejects an unnamed definition, so `name` is a resolved string from here on.
+    const model = new ValkeyModel(def) as ValkeyModel & Model;
+    const name = model.name;
+    this.models[name] = model;
     const adapter = this;
 
     // Sequelize-style static CRUD on the model object (so `orm.models.X.create(...)` works).
-    model.create = (values: any, options?: any) => adapter.getCreateFunction(name)(values, options);
-    model.findAll = (options?: any) => adapter.findAll(name, options || {});
-    model.findOne = async (options?: any) => (await adapter.findAll(name, { ...(options || {}), limit: 1 }))[0] || null;
-    model.findByPk = (id: any, options?: any) => adapter.getById(name, id, options);
-    model.count = (options?: any) => adapter.count(name, options || {});
-    model.update = (values: any, options?: any) => adapter.getUpdateFunction(name, undefined)(options?.where || {}, () => values, options);
-    model.destroy = (options?: any) => adapter.getDeleteFunction(name, undefined)(options?.where || {}, options);
+    model.create = (values: { [field: string]: any }, options?: AdapterQueryOptions) => adapter.getCreateFunction(name)(values, options);
+    model.findAll = (options?: AdapterQueryOptions) => adapter.findAll(name, options || {});
+    model.findOne = async (options?: AdapterQueryOptions) => (await adapter.findAll(name, { ...(options || {}), limit: 1 }))[0] || null;
+    model.findByPk = (id: string | number, options?: AdapterQueryOptions) => adapter.getById(name, id, options);
+    model.count = (options?: AdapterQueryOptions) => adapter.count(name, options || {});
+    model.update = (values: { [field: string]: any }, options?: AdapterQueryOptions) => adapter.getUpdateFunction(name, undefined)(options?.where || {}, () => values, options);
+    model.destroy = (options?: AdapterQueryOptions) => adapter.getDeleteFunction(name, undefined)(options?.where || {}, options);
 
     // Wire user-declared class/instance methods (top-level + options.*), matching
     // the Sequelize adapter. Class methods → statics; instance methods → stashed
@@ -172,31 +216,43 @@ export default class ValkeyAdapter {
    * to implement itself because the target lives in another datastore — a Valkey
    * "model" is a plain descriptor, so there is no prototype to hang them on.
    */
-  addInstanceFunction = (modelName: string, name: string, fn: any) => {
-    const model: any = this.model(modelName);
+  addInstanceFunction = (modelName: string, name: string, fn: (...args: any[]) => any) => {
+    const model = this.model(modelName) as ValkeyModel & Model;
     model.__instanceMethods = { ...(model.__instanceMethods || {}), [name]: fn };
   };
 
-  getFields = (defName: string) => this.model(defName).fields as any;
+  getFields = (defName: string) => this.model(defName).fields;
 
   getPrimaryKeyNameForModel = (defName: string): string[] => [this.model(defName).primaryKey];
 
-  getValueFromInstance = (data: any, key: string) => (data ? data[key] : undefined);
+  getValueFromInstance = (data: ValkeyRow, key: string) => (data ? data[key] : undefined);
 
   getAssociations = (defName: string) => {
     const model = this.model(defName);
-    const out: { [rel: string]: any } = {};
+    const out: { [rel: string]: ValkeyAssociation } = {};
     for (const rel of model.relationships) {
       const type = rel.type;
       const fk = rel.options?.foreignKey;
-      const join = (rel as any).__join;
+      const join = rel.__join;
       out[rel.name] = {
         name: rel.name,
         target: rel.model,
         source: defName,
-        foreignKey: fk,
-        sourceKey: rel.options?.sourceKey,
-        targetKey: rel.options?.targetKey,
+        // An {@link Association} reports *resolved* join keys, and the three
+        // below are resolved as far as this adapter can see. The source is
+        // always one of our models, so its key falls back to that model's
+        // primary key — the same fallback every read below applies. The other
+        // two can be genuinely unresolvable here: a target on another adapter is
+        // not one of our models (ormize overlays its own, fully resolved,
+        // association over ours for exactly those), and a relationship declared
+        // without a foreign key was never wired at all — `createRelationship`
+        // skips it. Both report the empty string rather than a guessed column
+        // name: it is falsy, so the `if (key)` guards that already exist around
+        // these behave as they did when the value was absent, and nothing can
+        // quietly query the wrong field.
+        foreignKey: fk || "",
+        sourceKey: rel.options?.sourceKey || model.primaryKey,
+        targetKey: rel.options?.targetKey || this.models[rel.model]?.primaryKey || "",
         associationType: type,
         // belongsToMany join descriptor (through model + the two foreign keys).
         through: join?.through,
@@ -220,7 +276,7 @@ export default class ValkeyAdapter {
 
   getAssociation = (defName: string, relName: string) => this.getAssociations(defName)[relName];
 
-  createRelationship = (defName: string, targetModel: string, relName: string, relType: string, options: any = {}) => {
+  createRelationship = (defName: string, targetModel: string, relName: string, relType: string, options: Relationship["options"] = {}) => {
     const source = this.model(defName);
     const fk = options.foreignKey;
     // Ensure the foreign key is an indexed field on whichever model owns it, so
@@ -240,19 +296,23 @@ export default class ValkeyAdapter {
       const fkB = options.otherKey || this.deriveOtherKey(targetModel, throughName, options.through) || `${targetModel.charAt(0).toLowerCase()}${targetModel.slice(1)}Id`;
       if (throughName && fkA && fkB) {
         this.ensureJoinModel(throughName, fkA, fkB);
-        const relObj = source.relationships.find((r: any) => r.name === relName);
-        if (relObj) (relObj as any).__join = { through: throughName, fkA, fkB };
+        const relObj = source.relationships.find((r) => r.name === relName);
+        if (relObj) relObj.__join = { through: throughName, fkA, fkB };
       }
     }
     return this.getAssociation(defName, relName);
   };
 
-  /** Find the reciprocal belongsToMany's foreign key (the "other" join key). */
-  private deriveOtherKey(targetModel: string, throughName: string, through: any): string | undefined {
+  /**
+   * Find the reciprocal belongsToMany's foreign key (the "other" join key).
+   * `throughName` may be absent — a `belongsToMany` declared without a `through`
+   * has no join model to match a reciprocal against, and no key comes back.
+   */
+  private deriveOtherKey(targetModel: string, throughName: string | undefined, through: Relationship["options"]["through"]): string | undefined {
     if (through && typeof through === "object" && through.otherKey) return through.otherKey;
     const t = this.models[targetModel];
     if (!t) return undefined;
-    const recip = (t.relationships || []).find((r: any) => {
+    const recip = (t.relationships || []).find((r) => {
       const rt = typeof r.options?.through === "string" ? r.options.through : r.options?.through?.model;
       return r.type === "belongsToMany" && rt === throughName;
     });
@@ -278,8 +338,8 @@ export default class ValkeyAdapter {
    * `filterKey` must be indexed — Valkey never scans the keyspace.
    */
   createFunctionForFind = (modelName: string) => {
-    return (value: any, filterKey: string, singular: boolean) => {
-      return async (options: { where?: any } = {}) => {
+    return (value: unknown, filterKey: string, singular: boolean) => {
+      return async (options: AdapterQueryOptions = {}) => {
         const opts = Object.assign({}, options, {
           where: this.mergeFilterStatement(filterKey, value, true, options.where),
         });
@@ -485,11 +545,11 @@ export default class ValkeyAdapter {
   }
 
   // ---- query ----
-  processFilterArgument = (where: any, whereOperators: any, options: any) =>
+  processFilterArgument = (where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions) =>
     processFilterArgument(where, whereOperators, options);
 
   /** Merge an equality (or, for arrays, membership) filter into an existing `where`. */
-  mergeFilterStatement = (fieldName: string, value: any, match = true, originalWhere?: any) => {
+  mergeFilterStatement = (fieldName: string, value: unknown, match = true, originalWhere?: AdapterWhere) => {
     const op = Array.isArray(value) ? (match ? "in" : "notIn") : (match ? "eq" : "ne");
     const filter = { [fieldName]: { [op]: value } };
     if (originalWhere && Object.keys(originalWhere).length) {
@@ -499,10 +559,17 @@ export default class ValkeyAdapter {
   };
 
   hasInlineCountFeature = () => false;
-  getInlineCount = async (_models: any) => 0;
+  getInlineCount = async (_models: AdapterRow[]) => 0;
 
   processListArgsToOptions = (
-    defName: string, args: any, offset: any, _selection: any, whereOperators: any, _graphQLArgs: any, _selectedFields: any, _runHook?: any,
+    defName: string,
+    args: { [name: string]: any },
+    offset: number | undefined,
+    _selection: Selection,
+    whereOperators: WhereOperators | undefined,
+    _graphQLArgs: { getGraphQLArgs: () => { context: any; info: any; source: any } },
+    _selectedFields: string[] | undefined,
+    _runHook?: (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>,
   ) => {
     const limit = (args?.first != null || args?.last != null) ? clampPageSize(args.first ?? args.last) : DEFAULT_PAGE_SIZE;
     const base = { where: args?.where || {}, whereOperators, order: args?.orderBy };
@@ -512,7 +579,7 @@ export default class ValkeyAdapter {
     };
   };
 
-  findAll = async (defName: string, options: any = {}) => {
+  findAll = async (defName: string, options: AdapterQueryOptions = {}) => {
     const model = this.model(defName);
     const { ex, finish } = this.execFor(options);
     const now = Date.now();
@@ -527,7 +594,7 @@ export default class ValkeyAdapter {
     return this.tagAll(objs, defName);
   };
 
-  count = async (defName: string, options: any = {}) => {
+  count = async (defName: string, options: AdapterQueryOptions = {}) => {
     const model = this.model(defName);
     const { ex, finish } = this.execFor(options);
     const now = Date.now();
@@ -538,7 +605,7 @@ export default class ValkeyAdapter {
   };
 
   // ---- mutation ----
-  getCreateFunction = (defName: string) => async (input: any, options: any = {}) => {
+  getCreateFunction = (defName: string) => async (input: { [field: string]: any }, options: AdapterQueryOptions = {}) => {
     const model = this.model(defName);
     const { ex, finish } = this.execFor(options);
     const now = Date.now();
@@ -557,14 +624,14 @@ export default class ValkeyAdapter {
     return this.tag(obj, defName);
   };
 
-  getUpdateFunction = (defName: string, whereOperators: any) =>
-    async (where: any, processInput: (o: any) => any, options: any = {}) => {
+  getUpdateFunction = (defName: string, whereOperators: WhereOperators | undefined) =>
+    async (where: AdapterWhere, processInput: (instance: ValkeyRow) => Promise<{ [field: string]: any }> | { [field: string]: any }, options: AdapterQueryOptions = {}) => {
       const model = this.model(defName);
       const { ex, finish } = this.execFor(options);
       const now = Date.now();
       const pwhere = await processFilterArgument(where, whereOperators, options);
       const matches = await executeQuery(ex, this.keys, model, pwhere, now);
-      const updated: any[] = [];
+      const updated: ValkeyRow[] = [];
       for (const oldObj of matches) {
         const input = await processInput(oldObj);
         if (!input || Object.keys(input).length === 0) { updated.push(this.tag(oldObj, defName)); continue; }
@@ -583,14 +650,19 @@ export default class ValkeyAdapter {
       return updated;
     };
 
-  getDeleteFunction = (defName: string, whereOperators: any) =>
-    async (where: any, options: any = {}, before?: (o: any) => any, after?: (o: any) => any) => {
+  getDeleteFunction = (defName: string, whereOperators: WhereOperators | undefined) =>
+    async (
+      where: AdapterWhere,
+      options: AdapterQueryOptions = {},
+      before?: (instance: AdapterRow) => Promise<AdapterRow> | AdapterRow,
+      after?: (instance: AdapterRow) => Promise<AdapterRow> | AdapterRow,
+    ) => {
       const model = this.model(defName);
       const { ex, finish } = this.execFor(options);
       const now = Date.now();
       const pwhere = await processFilterArgument(where, whereOperators, options);
       const matches = await executeQuery(ex, this.keys, model, pwhere, now);
-      const deleted: any[] = [];
+      const deleted: AdapterRow[] = [];
       for (const obj of matches) {
         const b = before ? await before(obj) : obj;
         const id = obj[model.primaryKey];
@@ -603,26 +675,37 @@ export default class ValkeyAdapter {
     };
 
   /** Single-record update (used by the nested relationship-mutation `update` branch). */
-  update = async (record: any, input: any, options?: any) => {
+  update = async (record: ValkeyRow, input: { [field: string]: any }, options?: AdapterQueryOptions) => {
     const modelName = record?.__valkeyModel;
     if (!modelName) throw new Error("ValkeyAdapter: update() requires an adapter-returned record");
     return this.persistPatch(modelName, record[this.model(modelName).primaryKey], input, options);
   };
 
   // ---- relationships (reads) ----
-  private async btmTargets(association: any, source: any, options: any): Promise<any[]> {
+  private async btmTargets(association: ValkeyAssociation, source: ValkeyRow, options?: AdapterQueryOptions): Promise<ValkeyRow[]> {
     const sourceModel = this.model(association.source);
     const sourceKey = association.sourceKey || sourceModel.primaryKey;
-    const edges = await this.findAll(association.through, { where: { [association.fkA]: source[sourceKey] }, transaction: options?.transaction });
-    const out: any[] = [];
+    const { through, fkA, fkB } = association;
+    // Set together by `createRelationship` when it wires the join model. Absent
+    // means the relationship was never wired (no `through`, or neither join key
+    // could be derived), which would otherwise surface as a query against a model
+    // called "undefined".
+    if (!through || !fkA || !fkB) {
+      throw new Error(`ValkeyAdapter: belongsToMany "${association.name}" has no join model — it was never wired`);
+    }
+    const edges = await this.findAll(through, { where: { [fkA]: source[sourceKey] }, transaction: options?.transaction });
+    const out: ValkeyRow[] = [];
     for (const e of edges) {
-      const t = await this.getById(association.target, e[association.fkB], options);
+      const t = await this.getById(association.target, e[fkB], options);
       if (t) out.push(t);
     }
     return out;
   }
 
-  resolveSingleRelationship = async (defName: string, association: any, source: any, _args: any, _context: any, _selection: any, options: any) => {
+  resolveSingleRelationship = async (
+    defName: string, association: ValkeyAssociation, source: ValkeyRow, _args: { [name: string]: any },
+    _context: any, _selection: Selection, options: AdapterQueryOptions,
+  ) => {
     if (association.associationType === "belongsTo") {
       const targetId = source[association.foreignKey];
       if (targetId == null) return null;
@@ -635,7 +718,9 @@ export default class ValkeyAdapter {
   };
 
   resolveManyRelationship = async (
-    _defName: string, association: any, source: any, args: any, offset: any, whereOperators: any, _selection: any, options: any, countOnly?: boolean,
+    _defName: string, association: ValkeyAssociation, source: ValkeyRow, args: { [name: string]: any },
+    offset: number | undefined, whereOperators: WhereOperators | undefined, _selection: Selection,
+    options: AdapterQueryOptions, countOnly?: boolean,
   ) => {
     const limit = (args?.first != null || args?.last != null) ? clampPageSize(args.first ?? args.last) : undefined;
     if (association.associationType === "belongsToMany") {
@@ -658,7 +743,7 @@ export default class ValkeyAdapter {
     return { total, models };
   };
 
-  countRelationship = async (association: any, source: any, where: any, options: any) => {
+  countRelationship = async (association: ValkeyAssociation, source: ValkeyRow, where: AdapterWhere | undefined, options?: AdapterQueryOptions) => {
     if (association.associationType === "belongsToMany") {
       let models = await this.btmTargets(association, source, options);
       if (where && Object.keys(where).length) models = models.filter((m) => matchWhere(m, where));
@@ -676,7 +761,7 @@ export default class ValkeyAdapter {
     const tx = new ValkeyTransaction(this.client);
     return { handle: tx, commit: () => tx.commit(), rollback: () => tx.rollback() };
   };
-  transaction = async (cb: (t: any) => Promise<any>) => {
+  transaction = async <T>(cb: (t: ValkeyTransaction) => Promise<T>): Promise<T> => {
     const { handle, commit, rollback } = await this.beginTransaction();
     try {
       const r = await cb(handle);
@@ -689,13 +774,13 @@ export default class ValkeyAdapter {
   };
 
   // ---- expiry (Valkey-specific) ----
-  getExpiry = async (defName: string, id: any, options?: any) => {
+  getExpiry = async (defName: string, id: string | number, options?: AdapterQueryOptions) => {
     const { ex, finish } = this.execFor(options);
     const r = await getExpiry(ex, this.keys, this.model(defName), id);
     await finish();
     return r;
   };
-  setExpiry = async (defName: string, id: any, ttlMs: number | null, options?: any) => {
+  setExpiry = async (defName: string, id: string | number, ttlMs: number | null, options?: AdapterQueryOptions) => {
     const { ex, finish } = this.execFor(options);
     await setExpiry(ex, this.keys, this.model(defName), id, ttlMs);
     await finish();
@@ -703,8 +788,8 @@ export default class ValkeyAdapter {
 
   /** Close the client if this adapter created it. */
   close = async () => {
-    if (this.ownsClient && this.client?.quit) {
-      try { await this.client.quit(); } catch { /* noop */ }
+    if (this.ownsClient) {
+      try { await this.client.quit?.(); } catch { /* noop */ }
     }
   };
 }

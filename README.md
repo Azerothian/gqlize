@@ -86,7 +86,7 @@ domain on an in-memory SQLite ormize instance and can be started from the repo r
 pnpm install
 pnpm build        # turbo run build   — builds every package into its publish/ dir
 pnpm test         # turbo run test    — Jest (swc-jest) across all packages
-pnpm typecheck    # tsc -b            — TypeScript project-references build
+pnpm typecheck    # tsc -b + turbo  — src via project references, then __tests__ per package
 pnpm watch        # turbo run watch   — tsc --watch per package
 ```
 

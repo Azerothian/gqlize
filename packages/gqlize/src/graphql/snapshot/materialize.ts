@@ -6,17 +6,31 @@ import {
   GraphQLObjectType,
   GraphQLSchema,
   GraphQLUnionType,
+  isInterfaceType,
+  isObjectType,
   parseConstValue,
   specifiedScalarTypes,
+  type GraphQLFieldConfig,
   type GraphQLFieldConfigMap,
+  type GraphQLInputType,
   type GraphQLNamedType,
+  type GraphQLOutputType,
   type GraphQLScalarType,
+  type GraphQLSchemaConfig,
   type GraphQLType,
 } from "graphql";
 
 import GqlizeBinding from "../../manager";
-import type { GqlizeOptions, SchemaCache } from "../../types";
-import { createSchema as buildSchema } from "../index";
+import type { Ormize } from "@azerothian/ormize";
+import type {
+  GqlizeAdapter,
+  GqlizeOptions,
+  IORBase,
+  ModelTypeHatch,
+  SchemaCache,
+  SchemaHatch,
+} from "../../types";
+import { createSchema as buildSchema, warnUnknownPermissionKeys } from "../index";
 import createSchemaCache from "../create-schema-cache";
 import createNodeInterface from "../utils/create-node-interface";
 import { applyExtendFields } from "../extend";
@@ -34,6 +48,7 @@ import {
   type SchemaSnapshot,
 } from "./ir";
 import { recordBuild } from "./build-registry";
+import type { GqlizeBuildLedger } from "./ledger";
 import { compareFingerprints, describeDrift, fingerprintDefinitions } from "./fingerprint";
 import { createScalarRegistry, unknownScalarError } from "./scalar-registry";
 import { decodeTypeRef } from "./type-ref";
@@ -91,7 +106,7 @@ export interface MaterializeOptions {
      * field maps: a subscription root that references this schema's model types
      * has to be built after they exist, and `options.root` is evaluated before.
      */
-    root?: Record<string, any>;
+    root?: Partial<GraphQLSchemaConfig>;
   };
 }
 
@@ -110,7 +125,7 @@ export interface MaterializeOptions {
  */
 export async function materializeSchema(
   snapshot: SchemaSnapshot,
-  orm: any,
+  orm: Ormize<any, IORBase>,
   options: GqlizeOptions & MaterializeOptions = {},
 ): Promise<GraphQLSchema> {
   const onMismatch = options.onMismatch || "throw";
@@ -126,6 +141,9 @@ export async function materializeSchema(
     log.warn(`${message}; rebuilding live`);
     return buildLiveSchema(orm, options);
   }
+  // Below the rebuild branch on purpose: that path warns for itself via
+  // `createSchemaObjects`.
+  warnUnknownPermissionKeys(options);
   if (options.checkStaleness === false) {
     // Never silent, for the same reason a missing fingerprint is not: an
     // unchecked load reads exactly like a fresh one until it doesn't.
@@ -140,7 +158,7 @@ export async function materializeSchema(
       return rebuilt;
     }
   }
-  const instance = new GqlizeBinding(orm) as any;
+  const instance = new GqlizeBinding(orm);
   const {extend = {}, root} = options;
   const ledger = snapshot.ledger;
   const registry = createScalarRegistry(options.scalars);
@@ -151,10 +169,8 @@ export async function materializeSchema(
   // Same adapter priming as the live build: its GraphQL type builders consult
   // the configured permission, and resolvers can reach them at request time.
   Object.keys(instance.getDefinitions() || {}).forEach((defName) => {
-    const adapter: any = instance.getModelAdapter(defName);
-    if (adapter && typeof adapter.setBuildPermission === "function") {
-      adapter.setBuildPermission(options.permission);
-    }
+    const adapter: GqlizeAdapter | undefined = instance.getModelAdapter(defName);
+    adapter?.setBuildPermission?.(options.permission);
   });
 
   const typeMap = new Map<string, GraphQLNamedType>();
@@ -209,7 +225,7 @@ export async function materializeSchema(
   /** field configs per type, kept for the `$sql2gql` escape hatch */
   const configs = new Map<string, GraphQLFieldConfigMap<any, any>>();
   /** merged into the root types' field maps; filled before any thunk runs */
-  const rootExtras = new Map<string, Record<string, any>>();
+  const rootExtras = new Map<string, GraphQLFieldConfigMap<any, any>>();
 
   function lookup(name: string): GraphQLNamedType | undefined {
     const found = typeMap.get(name);
@@ -278,7 +294,7 @@ export async function materializeSchema(
         return new GraphQLUnionType({
           name: ir.name,
           description,
-          types: () => ir.types.map((n) => lookupOrThrow(n, ir.name)) as any,
+          types: () => ir.types.map((n) => lookupObjectType(n, ir.name)),
         });
       case "input":
         return new GraphQLInputObjectType({
@@ -293,14 +309,14 @@ export async function materializeSchema(
         return new GraphQLInterfaceType({
           name: ir.name,
           description,
-          interfaces: () => (ir.interfaces || []).map((n) => lookupOrThrow(n, ir.name)) as any,
+          interfaces: () => (ir.interfaces || []).map((n) => lookupInterfaceType(n, ir.name)),
           fields: () => fieldMap(ir.name, ir.fields),
         });
       case "object":
         return new GraphQLObjectType({
           name: ir.name,
           description,
-          interfaces: () => (ir.interfaces || []).map((n) => lookupOrThrow(n, ir.name)) as any,
+          interfaces: () => (ir.interfaces || []).map((n) => lookupInterfaceType(n, ir.name)),
           fields: () => fieldMap(ir.name, ir.fields),
         });
     }
@@ -314,12 +330,43 @@ export async function materializeSchema(
     return found;
   }
 
+  /**
+   * A union member and an implemented interface each have to be of a particular
+   * kind, and the IR carries only the name. Checked here rather than left to
+   * `new GraphQLSchema`, whose complaint names neither the referring type nor
+   * the artifact it came out of.
+   */
+  function lookupObjectType(name: string, referencedBy: string): GraphQLObjectType {
+    const found = lookupOrThrow(name, referencedBy);
+    if (!isObjectType(found)) {
+      throw new Error(
+        `gqlize: union ${referencedBy} lists "${name}" as a member, but it is not an object ` +
+          "type — the artifact is inconsistent, rebuild it",
+      );
+    }
+    return found;
+  }
+
+  function lookupInterfaceType(name: string, referencedBy: string): GraphQLInterfaceType {
+    const found = lookupOrThrow(name, referencedBy);
+    if (!isInterfaceType(found)) {
+      throw new Error(
+        `gqlize: ${referencedBy} implements "${name}", but it is not an interface type — the ` +
+          "artifact is inconsistent, rebuild it",
+      );
+    }
+    return found;
+  }
+
   function fieldMap(typeName: string, fields: FieldIR[]): GraphQLFieldConfigMap<any, any> {
     const out: GraphQLFieldConfigMap<any, any> = {};
     for (const field of fields) {
       const coordinate = `${typeName}.${field.name}`;
-      let config: any = {
-        type: decodeRef(field.type, coordinate) as any,
+      let config: GraphQLFieldConfig<any, any> = {
+        // `decodeRef` answers with a `GraphQLType`: the ref is SDL, and SDL does
+        // not distinguish input from output. What guarantees this one is an
+        // output type is the schema the artifact was printed from.
+        type: decodeRef(field.type, coordinate) as GraphQLOutputType,
         description: field.description,
         deprecationReason: field.deprecationReason,
         ...(field.args
@@ -345,7 +392,9 @@ export async function materializeSchema(
 
   function inputValue(iv: InputValueIR, coordinate: string) {
     return {
-      type: decodeRef(iv.type, coordinate) as any,
+      // An output/input type as above — an argument or input field position
+      // only ever held an input type in the schema this was printed from.
+      type: decodeRef(iv.type, coordinate) as GraphQLInputType,
       description: iv.description,
       deprecationReason: iv.deprecationReason,
       ...(iv.defaultLiteral !== undefined
@@ -381,10 +430,10 @@ export async function materializeSchema(
   const modelTypes = rebuildModelTypes(ledger.modelTypes || [], typeMap);
   nodeTypeMapper.mapTypes(modelTypes);
 
-  const rootSchema: any = {};
-  rootSchema.query = lookupOrThrow(snapshot.query, "schema");
+  const rootSchema: GraphQLSchemaConfig = {};
+  rootSchema.query = lookupObjectType(snapshot.query, "schema");
   if (snapshot.mutation) {
-    rootSchema.mutation = lookupOrThrow(snapshot.mutation, "schema");
+    rootSchema.mutation = lookupObjectType(snapshot.mutation, "schema");
   }
   if (snapshot.description) {
     rootSchema.description = snapshot.description;
@@ -414,7 +463,7 @@ export async function materializeSchema(
     );
   }
 
-  (schema as any).$sql2gql = {types: modelTypes};
+  (schema as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql = {types: modelTypes};
   attachTypeHatches(snapshot, typeMap, configs);
   // Same bookkeeping the live builder does, so a materialized schema can be
   // re-snapshotted (round-trip tests, `gqlize check`) without losing its fingerprint.
@@ -430,7 +479,7 @@ export async function materializeSchema(
  */
 function checkFingerprint(
   snapshot: SchemaSnapshot,
-  orm: any,
+  orm: Ormize<any, IORBase>,
   options: GqlizeOptions & MaterializeOptions,
   onMismatch: "throw" | "warn" | "rebuild",
 ): Promise<GraphQLSchema> | undefined {
@@ -484,8 +533,8 @@ function checkFingerprint(
   return undefined;
 }
 
-function buildLiveSchema(orm: any, options: GqlizeOptions & MaterializeOptions) {
-  return buildSchema(new GqlizeBinding(orm) as any, options);
+function buildLiveSchema(orm: Ormize<any, IORBase>, options: GqlizeOptions & MaterializeOptions) {
+  return buildSchema(new GqlizeBinding(orm), options);
 }
 
 /**
@@ -497,7 +546,10 @@ function buildLiveSchema(orm: any, options: GqlizeOptions & MaterializeOptions) 
  * The build recorded which keys survived its permission gate, so the loader can
  * say so up front.
  */
-function requireExtendFields(ledger: any, extend: any) {
+function requireExtendFields(
+  ledger: GqlizeBuildLedger,
+  extend: {query?: GraphQLFieldConfigMap<any, any>; mutation?: GraphQLFieldConfigMap<any, any>},
+) {
   const missing: string[] = [];
   for (const target of ["query", "mutation"] as const) {
     for (const key of ledger?.extendFields?.[target] || []) {
@@ -520,7 +572,10 @@ function requireExtendFields(ledger: any, extend: any) {
   );
 }
 
-function mergeExtend(a: any, b: any) {
+function mergeExtend(
+  a: GraphQLFieldConfigMap<any, any> | undefined,
+  b: GraphQLFieldConfigMap<any, any> | undefined,
+) {
   if (!a && !b) {
     return undefined;
   }
@@ -530,16 +585,16 @@ function mergeExtend(a: any, b: any) {
 function parseDefault(literal: string, coordinate: string) {
   try {
     return parseConstValue(literal);
-  } catch (err: any) {
+  } catch (err) {
     throw new Error(
       `gqlize: default value for ${coordinate} (${JSON.stringify(literal)}) is not a valid ` +
-        `GraphQL const literal: ${err.message}`,
+        `GraphQL const literal: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
 
-function rebuildModelTypes(names: string[], typeMap: Map<string, GraphQLNamedType>) {
-  const out: Record<string, any> = {};
+function rebuildModelTypes(names: string[], typeMap: Map<string, GraphQLNamedType>): SchemaHatch["types"] {
+  const out: SchemaHatch["types"] = {};
   const wanted = new Set(names);
   for (const name of names) {
     if (name.endsWith("[]")) {
@@ -582,15 +637,15 @@ function attachTypeHatches(
     if (ir.kind !== "object" || !(ir as ObjectTypeIR).model) {
       continue;
     }
-    const type = typeMap.get(ir.name) as any;
+    const type = typeMap.get(ir.name);
     if (!type) {
       continue;
     }
     const pick = (want: "basic" | "related" | "complex") => () => {
       const all = configs.get(ir.name) || {};
-      const out: Record<string, any> = {};
+      const out: GraphQLFieldConfigMap<any, any> = {};
       for (const [name, config] of Object.entries(all)) {
-        const kind = readBinding(config as any)?.kind;
+        const kind = readBinding(config)?.kind;
         const bucket = kind === "connection" || kind === "singleRelationship"
           ? "related"
           : kind === "instanceMethod"
@@ -602,7 +657,7 @@ function attachTypeHatches(
       }
       return out;
     };
-    type.$sql2gql = {
+    (type as GraphQLNamedType & {$sql2gql?: ModelTypeHatch}).$sql2gql = {
       basicFields: pick("basic"),
       relatedFields: pick("related"),
       complexFields: pick("complex"),

@@ -11,7 +11,8 @@
       "env": ["REDIS_URL"]
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"]
+      "dependsOn": [],
+      "outputs": []
     },
     "watch": {
       "cache": false,

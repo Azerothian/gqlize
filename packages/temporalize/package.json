@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=24"
   },
-  "description": "Generate Temporal activities, workflows and per-queue workers from an @azerothian/ormize instance — the durable-execution analogue of @azerothian/gqlize (GraphQL) and @azerothian/nestize (REST)",
+  "description": "Generate Temporal activities, workflows and per-queue workers from an @azerothian/ormize instance \u2014 the durable-execution analogue of @azerothian/gqlize (GraphQL) and @azerothian/nestize (REST)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Azerothian/gqlize.git",
@@ -19,6 +19,7 @@
   "scripts": {
     "watch": "tsc --watch",
     "test": "jest",
+    "typecheck": "tsc -p tsconfig.test.json",
     "package:yalc": "pnpm run build && cd publish && yalc publish",
     "package:npm": "pnpm run build && cd publish && npm publish",
     "build": "rm -Rf ./publish || true; mkdir ./publish && run-p build:*",

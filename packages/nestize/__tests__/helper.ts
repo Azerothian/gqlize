@@ -1,8 +1,9 @@
 import { DataTypes } from "sequelize";
 import { Ormize } from "@azerothian/ormize";
+import type { Definition } from "@azerothian/utilize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 
-const ItemDef: any = {
+const ItemDef: Definition = {
   name: "Item",
   define: {
     label: { type: DataTypes.STRING },
@@ -13,7 +14,7 @@ const ItemDef: any = {
   ],
 };
 
-const TaskDef: any = {
+const TaskDef: Definition = {
   name: "Task",
   define: {
     name: { type: DataTypes.STRING, allowNull: false },
@@ -31,8 +32,8 @@ const TaskDef: any = {
 };
 
 /** Build a fresh, initialised & synced in-memory ormize (Item hasMany Task). */
-export async function buildOrm(): Promise<any> {
-  const orm: any = new Ormize();
+export async function buildOrm(): Promise<Ormize> {
+  const orm = new Ormize();
   orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
   await orm.addDefinition(ItemDef);
   await orm.addDefinition(TaskDef);

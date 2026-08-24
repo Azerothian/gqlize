@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { getNamedType, isEnumType, version as graphqlVersion } from "graphql";
 
 import GqlizeBinding from "../../manager";
-import type { GqlizeOptions } from "../../types";
+import type { Ormize } from "@azerothian/ormize";
+import type { DataTypeDescriptor, Definition, DefinitionFieldMeta, GqlizeOptions, IORBase } from "../../types";
 import { VERSION as gqlizeVersion } from "../../version";
 
 export const FINGERPRINT_FORMAT_VERSION = 1;
@@ -48,8 +49,8 @@ export interface FingerprintOptions {
  * schema's shape) and every hook/predicate body (they are closures). What is
  * included is the projection the builders actually read.
  */
-export function fingerprintDefinitions(orm: any, opts: FingerprintOptions = {}): Fingerprint {
-  const instance: any = orm instanceof GqlizeBinding ? orm : new GqlizeBinding(orm);
+export function fingerprintDefinitions(orm: Ormize<any, IORBase> | GqlizeBinding, opts: FingerprintOptions = {}): Fingerprint {
+  const instance = orm instanceof GqlizeBinding ? orm : new GqlizeBinding(orm);
   return {
     formatVersion: FINGERPRINT_FORMAT_VERSION,
     gqlizeVersion,
@@ -73,8 +74,8 @@ export function compareFingerprints(a?: Fingerprint | null, b?: Fingerprint | nu
   if (!a || !b) {
     return ["fingerprint"];
   }
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  return [...keys].filter((key) => (a as any)[key] !== (b as any)[key]).sort();
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)] as (keyof Fingerprint)[]);
+  return [...keys].filter((key) => a[key] !== b[key]).sort();
 }
 
 /**
@@ -94,8 +95,8 @@ export function describeDrift(
     if (!readable.has(key) || !artifact || !live) {
       return key;
     }
-    return `${key} (artifact ${JSON.stringify((artifact as any)[key])}, live ` +
-      `${JSON.stringify((live as any)[key])})`;
+    return `${key} (artifact ${JSON.stringify(artifact[key as keyof Fingerprint])}, live ` +
+      `${JSON.stringify(live[key as keyof Fingerprint])})`;
   }).join(", ");
 }
 
@@ -110,17 +111,17 @@ export function describeDrift(
  * scope — a CI job that builds against sqlite must produce an artifact that
  * loads against postgres.
  */
-function adapterProjection(instance: any) {
-  const defsAdapters = instance.orm?.defsAdapters || {};
-  const adapters = instance.orm?.adapters || {};
+function adapterProjection(instance: GqlizeBinding) {
+  const defsAdapters = instance.orm.defsAdapters || {};
+  const adapters = instance.orm.adapters || {};
   return Object.fromEntries(Object.keys(defsAdapters).map((defName) =>
     [defName, adapters[defsAdapters[defName]]?.constructor?.name ?? "unknown"]));
 }
 
-function modelProjection(instance: any) {
+function modelProjection(instance: GqlizeBinding) {
   const defs = instance.getDefinitions() || {};
   return Object.keys(defs).sort().map((defName) => {
-    const def = defs[defName] || {};
+    const def: Partial<Definition> = defs[defName] || {};
     const fields = safe(() => instance.getFields(defName)) || {};
     const associations = safe(() => instance.getAssociations(defName)) || {};
     return {
@@ -144,7 +145,7 @@ function modelProjection(instance: any) {
         };
       }),
       override: Object.keys(def.override || {}).sort().map((fieldName) => {
-        const o = def.override[fieldName] || {};
+        const o = def.override?.[fieldName] || {};
         return {
           fieldName,
           description: o.description,
@@ -159,7 +160,7 @@ function modelProjection(instance: any) {
   });
 }
 
-function fieldProjection(instance: any, defName: string, key: string, field: any = {}) {
+function fieldProjection(instance: GqlizeBinding, defName: string, key: string, field: DefinitionFieldMeta) {
   return {
     name: field.name ?? key,
     type: fieldType(instance, defName, key, field),
@@ -179,30 +180,30 @@ function fieldProjection(instance: any, defName: string, key: string, field: any
  * the fingerprint survive sqlite -> postgres. Enum members are appended because
  * they are schema-visible but the type's name alone hides them.
  */
-function fieldType(instance: any, defName: string, fieldName: string, field: any): string {
+function fieldType(instance: GqlizeBinding, defName: string, fieldName: string, field: DefinitionFieldMeta): string {
   const gql = safe(() => instance.getGraphQLOutputType(defName, fieldName, field.type));
   if (gql) {
-    const named: any = safe(() => getNamedType(gql));
+    const named = safe(() => getNamedType(gql));
     if (named && isEnumType(named)) {
-      return `${String(gql)}<${named.getValues().map((v: any) => v.name).join(",")}>`;
+      return `${String(gql)}<${named.getValues().map((v) => v.name).join(",")}>`;
     }
     return String(gql);
   }
   // Fall back to ormize's abstract descriptor before the native type: the
   // descriptor is adapter-neutral, `String(nativeType)` is dialect-specific and
   // would make the fingerprint flip on sqlite -> postgres for no real change.
-  const descriptor: any = safe(() => instance.getModelAdapter(defName)?.mapDataType?.(field.type));
+  const descriptor: DataTypeDescriptor | undefined = safe(() => instance.getModelAdapter(defName)?.mapDataType?.(field.type));
   if (descriptor) {
     return `ormize:${descriptor.type}${descriptor.values ? `<${descriptor.values.join(",")}>` : ""}`;
   }
   return `native:${String(field.type)}`;
 }
 
-function exposeProjection(expose: any) {
+function exposeProjection(expose: Definition["expose"]) {
   if (!expose) {
     return undefined;
   }
-  const out: Record<string, any> = {};
+  const out: Record<string, unknown> = {};
   for (const group of ["classMethods", "instanceMethods"] as const) {
     for (const target of ["query", "mutations"] as const) {
       const methods = expose[group]?.[target];
@@ -229,16 +230,18 @@ function exposeProjection(expose: any) {
  * schema. A thunked `fields` is skipped — calling it here could construct types
  * as a side effect of a staleness check.
  */
-function typeShape(type: any): any {
+function typeShape(type: unknown): string | {name: unknown; fields?: string[]} | undefined {
   if (!type) {
     return undefined;
   }
   if (typeof type !== "object" && typeof type !== "function") {
     return String(type);
   }
-  const shape: any = {name: type.name};
-  if (type.fields && typeof type.fields === "object") {
-    shape.fields = Object.keys(type.fields).sort();
+  // Either shape carries `name`; only a config object carries a literal `fields`.
+  const authored = type as {name?: unknown; fields?: unknown};
+  const shape: {name: unknown; fields?: string[]} = {name: authored.name};
+  if (authored.fields && typeof authored.fields === "object") {
+    shape.fields = Object.keys(authored.fields).sort();
   }
   return shape;
 }
@@ -273,7 +276,7 @@ function hash(value: unknown): string {
 }
 
 /** JSON with object keys in sorted order, so the digest is stable across runs. */
-export function stableStringify(value: any): string {
+export function stableStringify(value: unknown): string {
   if (value === undefined) {
     return "null";
   }
@@ -283,6 +286,7 @@ export function stableStringify(value: any): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(",")}]`;
   }
-  const keys = Object.keys(value).filter((key) => value[key] !== undefined).sort();
-  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+  const record = value as {[key: string]: unknown};
+  const keys = Object.keys(record).filter((key) => record[key] !== undefined).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
 }

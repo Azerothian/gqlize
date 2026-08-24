@@ -19,12 +19,12 @@ async function build() {
       data: {type: Sequelize.JSONB, allowNull: true},
     },
     relationships: [{type: "hasMany", model: "Part", name: "parts", options: {foreignKey: "widgetId"}}],
-  } as any);
+  });
   db.addDefinition({
     name: "Part",
     define: {name: {type: Sequelize.STRING, allowNull: false}},
     relationships: [{type: "belongsTo", model: "Widget", name: "widget", options: {foreignKey: "widgetId"}}],
-  } as any);
+  });
   await db.initialise();
   await db.sync();
   return db;
@@ -33,7 +33,7 @@ async function build() {
 describe("variables inside a where object", () => {
   it("string field: variable in top-level where", async () => {
     const db = await build();
-    const {Widget} = db.models as any;
+    const {Widget} = db.models;
     await Widget.create({name: "alpha"});
     await Widget.create({name: "beta"});
     const schema = await createSchema(db);
@@ -48,7 +48,7 @@ describe("variables inside a where object", () => {
 
   it("int field: variable in top-level where", async () => {
     const db = await build();
-    const {Widget} = db.models as any;
+    const {Widget} = db.models;
     await Widget.create({name: "a", qty: 1});
     await Widget.create({name: "b", qty: 2});
     const schema = await createSchema(db);
@@ -63,7 +63,7 @@ describe("variables inside a where object", () => {
 
   it("nested relationship where: variable", async () => {
     const db = await build();
-    const {Widget, Part} = db.models as any;
+    const {Widget, Part} = db.models;
     const w = await Widget.create({name: "w1"});
     await Part.create({name: "keep", widgetId: w.get("id")});
     await Part.create({name: "drop", widgetId: w.get("id")});
@@ -80,7 +80,7 @@ describe("variables inside a where object", () => {
 
   it("mutation update: variable in where", async () => {
     const db = await build();
-    const {Widget} = db.models as any;
+    const {Widget} = db.models;
     await Widget.create({name: "x"});
     await Widget.create({name: "y"});
     const schema = await createSchema(db);
@@ -96,7 +96,7 @@ describe("variables inside a where object", () => {
 
   it("string field: variable as the field-filter object inside an inline where", async () => {
     const db = await build();
-    const {Widget} = db.models as any;
+    const {Widget} = db.models;
     await Widget.create({name: "alpha"});
     await Widget.create({name: "beta"});
     const schema = await createSchema(db);
@@ -112,7 +112,7 @@ describe("variables inside a where object", () => {
 
   it("string field: the whole where supplied as a variable", async () => {
     const db = await build();
-    const {Widget} = db.models as any;
+    const {Widget} = db.models;
     await Widget.create({name: "alpha"});
     await Widget.create({name: "beta"});
     const schema = await createSchema(db);
@@ -127,7 +127,7 @@ describe("variables inside a where object", () => {
 
   it("JSON field: variable nested inside a where literal", async () => {
     const db = await build();
-    const {Widget} = db.models as any;
+    const {Widget} = db.models;
     await Widget.create({name: "j1", data: {kind: "a"}});
     await Widget.create({name: "j2", data: {kind: "b"}});
     const schema = await createSchema(db);

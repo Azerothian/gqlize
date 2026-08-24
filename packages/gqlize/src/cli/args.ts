@@ -66,7 +66,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
     : [...argv.slice(0, separator), ...argv.slice(separator + 1)];
   let parsed;
   try {
-    parsed = parseArgs({args, options: OPTIONS as any, allowPositionals: true, strict: true});
+    parsed = parseArgs({args, options: OPTIONS, allowPositionals: true, strict: true});
   } catch (err: any) {
     throw new UsageError(err.message);
   }

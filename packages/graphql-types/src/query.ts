@@ -1,13 +1,9 @@
 import {
-  GraphQLScalarType,
-  GraphQLInt,
-  GraphQLFloat,
-  GraphQLBoolean,
   GraphQLString,
   GraphQLInputObjectType,
   GraphQLList,
   GraphQLInputFieldConfig,
-  Kind,
+  GraphQLInputType,
 } from "graphql";
 import property from "./utils/property";
 
@@ -71,15 +67,32 @@ export const defaultConfig = {
   ],
 };
 
-interface QueryTypeConfig {
-  modelName: any;
-  fields: { [x: string]: any };
-  valueFuncs: any[];
-  arrayValues: any[];
-  processInnerFields: (arg0: any, arg1: any) => ObjMap<GraphQLInputFieldConfig>;
-  arrayFuncs: any[];
-  isolatedFields: { [x: string]: any };
-  processFields: (arg0: {}) => ObjMap<GraphQLInputFieldConfig>;
+/**
+ * What an adapter hands `createQueryType` to describe one model's `where` input.
+ *
+ * The optional members match the runtime guards below: an adapter that has no
+ * isolated fields or no post-processing simply omits them.
+ */
+export interface QueryTypeConfig {
+  /** Prefixed onto every generated type name, so it must be a valid GraphQL name. */
+  modelName: string;
+  /** Filterable fields, keyed by field name, mapped to the type each is compared against. */
+  fields: { [fieldName: string]: GraphQLInputType };
+  /** Comparison operators taking a single value of the field's own type — `eq`, `like`, ... */
+  valueFuncs: string[];
+  /** Comparison operators taking a list of the field's type — `in`, `between`, ... */
+  arrayValues: string[];
+  /** Boolean combinators taking a list of whole `where` objects — `or`, `and`. */
+  arrayFuncs: string[];
+  /** Operators that stand alone rather than nesting under a field, keyed by operator name. */
+  isolatedFields?: { [operatorName: string]: GraphQLInputType };
+  /** Last look at one field's operator map, e.g. to add a backend-specific operator. */
+  processInnerFields?: (
+    innerFields: ObjMap<GraphQLInputFieldConfig>,
+    fieldType: GraphQLInputType,
+  ) => ObjMap<GraphQLInputFieldConfig>;
+  /** Last look at the whole `where` field map before the input object is built. */
+  processFields?: (fields: ObjMap<GraphQLInputFieldConfig>) => ObjMap<GraphQLInputFieldConfig>;
 }
 
 export default function createQueryType(config: QueryTypeConfig) {
@@ -97,7 +110,7 @@ export default function createQueryType(config: QueryTypeConfig) {
                 type: actualFieldType,
               };
               return i;
-            }, {});
+            }, {} as ObjMap<GraphQLInputFieldConfig>);
             innerFields = config.arrayValues.reduce((i, funcName) => {
               i[funcName] = {
                 type: new GraphQLList(actualFieldType),
@@ -114,17 +127,21 @@ export default function createQueryType(config: QueryTypeConfig) {
           type: fieldType,
         };
         return o;
-      }, {} as {[key: string]: {type: GraphQLInputObjectType}});
+        // The accumulator is the field-config map the thunk must return: the two
+        // passes below add a list of whole `where` objects (`arrayFuncs`) and any
+        // isolated operators, so it is never uniformly "object type per field".
+      }, {} as ObjMap<GraphQLInputFieldConfig>);
       fields = config.arrayFuncs.reduce((i, funcName) => {
         i[funcName] = {
           type: new GraphQLList(fieldInputType),
         };
         return i;
       }, fields);
-      if (config.isolatedFields) {
-        fields = Object.keys(config.isolatedFields).reduce((o, fieldName) => {
+      const {isolatedFields} = config;
+      if (isolatedFields) {
+        fields = Object.keys(isolatedFields).reduce((o, fieldName) => {
           o[fieldName] = {
-            type: config.isolatedFields[fieldName],
+            type: isolatedFields[fieldName],
           };
           return o;
         }, fields);

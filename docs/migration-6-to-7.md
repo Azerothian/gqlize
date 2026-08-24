@@ -20,6 +20,10 @@ cleanly — that section is where working code breaks.
    - [Relay `pageInfo` is derived from the window's absolute position](#relay-pageinfo-is-derived-from-the-windows-absolute-position)
    - [Mutations run in a transaction](#mutations-run-in-a-transaction)
    - [`createListObject` takes a data-source descriptor, not a resolver](#createlistobject-takes-a-data-source-descriptor-not-a-resolver)
+   - [Role-based permissions now gate `extend` fields and mutation inputs](#role-based-permissions-now-gate-extend-fields-and-mutation-inputs)
+   - [Unknown `permission` keys are a type error, and warn at build time](#unknown-permission-keys-are-a-type-error-and-warn-at-build-time)
+   - [The adapter contract is typed, and `setBuildPermission` is part of it](#the-adapter-contract-is-typed-and-setbuildpermission-is-part-of-it)
+   - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
 4. [The graphql patch](#4-the-graphql-patch)
 5. [New in 7.x](#5-new-in-7x)
 6. [Checklist](#6-checklist)
@@ -284,6 +288,136 @@ The same rule applies anywhere a resolver is attached inside the builders: they 
 `extensions.gqlize`. A field with a `resolve` but no descriptor makes `snapshotSchema` throw —
 deliberately, since the alternative is a materialized field that silently returns `undefined`.
 
+### Role-based permissions now gate `extend` fields and mutation inputs
+
+`createRoleBasedPermissions` compiled four callbacks nothing has ever read — `subscription`,
+`mutationUpdateAll`, `mutationDeleteAll` and `extensions` — while never compiling four that gqlize
+does read: `queryExtension`, `mutationExtension`, `mutationCreateInput` and `mutationUpdateInput`.
+Since an absent predicate means *allow*, that gap was a hole rather than a no-op: under
+`defaultDeny: true` a role-based bag denied models, fields and mutations as advertised, but let every
+`options.extend.query` / `extend.mutation` root field and every mutation input field straight
+through.
+
+7.x compiles exactly the callbacks listed in [specifications.md §7](specifications.md#7-permissions).
+Two rules keys feed more than one callback, so a `defaultDeny` role stays usable:
+
+- `extensions` is accepted as a synonym for both `queryExtension` and `mutationExtension` — the key
+  6.x emitted (inertly) is now the one that works.
+- `mutationCreateInput` / `mutationUpdateInput` fall back to `field`, matching the rule the
+  `where` / `orderBy` tightening above already applies: if a field should be writable, it must be
+  readable. Without this fallback a `defaultDeny` role would deny every input field, leaving the
+  input object empty and deleting its create/update mutations outright.
+
+The more specific key wins wherever both express an opinion, and an explicit `"deny"` on the
+specific key is never overridden by an `"allow"` on the fallback.
+
+> **Watch for:** roles that exposed `extend` root fields or mutation inputs by omission now have to
+> name them. Add `queryExtension: { health: "allow" }` (the key is the **extend field key**, not a
+> model name), or grant the field for reading and let the input fallback pick it up. A rules key
+> outside the accepted set — `subscription`, or a typo — is now reported on `console.warn` instead of
+> being compiled into a predicate nobody calls.
+
+### Unknown `permission` keys are a type error, and warn at build time
+
+`createSchema(orm, options)` typed `options` as `any` in 6.x, so a misspelled predicate
+(`modle`, `mutationCreateInputs`) typechecked, was never called, and — because an absent predicate
+means *allow* — silently produced a **wider** schema than intended.
+
+`Permission`, exported from `@azerothian/utilize`, is now a **closed** shape — sixteen optional
+predicates and no index signature — and it is the type behind every package's `permission?:`
+option: `createSchema`, `generateZodSchemas`, nestize's `NestizeOptions`, and whatever
+temporalize's `resolvePermission` returns. A stray key is a compile error with a "did you mean"
+suggestion. In 6.x the type carried `[key: string]: any`, which defeated the excess-property check
+outright, so every one of those surfaces failed open on a typo.
+
+For JavaScript callers and bags built programmatically the compiler cannot help, so `createSchema`
+also warns on `console.warn` naming the unknown keys. It warns rather than throws, so an existing
+bag still builds.
+
+`PERMISSION_KEYS` is the machine-readable copy of the same set, and a compile-time guard now holds
+the two together — adding a predicate to one and forgetting the other no longer compiles.
+
+> **Watch for:** the new warning firing on a bag you thought was enforcing something. That is the
+> bug, not the warning.
+>
+> **Watch for:** every predicate is optional, so TypeScript callers that invoke one directly
+> (`permission.model("Task")` in a test or a wrapper) now need `permission.model!(...)` or a
+> presence check. Under `defaultDeny: false` the absent case is real — an unmentioned gate is
+> genuinely omitted from the bag.
+
+### The adapter contract is typed, and `setBuildPermission` is part of it
+
+Only relevant if you maintain your own adapter. `OrmAdapter` and `GqlizeAdapter` described most of
+their surface as `any`; they now name the things that flow through them —
+`AdapterQueryOptions`, `AdapterWhere`, `AdapterRow`, `AdapterTransactionHandle`, `NativeDataType`,
+`AdapterCreateFunction` / `AdapterUpdateFunction` / `AdapterDeleteFunction`, and
+`AdapterRelationshipPage` for what a `resolveManyRelationship` hop returns (`{total, models}`).
+
+`AdapterRow` is `unknown`, so a *caller* cannot read a column off a row without saying what it
+expects. The members are declared with method syntax, which keeps parameters bivariant: your
+implementation may still narrow a row to your own instance type
+(`update(row: MyModel, ...)`) without a cast.
+
+`setBuildPermission` is now declared — optional — on `GqlizeAdapter`. It was already implemented by
+both bundled adapters and already called by `createSchema`, but through a
+`typeof adapter.setBuildPermission === "function"` duck-type check, so an adapter that misspelled it
+silently lost filter/order/include gating. Declaring it means the compiler catches that. If your
+adapter builds those three input types from a permission bag, implement it; if its builders take the
+permission explicitly, leave it off.
+
+> **Watch for:** `createRelationship`'s fifth parameter is `Relationship["options"]`, whose `through`
+> is `string | {model?, foreignKey?, otherKey?}`. Adapters that only ever destructured the object
+> form need a `typeof === "object"` guard before reading `.model`.
+
+`SchemaCache` moved from `@azerothian/utilize` to `@azerothian/gqlize`, and is no longer twelve
+`{[x: string]: any}` buckets. Every bucket holds a `graphql` type, so it could never be described in
+a package that must not import `graphql`. Import it from `@azerothian/gqlize` (or
+`@azerothian/gqlize/types/index`, which is where it already resolved from for anyone using the
+gqlize barrel). The buckets are keyed differently from each other — `types` and
+`mutationInputFields` by type name, the `*Fields` buckets by model name, the class-method and
+mutation-model buckets flat — which the shared `any` shape hid.
+
+`Selection.include` is now `IncludeMap[]` rather than `any[]`. `IncludeDescriptor` and `IncludeMap`
+moved the other way, from gqlize into `@azerothian/utilize`, since they are what the graphql-free
+hand-off actually carries; `@azerothian/gqlize/graphql/utils/build-include-from-selection` still
+re-exports both. `Definition.ignoreFields` is `string[]` and `Definition.comments` is a
+`DefinitionComments` (`{fields?, classMethods?, instanceMethods?}`).
+
+### Definition `type` slots are `unknown`, not `any`
+
+`DefinitionField.type`, `Definition.override.*.type` / `.inputType` and the four
+`Definition.expose.*.type` slots are now `unknown`. Nothing changes for authoring a definition:
+`unknown` accepts every value, so `type: DataTypes.String`, `type: GraphQLString` and
+`type: {name: "Point", fields: {...}}` all still assign. They cannot be typed more tightly here,
+because what belongs in them is a `DataType` member, an adapter-native type *or* a `graphql` type —
+and `@azerothian/utilize` must not import `graphql`.
+
+What changes is *reading* them. Code that pulled a property straight off one of these slots now has
+to narrow first, which is what the builders already did at runtime:
+
+```ts
+// before — `any`, so this compiled whether or not the author supplied a built type
+const name = definition.override.point.type.name;
+
+// after — say which form you are handling
+import {isBuiltOutputType} from "@azerothian/gqlize/graphql/utils/authored-type";
+
+const slot = definition.override.point.type;
+const type = isBuiltOutputType(slot)
+  ? slot                                                  // already a GraphQLObjectType/Scalar/Enum
+  : new GraphQLObjectType(slot as GraphQLObjectTypeConfig<any, any>);  // a config for one
+```
+
+`isBuiltOutputType` / `isBuiltInputType` and the `AuthoredTypeSlot` shape (`{name, fields?}` — what
+both forms have in common) are exported from
+`@azerothian/gqlize/graphql/utils/authored-type` for exactly this.
+
+Two smaller consequences, both only visible to code that touches the internals: `recordExternalType`
+now accepts any `GraphQLType`, wrappers included, rather than only named types — it unwraps with
+`getNamedType` and always did. And `SchemaCache.mutationInputFields` is `GraphQLNullableInputType`,
+since the bucket only ever holds an input object or a list of one; callers apply
+`GraphQLNonNull` themselves.
+
 ## 4. The graphql patch
 
 6.x solved [graphql-spec #252](https://github.com/graphql/graphql-spec/issues/252) — nested mutation
@@ -349,6 +483,17 @@ Not required for migration, but this is what the split bought:
 - [ ] Direct `createListObject` callers switched from a `resolveData` closure to a data-source
       descriptor.
 - [ ] The graphql patch applied if you rely on ordered nested mutations.
+- [ ] `createRoleBasedPermissions` rules audited for `extend` root fields and mutation inputs, which
+      are now denied under `defaultDeny` instead of passing through.
+- [ ] Any `subscription`, `mutationUpdateAll`, `mutationDeleteAll` rules keys removed — they gated
+      nothing in 6.x and now warn.
+- [ ] Hand-written `permission` bags checked against the build-time unknown-key warning.
+- [ ] Third-party adapters recompiled against the typed `OrmAdapter` / `GqlizeAdapter`, and
+      `setBuildPermission` implemented if their filter/order/include builders gate on a permission
+      bag.
+- [ ] Code that *reads* a definition's `type` / `inputType` slot narrows it — `isBuiltOutputType` /
+      `isBuiltInputType` — instead of reading properties off what used to be `any`. Authoring a
+      definition is unaffected.
 
 For everything else, [**guide.md**](guide.md) is the 7.x usage guide and
 [**specifications.md**](specifications.md) is the API/contract reference.

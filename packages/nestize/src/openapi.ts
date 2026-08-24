@@ -1,7 +1,16 @@
 import { z } from "zod";
+import type { INestApplication } from "@nestjs/common";
+import type { Ormize } from "@azerothian/ormize";
 import { generateZodSchemas } from "@azerothian/ormize-zod4";
 import { isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize";
 import { OpenApiOptions } from "./types";
+
+/**
+ * A node of the emitted document. OpenAPI path items, operation objects and JSON
+ * schemas are open by specification — vendor extensions included — and nothing
+ * here reads them back, so they are described as JSON rather than modelled.
+ */
+type JsonObject = { [key: string]: unknown };
 
 // Minimal structural stand-ins so the builder needs no @nestjs/swagger types at
 // compile time (swagger is a peer dependency). `setupSwagger` casts at the call.
@@ -9,15 +18,15 @@ type OpenAPIObject = {
   openapi: string;
   info: { title: string; version: string };
   tags?: { name: string }[];
-  paths: Record<string, any>;
-  components: { schemas: Record<string, any> };
+  paths: Record<string, JsonObject>;
+  components: { schemas: Record<string, JsonObject> };
 };
 
 function ref(name: string) {
   return { $ref: `#/components/schemas/${name}` };
 }
 
-function toSchema(schema: z.ZodTypeAny | undefined): any {
+function toSchema(schema: z.ZodTypeAny | undefined): JsonObject {
   if (!schema) {
     return { type: "object" };
   }
@@ -35,7 +44,7 @@ function joinPath(prefix: string | undefined, resource: string): string {
  * `<Model>UpdateInput` (permission-filtered), and `paths` carries the CRUD +
  * relation routes. GraphQL-free.
  */
-export function buildOpenApiDocument(orm: any, options: OpenApiOptions = {}): OpenAPIObject {
+export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}): OpenAPIObject {
   const { permission, pathPrefix, includeRelations = true, readOnly = false } = options;
   const title = options.title || "Nestize API";
   const version = options.version || "1.0.0";
@@ -45,11 +54,11 @@ export function buildOpenApiDocument(orm: any, options: OpenApiOptions = {}): Op
   const entitySchemas = generateZodSchemas(orm, { permission, includeRelations: false });
   const inputSchemas = generateZodSchemas(orm, { permission });
 
-  const components: { schemas: Record<string, any> } = { schemas: {} };
-  const paths: Record<string, any> = {};
+  const components: { schemas: Record<string, JsonObject> } = { schemas: {} };
+  const paths: Record<string, JsonObject> = {};
   const tags: { name: string }[] = [];
 
-  const defs = (orm.getDefinitions && orm.getDefinitions()) || {};
+  const defs = orm.getDefinitions() || {};
   const names = Object.keys(defs).filter((n) => isModelAllowed(permission, n));
 
   for (const name of names) {
@@ -84,7 +93,7 @@ export function buildOpenApiDocument(orm: any, options: OpenApiOptions = {}): Op
       },
     };
 
-    const collection: any = {
+    const collection: JsonObject = {
       get: {
         tags: [name],
         summary: `List ${name}`,
@@ -258,7 +267,7 @@ export function buildOpenApiDocument(orm: any, options: OpenApiOptions = {}): Op
  * Build the OpenAPI document for `orm` and mount Swagger UI on the Nest `app` at
  * `options.path` (default `docs`) using `@nestjs/swagger`'s `SwaggerModule.setup`.
  */
-export function setupSwagger(app: any, orm: any, options: OpenApiOptions = {}): OpenAPIObject {
+export function setupSwagger(app: INestApplication, orm: Ormize, options: OpenApiOptions = {}): OpenAPIObject {
   const doc = buildOpenApiDocument(orm, options);
   // Required lazily so @nestjs/swagger stays a peer dependency (not needed for the
   // pure `buildOpenApiDocument` path).
