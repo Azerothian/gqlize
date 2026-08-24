@@ -6,10 +6,14 @@ import {lowercase} from "@azerothian/utilize/utils/word";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
-import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Model, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
-import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, NativeDataType,
+import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
+import { OrmAdapter, AdapterRow, AdapterQueryOptions, DataTypeDescriptor, NativeDataType,
   RequestContext, Selection, IncludeMap, FindAllArgs } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
+import type { InstanceRow, MutationFilter, MutationHost, MutationInput,
+  MutationInputTree, ResolveOptions } from "./types/engine";
+import { addProxyAccessor, btmGetter, createProxyFunction, joinScope, writeAccessors } from "./cross-adapter";
+import { applyRelationshipMutations } from "./relationship-mutations";
 import Events from "./events";
 import OrmizeTransaction from "./transaction";
 import { store, getStore } from "./context";
@@ -75,15 +79,6 @@ const gqlizeHookList = [
 export type HookFunction = (value: any, ...args: any[]) => any;
 
 /**
- * An adapter row seen through its dynamically-named members: the relationship
- * accessors an adapter installs (`addFiles`, `setItem`, ...), `dataValues`,
- * `restore`. {@link AdapterRow} is `unknown` by contract, so the engine narrows
- * to this at the points that have to reach a member whose name is only known at
- * runtime.
- */
-type InstanceRow = { [member: string]: any };
-
-/**
  * A relationship after ormize has wired it, as stored in {@link Ormize.relationships}.
  *
  * `internal` says whether the source and target share an adapter — a `true`
@@ -109,48 +104,11 @@ export type WiredRelationship = {
   otherKey?: string;
 };
 
-/**
- * The options bag ormize builds for an adapter call. `getGraphQLArgs` is what
- * hooks read to reach the caller's context and — under gqlize — the execution
- * `info`, so it is the one member every adapter can count on being there.
- */
-export type ResolveOptions = AdapterQueryOptions & {
-  getGraphQLArgs: () => { context: RequestContext; info: unknown; source: AdapterRow };
-};
-
-/** A caller-supplied filter, before relay global ids have been translated out of it. */
-export type MutationFilter = AdapterWhere;
-
-/** A caller-supplied field bag for a create or an update. */
-export type MutationInput = { [field: string]: unknown };
-
-/**
- * The relationship sub-mutations for one relationship, as they arrive nested in a
- * create/update input: `{files: {create: [...], add: [...]}}`. Every operation is
- * optional, and the singular forms (`belongsTo`/`hasOne`) take a single filter
- * where a collection takes a list of them.
- */
-export type RelationshipMutation = {
-  create?: MutationInput[];
-  update?: { where?: MutationFilter; limit?: number; input?: MutationInput }[];
-  delete?: MutationFilter[];
-  /** `true` to detach a singular relationship; filters to detach from a collection. */
-  remove?: true | MutationFilter[];
-  /** `belongsToMany` entries are `{where, through}`; other collections pass the filter directly. */
-  add?: (MutationFilter | { where?: MutationFilter; through?: MutationInput })[];
-  set?: MutationFilter | (MutationFilter | { where?: MutationFilter; through?: MutationInput })[];
-  restore?: MutationFilter | MutationFilter[];
-  select?: { where?: MutationFilter; input?: MutationInput } | { where?: MutationFilter; input?: MutationInput }[];
-};
-
-/**
- * A mutation input as the engine reads it: scalar columns alongside a
- * {@link RelationshipMutation} under each relationship name. The two cannot be
- * told apart structurally, so `processInputs` allow-lists the scalars by field
- * name and `processRelationshipMutation` picks out the relationships by
- * association name.
- */
-export type MutationInputTree = { [name: string]: unknown };
+// The engine's own types (rows, mutation inputs, host slices) live in
+// `./types/engine` so the cross-adapter and relationship-mutation modules can be
+// built over them; they stay exported from here, which is where they have always
+// been imported from.
+export type * from "./types/engine";
 
 export default class Ormize<
   TModels extends Record<string, any> = { [name: string]: any },
@@ -543,8 +501,8 @@ export default class Ormize<
     const association = this.buildCrossAdapterAssociation(def.name, this.relationships[def.name][rel.name]);
     if (rel.type === "belongsToMany") {
       // The pair is resolved from the join model rather than from a key on either
-      // record, so there is no single find to proxy — see {@link crossAdapterBtmGetter}.
-      this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, this.crossAdapterBtmGetter(association));
+      // record, so there is no single find to proxy — see {@link btmGetter}.
+      addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, btmGetter(this.host, association));
     } else {
       const findFunc = await targetAdapter.createFunctionForFind(rel.model);
       // Captured out of the closure: the `!def.name` guard at the top of this
@@ -558,12 +516,12 @@ export default class Ormize<
       // other two keep it on each target and point back at the source's `sourceKey`,
       // differing only in whether one row or many come back.
       const proxy = rel.type === "belongsTo"
-        ? this.createProxyFunction(sourceAdapter, foreignKey, targetKey, true, findFunc, adaptOptions)
-        : this.createProxyFunction(sourceAdapter, sourceKey, foreignKey, rel.type === "hasOne", findFunc, adaptOptions);
-      this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, proxy);
+        ? createProxyFunction(sourceAdapter, foreignKey, targetKey, true, findFunc, adaptOptions)
+        : createProxyFunction(sourceAdapter, sourceKey, foreignKey, rel.type === "hasOne", findFunc, adaptOptions);
+      addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, proxy);
     }
-    for (const [accessor, func] of Object.entries(this.crossAdapterWriteAccessors(association, sourceAdapter, targetAdapter))) {
-      this.addProxyAccessor(sourceAdapter, def.name, modelClass, accessor, func);
+    for (const [accessor, func] of Object.entries(writeAccessors(this.host, association, sourceAdapter, targetAdapter))) {
+      addProxyAccessor(sourceAdapter, def.name, modelClass, accessor, func);
     }
     return undefined;
   }
@@ -635,231 +593,29 @@ export default class Ormize<
     });
     return reciprocal?.options?.foreignKey;
   }
-  /** `mergeFilterStatement` on an adapter, with the error the missing case deserves. */
-  private filterMerger(defName: string) {
-    const adapter = this.getModelAdapter(defName);
-    if (!adapter.mergeFilterStatement) {
-      throw new Error(`Adapter '${adapter.adapterName}' cannot scope a query and so cannot take part in a cross-adapter relationship: it does not implement mergeFilterStatement`);
-    }
-    return adapter.mergeFilterStatement.bind(adapter);
-  }
   /**
-   * The target keys a cross-adapter `belongsToMany` currently links to, read from
-   * the join model. Duplicated join rows collapse to one key.
-   *
-   * Only the transaction is carried over from the caller's options: everything
-   * else in them (`where`, `limit`, `paranoid`, …) describes the *target* query
-   * that these keys go on to scope, and would be nonsense against the join model.
+   * The slice of this manager the cross-adapter and mutation modules are written
+   * against. An object literal rather than `this` because `optionsForAdapter` is
+   * private, and a private member cannot satisfy a structurally-required public
+   * one — see {@link MutationHost}.
    */
-  private crossAdapterBtmKeys = async(association: Association, source: AdapterRow, options?: AdapterQueryOptions): Promise<unknown[]> => {
-    const throughName = association.through as string;
-    const sourceValue = this.getModelAdapter(association.source).getValueFromInstance(source, association.sourceKey);
-    if (sourceValue === undefined || sourceValue === null) {
-      return [];
-    }
-    const throughAdapter = this.getModelAdapter(throughName);
-    const opts = await this.optionsForAdapter(association.source, throughName, options);
-    const edges = await throughAdapter.findAll(throughName, {
-      where: this.filterMerger(throughName)(association.foreignKey, sourceValue, true, undefined),
-      ...(opts?.transaction !== undefined ? {transaction: opts.transaction} : {}),
-    });
-    const keys: unknown[] = [];
-    const seen = new Set<unknown>();
-    for (const edge of edges) {
-      const value = throughAdapter.getValueFromInstance(edge, association.otherKey as string);
-      if (value === undefined || value === null || seen.has(value)) {
-        continue;
-      }
-      seen.add(value);
-      keys.push(value);
-    }
-    return keys;
-  }
+  private host: MutationHost = {
+    getModelAdapter: (modelName) => this.getModelAdapter(modelName),
+    optionsForAdapter: (fromDefName, toDefName, options) => this.optionsForAdapter(fromDefName, toDefName, options),
+    getAssociations: (defName) => this.getAssociations(defName),
+    getDefinition: (defName) => this.getDefinition(defName),
+    getGlobalKeys: (defName) => this.getGlobalKeys(defName),
+    processInputs: (defName, input, args, context, info, model) => this.processInputs(defName, input, args, context, info, model),
+    processCreate: (defName, source, args, context, selection) => this.processCreate(defName, source, args, context, selection),
+    processDelete: (defName, source, args, context, selection) => this.processDelete(defName, source, args, context, selection),
+    processRelationshipMutation: (defName, source, input, context, selection) => this.processRelationshipMutation(defName, source, input, context, selection),
+  };
   /**
-   * The `get` accessor of a cross-adapter `belongsToMany`: resolve the linked keys
-   * from the join model, then run one query on the target scoped to them. Going
-   * through the target's own `findAll` (rather than fetching row by row) keeps a
-   * caller-supplied `where`/`limit` working exactly as it does for the other types.
+   * @deprecated Kept for the published surface; prefer the free
+   * `createProxyFunction` in `./cross-adapter`, which this forwards to.
    */
-  private crossAdapterBtmGetter(association: Association) {
-    const self = this;
-    const targetAdapter = this.getModelAdapter(association.target);
-    return async function(this: InstanceRow, options?: AdapterQueryOptions) {
-      const keys = await self.crossAdapterBtmKeys(association, this, options);
-      if (keys.length === 0) {
-        return [];
-      }
-      const opts = (await self.optionsForAdapter(association.source, association.target, options)) || {};
-      return targetAdapter.findAll(association.target, {
-        ...opts,
-        where: self.filterMerger(association.target)(association.targetKey, keys, true, opts.where),
-      });
-    };
-  }
-  /**
-   * The write half of a cross-adapter relationship. There is no native association
-   * to delegate to, so linking and unlinking is done by writing the foreign key
-   * directly — on the target for `hasMany`, on the source for `belongsTo`, and by
-   * creating and deleting join rows for `belongsToMany`.
-   *
-   * These are installed under the same accessor names a native association would
-   * use, so `processRelationshipMutation` drives them without knowing the
-   * relationship spans two datastores. Note that each write is an independent
-   * statement against its own adapter: they are only atomic when the whole
-   * mutation runs inside `orm.transaction()`, which coordinates a transaction per
-   * adapter.
-   */
-  private crossAdapterWriteAccessors(association: Association, sourceAdapter: OrmAdapter, targetAdapter: OrmAdapter) {
-    const {foreignKey, sourceKey, targetKey, accessors} = association;
-    const list = (targets: AdapterRow | AdapterRow[]) => (Array.isArray(targets) ? targets : [targets]).filter((t) => t !== undefined && t !== null);
-    // Callers build one options object for the source's adapter; writes aimed at
-    // the target's adapter need its own transaction handle instead.
-    const forTarget = (options: AdapterQueryOptions | undefined) => this.optionsForAdapter(association.source, association.target, options);
-    if (association.associationType === "belongsTo") {
-      // The key lives on the source: pointing it elsewhere is a write to `this`.
-      const set = async function(this: InstanceRow, target: AdapterRow, options?: AdapterQueryOptions) {
-        const value = target ? targetAdapter.getValueFromInstance(target, targetKey) : null;
-        return sourceAdapter.update(this, {[foreignKey]: value}, options as AdapterQueryOptions);
-      };
-      const clear = async function(this: InstanceRow, _target?: AdapterRow, options?: AdapterQueryOptions) {
-        return sourceAdapter.update(this, {[foreignKey]: null}, options as AdapterQueryOptions);
-      };
-      return {
-        [accessors.set]: set,
-        [accessors.add]: set,
-        [accessors.remove]: clear,
-        [accessors.count]: async function(this: InstanceRow) {
-          return sourceAdapter.getValueFromInstance(this, foreignKey) === null ? 0 : 1;
-        },
-      };
-    }
-    if (association.associationType === "belongsToMany") {
-      // The link is a row of its own: (un)linking creates and deletes join rows on
-      // whichever adapter hosts the through model — a third hop, independent of
-      // both the source's and the target's.
-      const self = this;
-      const throughName = association.through as string;
-      const otherKey = association.otherKey as string;
-      // Resolved on use, not on wiring: a join model ormize generates itself is
-      // only defined once every relationship has been read.
-      const edgeWhere = (sourceValue: unknown, targetValues?: unknown) => {
-        const merge = self.filterMerger(throughName);
-        const where = merge(foreignKey, sourceValue, true, undefined);
-        return targetValues === undefined ? where : merge(otherKey, targetValues, true, where);
-      };
-      // Only the transaction crosses over: the rest of the caller's options describe
-      // the source's or the target's query, not the join model's.
-      const forThrough = async(options: AdapterQueryOptions | undefined) => {
-        const opts = await self.optionsForAdapter(association.source, throughName, options);
-        return opts?.transaction !== undefined ? {transaction: opts.transaction} : {};
-      };
-      const link = async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
-        const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
-        // `through` carries attribute values for the join row itself (the columns a
-        // join table has beyond its two keys).
-        const attributes: MutationInput = (options || {}).through || {};
-        const opts = await forThrough(options);
-        const throughAdapter = self.getModelAdapter(throughName);
-        for (const target of list(targets)) {
-          const targetValue = targetAdapter.getValueFromInstance(target, targetKey);
-          const [existing] = await throughAdapter.findAll(throughName, {where: edgeWhere(sourceValue, targetValue), ...opts});
-          if (!existing) {
-            await throughAdapter.getCreateFunction(throughName)({[foreignKey]: sourceValue, [otherKey]: targetValue, ...attributes}, opts);
-          } else if (Object.keys(attributes).length > 0) {
-            await throughAdapter.update(existing, attributes, opts);
-          }
-        }
-      };
-      const unlinkWhere = async(where: AdapterWhere, options: AdapterQueryOptions | undefined) => {
-        const opts = await forThrough(options);
-        await self.getModelAdapter(throughName).getDeleteFunction(throughName, undefined)(where, opts, (r) => r, (r) => r);
-      };
-      const unlink = async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
-        const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
-        const targetValues = list(targets).map((t) => targetAdapter.getValueFromInstance(t, targetKey));
-        if (targetValues.length === 0) {
-          return;
-        }
-        await unlinkWhere(edgeWhere(sourceValue, targetValues), options);
-      };
-      return {
-        [accessors.add]: link,
-        [accessors.addMultiple]: link,
-        [accessors.remove]: unlink,
-        [accessors.removeMultiple]: unlink,
-        // `set` replaces the whole collection: drop every join row, then relink.
-        [accessors.set]: async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
-          await unlinkWhere(edgeWhere(sourceAdapter.getValueFromInstance(this, sourceKey)), options);
-          return link.call(this, targets, options);
-        },
-        [accessors.count]: async function(this: InstanceRow, options?: AdapterQueryOptions) {
-          return (await self.crossAdapterBtmKeys(association, this, options)).length;
-        },
-      };
-    }
-    // hasMany/hasOne: the key lives on each target, so (un)linking writes there.
-    const relink = (value: (self: InstanceRow) => unknown) => async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
-      const fk = value(this);
-      const opts = await forTarget(options);
-      for (const target of list(targets)) {
-        await targetAdapter.update(target, {[foreignKey]: fk}, opts as AdapterQueryOptions);
-      }
-    };
-    const link = relink((self) => sourceAdapter.getValueFromInstance(self, sourceKey));
-    const unlink = relink(() => null);
-    return {
-      [accessors.add]: link,
-      [accessors.addMultiple]: link,
-      [accessors.remove]: unlink,
-      [accessors.removeMultiple]: unlink,
-      // `set` replaces the whole collection: drop the ones no longer in it, then link.
-      [accessors.set]: async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
-        const next = list(targets);
-        const nextKeys = new Set(next.map((t) => targetAdapter.getValueFromInstance(t, targetKey)));
-        const current = await this[accessors.get](options);
-        const opts = await forTarget(options);
-        for (const existing of list(current)) {
-          if (!nextKeys.has(targetAdapter.getValueFromInstance(existing, targetKey))) {
-            await targetAdapter.update(existing, {[foreignKey]: null}, opts as AdapterQueryOptions);
-          }
-        }
-        return link.call(this, next, options);
-      },
-      [accessors.count]: async function(this: InstanceRow, options?: AdapterQueryOptions) {
-        return list(await this[accessors.get](options)).length;
-      },
-    };
-  }
-  /**
-   * Install the cross-adapter accessor (`getFiles()`, `getItem()`, …) on the
-   * source model. Class-based adapters (Sequelize) take it on the prototype;
-   * adapters whose "model" is a plain descriptor rather than a constructor get
-   * it via `addInstanceFunction`, and those with neither simply go without —
-   * the GraphQL and `resolveXRelationship` paths do not depend on it.
-   */
-  private addProxyAccessor(sourceAdapter: OrmAdapter, defName: string, modelClass: Model | undefined, funcName: string, func: (...args: any[]) => any) {
-    if (modelClass?.prototype) {
-      // Installing by name onto a prototype the adapter's own types describe
-      // without an index signature — see {@link Model.prototype}.
-      (modelClass.prototype as Record<string, unknown>)[funcName] = func;
-      return;
-    }
-    if (sourceAdapter.addInstanceFunction) {
-      sourceAdapter.addInstanceFunction(defName, funcName, func);
-    }
-  }
   createProxyFunction(adapter: OrmAdapter, sourceKey: string, filterKey: string, singular: boolean, findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((options: AdapterQueryOptions) => Promise<AdapterRow>), adaptOptions?: (options: AdapterQueryOptions | undefined) => Promise<AdapterQueryOptions | undefined>)  {
-    return async function(this: InstanceRow, options?: AdapterQueryOptions) {
-      // The join key — whatever column `sourceKey` names, so its type belongs to
-      // the definition, not to this layer. `getValueFromInstance` returns
-      // `unknown` for that reason; the find function takes it as given.
-      const keyValue = adapter.getValueFromInstance(this, sourceKey) as string;
-      // The find runs on the *target's* adapter while `options` were built for the
-      // source's, so any transaction handle in them has to be swapped first.
-      const opts = adaptOptions ? await adaptOptions(options) : options;
-      return findFunc(keyValue, filterKey, singular)
-        .call(this, opts as AdapterQueryOptions);
-    };
+    return createProxyFunction(adapter, sourceKey, filterKey, singular, findFunc, adaptOptions);
   }
   getValueFromInstance = (defName: string, data: AdapterRow, keyName: string): unknown => {
     if (!data) {
@@ -930,29 +686,6 @@ export default class Ormize<
   // ---------------------------------------------------------------------------
 
   /**
-   * Resolve the join key for a cross-adapter relationship: which field on the
-   * *target* to filter, and the value to filter it by, read off the source
-   * instance through the source adapter (a Sequelize instance and a Valkey
-   * record expose their values differently).
-   *
-   * `belongsTo` keeps the foreign key on the source and points at the target's
-   * `targetKey`; `hasMany`/`hasOne` keep it on the target and point back at the
-   * source's `sourceKey`. `belongsToMany` keeps it on neither — the pair comes
-   * from the join model, so the scope is a *list* of target keys (which the
-   * adapters' `mergeFilterStatement` turns into an `in`) and reading it costs a
-   * query of its own.
-   */
-  private crossAdapterScope = async(association: Association, source: AdapterRow, options?: AdapterQueryOptions) => {
-    if (association.associationType === "belongsToMany") {
-      return {field: association.targetKey, value: await this.crossAdapterBtmKeys(association, source, options)};
-    }
-    const sourceAdapter = this.getModelAdapter(association.source);
-    const belongsTo = association.associationType === "belongsTo";
-    const onSource = belongsTo ? association.foreignKey : association.sourceKey;
-    const onTarget = belongsTo ? association.targetKey : association.foreignKey;
-    return {field: onTarget, value: sourceAdapter.getValueFromInstance(source, onSource)};
-  }
-  /**
    * A cross-adapter relationship is just a root query on the target model scoped
    * to the join key — the target's adapter cannot see the source's rows, so there
    * is nothing to JOIN and no accessor to call. Routing it through
@@ -960,7 +693,7 @@ export default class Ormize<
    * the target model's own hooks behaving exactly as they do at the root.
    */
   private resolveCrossAdapterRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) => {
-    const scope = await this.crossAdapterScope(association, source, context);
+    const scope = await joinScope(this.host, association, source, context);
     const empty = scope.value === undefined || scope.value === null
       || (Array.isArray(scope.value) && scope.value.length === 0);
     if (scope.field === undefined || empty) {
@@ -1118,211 +851,14 @@ export default class Ormize<
     }
     return i;
   }
-  processRelationshipMutation = async(defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, selection?: Selection) => {
-    if (!input) {
-      // A select with no `input` is a plain find — there is nothing nested to
-      // apply. Reading `input[key]` per association would throw on the way past.
-      return source;
-    }
-    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
-    // A collection's getter returns an array, a singular relationship's returns one
-    // record or null — every branch below treats what it got back as a list.
-    const asList = (res: unknown): InstanceRow[] => Array.isArray(res) ? res : (res ? [res] : []);
-    const associations = this.getAssociations(defName);
-    const defaultOptions = createResolveContext(context, selection, source);
-    // The relationship accessors are reached off the row by name — see {@link InstanceRow}.
-    const row = source as InstanceRow;
-    await waterfall(Object.keys(associations), async(key: string) => {
-      const association = associations[key];
-      const targetName = association.target;
-      const targetAdapter = this.getModelAdapter(targetName);
-      const targetGlobalKeys = this.getGlobalKeys(targetName);
-      const targetDef = this.getDefinition(targetName);
-      if (input[key]) {
-        // Anything handed to the target's adapter needs that adapter's transaction
-        // handle: for a cross-adapter relationship the one in `defaultOptions` /
-        // `context` was opened by this model's adapter and is meaningless there.
-        // (Resolving it enrols the target adapter in the unit of work, so only do
-        // it for a relationship the mutation actually touches.)
-        const targetOptions = await this.optionsForAdapter(defName, targetName, defaultOptions);
-        const targetContext = await this.optionsForAdapter(defName, targetName, context);
-        const args = input[key] as RelationshipMutation;
-        const singular = association.associationType === "belongsTo" || association.associationType === "hasOne";
-        const isBtm = association.associationType === "belongsToMany";
-        if (args.create) {
-          await waterfall(args.create, async(arg: MutationInput) => {
-            if (targetDef.before) {
-              arg = await targetDef.before({
-                params: arg, args, context, info: selection?.raw,
-                modelDefinition: targetDef,
-                type: Events.MUTATION_CREATE,
-              });
-            }
-
-            const [result] = await this.processCreate(targetName, source, {input: arg}, targetContext, selection);
-
-            switch (association.associationType) {
-              case "hasMany":
-              case "belongsToMany":
-                await row[association.accessors.add](result, defaultOptions);
-                break;
-              default:
-                await row[association.accessors.set](result, defaultOptions);
-                break;
-            }
-
-          });
-        }
-        if (args.update) {
-          await waterfall(args.update, async(arg: { where?: MutationFilter; limit?: number; input?: MutationInput }) => {
-            const {where, limit, input} = arg;
-            const whereObj = await targetAdapter.processFilterArgument(translateFilter(where, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-            const targets = asList(await row[association.accessors.get]({
-              limit,
-              where: whereObj,
-              ...defaultOptions
-            }));
-            let i: MutationInput = await this.processInputs(targetName, input as MutationInputTree, args, targetContext, selection?.raw);
-            if (targetDef.before) {
-              i = await targetDef.before({
-                params: input, args, context, info: selection?.raw,
-                modelDefinition: targetDef,
-                type: Events.MUTATION_UPDATE,
-              });
-            }
-            await Promise.all(targets.map(async(model: InstanceRow) => {
-              const m = await targetAdapter.update(model, i, targetOptions);
-              const defName = targetDef.name as string;
-              await this.processRelationshipMutation(defName, m, input as MutationInputTree, targetContext, selection);
-              return m;
-            }));
-          });
-        }
-        if (args.delete) {
-          await waterfall(args.delete, async(arg: MutationFilter) => {
-            const targets = asList(await row[association.accessors.get](Object.assign({
-              where: await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions),
-            }, defaultOptions)));
-            await Promise.all(targets.map(async(model: InstanceRow) => {
-              const defName = targetDef.name as string;
-              await this.processRelationshipMutation(defName, model, input as MutationInputTree, targetContext, selection);
-              if (targetDef.before) {
-                await targetDef.before({
-                  params: model, args, context, info: selection?.raw,
-                  model, modelDefinition: targetDef,
-                  type: Events.MUTATION_DELETE,
-                });
-              }
-              await this.processDelete(defName, source, arg, targetContext, selection);
-              return model;
-            }));
-          });
-        }
-        if (args.remove !== undefined && args.remove !== null) {
-          if (singular) {
-            // belongsTo/hasOne: disassociate by nulling the relationship.
-            if (args.remove === true) {
-              await row[association.accessors.set](null, defaultOptions);
-            }
-          } else {
-            // The list forms are the collection branch of each pair — a singular
-            // relationship takes one filter, and is handled above.
-            await waterfall(args.remove as MutationFilter[], async(arg: MutationFilter) => {
-              const where = await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-              const results = await targetAdapter.findAll(targetName, Object.assign({
-                where,
-              }, targetOptions));
-              if (results.length > 0) {
-                return row[association.accessors.removeMultiple](results, defaultOptions);
-              }
-              return undefined;
-            });
-          }
-        }
-
-        if (args.add) {
-          await waterfall(args.add, async(arg: MutationFilter | { where?: MutationFilter; through?: MutationInput }) => {
-            // belongsToMany add entries are `{ where, through }`; other collections
-            // pass the filter directly.
-            const entry = (arg || {}) as { where?: MutationFilter; through?: MutationInput };
-            const filter = isBtm ? entry.where : (arg as MutationFilter);
-            const through = isBtm ? entry.through : undefined;
-            const where = await targetAdapter.processFilterArgument(translateFilter(filter, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-            const results = await targetAdapter.findAll(targetName, Object.assign({
-              where,
-            }, targetOptions));
-            if (results.length > 0) {
-              return row[association.accessors.addMultiple](results, through !== undefined ? Object.assign({through}, defaultOptions) : defaultOptions);
-            }
-            return undefined;
-          });
-        }
-
-        if (args.set !== undefined && args.set !== null) {
-          if (singular) {
-            // belongsTo/hasOne: associate one existing record found by filter.
-            const where = await targetAdapter.processFilterArgument(translateFilter(args.set as MutationFilter, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-            const found = await targetAdapter.findAll(targetName, Object.assign({where, limit: 1}, targetOptions));
-            await row[association.accessors.set](found[0] || null, defaultOptions);
-          } else {
-            // Collections: replace the entire set with all matching existing records.
-            const all: AdapterRow[] = [];
-            let through: MutationInput | undefined;
-            await waterfall(args.set as (MutationFilter | { where?: MutationFilter; through?: MutationInput })[], async(arg: MutationFilter | { where?: MutationFilter; through?: MutationInput }) => {
-              const entry = (arg || {}) as { where?: MutationFilter; through?: MutationInput };
-              const filter = isBtm ? entry.where : (arg as MutationFilter);
-              if (isBtm && entry.through !== undefined) {
-                through = entry.through;
-              }
-              const where = await targetAdapter.processFilterArgument(translateFilter(filter, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-              const results = await targetAdapter.findAll(targetName, Object.assign({where}, targetOptions));
-              all.push(...results);
-              return undefined;
-            });
-            await row[association.accessors.set](all, through !== undefined ? Object.assign({through}, defaultOptions) : defaultOptions);
-          }
-        }
-
-        if (args.restore !== undefined && args.restore !== null) {
-          // Restore soft-deleted (paranoid) related records scoped to this relationship.
-          const restoreByFilter = async(arg: MutationFilter) => {
-            const where = await targetAdapter.processFilterArgument(translateFilter(arg, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-            const res = await row[association.accessors.get](Object.assign({where, paranoid: false}, defaultOptions));
-            const records = asList(res);
-            await Promise.all(records
-              .filter((r) => r && r.deletedAt)
-              .map((r) => r.restore(targetOptions)));
-          };
-          if (singular) {
-            await restoreByFilter(args.restore as MutationFilter);
-          } else {
-            await waterfall(args.restore as MutationFilter[], restoreByFilter);
-          }
-        }
-
-        if (args.select !== undefined && args.select !== null) {
-          // Find related records (scoped to this relationship via the get accessor,
-          // so beforeFind/afterFind fire) and run further relationship mutations on
-          // them via `arg.input`. The selected records themselves are NOT modified —
-          // no field write, no create/update/delete; scalar fields in `input` are
-          // ignored (only relationship sub-mutations are applied).
-          const selectByFilter = async(arg: { where?: MutationFilter; input?: MutationInput }) => {
-            const where = await targetAdapter.processFilterArgument(translateFilter(arg.where, targetGlobalKeys), targetDef.whereOperators, targetOptions);
-            const res = await row[association.accessors.get](Object.assign({where}, defaultOptions));
-            const records = asList(res);
-            await waterfall(records, async(m: InstanceRow) => {
-              await this.processRelationshipMutation(targetDef.name as string, m, arg.input as MutationInputTree, targetContext, selection);
-            });
-          };
-          if (singular) {
-            await selectByFilter(args.select as { where?: MutationFilter; input?: MutationInput });
-          } else {
-            await waterfall(args.select as { where?: MutationFilter; input?: MutationInput }[], selectByFilter);
-          }
-        }
-      }
-    });
-    return source;
+  /**
+   * Apply the relationship sub-mutations nested under each association name of
+   * `input` to a row that was just created, updated or selected. The verbs
+   * themselves are a table in `./relationship-mutations`.
+   */
+  processRelationshipMutation = async(defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, selection?: Selection): Promise<AdapterRow> => {
+    return applyRelationshipMutations(this.host, defName, source, input, context,
+      createResolveContext(context, selection, source), selection);
   }
   /**
    * Run a coordinated unit of work. Any create/update/delete inside `fn` — on any
@@ -1390,128 +926,134 @@ export default class Ormize<
     return this.transaction(async() => this.withTransaction(defName, context, fn));
   }
 
+  /**
+   * Open (or join) the unit of work a top-level mutation runs in, then hand the
+   * body the four lookups all four of them opened with.
+   *
+   * It is a wrapper rather than four copies of the preamble because of the
+   * `context` shadowing: {@link withTransaction} hands back a context carrying
+   * the adapter's transaction handle, and a body that used the one it was called
+   * with would run outside the transaction. Making the shadow a parameter is what
+   * stops that being a rename away.
+   */
+  private mutationEntry = <T>(
+    defName: string,
+    context: RequestContext,
+    selection: Selection | undefined,
+    fn: (entry: {
+      context: RequestContext;
+      adapter: OrmAdapter;
+      definition: Definition;
+      globalKeys: string[];
+      translateFilter: NonNullable<Selection["translateFilter"]>;
+    }) => Promise<T>,
+  ): Promise<T> => {
+    return this.withTransaction(defName, context, (context: RequestContext) => fn({
+      context,
+      adapter: this.getModelAdapter(defName),
+      definition: this.getDefinition(defName),
+      globalKeys: this.getGlobalKeys(defName),
+      translateFilter: selection?.translateFilter || (<W,>(w: W) => w),
+    }));
+  }
+
   processCreate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return this.withTransaction(defName, context, async(context: RequestContext) => {
-    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
-    const adapter = this.getModelAdapter(defName);
-    const definition = this.getDefinition(defName);
-    const processCreate = adapter.getCreateFunction(defName);
-    const globalKeys = this.getGlobalKeys(defName);
-    let i = await this.processInputs(defName, args.input, args, context, selection?.raw);
-    let input = translateFilter(i, globalKeys);
-    if (definition.before) {
-      input = await definition.before({
-        params: input, args, context, info: selection?.raw,
-        modelDefinition: definition,
-        type: Events.MUTATION_CREATE,
-      });
-    }
-    let result: AdapterRow;
-    if (Object.keys(input).length > 0) {
-      result = await processCreate(input, createResolveContext(context, selection, source));
-
-      if (result !== undefined && result !== null) {
-        result = await this.processRelationshipMutation(defName, result, args.input, context, selection);
-        return [result];
+    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
+      const processCreate = adapter.getCreateFunction(defName);
+      const i = await this.processInputs(defName, args.input, args, context, selection?.raw);
+      let input = translateFilter(i, globalKeys);
+      if (definition.before) {
+        input = await definition.before({
+          params: input, args, context, info: selection?.raw,
+          modelDefinition: definition,
+          type: Events.MUTATION_CREATE,
+        });
       }
-
-    }
-    return [];
+      if (Object.keys(input).length > 0) {
+        let result = await processCreate(input, createResolveContext(context, selection, source));
+        if (result !== undefined && result !== null) {
+          result = await this.processRelationshipMutation(defName, result, args.input, context, selection);
+          return [result];
+        }
+      }
+      return [];
     });
   }
 
   processUpdate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return this.withTransaction(defName, context, async(context: RequestContext) => {
-    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
-    const translateId = selection?.translateId || ((v: unknown) => v);
-    const definition = this.getDefinition(defName);
-    const adapter = this.getModelAdapter(defName);
-    const processUpdate = adapter.getUpdateFunction(defName, definition.whereOperators);
-    const globalKeys = this.getGlobalKeys(defName);
-
-    let i: MutationInput = Object.keys(args.input).reduce((o, k) => {
-      if (globalKeys.indexOf(k) > -1) {
-        let v = args.input[k];
-        // A global-id argument may arrive as a thunk over the operation's
-        // variables — gqlize defers relay id translation that way.
-        if (typeof v === "function") {
-          v = v(selection?.variableValues);
-        }
-        if (v === null || v === undefined) {
-          o[k] = null;
+    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
+      const translateId = selection?.translateId || ((v: unknown) => v);
+      const processUpdate = adapter.getUpdateFunction(defName, definition.whereOperators);
+      let i: MutationInput = Object.keys(args.input).reduce((o, k) => {
+        if (globalKeys.indexOf(k) > -1) {
+          let v = args.input[k];
+          // A global-id argument may arrive as a thunk over the operation's
+          // variables — gqlize defers relay id translation that way.
+          if (typeof v === "function") {
+            v = v(selection?.variableValues);
+          }
+          if (v === null || v === undefined) {
+            o[k] = null;
+          } else {
+            o[k] = translateId(v);
+          }
         } else {
-          o[k] = translateId(v);
+          o[k] = args.input[k];
         }
-      } else {
-        o[k] = args.input[k];
+        return o;
+      }, {} as MutationInput);
+      const where = translateFilter(args.where, globalKeys);
+      if (definition.before) {
+        i = await definition.before({
+          params: i, args, context, info: selection?.raw,
+          modelDefinition: definition,
+          type: Events.MUTATION_UPDATE,
+        });
       }
-      return o;
-    }, {} as MutationInput);
-    const where = translateFilter(args.where, globalKeys);
-    if (definition.before) {
-      i = await definition.before({
-        params: i, args, context, info: selection?.raw,
-        modelDefinition: definition,
-        type: Events.MUTATION_UPDATE,
+      const results = await processUpdate(where, (model) => {
+        return this.processInputs(defName, i, args, context, selection?.raw, model);
+      }, createResolveContext(context, selection, source, {limit: args.limit}));
+      await waterfall(results, async(r: AdapterRow) => {
+        await this.processRelationshipMutation(defName, r, args.input, context, selection);
       });
-    }
-    const results = await processUpdate(where, (model) => {
-      return this.processInputs(defName, i, args, context, selection?.raw, model);
-    }, createResolveContext(context, selection, source, {limit: args.limit}));
-
-    await waterfall(results, async(r: AdapterRow) => {
-      await this.processRelationshipMutation(defName, r, args.input, context, selection);
-    });
-
-    return results;
+      return results;
     });
   }
   processSelect = async(defName: string, source: AdapterRow, args: { input?: MutationInputTree; where?: MutationFilter; limit?: number }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return this.withTransaction(defName, context, async(context: RequestContext) => {
-    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
     // Find matching elements and run relationship mutations on them via `args.input`
     // WITHOUT modifying the elements themselves (no field write / lifecycle change);
     // scalar fields in `input` are ignored. Returns the found rows so the caller can
     // select fields back.
-    const definition = this.getDefinition(defName);
-    const adapter = this.getModelAdapter(defName);
-    const globalKeys = this.getGlobalKeys(defName);
-    const options = createResolveContext(context, selection, source, {limit: args.limit});
-    const where = await adapter.processFilterArgument(
-      translateFilter(args.where, globalKeys),
-      definition.whereOperators,
-      options,
-    );
-    const results = await adapter.findAll(defName, Object.assign({where, limit: args.limit}, options));
-    await waterfall(results, async(r: AdapterRow) => {
-      await this.processRelationshipMutation(defName, r, args.input, context, selection);
-    });
-    return results;
+    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
+      const options = createResolveContext(context, selection, source, {limit: args.limit});
+      const where = await adapter.processFilterArgument(
+        translateFilter(args.where, globalKeys),
+        definition.whereOperators,
+        options,
+      );
+      const results = await adapter.findAll(defName, Object.assign({where, limit: args.limit}, options));
+      await waterfall(results, async(r: AdapterRow) => {
+        await this.processRelationshipMutation(defName, r, args.input, context, selection);
+      });
+      return results;
     });
   }
   processDelete = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return this.withTransaction(defName, context, async(context: RequestContext) => {
-    const translateFilter = selection?.translateFilter || (<W,>(w: W) => w);
-    const definition = this.getDefinition(defName);
-    const adapter = this.getModelAdapter(defName);
-    const processDelete = adapter.getDeleteFunction(defName, definition.whereOperators);
-    const globalKeys = this.getGlobalKeys(defName);
-    const where = translateFilter(args, globalKeys);
-    const before = (model: AdapterRow) => {
-      if (!definition.before) {
-        return model;
-      }
-      return definition.before({
-        params: model, args, context, info: selection?.raw,
-        model, modelDefinition: definition,
-        type: Events.MUTATION_DELETE,
-      });
-    };
-    const after = (model: AdapterRow) => {
-      return model;
-
-    };
-    return processDelete(where, createResolveContext(context, selection, source), before, after);
+    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
+      const processDelete = adapter.getDeleteFunction(defName, definition.whereOperators);
+      const where = translateFilter(args, globalKeys);
+      const before = (model: AdapterRow) => {
+        if (!definition.before) {
+          return model;
+        }
+        return definition.before({
+          params: model, args, context, info: selection?.raw,
+          model, modelDefinition: definition,
+          type: Events.MUTATION_DELETE,
+        });
+      };
+      const after = (model: AdapterRow) => model;
+      return processDelete(where, createResolveContext(context, selection, source), before, after);
     });
   }
 
