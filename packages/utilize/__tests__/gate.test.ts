@@ -8,6 +8,7 @@ import {
   isRelationshipAllowed,
   isMutationAllowed,
   isInputFieldAllowed,
+  type Permission,
 } from "../src/gate";
 
 describe("utilize - gate helpers", () => {
@@ -79,14 +80,18 @@ describe("utilize - gate helpers", () => {
   });
 
   it("unknownPermissionKeys: reports a typo, which would otherwise fail open", () => {
-    const typo = { modle: () => false };
+    // @ts-expect-error - `modle` is not a permission key. That this no longer
+    // typechecks is half the fix; the runtime check is the other half, for JS
+    // callers and bags built programmatically.
+    const typo: Permission = { modle: () => false };
     expect(unknownPermissionKeys(typo)).toEqual(["modle"]);
     // the reason it matters: nothing reads `modle`, so the model is allowed.
     expect(isModelAllowed(typo, "Task")).toBe(true);
   });
 
   it("unknownPermissionKeys: reports keys retired in 7.0", () => {
-    const legacy = { model: () => true, subscription: () => false, extensions: () => false };
+    // @ts-expect-error - `subscription` and `extensions` were retired in 7.0
+    const legacy: Permission = { model: () => true, subscription: () => false, extensions: () => false };
     expect(unknownPermissionKeys(legacy).sort()).toEqual(["extensions", "subscription"]);
   });
 });

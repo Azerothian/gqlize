@@ -259,7 +259,11 @@ export default function createRoleBasedPermissions(
     : {};
   warnUnknownRuleKeys(compiledRules);
 
-  const permission: Permission = {};
+  // Built through a string-keyed bag because the loops below are driven by the
+  // runtime gate maps. `ROLE_BASED_GATES` is asserted against `PERMISSION_KEYS`
+  // in the tests, so the cast at the return is backed by a check rather than a
+  // hope.
+  const permission: Record<string, unknown> = {};
   Object.keys(ONE_ARG_GATES).forEach((gate) => {
     const predicate = buildGate(compiledRules, ONE_ARG_GATES[gate], defaultDeny,
       (node, name: string | number) => decideOne(node, name));
@@ -274,7 +278,7 @@ export default function createRoleBasedPermissions(
       permission[gate] = predicate;
     }
   });
-  return permission;
+  return permission as Permission;
 }
 
 /** Every gate this helper can emit — the keys it is responsible for covering. */

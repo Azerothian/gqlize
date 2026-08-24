@@ -1,5 +1,6 @@
 import Events from "../events";
 import { DataTypeDescriptor } from "./data-type";
+import type { Permission } from "../gate";
 
 /**
  * An unmanaged, adapter-native transaction. `handle` is the token threaded onto
@@ -113,24 +114,11 @@ export type Selection = {
 
 export type GqlizeOptions = {
   globalHooks?: {[name: string]: {}}
-  permission?: { 
-    options?: any
-    model?: (defName: string, options?: any) => boolean; 
-    query?: (defName: string, options?: any) => boolean; 
-    mutation?: (defName: string, options?: any) => boolean; 
-    mutationUpdate?: (defName: string, options?: any) => boolean; 
-    mutationDelete?: (defName: string, options?: any) => boolean;
-    mutationCreate?: (defName: string, options?: any) => boolean;
-    queryExtension?: (defName: string, options?: any) => boolean;
-    mutationExtension?: (defName: string, options?: any) => boolean;
-    mutationUpdateInput?: (defName: string, fieldName: string, options?: any) => boolean;
-    mutationCreateInput?: (defName: string, fieldName: string, options?: any) => boolean;
-    field?: (defName: string, fieldName: string, options?: any) => boolean; 
-    queryClassMethods?: (defName: string, methodName: string, options?: any) => boolean;
-    mutationClassMethods?: (defName: string, methodName: string, options?: any) => boolean;
-    queryInstanceMethods?: (defName: string, methodName: string, options?: any) => boolean;
-    relationship?: (defName: string, relName: string, targetName: string, options?: any) => boolean; 
-  },
+  /**
+   * The predicate bag gating what gets generated. Closed by design — see
+   * {@link Permission} in `../gate` for why a typo has to be a compile error.
+   */
+  permission?: Permission,
   extend?: any,
   root?: any,
   subscriptions?: any

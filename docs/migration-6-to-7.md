@@ -321,13 +321,27 @@ specific key is never overridden by an `"allow"` on the fallback.
 (`modle`, `mutationCreateInputs`) typechecked, was never called, and — because an absent predicate
 means *allow* — silently produced a **wider** schema than intended.
 
-`options` is now typed as `GqlizeOptions`, whose `permission` is a closed shape: a stray key is a
-compile error with a "did you mean" suggestion. For JavaScript callers and bags built
-programmatically, `createSchema` also warns on `console.warn` naming the unknown keys. It warns
-rather than throws, so an existing bag still builds.
+`Permission`, exported from `@azerothian/utilize`, is now a **closed** shape — sixteen optional
+predicates and no index signature — and it is the type behind every package's `permission?:`
+option: `createSchema`, `generateZodSchemas`, nestize's `NestizeOptions`, and whatever
+temporalize's `resolvePermission` returns. A stray key is a compile error with a "did you mean"
+suggestion. In 6.x the type carried `[key: string]: any`, which defeated the excess-property check
+outright, so every one of those surfaces failed open on a typo.
+
+For JavaScript callers and bags built programmatically the compiler cannot help, so `createSchema`
+also warns on `console.warn` naming the unknown keys. It warns rather than throws, so an existing
+bag still builds.
+
+`PERMISSION_KEYS` is the machine-readable copy of the same set, and a compile-time guard now holds
+the two together — adding a predicate to one and forgetting the other no longer compiles.
 
 > **Watch for:** the new warning firing on a bag you thought was enforcing something. That is the
-> bug, not the warning. `PERMISSION_KEYS`, exported from `@azerothian/utilize`, is the accepted set.
+> bug, not the warning.
+>
+> **Watch for:** every predicate is optional, so TypeScript callers that invoke one directly
+> (`permission.model("Task")` in a test or a wrapper) now need `permission.model!(...)` or a
+> presence check. Under `defaultDeny: false` the absent case is real — an unmentioned gate is
+> genuinely omitted from the bag.
 
 ## 4. The graphql patch
 

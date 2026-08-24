@@ -48,7 +48,7 @@ const log = {
  * invisible there.
  */
 export function warnUnknownPermissionKeys(options: GqlizeOptions) {
-  const unknown = unknownPermissionKeys(options.permission as any);
+  const unknown = unknownPermissionKeys(options.permission);
   if (unknown.length === 0) {
     return;
   }

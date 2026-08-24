@@ -10,7 +10,7 @@ describe("permission helper", () => {
   it("basic test - no settings - defaults deny", async() => {
     const instance = await createInstance();
     const permission = permissionHelper("anything", {});
-    const result = permission.model("anything");
+    const result = permission.model!("anything");
     expect(result).toBeFalsy();
     let e;
     try {
@@ -44,15 +44,15 @@ describe("permission helper", () => {
       },
     });
 
-    expect(permission.query("Task")).toBeTruthy();
-    expect(permission.query("TaskItem")).toBeTruthy();
+    expect(permission.query!("Task")).toBeTruthy();
+    expect(permission.query!("TaskItem")).toBeTruthy();
 
-    expect(permission.model("Task")).toBeTruthy();
-    expect(permission.model("TaskItem")).toBeFalsy();
+    expect(permission.model!("Task")).toBeTruthy();
+    expect(permission.model!("TaskItem")).toBeFalsy();
 
-    expect(permission.field("Task", "name")).toBeTruthy();
-    expect(permission.field("Task", "options")).toBeFalsy();
-    // expect(permission.field("TaskItem", "name")).toBeFalsy();
+    expect(permission.field!("Task", "name")).toBeTruthy();
+    expect(permission.field!("Task", "options")).toBeFalsy();
+    // expect(permission.field!("TaskItem", "name")).toBeFalsy();
 
     const schema = await createSchema(instance, {
       permission,
@@ -83,8 +83,8 @@ describe("permission helper", () => {
         },
       },
     });
-    expect(permission.query("Task")).toBeTruthy();
-    expect(permission.field("Task", "name")).toBeTruthy();
+    expect(permission.query!("Task")).toBeTruthy();
+    expect(permission.field!("Task", "name")).toBeTruthy();
   });
 
   it("extend fields are denied under defaultDeny, and grantable by key", async() => {
@@ -110,8 +110,8 @@ describe("permission helper", () => {
     };
 
     const permission = permissionHelper("anyone", rules);
-    expect(permission.queryExtension("health")).toBeTruthy();
-    expect(permission.queryExtension("secret")).toBeFalsy();
+    expect(permission.queryExtension!("health")).toBeTruthy();
+    expect(permission.queryExtension!("secret")).toBeFalsy();
 
     const instance = await createInstance();
     const schema = await createSchema(instance, {extend, permission});
@@ -132,8 +132,8 @@ describe("permission helper", () => {
         mutationCreate: {Task: "allow"},
       },
     });
-    expect(permission.mutationCreateInput("Task", "name")).toBeTruthy();
-    expect(permission.mutationCreateInput("Task", "options")).toBeFalsy();
+    expect(permission.mutationCreateInput!("Task", "name")).toBeTruthy();
+    expect(permission.mutationCreateInput!("Task", "options")).toBeFalsy();
 
     const instance = await createInstance();
     const schema = await createSchema(instance, {permission});
