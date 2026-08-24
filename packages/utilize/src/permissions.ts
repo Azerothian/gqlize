@@ -1,5 +1,39 @@
 import deepmerge from "deepmerge";
 
+import type { Permission } from "./gate";
+
+/** A leaf decision in a rules tree. Anything else is "no opinion". */
+export type RuleDecision = "allow" | "deny";
+
+/**
+ * One node of a rules tree: a blanket decision, or a map one level deeper. The
+ * depth that carries meaning varies by gate — one-arg gates read
+ * `{[name]: decision}`, two-arg gates read `{[model]: {[name]: decision}}` —
+ * so the node is recursive rather than depth-indexed.
+ */
+export type RuleNode = RuleDecision | { [key: string]: RuleNode };
+
+/** One role's rules: a node per gate key (see `KNOWN_RULE_KEYS`). */
+export type RoleRuleTree = { [gate: string]: RuleNode };
+
+/**
+ * The tree handed to `createRoleBasedPermissions`, keyed by role.
+ *
+ * A role's value is normally a {@link RoleRuleTree}, but a bare `"deny"` is an
+ * accepted (and documented) shorthand for "this role gets nothing" — see
+ * `docs/guide.md`. It carries no gate keys, so under the default `defaultDeny`
+ * every gate denies. Note the corollary: a bare `"allow"` does **not** grant
+ * anything, for the same reason.
+ */
+export type RoleRules = { [role: string]: RoleRuleTree | RuleDecision };
+
+export type RoleBasedPermissionOptions = {
+  /** Deny any surface no rule mentions. Defaults to `true`. */
+  defaultDeny?: boolean;
+  /** Rules merged *under* the selected role's own rules. */
+  defaults?: RoleRuleTree;
+};
+
 /**
  * `undefined` means "this rules node expressed no opinion", which is distinct
  * from an explicit `"deny"`. Keeping the two apart is what lets a gate consult
@@ -106,7 +140,7 @@ const log = {
   warn: (message: string) => console.warn(message), // eslint-disable-line no-console
 };
 
-function warnUnknownRuleKeys(compiledRules: { [x: string]: any }) {
+function warnUnknownRuleKeys(compiledRules: RoleRuleTree) {
   const unknown = Object.keys(compiledRules).filter((key) => !KNOWN_RULE_KEYS.has(key));
   if (unknown.length === 0) {
     return;
@@ -119,10 +153,10 @@ function warnUnknownRuleKeys(compiledRules: { [x: string]: any }) {
 }
 
 function buildGate(
-  compiledRules: { [x: string]: any },
+  compiledRules: RoleRuleTree,
   chain: string[],
-  defaultDeny: any,
-  decide: (node: any, ...args: any[]) => Decision,
+  defaultDeny: boolean,
+  decide: (node: RuleNode | undefined, ...args: any[]) => Decision,
 ) {
   const present = chain.filter((ruleKey) => compiledRules[ruleKey] !== undefined);
   if (present.length === 0) {
@@ -208,24 +242,34 @@ function buildGate(
 
 */
 
-export default function createRoleBasedPermissions(role: string | number, rules: { [x: string]: any; }, options: any = {}) {
+export default function createRoleBasedPermissions(
+  role: string | number,
+  rules: RoleRules,
+  options: RoleBasedPermissionOptions = {},
+): Permission {
   const {defaultDeny = true, defaults: defaultPerms = {}} = options;
   // Only the selected role's rules are needed — merge just that entry rather than
   // deep-merging every role's rules and discarding all but one.
-  let compiledRules = rules[role] ? deepmerge(defaultPerms, rules[role]) : {};
+  // A role may be a bare `"allow"`/`"deny"` string rather than a tree. There are
+  // no gate keys to merge in that case; the empty tree lets `defaultDeny` decide,
+  // which is what the string form already resolved to before it was typed.
+  const roleRules = rules[role];
+  const compiledRules: RoleRuleTree = roleRules && typeof roleRules === "object"
+    ? deepmerge<RoleRuleTree>(defaultPerms, roleRules)
+    : {};
   warnUnknownRuleKeys(compiledRules);
 
-  const permission: any = {};
+  const permission: Permission = {};
   Object.keys(ONE_ARG_GATES).forEach((gate) => {
     const predicate = buildGate(compiledRules, ONE_ARG_GATES[gate], defaultDeny,
-      (node: any, name: string | number) => decideOne(node, name));
+      (node, name: string | number) => decideOne(node, name));
     if (predicate) {
       permission[gate] = predicate;
     }
   });
   Object.keys(TWO_ARG_GATES).forEach((gate) => {
     const predicate = buildGate(compiledRules, TWO_ARG_GATES[gate], defaultDeny,
-      (node: any, model: string | number, name: string | number) => decideTwo(node, model, name));
+      (node, model: string | number, name: string | number) => decideTwo(node, model, name));
     if (predicate) {
       permission[gate] = predicate;
     }

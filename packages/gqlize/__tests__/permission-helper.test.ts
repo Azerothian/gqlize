@@ -1,6 +1,7 @@
 import {createInstance} from "./helper";
 import {createSchema} from "../src";
 import { createRoleBasedPermissions as permissionHelper } from "@azerothian/ormize";
+import type { RoleRules } from "@azerothian/utilize";
 import { GraphQLObjectType } from 'graphql';
 
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
@@ -97,7 +98,9 @@ describe("permission helper", () => {
         secret: {type: GraphQLString, resolve: () => "nope"},
       },
     };
-    const rules = {
+    // Annotated rather than inline: a `const` without a contextual type widens
+    // `"allow"` to `string`, which is no longer assignable to `RuleDecision`.
+    const rules: RoleRules = {
       anyone: {
         query: {Task: "allow"},
         model: {Task: "allow"},
