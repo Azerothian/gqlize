@@ -1,7 +1,27 @@
-import { getArgumentValues, GraphQLResolveInfo, GraphQLObjectType } from "graphql";
+import { getArgumentValues, GraphQLResolveInfo, GraphQLObjectType, GraphQLFieldMap, Kind } from "graphql";
+import type { FieldNode, SelectionSetNode } from "graphql";
 import GQLManager from "../../manager";
 import { fromCursor } from "../objects/cursor";
-import type { IncludeDescriptor, IncludeMap } from "../../types";
+import type { AdapterWhere, Association, GqlizeAdapter, IncludeDescriptor, IncludeMap } from "../../types";
+
+/**
+ * The arguments of a relationship field, resolved against the request's
+ * variables. `getArgumentValues` hands each one back as `unknown` — it cannot
+ * know the argument's declared type — so these are the ones this builder reads,
+ * named. GraphQL has already validated each against its own arg type by the time
+ * it gets here, which is why `where` can be taken at its word.
+ */
+type IncludeFieldArgs = {
+  required?: unknown;
+  separate?: unknown;
+  where?: AdapterWhere;
+  orderBy?: unknown;
+  first?: unknown;
+  last?: unknown;
+  after?: unknown;
+  before?: unknown;
+  include?: unknown;
+};
 
 // Bound per-parent eager-load page size. This mirrors the adapter's root-query
 // backstop but is applied at the GraphQL layer, since a nested `first`/`last`
@@ -10,8 +30,8 @@ import type { IncludeDescriptor, IncludeMap } from "../../types";
 // connection is an unbounded per-parent fetch (DoS / amplification).
 const DEFAULT_INCLUDE_PAGE_SIZE = 100;
 const MAX_INCLUDE_PAGE_SIZE = 1000;
-function clampIncludePageSize(value: any): number {
-  const n = parseInt(value, 10);
+function clampIncludePageSize(value: unknown): number {
+  const n = parseInt(String(value), 10);
   if (!Number.isFinite(n) || n <= 0) {
     return DEFAULT_INCLUDE_PAGE_SIZE;
   }
@@ -32,7 +52,7 @@ function isCollection(associationType: string) {
  * Collections are wrapped in a relay connection (`edges { node { … } }`); single
  * valued relations expose their sub-fields directly.
  */
-export function getChildSelectionSet(fieldSelectionSet: any, collection: boolean, info: GraphQLResolveInfo): any {
+export function getChildSelectionSet(fieldSelectionSet: SelectionSetNode | undefined, collection: boolean, info: GraphQLResolveInfo): SelectionSetNode | undefined {
   if (!fieldSelectionSet) {
     return undefined;
   }
@@ -51,17 +71,17 @@ export function getChildSelectionSet(fieldSelectionSet: any, collection: boolean
  * only `total`/`pageInfo`, callers can skip the row fetch and run a count instead.
  * Fragment-aware; defaults to `true` (fetch rows) when the shape is unknown.
  */
-export function isConnectionRowsSelected(fieldNode: any, info: GraphQLResolveInfo): boolean {
+export function isConnectionRowsSelected(fieldNode: FieldNode | undefined, info: GraphQLResolveInfo): boolean {
   if (!fieldNode || !fieldNode.selectionSet) {
     return true;
   }
-  return flattenFieldNodes(fieldNode.selectionSet, info).some((f: any) => f.name.value === "edges");
+  return flattenFieldNodes(fieldNode.selectionSet, info).some((f) => f.name.value === "edges");
 }
 
 // Memoizes the flattened field list per selection-set AST node. Node identity is
 // unique per parsed document (and the document's fragments are fixed), so keying
 // by the node is safe across requests; entries are GC'd with the document.
-const flattenCache = new WeakMap<object, any[]>();
+const flattenCache = new WeakMap<SelectionSetNode, FieldNode[]>();
 
 /**
  * Flatten a selection set into its effective Field nodes, expanding inline
@@ -70,7 +90,7 @@ const flattenCache = new WeakMap<object, any[]>();
  * GraphQL validation guarantees a fragment's type condition is compatible with
  * the position it appears in, so type conditions are simply followed through.
  */
-export function flattenFieldNodes(selectionSet: any, info: GraphQLResolveInfo, seen?: Set<string>): any[] {
+export function flattenFieldNodes(selectionSet: SelectionSetNode | undefined, info: GraphQLResolveInfo, seen?: Set<string>): FieldNode[] {
   if (!selectionSet || !Array.isArray(selectionSet.selections)) {
     return [];
   }
@@ -84,13 +104,13 @@ export function flattenFieldNodes(selectionSet: any, info: GraphQLResolveInfo, s
     }
   }
   const visited = seen || new Set<string>();
-  const fields: any[] = [];
+  const fields: FieldNode[] = [];
   for (const sel of selectionSet.selections) {
-    if (sel.kind === "Field") {
+    if (sel.kind === Kind.FIELD) {
       fields.push(sel);
-    } else if (sel.kind === "InlineFragment") {
+    } else if (sel.kind === Kind.INLINE_FRAGMENT) {
       fields.push(...flattenFieldNodes(sel.selectionSet, info, visited));
-    } else if (sel.kind === "FragmentSpread") {
+    } else if (sel.kind === Kind.FRAGMENT_SPREAD) {
       const name = sel.name && sel.name.value;
       if (!name || visited.has(name)) {
         continue; // guard against unknown / cyclic fragments
@@ -108,7 +128,7 @@ export function flattenFieldNodes(selectionSet: any, info: GraphQLResolveInfo, s
   return fields;
 }
 
-function findFieldSelectionSet(selectionSet: any, fieldName: string, info: GraphQLResolveInfo): any {
+function findFieldSelectionSet(selectionSet: SelectionSetNode | undefined, fieldName: string, info: GraphQLResolveInfo): SelectionSetNode | undefined {
   for (const sel of flattenFieldNodes(selectionSet, info)) {
     if (sel.name.value === fieldName) {
       return sel.selectionSet;
@@ -135,7 +155,7 @@ export function mergeIncludeMaps(a: IncludeMap = {}, b: IncludeMap = {}): Includ
   return out;
 }
 
-function mergeWhere(a: any, b: any) {
+function mergeWhere(a: AdapterWhere | undefined, b: AdapterWhere | undefined): AdapterWhere | undefined {
   if (!a) {
     return b;
   }
@@ -169,11 +189,11 @@ function mergeIncludeDescriptors(a: IncludeDescriptor, b: IncludeDescriptor): In
  * Normalise an explicit `include` argument (an array of relation-keyed objects)
  * into a single include map.
  */
-export function normaliseExplicitInclude(include: any): IncludeMap {
+export function normaliseExplicitInclude(include: unknown): IncludeMap {
   if (!Array.isArray(include)) {
     return {};
   }
-  return include.reduce((map: IncludeMap, entry: any) => {
+  return include.reduce((map: IncludeMap, entry: unknown) => {
     return mergeIncludeMaps(map, entry as IncludeMap);
   }, {} as IncludeMap);
 }
@@ -187,7 +207,7 @@ export function normaliseExplicitInclude(include: any): IncludeMap {
 export function buildIncludeMapFromSelection(
   instance: GQLManager,
   defName: string,
-  selectionSet: any,
+  selectionSet: SelectionSetNode | undefined,
   gqlType: GraphQLObjectType | undefined,
   info: GraphQLResolveInfo
 ): IncludeMap {
@@ -196,8 +216,11 @@ export function buildIncludeMapFromSelection(
     return plan;
   }
   const associations = instance.getAssociations(defName);
-  const typeFields: any = gqlType && (gqlType as any).getFields ? (gqlType as any).getFields() : {};
-  let parentAdapter: any;
+  // `getType(defName)` is asserted to an object type by both callers, but a
+  // definition name could resolve to a scalar or an enum — neither has fields.
+  const typeFields: GraphQLFieldMap<unknown, unknown> =
+    gqlType && typeof gqlType.getFields === "function" ? gqlType.getFields() : {};
+  let parentAdapter: GqlizeAdapter | undefined;
   try {
     parentAdapter = instance.getModelAdapter(defName);
   } catch (e) {
@@ -205,7 +228,7 @@ export function buildIncludeMapFromSelection(
   }
   for (const sel of flattenFieldNodes(selectionSet, info)) {
     const relName = sel.name.value;
-    const association = associations[relName];
+    const association: Association | undefined = associations[relName];
     if (!association) {
       continue; // scalar / non-relationship field
     }
@@ -224,11 +247,13 @@ export function buildIncludeMapFromSelection(
       // resolver runs a count-only query (fires beforeCount/afterCount) instead.
       continue;
     }
-    let fieldArgs: any = {};
+    let fieldArgs: IncludeFieldArgs = {};
     try {
       const fieldDef = typeFields[relName];
       if (fieldDef) {
-        fieldArgs = getArgumentValues(fieldDef, sel, info.variableValues) || {};
+        // Each value has already been coerced and validated against the
+        // argument's declared type — see {@link IncludeFieldArgs}.
+        fieldArgs = (getArgumentValues(fieldDef, sel, info.variableValues) || {}) as IncludeFieldArgs;
       }
     } catch (e) {
       fieldArgs = {};
@@ -288,13 +313,16 @@ export function buildIncludeMapFromSelection(
   return plan;
 }
 
-function decodeCursorIndex(cursor: any): number {
+function decodeCursorIndex(cursor: unknown): number {
   try {
     if (typeof cursor === "string") {
       return fromCursor(cursor).index;
     }
-    if (cursor && typeof cursor.index === "number") {
-      return cursor.index;
+    // A cursor arrives either opaque (base64) or already decoded by an adapter's
+    // relay arg handling, which leaves the `{index}` object behind.
+    const decoded = cursor as {index?: unknown} | null | undefined;
+    if (decoded && typeof decoded.index === "number") {
+      return decoded.index;
     }
   } catch (e) {
     // ignore malformed cursors
@@ -311,9 +339,9 @@ function decodeCursorIndex(cursor: any): number {
 export default function buildIncludeFromSelection(
   instance: GQLManager,
   defName: string,
-  fieldNode: any,
+  fieldNode: FieldNode | undefined,
   info: GraphQLResolveInfo,
-  explicitInclude?: any
+  explicitInclude?: unknown
 ): IncludeMap[] | undefined {
   const gqlType = info.schema.getType(defName) as GraphQLObjectType | undefined;
   const nodeSelectionSet = getChildSelectionSet(fieldNode && fieldNode.selectionSet, true, info);

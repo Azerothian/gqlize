@@ -1,9 +1,24 @@
 import {fromGlobalId} from "graphql-relay";
 import replaceIdDeep from "./utils/replace-id-deep";
 import { GraphQLResolveInfo } from "graphql";
+import type { FieldNode } from "graphql";
 import logger from "@azerothian/utilize/utils/logger";
 import buildIncludeFromSelection, { mergeIncludeMaps, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
-import { Model, Association, Selection } from './types';
+import type { Ormize } from "@azerothian/ormize";
+import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
+import { AdapterRow, Association, FindAllArgs, GqlizeAdapter, IncludeMap, IORBase, NativeDataType, Permission, RequestContext, Selection } from './types';
+
+/**
+ * The engine this binding wraps.
+ *
+ * `any` for the model map is deliberate. `Ormize` is generic over the map its
+ * fluent `define()` chain accumulates, and the binding never reads a model by
+ * name — it forwards. Naming a concrete map here would reject every instance a
+ * caller actually builds, and naming the default one would reject the typed ones.
+ * The base parameter keeps its own constraint: it is a registry key, and `any`
+ * is not one.
+ */
+type AnyOrmize = Ormize<any, IORBase>;
 
 /**
  * GraphQL binding that composes an `Ormize` backend instance. The schema builders
@@ -15,56 +30,68 @@ import { Model, Association, Selection } from './types';
  * GraphQL execution `info` into a backend-agnostic `Selection` (via `buildSelection`)
  * and injects relay global-id translation, then delegates to the engine — so
  * behaviour is identical while the engine can be shared with non-GraphQL callers.
+ *
+ * The pass-through forwarders take their signature from the engine by indexed
+ * access (`Ormize["getFields"]`) rather than restating it. A forwarder that
+ * changes nothing should not be able to drift from what it forwards to, and the
+ * ones that *do* change something — `getModelAdapter` narrowing to a
+ * {@link GqlizeAdapter} — are written out so the difference is visible.
  */
 export default class GqlizeBinding {
-  orm: any;
-  constructor(orm: any) {
+  orm: AnyOrmize;
+  constructor(orm: AnyOrmize) {
     this.orm = orm;
   }
   get models() { return this.orm.models; }
-  getDefinition = (...a: any[]) => this.orm.getDefinition(...a);
-  getDefinitions = (...a: any[]) => this.orm.getDefinitions(...a);
+  getDefinition: AnyOrmize["getDefinition"] = (...a) => this.orm.getDefinition(...a);
+  getDefinitions: AnyOrmize["getDefinitions"] = (...a) => this.orm.getDefinitions(...a);
   getModels = () => this.orm.models;
-  getModel = (...a: any[]) => this.orm.getModel(...a);
-  getFields = (...a: any[]) => this.orm.getFields(...a);
-  getAssociations = (...a: any[]) => this.orm.getAssociations(...a);
-  getGlobalKeys = (...a: any[]) => this.orm.getGlobalKeys(...a);
-  getModelAdapter = (...a: any[]) => this.orm.getModelAdapter(...a);
-  getValueFromInstance = (...a: any[]) => this.orm.getValueFromInstance(...a);
-  isTypeOf = (...a: any[]) => this.orm.isTypeOf(...a);
-  resolveClassMethod = (...a: any[]) => this.orm.resolveClassMethod(...a);
-  applyEagerAfterFind = (...a: any[]) => this.orm.applyEagerAfterFind(...a);
-  runHook = (...a: any[]) => this.orm.runHook(...a);
-  getDefinitionHooks = (...a: any[]) => this.orm.getDefinitionHooks(...a);
+  getModel: AnyOrmize["getModel"] = (...a) => this.orm.getModel(...a);
+  getFields: AnyOrmize["getFields"] = (...a) => this.orm.getFields(...a);
+  getAssociations: AnyOrmize["getAssociations"] = (...a) => this.orm.getAssociations(...a);
+  getGlobalKeys: AnyOrmize["getGlobalKeys"] = (...a) => this.orm.getGlobalKeys(...a);
+  /**
+   * Narrower than the engine's: every adapter registered on a gqlize instance has
+   * to be a {@link GqlizeAdapter}, because the schema builders below call the
+   * graphql-typed half of the contract (`getTypeMapper`, `getFilterGraphQLType`,
+   * `replaceIdInArgs`) that plain `OrmAdapter` does not declare.
+   */
+  getModelAdapter = (modelName: string): GqlizeAdapter => this.orm.getModelAdapter(modelName) as GqlizeAdapter;
+  getValueFromInstance: AnyOrmize["getValueFromInstance"] = (...a) => this.orm.getValueFromInstance(...a);
+  isTypeOf: AnyOrmize["isTypeOf"] = (...a) => this.orm.isTypeOf(...a);
+  resolveClassMethod: AnyOrmize["resolveClassMethod"] = (...a) => this.orm.resolveClassMethod(...a);
+  applyEagerAfterFind: AnyOrmize["applyEagerAfterFind"] = (...a) => this.orm.applyEagerAfterFind(...a);
+  runHook: AnyOrmize["runHook"] = (...a) => this.orm.runHook(...a);
+  getDefinitionHooks: AnyOrmize["getDefinitionHooks"] = (...a) => this.orm.getDefinitionHooks(...a);
   // Backend lifecycle forwarders so the binding is a transparent wrapper (useful
   // for tests/tools that drive both setup and schema building through one object).
-  registerAdapter = (...a: any[]) => this.orm.registerAdapter(...a);
-  addDefinition = (...a: any[]) => this.orm.addDefinition(...a);
-  define = (...a: any[]) => this.orm.define(...a);
-  initialise = (...a: any[]) => this.orm.initialise(...a);
-  sync = (...a: any[]) => this.orm.sync(...a);
-  reset = (...a: any[]) => this.orm.reset(...a);
-  getGraphQLOutputType = (modelName: string, fieldName: string, type: any) => {
+  registerAdapter: AnyOrmize["registerAdapter"] = (...a) => this.orm.registerAdapter(...a);
+  addDefinition: AnyOrmize["addDefinition"] = (...a) => this.orm.addDefinition(...a);
+  define: AnyOrmize["define"] = (...a) => this.orm.define(...a);
+  initialise: AnyOrmize["initialise"] = (...a) => this.orm.initialise(...a);
+  sync: AnyOrmize["sync"] = (...a) => this.orm.sync(...a);
+  reset: AnyOrmize["reset"] = (...a) => this.orm.reset(...a);
+  getGraphQLOutputType = (modelName: string, fieldName: string, type: NativeDataType) => {
     const adapter = this.getModelAdapter(modelName);
     const typeMapper = adapter.getTypeMapper();
     return typeMapper(type, modelName, fieldName);
   }
-  getGraphQLInputType = (modelName: string, fieldName: string, type: any) => {
+  getGraphQLInputType = (modelName: string, fieldName: string, type: NativeDataType) => {
     const adapter = this.getModelAdapter(modelName);
     const typeMapper = adapter.getTypeMapper();
     return typeMapper(type, modelName, `${fieldName}Input`);
   }
-  getDefaultListArgs = (defName: string, permission?: any) => {
+  getDefaultListArgs = (defName: string, permission?: Permission) => {
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
     return adapter.getDefaultListArgs(defName, definition, permission);
   }
 
-  getOrderByGraphQLType = (defName: string, permission?: any) => {
+  getOrderByGraphQLType = (defName: string, permission?: Permission) => {
     const adapter = this.getModelAdapter(defName);
     return adapter.getOrderByGraphQLType(defName, permission);
   }
-  getFilterGraphQLType = (defName: string, permission?: any) => {
+  getFilterGraphQLType = (defName: string, permission?: Permission) => {
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
     return adapter.getFilterGraphQLType(defName, definition, permission);
@@ -98,7 +125,7 @@ export default class GqlizeBinding {
     }
     const out = [...fields];
     for (const fieldName of fields) {
-      const association: any = associations[fieldName];
+      const association: Association | undefined = associations[fieldName];
       if (!association?.crossAdapter) {
         continue;
       }
@@ -109,14 +136,14 @@ export default class GqlizeBinding {
     }
     return out;
   }
-  private buildSelection(defName: string, info: any, a?: any): Selection {
+  private buildSelection(defName: string, info: GraphQLResolveInfo | undefined, a?: FindAllArgs): Selection {
     const selection: Selection = {
       raw: info,
       variableValues: info?.variableValues,
       fields: (info && Array.isArray(info.fieldNodes)) ? this.withCrossAdapterJoinKeys(defName, getSelectionFields(info.fieldNodes[0], info)) : undefined,
       countOnly: wantsCountOnly(info),
-      translateFilter: (w: any, keys: string[]) => replaceIdDeep(w, keys, info?.variableValues),
-      translateId: (v: any) => fromGlobalId(v).id,
+      translateFilter: (w, keys) => replaceIdDeep(w, keys, info?.variableValues),
+      translateId: (v) => fromGlobalId(v as string).id,
     };
     if (a && info && Array.isArray(info.fieldNodes)) {
       const definition = this.getDefinition(defName);
@@ -125,60 +152,66 @@ export default class GqlizeBinding {
         try {
           let astInclude = buildIncludeFromSelection(this, defName, info.fieldNodes[0], info);
           if (astInclude) {
-            astInclude = (adapter as any).replaceIdInInclude(astInclude, defName, info.variableValues);
+            astInclude = adapter.replaceIdInInclude(astInclude, defName, info.variableValues);
           }
-          const explicit = (a as any).include;
+          // `include` is one of the open keys on the args bag — see {@link FindAllArgs}.
+          const explicit = a.include as IncludeMap[] | undefined;
           if (astInclude && explicit) {
-            (a as any).include = [mergeIncludeMaps(explicit[0] || {}, astInclude[0] || {})];
+            a.include = [mergeIncludeMaps(explicit[0] || {}, astInclude[0] || {})];
           } else if (astInclude) {
-            (a as any).include = astInclude;
+            a.include = astInclude;
           }
         } catch (e) {
           logger("gqlize::manager").warn("auto-include build failed, falling back to per-relation resolution", e);
         }
       }
-      selection.include = (a as any).include;
+      selection.include = a.include as IncludeMap[] | undefined;
     }
     return selection;
   }
 
-  resolveManyRelationship = async(defName: string, association: Association, source: Model, args: any, context: any, info: GraphQLResolveInfo) => {
+  /**
+   * `info` is optional on both relationship resolvers: `buildSelection` treats an
+   * absent execution context as "no selection hints", which is what a caller
+   * driving a relationship hop outside a GraphQL request has.
+   */
+  resolveManyRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, info?: GraphQLResolveInfo) => {
     const adapter = this.getModelAdapter(defName);
     // Relay-translate the (top-level) list args before the engine; the engine's
     // internal filter translations use `selection.translateFilter`.
     const a = await adapter.replaceIdInArgs(args, defName, info?.variableValues);
     return this.orm.resolveManyRelationship(defName, association, source, a, context, this.buildSelection(defName, info));
   }
-  resolveSingleRelationship = async(defName: string, association: Association, source: any, args: any, context: any, info: any) => {
+  resolveSingleRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, info?: GraphQLResolveInfo) => {
     return this.orm.resolveSingleRelationship(defName, association, source, args, context, this.buildSelection(defName, info));
   }
-  resolveFindAll = async(defName: any, source: any, args: { after: { index: number; }; before: { index: number; }; limit: any; }, context: any, info: GraphQLResolveInfo) => {
+  resolveFindAll = async(defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, info: GraphQLResolveInfo) => {
     const adapter = this.getModelAdapter(defName);
     const a = await adapter.replaceIdInArgs(args, defName, info?.variableValues);
     const selection = this.buildSelection(defName, info, a);
     return this.orm.resolveFindAll(defName, source, a, context, selection);
   }
-  processInputs = (defName: any, input: { [x: string]: any; }, args: any, context: any, info: any, model?: any) => {
+  processInputs = (defName: string, input: MutationInputTree, args: unknown, context: RequestContext, info: unknown, model?: AdapterRow) => {
     return this.orm.processInputs(defName, input, args, context, info, model);
   }
-  processRelationshipMutation = (defName: any, source: any, input: any, context: any, info: { variableValues: any; }) => {
+  processRelationshipMutation = (defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processRelationshipMutation(defName, source, input, context, this.buildSelection(defName, info));
   }
-  processCreate = (defName: any, source: any, args: { input: any; }, context: any, info: { variableValues: any; }) => {
+  processCreate = (defName: string, source: AdapterRow, args: { input: MutationInputTree }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processCreate(defName, source, args, context, this.buildSelection(defName, info));
   }
-  processUpdate = (defName: any, source: any, args: { input: { [x: string]: any; }; where: any; limit: any; }, context: any, info: { variableValues: any; }) => {
+  processUpdate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processUpdate(defName, source, args, context, this.buildSelection(defName, info));
   }
-  processSelect = (defName: any, source: any, args: { input: any; where: any; limit: any; }, context: any, info: { variableValues: any; }) => {
+  processSelect = (defName: string, source: AdapterRow, args: { input?: MutationInputTree; where?: MutationFilter; limit?: number }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processSelect(defName, source, args, context, this.buildSelection(defName, info));
   }
-  processDelete = (defName: any, source: any, args: any, context: any, info: { variableValues: any; }) => {
+  processDelete = (defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processDelete(defName, source, args, context, this.buildSelection(defName, info));
   }
 }
 
-function getSelectionFields(startNode: any, info?: GraphQLResolveInfo) {
+function getSelectionFields(startNode: FieldNode | undefined, info?: GraphQLResolveInfo) {
   if (!startNode || !info) {
     return undefined;
   }
@@ -188,11 +221,11 @@ function getSelectionFields(startNode: any, info?: GraphQLResolveInfo) {
   if (!nodeSelectionSet) {
     return undefined;
   }
-  return flattenFieldNodes(nodeSelectionSet, info).map((f: any) => f.name.value);
+  return flattenFieldNodes(nodeSelectionSet, info).map((f) => f.name.value);
 }
 
 // A relay connection field that selects `total` but not `edges`/rows can be
 // served by a count instead of a findAll.
-function wantsCountOnly(info: GraphQLResolveInfo) {
+function wantsCountOnly(info: GraphQLResolveInfo | undefined) {
   return Boolean(info && Array.isArray(info.fieldNodes) && !isConnectionRowsSelected(info.fieldNodes[0], info));
 }

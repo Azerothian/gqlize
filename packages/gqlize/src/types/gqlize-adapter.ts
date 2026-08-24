@@ -17,9 +17,15 @@ export interface GqlizeAdapter extends OrmAdapter {
   /**
    * Relay global ids arrive opaque; both hooks rewrite them to their underlying
    * values in place before the args reach the backend.
+   *
+   * `variableValues` is optional because a global id may have arrived as a
+   * literal in the query document rather than through a variable, and because a
+   * caller driving a resolver outside a GraphQL request has no variables at all.
+   * Both shipped adapters hand it straight to `replaceIdDeep`, which treats an
+   * absent bag as "no variables to look through".
    */
-  replaceIdInArgs(args: {[name: string]: any}, defName: string, variableValues: {[name: string]: any}): {[name: string]: any};
-  replaceIdInInclude(include: Selection["include"], defName: string, variableValues: {[name: string]: any}): Selection["include"];
+  replaceIdInArgs(args: {[name: string]: any}, defName: string, variableValues?: {[name: string]: any}): {[name: string]: any} | Promise<{[name: string]: any}>;
+  replaceIdInInclude(include: Selection["include"], defName: string, variableValues?: {[name: string]: any}): Selection["include"];
   /**
    * Optional: capture the permission bag for the duration of a schema build.
    * The filter/order/include type builders above fall back to it when no

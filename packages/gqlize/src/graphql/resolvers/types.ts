@@ -42,13 +42,21 @@ export type FieldBinding =
       relName: string;
       targetDefName: string;
     }
-  /** create-basic-fields: primary/foreign keys rendered as relay global ids */
+  /**
+   * create-basic-fields: primary/foreign keys rendered as relay global ids.
+   *
+   * `typeName` is the definition name for a primary key and the relationship's
+   * `foreignTarget` for a foreign key — and a column marked `foreignKey` that no
+   * relationship ever wired has no target to name. The resolver falls back to the
+   * parent type's own name in that case, which is why this is optional rather
+   * than a hole to be filled in at build time.
+   */
   | {
       kind: "globalId";
       defName: string;
       fieldName: string;
-      typeName: string;
-      nullable: boolean;
+      typeName?: string;
+      nullable?: boolean;
     }
   /** create-basic-fields: a user `resolve` hung off the model field definition */
   | { kind: "modelField"; defName: string; fieldName: string }

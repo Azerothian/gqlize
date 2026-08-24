@@ -28,7 +28,7 @@ test("createMutationInput", async() => {
   const schemaCache = createSchemaCache();
   // `mutableDefNames` is which models can contribute a relationship input;
   // the live build derives it from the permission-visible set.
-  const result = createMutationInput(new GqlizeBinding(db), "Item", schemaCache, inputTypes, {}, new Set(["Item"]));
+  const result = createMutationInput(db, "Item", schemaCache, inputTypes, {}, new Set(["Item"]));
   expect(result).toBeDefined();
   expect(result.required).toBeDefined();
   expect(result.optional).toBeDefined();

@@ -1,4 +1,7 @@
 import { toGlobalId } from "graphql-relay";
+import type { GraphQLFieldResolver, GraphQLResolveInfo } from "graphql";
+import type GQLManager from "../../manager";
+import type { AdapterRow, RequestContext } from "../../types";
 import type { BindingContext, FieldBinding } from "./types";
 
 /**
@@ -6,27 +9,24 @@ import type { BindingContext, FieldBinding } from "./types";
  * live builder path) and the artifact materializer produce the same function.
  */
 export function globalIdResolver(
-  typeName: any,
-  idFetcher: (arg0: any, arg1: any, arg2: any) => any,
-  isNullable: any,
-) {
-  return (
-    obj: { id: any },
-    args: any,
-    context: any,
-    info: { parentType: { name: any } },
-  ) => {
-    const id = idFetcher ? idFetcher(obj, context, info) : obj.id;
+  typeName: string | undefined,
+  idFetcher: ((row: AdapterRow, context: RequestContext, info: GraphQLResolveInfo) => unknown) | undefined,
+  isNullable: boolean | undefined,
+): GraphQLFieldResolver<AdapterRow, RequestContext> {
+  return (obj, args, context, info) => {
+    const id = idFetcher ? idFetcher(obj, context, info) : (obj as {id?: unknown})?.id;
     if (!id && id !== 0 && isNullable) {
       return undefined;
     } else {
-      return toGlobalId(typeName || info.parentType.name, id);
+      // `toGlobalId` stringifies whatever it is handed; the value is a primary or
+      // foreign key, so it is a string or a number in every backend here.
+      return toGlobalId(typeName || info.parentType.name, id as string);
     }
   };
 }
 
-export function globalIdBindValue(defName: string, key: string, instance: any) {
-  return (i: any) => instance.getValueFromInstance(defName, i, key);
+export function globalIdBindValue(defName: string, key: string, instance: GQLManager) {
+  return (row: AdapterRow) => instance.getValueFromInstance(defName, row, key);
 }
 
 export function buildGlobalIdResolver(

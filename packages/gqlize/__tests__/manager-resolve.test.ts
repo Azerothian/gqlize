@@ -295,9 +295,9 @@ test("manager - resolveSingleRelationship - belongsTo", async() => {
     parentId: parent.id,
   });
   const assoc = db.getAssociations(itemDef.name).parent;
-  const model = await new GqlizeBinding(db).resolveSingleRelationship(itemDef.name, assoc, child, {}, {}, {});
+  const model = await new GqlizeBinding(db).resolveSingleRelationship(itemDef.name, assoc, child, {}, {});
   expect(model).toBeDefined();
-  expect(model.id).toEqual(parent.id);
+  expect((model as {id: number}).id).toEqual(parent.id);
 });
 
 test("manager - resolveSingleRelationship - hasOne", async() => {
@@ -329,9 +329,9 @@ test("manager - resolveSingleRelationship - hasOne", async() => {
     testId: test.id,
   });
   const assoc = db.getAssociations(itemDef.name).test;
-  const model = await new GqlizeBinding(db).resolveSingleRelationship(itemDef.name, assoc, test, {}, {}, {});
+  const model = await new GqlizeBinding(db).resolveSingleRelationship(itemDef.name, assoc, test, {}, {});
   expect(model).toBeDefined();
-  expect(model.id).toEqual(parent.id);
+  expect((model as {id: number}).id).toEqual(parent.id);
 });
 
 
