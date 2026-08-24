@@ -6,7 +6,7 @@
     "moduleResolution": "Bundler",
     "moduleDetection": "force",
     "allowImportingTsExtensions": false,
-    "strict": false,
+    "strict": true,
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
