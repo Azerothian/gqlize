@@ -138,7 +138,7 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
   });
 
   it("belongsToMany — nested create, add (+through), remove, reverse read", async () => {
-    const post = await create("Post", { title: "bm", tags: { create: [{ label: "t1" }, { label: "t2" }] } });
+    await create("Post", { title: "bm", tags: { create: [{ label: "t1" }, { label: "t2" }] } });
     expect(await tags()).toEqual(["t1", "t2"]);
 
     // Reverse direction.

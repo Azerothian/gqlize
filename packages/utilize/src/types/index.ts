@@ -285,7 +285,6 @@ export interface IncludeMap {
  */
 export type OrderEntry = [column: string, direction: string];
 
-
 export type GqlizeOptions = {
   /** Hooks applied to every model, keyed by hook name — see {@link HookMap}. */
   globalHooks?: HookMap
@@ -298,8 +297,6 @@ export type GqlizeOptions = {
   root?: any,
   subscriptions?: any
 }
-
-
 
 export type Association = {
   name: string;
@@ -585,7 +582,3 @@ export type HookMap = {
 
 export * from "./orm";
 export * from "./data-type";
-// (arg0: any, arg1: any, arg2: any) => { (): any; new(): any; apply: { (arg0: any, arg1: any[]): any; new(): any; }; })
-// type Models = {
-//   [name: string]: Model
-// }

@@ -100,7 +100,7 @@ describe("relationship mutations", () => {
     const db = await build();
     const {Post, Tag} = db.models;
     const post = await Post.create({title: "post1"});
-    const [t1, t2, t3] = await Promise.all([
+    const [t1, t2] = await Promise.all([
       Tag.create({name: "tagone"}), Tag.create({name: "tagtwo"}), Tag.create({name: "tagthree"}),
     ]);
     await (post as any).addTags([t1, t2]);
@@ -117,7 +117,7 @@ describe("relationship mutations", () => {
   it("belongsToMany: add with through attributes writes join-table columns", async () => {
     const db = await build();
     const {Post, Tag, PostTag} = db.models;
-    const post = await Post.create({title: "post1"});
+    await Post.create({title: "post1"});
     await Tag.create({name: "tagone"});
     const schema = await createSchema(db, schemaOpts);
 

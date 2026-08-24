@@ -95,7 +95,6 @@ function createMutationInputs(instance: GQLManager, options: GqlizeOptions, sche
   };
 }
 
-
 function createMutationModels(instance: GQLManager, options: GqlizeOptions, schemaCache: SchemaCache, mutableDefNames: Set<string>) {
   return async(defName: string, o: any) => {
     if (mutableDefNames.has(defName)) {
@@ -136,7 +135,7 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   };
 
   const {nodeInterface, nodeField, nodeTypeMapper} = createNodeInterface(instance, options);
-  const {subscriptions, extend = {}, root} = options;
+  const {extend = {}, root} = options;
   const schemaCache = createSchemaCache();
   const bindingContext = {instance, options};
   // Rides on the schema cache: same per-build lifetime, and it is already
@@ -165,7 +164,8 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     });
   });
 
-  const types = await waterfall(Object.keys(definitions),
+  // Side-effecting: populates `schemaCache.types`, which is what is read below.
+  await waterfall(Object.keys(definitions),
     createModelTypes(instance, options, nodeInterface, schemaCache), schemaCache.types);
 
   const queryLists = await waterfall(Object.keys(definitions),
@@ -198,7 +198,6 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   const classMethodMutations = await waterfall(Object.keys(definitions),
     createClassMethods(instance, definitions, options, schemaCache, "mutations"), schemaCache.classMethodMutations);
 
-
   let queryRootFields: any = {
     // The relay node field closes over a live id-fetcher that re-checks
     // permissions per request; it is always rebuilt, never serialized.
@@ -228,8 +227,6 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     });
   }
 
-
-
   if (Object.keys(mutationCollection).length > 0) {
     mutationRootFields.models = bindField({
       type: new GraphQLObjectType({name: "MutationModels", fields: mutationCollection}),
@@ -247,39 +244,11 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
       fields: mutationRootFields,
     });
   }
-  // rootSchema.INode = {
-  //   __resolveType: (obj, context, info) => {
-  //     return false;
-  //   },
-  // };
 
-  // const relayTypes = Object.keys(sqlInstance.models).reduce((types, name) => {
-  //   if (typeCollection[name]) {
-  //     types[name] = typeCollection[name];
-  //   }
-  //   return types;
-  // }, {});
-
-  // const relayTypes = Object.keys(instance.getModels());
   // Record the exact key set handed to the mapper rather than re-deriving it
   // later — `node(id:)` and `__resolveType` break silently if it differs.
   ledger.modelTypes = Object.keys(schemaCache.types);
   nodeTypeMapper.mapTypes(schemaCache.types);
-
-  // const subscriptionRootFields = Object.assign({}, subscriptions);
-
-  // if ((sqlInstance.$sqlgql || {}).subscriptions) {
-  //   const {pubsub} = (sqlInstance.$sqlgql || {}).subscriptions;
-  //   subscriptionRootFields = await createSubscriptionFunctions(pubsub, sqlInstance.models, validKeys, typeCollection, options);
-  //   if (Object.keys(subscriptionRootFields).length > 0) {
-  //     rootSchema.subscription = new GraphQLObjectType({
-  //       name: "Subscription",
-  //       fields: subscriptionRootFields,
-  //     });
-  //   }
-  // }
-  // const extensions = {};
-  // const schemaParams = Object.assign(rootSchema, extensions);
 
   if (!rootSchema.query) {
     throw new Error("GraphQLSchema requires query to be set. Are your permissions settings to aggressive?");
@@ -290,7 +259,6 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     root: Object.assign(rootSchema, {...root})
   };
 }
-
 
 export async function createSchema(dbInstance: GQLManager, options: GqlizeOptions = {}) {
   const schemaObjects = await createSchemaObjects(dbInstance, options);

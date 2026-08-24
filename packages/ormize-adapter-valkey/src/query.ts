@@ -4,7 +4,6 @@ import { Executor } from "./transaction";
 import { deserialize } from "./serialize";
 import { removeFromIndexes } from "./indexes";
 
-const LOGICAL = new Set(["and", "or", "not"]);
 
 /**
  * Apply definition-level custom `whereOperators` then return the (still abstract)

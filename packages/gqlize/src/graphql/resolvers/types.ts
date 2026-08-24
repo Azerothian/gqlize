@@ -1,4 +1,3 @@
-import type { GraphQLFieldResolver } from "graphql";
 import type GQLManager from "../../manager";
 import type { GqlizeOptions } from "../../types";
 
@@ -80,15 +79,8 @@ export type FieldBinding =
   /** `options.extend.*` — user config passed through verbatim, never serialized */
   | { kind: "extend"; target: "query" | "mutation"; key: string };
 
-export type FieldBindingKind = FieldBinding["kind"];
-
 /** Everything a resolver factory needs to close over. */
 export interface BindingContext {
   instance: GQLManager;
   options: GqlizeOptions;
-}
-
-export interface BindingHandler<B extends FieldBinding> {
-  /** Returns undefined when the binding needs no resolver of its own. */
-  build(binding: B, ctx: BindingContext): GraphQLFieldResolver<any, any> | undefined;
 }

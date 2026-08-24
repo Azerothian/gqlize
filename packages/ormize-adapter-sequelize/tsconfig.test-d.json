@@ -3,7 +3,10 @@
   "compilerOptions": {
     "noEmit": true,
     "composite": false,
-    "strict": true
+    "strict": true,
+    // A type-assertion file's whole point is `const x: Expected = expr` — the
+    // binding is the assertion, so nothing reads it. Base sets this true.
+    "noUnusedLocals": false
   },
   // Only the (pure-type) definition-typesystem modules + the assertions — NOT the
   // non-strict runtime src — so the type assertions run under strictNullChecks.

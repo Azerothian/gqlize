@@ -3,7 +3,7 @@ import {createInstance, validateResult} from "./helper";
 import {createSchema} from "../src";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 
-import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
+import {describe, it, expect} from "@jest/globals";
 import {toGlobalId} from "graphql-relay";
 describe("queries", () => {
   it("basic", async() => {
@@ -633,7 +633,7 @@ it("where operators - not chained", async() => {
     name: "item12222222222",
     taskId: model.get("id"),
   });
-  const model2 = await Task.create({
+  await Task.create({
     name: "task2",
   });
   const schema = await createSchema(instance);
@@ -674,7 +674,7 @@ it("where operators - chained", async() => {
     name: "item12222222222",
     taskId: model.get("id"),
   });
-  const model2 = await Task.create({
+  await Task.create({
     name: "task2",
   });
   const schema = await createSchema(instance);
@@ -758,7 +758,7 @@ it("paging asc", async() => {
 
 it("Child to Parent", async() => {
   const instance = await createInstance();
-  const { Parent, Child } = instance.models;
+  const { Child } = instance.models;
 
   const child = await Child.create({
     name: "child1",

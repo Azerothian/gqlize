@@ -2,7 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import type { Ormize } from "@azerothian/ormize";
 import { generateZodSchemas } from "@azerothian/ormize-zod4";
-import type { GeneratedZodSchemas, ZodObjectMap } from "@azerothian/ormize-zod4";
+import type { GeneratedZodSchemas } from "@azerothian/ormize-zod4";
 import { isModelAllowed } from "@azerothian/utilize";
 import { NESTIZE_OPTIONS, ORMIZE, type NestizeOptions } from "./types";
 

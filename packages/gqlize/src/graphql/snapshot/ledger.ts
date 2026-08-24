@@ -1,4 +1,4 @@
-import { getNamedType, isIntrospectionType, isSpecifiedScalarType, type GraphQLNamedType, type GraphQLType } from "graphql";
+import { getNamedType, isIntrospectionType, isSpecifiedScalarType, type GraphQLType } from "graphql";
 
 /**
  * Where a user-authored GraphQL type entered the schema.

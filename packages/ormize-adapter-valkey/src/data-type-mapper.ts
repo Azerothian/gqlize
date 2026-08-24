@@ -4,7 +4,6 @@
 // definition can use either a `DataTypes.*` token or a plain JS constructor.
 
 import {
-  DataType,
   DataTypeDescriptor,
   DataTypes,
   isOrmizeDataType,
@@ -60,4 +59,3 @@ export function resolveAttributeTypes(define: { [k: string]: any }): { [k: strin
   return out;
 }
 
-export { DataType };

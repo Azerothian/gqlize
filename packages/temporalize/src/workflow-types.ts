@@ -46,14 +46,6 @@ export const CRUD_OPS = [
 
 export type CrudOp = (typeof CRUD_OPS)[number];
 
-/**
- * Operations that write. `select` is included deliberately: `Ormize.processSelect`
- * finds rows by `where` and then runs relationship mutations against them, so it
- * is a mutation that happens to start with a read (scalar `input` fields are
- * ignored and the matched rows themselves are never written).
- */
-export const MUTATION_OPS: readonly CrudOp[] = ["create", "update", "destroy", "select"];
-
 /** The `Permission` mutation kind each write op is gated by. */
 export const MUTATION_KIND: { [op: string]: "create" | "update" | "delete" } = {
   create: "create",

@@ -24,6 +24,7 @@ cleanly — that section is where working code breaks.
    - [Unknown `permission` keys are a type error, and warn at build time](#unknown-permission-keys-are-a-type-error-and-warn-at-build-time)
    - [The adapter contract is typed, and `setBuildPermission` is part of it](#the-adapter-contract-is-typed-and-setbuildpermission-is-part-of-it)
    - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
+   - [Unreferenced exports removed](#unreferenced-exports-removed)
 4. [The graphql patch](#4-the-graphql-patch)
 5. [New in 7.x](#5-new-in-7x)
 6. [Checklist](#6-checklist)
@@ -417,6 +418,28 @@ now accepts any `GraphQLType`, wrappers included, rather than only named types �
 `getNamedType` and always did. And `SchemaCache.mutationInputFields` is `GraphQLNullableInputType`,
 since the bucket only ever holds an input object or a list of one; callers apply
 `GraphQLNonNull` themselves.
+
+### Unreferenced exports removed
+
+Eight exports had no consumer inside the repo and none documented outside it. They are gone in 7.x.
+Each was either dead on arrival or superseded by something already exported alongside it.
+
+| Removed | Package / module | Replacement |
+|---|---|---|
+| `defaultConfig` | `@azerothian/graphql-types` (`query`) | None — it was never a valid `QueryTypeConfig` (it carried a `getFieldType()` member the interface does not declare). Build the config from your adapter's operator vocabulary and pass it to `createQueryType`. |
+| `globalIdField` | `@azerothian/gqlize` (`graphql/utils/global-id-field`) | `globalIdFieldConfig(isNullable)` — the same `{description, type}` half, without the resolver. The live schema builders already used it; the resolver half is bound in `graphql/resolvers`. |
+| `mustResolveModel` | `@azerothian/temporalize` (`guards`) | `isModelAllowed` plus your own throw, which is what every call site did. |
+| `MUTATION_OPS` | `@azerothian/temporalize` (`workflow-types`) | None — the workflow entry points switch on the operation name directly. |
+| `FieldBindingKind`, `BindingHandler` | `@azerothian/gqlize` (`graphql/resolvers/types`) | None — an abandoned first cut at the resolver-binding registry, which shipped keyed by `ResolverKind` instead. |
+| `DataType` (re-export) | `@azerothian/ormize-adapter-valkey` (`data-type-mapper`) | Import it from its home, `@azerothian/utilize/types/data-type`. |
+| `lowecase` | `@azerothian/utilize` (`utils/word`) | `lowercase` — `lowecase` was a misspelled alias kept for 6.x compatibility. |
+
+Also removed: two empty `types/modules.d.ts` ambient-declaration files (`gqlize`, `ormize`) and the
+vendored lodash `_.property` port in `graphql-types`. Neither was importable as a public subpath.
+
+The build now runs with `noUnusedLocals`, so an import or local that nothing reads is a compile
+error rather than something that accumulates. If you extend this repo, expect `tsc` to reject
+placeholder bindings — drop the binding and keep the call.
 
 ## 4. The graphql patch
 

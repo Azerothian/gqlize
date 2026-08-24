@@ -1,4 +1,4 @@
-import { test, describe, it, expect, jest } from "@jest/globals";
+import { describe, it, expect, jest } from "@jest/globals";
 import createRoleBasedPermissions, { ROLE_BASED_GATES } from "../src/permissions";
 import { PERMISSION_KEYS } from "../src/gate";
 

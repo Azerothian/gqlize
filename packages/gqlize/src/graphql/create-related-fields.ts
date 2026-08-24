@@ -2,9 +2,9 @@ import createListObject from "./create-list-object";
 // import { fromCursor, toCursor } from "./objects/cursor";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isRelationshipAllowed } from "@azerothian/utilize";
-import { SchemaCache, GqlizeOptions, Definition, DefinitionFields, HookMap, Relationship, WhereOperators, Association } from '../types';
+import { SchemaCache, GqlizeOptions, Definition, Association } from '../types';
 import GQLManager from '../manager';
-import { GraphQLType, GraphQLArgs, GraphQLBoolean } from "graphql";
+import { GraphQLBoolean } from "graphql";
 import { bindField } from "./resolvers/bind";
 
 export default function createRelatedFieldsFunc(
@@ -21,7 +21,6 @@ export default function createRelatedFieldsFunc(
       const associations = instance.getAssociations(defName);
       const associationKeys = Object.keys(associations);
 
-      let include;
       if (associationKeys.length > 0) {
         fields = associationKeys.reduce((f, relName) => {
           const association = associations[relName];

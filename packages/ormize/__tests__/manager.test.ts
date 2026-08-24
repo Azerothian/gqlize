@@ -5,7 +5,7 @@ import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import TaskDef from "./helper/models/task";
 import { Definition, OrmAdapter } from "../src/types";
 // import TaskItemDef from "./models/task-item";
-import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
+import {test,expect} from "@jest/globals";
 
 
 test("manager - registerAdapter", () => {

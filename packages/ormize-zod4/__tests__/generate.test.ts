@@ -1,4 +1,4 @@
-import { test, describe, it, expect, beforeAll } from "@jest/globals";
+import { describe, it, expect, beforeAll } from "@jest/globals";
 import Sequelize, { DataTypes } from "sequelize";
 import { Ormize, createRoleBasedPermissions, DataType, DataTypes as OrmizeDataTypes } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";

@@ -6,7 +6,7 @@ import {GraphQLObjectType} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import { Definition } from '../../src/types';
 import { GqlizeAdapter } from "../../src/types";
-import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
+import {test,expect} from "@jest/globals";
 test("createRelatedFieldsFunc - empty define", async() => {
   const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {

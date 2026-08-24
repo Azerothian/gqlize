@@ -1,7 +1,7 @@
 import {createInstance} from "./helper";
 import {createSchema} from "../src";
 import { GraphQLObjectType } from 'graphql';
-import {test,describe, it, beforeAll, beforeEach, expect, jest} from "@jest/globals";
+import {describe, it, expect, jest} from "@jest/globals";
 import {PERMISSION_KEYS} from "@azerothian/utilize";
 
 describe("permissions", () => {
