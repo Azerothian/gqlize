@@ -216,6 +216,14 @@ export type SequelizeInclude = Omit<IncludeOptions, "order" | "include"> & {
 type GetGraphQLArgs = () => { context: RequestContext; info: unknown; source: unknown };
 
 import createQueryType, { type QueryTypeConfig } from "@azerothian/graphql-types/query";
+import {
+  CORE_VALUE_FUNCS,
+  REGEX_VALUE_FUNCS,
+  SQL_ARRAY_FUNCS,
+  SQL_ARRAY_VALUES,
+} from "@azerothian/graphql-types/operators";
+import {clampPageSize} from "@azerothian/utilize/utils/page-size";
+import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 
 import {
   GraphQLBoolean,
@@ -264,20 +272,10 @@ import { replaceWhereOperators, reservedOperatorNames } from "./utils/where-ops"
 // `processListArgsToOptions`). Without it, an absent `first`/`last` produced an
 // unbounded `findAll` (full-table dump) and an over-large value was passed
 // straight through — a trivial DoS / data-exfiltration vector.
-export const DEFAULT_PAGE_SIZE = 100;
-export const MAX_PAGE_SIZE = 1000;
-
-/**
- * Coerce a client-supplied page size to a safe, bounded integer: falls back to
- * DEFAULT_PAGE_SIZE when absent/NaN/non-positive, and caps at MAX_PAGE_SIZE.
- */
-function clampPageSize(value: unknown): number {
-  const n = parseInt(String(value), 10);
-  if (!Number.isFinite(n) || n <= 0) {
-    return DEFAULT_PAGE_SIZE;
-  }
-  return Math.min(n, MAX_PAGE_SIZE);
-}
+// Re-exported because they have been part of this package's public surface
+// since the backstop landed; the implementation is shared with every other
+// list path in `@azerothian/utilize`.
+export {DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
 
 function safeStringify(value: unknown) {
   const seen = new Set<unknown>();
@@ -754,43 +752,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       fields: f,
       isolatedFields: iso,
       valueFuncs: [
-        "eq",
-        "ne",
-        "gte",
-        "lte",
-        "lt",
-        "not",
-        "is",
-        "like",
-        "notLike",
-        "iLike",
-        "notILike",
-        "startsWith",
-        "endsWith",
-        "substring",
-        // Regex operators are opt-in. On dialects that evaluate client-supplied
-        // patterns (e.g. Postgres `~`/`~*`), a catastrophic-backtracking pattern
-        // is a ReDoS vector, so they are excluded unless the adapter is
-        // constructed with `{ enableRegexpOperators: true }`.
-        ...(this.options.enableRegexpOperators
-          ? ["regexp", "notRegexp", "iRegexp", "notIRegexp"]
-          : []),
+        ...CORE_VALUE_FUNCS,
+        // Regex operators are opt-in: see `REGEX_VALUE_FUNCS` for why.
+        ...(this.options.enableRegexpOperators ? REGEX_VALUE_FUNCS : []),
       ],
-      arrayFuncs: ["or", "and", "any", "all"],
-      arrayValues: [
-        "in",
-        "notIn",
-        "contains",
-        "contained",
-        "between",
-        "notBetween",
-        "overlap",
-        "adjacent",
-        "strictLeft",
-        "strictRight",
-        "noExtendRight",
-        "noExtendLeft",
-      ],
+      arrayFuncs: [...SQL_ARRAY_FUNCS],
+      arrayValues: [...SQL_ARRAY_VALUES],
     };
   };
   createRelationship = (
@@ -1288,15 +1255,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   getAllArgsToReplaceId() {
     return ["where", "include"];
   }
-  getGlobalKeys = (defName: string) => {
-    const fields = this.getFields(defName);
-    return Object.keys(fields).filter((key) => {
-      return (
-        (fields[key].foreignKey || fields[key].primaryKey) &&
-        !fields[key].ignoreGlobalKey
-      );
-    });
-  };
+  getGlobalKeys = (defName: string) => globalKeysFromFields(this.getFields(defName));
   replaceIdInWhere = (where: AdapterWhere | undefined, defName: string, variableValues?: {[name: string]: any}) => {
     const globalKeys = this.getGlobalKeys(defName);
     return replaceIdDeep(where, globalKeys, variableValues);

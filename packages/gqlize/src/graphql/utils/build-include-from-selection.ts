@@ -3,6 +3,12 @@ import type { FieldNode, SelectionSetNode } from "graphql";
 import GQLManager from "../../manager";
 import { fromCursor } from "../objects/cursor";
 import type { AdapterWhere, Association, GqlizeAdapter, IncludeDescriptor, IncludeMap, OrderEntry } from "../../types";
+// The per-parent eager-load backstop. The same clamp the adapters apply to a
+// root query, applied again at the GraphQL layer: a nested `first`/`last` is
+// written straight onto the include descriptor and never passes back through
+// `processListArgsToOptions`, so without it `orders(first: 10000000)` on a
+// nested connection is an unbounded per-parent fetch (DoS / amplification).
+import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
 
 /**
  * The arguments of a relationship field, resolved against the request's
@@ -23,20 +29,6 @@ type IncludeFieldArgs = {
   include?: unknown;
 };
 
-// Bound per-parent eager-load page size. This mirrors the adapter's root-query
-// backstop but is applied at the GraphQL layer, since a nested `first`/`last`
-// is written straight onto the include descriptor and never passes back through
-// `processListArgsToOptions`. Without it, `orders(first: 10000000)` on a nested
-// connection is an unbounded per-parent fetch (DoS / amplification).
-const DEFAULT_INCLUDE_PAGE_SIZE = 100;
-const MAX_INCLUDE_PAGE_SIZE = 1000;
-function clampIncludePageSize(value: unknown): number {
-  const n = parseInt(String(value), 10);
-  if (!Number.isFinite(n) || n <= 0) {
-    return DEFAULT_INCLUDE_PAGE_SIZE;
-  }
-  return Math.min(n, MAX_INCLUDE_PAGE_SIZE);
-}
 
 // Both moved to `@azerothian/utilize`: they are what `Selection.include` carries,
 // and `Selection` is the graphql-free hand-off between gqlize and the engine.
@@ -285,11 +277,11 @@ export function buildIncludeMapFromSelection(
         association.associationType === "hasMany" &&
         (paginated || fieldArgs.separate === true);
       if (fieldArgs.first != null || fieldArgs.last != null) {
-        descriptor.limit = clampIncludePageSize(fieldArgs.first != null ? fieldArgs.first : fieldArgs.last);
+        descriptor.limit = clampPageSize(fieldArgs.first != null ? fieldArgs.first : fieldArgs.last);
       } else if (descriptor.separate) {
         // Per-parent separate fetch with no explicit page size — bound it so a
         // nested connection can't pull an entire child table for each parent.
-        descriptor.limit = DEFAULT_INCLUDE_PAGE_SIZE;
+        descriptor.limit = DEFAULT_PAGE_SIZE;
       }
       if (fieldArgs.after) {
         descriptor.offset = decodeCursorIndex(fieldArgs.after) + 1;

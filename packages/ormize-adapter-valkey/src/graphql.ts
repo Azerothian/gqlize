@@ -3,6 +3,11 @@ import {
   type GraphQLFieldConfigArgumentMap, type GraphQLInputFieldConfigMap, type GraphQLInputType,
 } from "graphql";
 import createQueryType, { type QueryTypeConfig } from "@azerothian/graphql-types/query";
+import {
+  CORE_ARRAY_FUNCS,
+  CORE_ARRAY_VALUES,
+  CORE_VALUE_FUNCS,
+} from "@azerothian/graphql-types/operators";
 import { isFieldAllowed, isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
 import type { Definition, OrderEntry, Permission } from "@azerothian/utilize/types/index";
 import typeMapper from "./type-mapper";
@@ -51,9 +56,9 @@ export function createQueryConfig(model: ValkeyModel, permission?: Permission): 
     modelName: defName,
     fields: f,
     isolatedFields: iso,
-    valueFuncs: ["eq", "ne", "gte", "lte", "lt", "not", "is", "like", "notLike", "iLike", "notILike", "startsWith", "endsWith", "substring"],
-    arrayFuncs: ["or", "and"],
-    arrayValues: ["in", "notIn", "between", "notBetween"],
+    valueFuncs: [...CORE_VALUE_FUNCS],
+    arrayFuncs: [...CORE_ARRAY_FUNCS],
+    arrayValues: [...CORE_ARRAY_VALUES],
   };
 }
 
