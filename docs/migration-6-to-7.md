@@ -20,6 +20,8 @@ cleanly — that section is where working code breaks.
    - [Relay `pageInfo` is derived from the window's absolute position](#relay-pageinfo-is-derived-from-the-windows-absolute-position)
    - [Mutations run in a transaction](#mutations-run-in-a-transaction)
    - [`createListObject` takes a data-source descriptor, not a resolver](#createlistobject-takes-a-data-source-descriptor-not-a-resolver)
+   - [Role-based permissions now gate `extend` fields and mutation inputs](#role-based-permissions-now-gate-extend-fields-and-mutation-inputs)
+   - [Unknown `permission` keys are a type error, and warn at build time](#unknown-permission-keys-are-a-type-error-and-warn-at-build-time)
 4. [The graphql patch](#4-the-graphql-patch)
 5. [New in 7.x](#5-new-in-7x)
 6. [Checklist](#6-checklist)
@@ -284,6 +286,49 @@ The same rule applies anywhere a resolver is attached inside the builders: they 
 `extensions.gqlize`. A field with a `resolve` but no descriptor makes `snapshotSchema` throw —
 deliberately, since the alternative is a materialized field that silently returns `undefined`.
 
+### Role-based permissions now gate `extend` fields and mutation inputs
+
+`createRoleBasedPermissions` compiled four callbacks nothing has ever read — `subscription`,
+`mutationUpdateAll`, `mutationDeleteAll` and `extensions` — while never compiling four that gqlize
+does read: `queryExtension`, `mutationExtension`, `mutationCreateInput` and `mutationUpdateInput`.
+Since an absent predicate means *allow*, that gap was a hole rather than a no-op: under
+`defaultDeny: true` a role-based bag denied models, fields and mutations as advertised, but let every
+`options.extend.query` / `extend.mutation` root field and every mutation input field straight
+through.
+
+7.x compiles exactly the callbacks listed in [specifications.md §7](specifications.md#7-permissions).
+Two rules keys feed more than one callback, so a `defaultDeny` role stays usable:
+
+- `extensions` is accepted as a synonym for both `queryExtension` and `mutationExtension` — the key
+  6.x emitted (inertly) is now the one that works.
+- `mutationCreateInput` / `mutationUpdateInput` fall back to `field`, matching the rule the
+  `where` / `orderBy` tightening above already applies: if a field should be writable, it must be
+  readable. Without this fallback a `defaultDeny` role would deny every input field, leaving the
+  input object empty and deleting its create/update mutations outright.
+
+The more specific key wins wherever both express an opinion, and an explicit `"deny"` on the
+specific key is never overridden by an `"allow"` on the fallback.
+
+> **Watch for:** roles that exposed `extend` root fields or mutation inputs by omission now have to
+> name them. Add `queryExtension: { health: "allow" }` (the key is the **extend field key**, not a
+> model name), or grant the field for reading and let the input fallback pick it up. A rules key
+> outside the accepted set — `subscription`, or a typo — is now reported on `console.warn` instead of
+> being compiled into a predicate nobody calls.
+
+### Unknown `permission` keys are a type error, and warn at build time
+
+`createSchema(orm, options)` typed `options` as `any` in 6.x, so a misspelled predicate
+(`modle`, `mutationCreateInputs`) typechecked, was never called, and — because an absent predicate
+means *allow* — silently produced a **wider** schema than intended.
+
+`options` is now typed as `GqlizeOptions`, whose `permission` is a closed shape: a stray key is a
+compile error with a "did you mean" suggestion. For JavaScript callers and bags built
+programmatically, `createSchema` also warns on `console.warn` naming the unknown keys. It warns
+rather than throws, so an existing bag still builds.
+
+> **Watch for:** the new warning firing on a bag you thought was enforcing something. That is the
+> bug, not the warning. `PERMISSION_KEYS`, exported from `@azerothian/utilize`, is the accepted set.
+
 ## 4. The graphql patch
 
 6.x solved [graphql-spec #252](https://github.com/graphql/graphql-spec/issues/252) — nested mutation
@@ -349,6 +394,11 @@ Not required for migration, but this is what the split bought:
 - [ ] Direct `createListObject` callers switched from a `resolveData` closure to a data-source
       descriptor.
 - [ ] The graphql patch applied if you rely on ordered nested mutations.
+- [ ] `createRoleBasedPermissions` rules audited for `extend` root fields and mutation inputs, which
+      are now denied under `defaultDeny` instead of passing through.
+- [ ] Any `subscription`, `mutationUpdateAll`, `mutationDeleteAll` rules keys removed — they gated
+      nothing in 6.x and now warn.
+- [ ] Hand-written `permission` bags checked against the build-time unknown-key warning.
 
 For everything else, [**guide.md**](guide.md) is the 7.x usage guide and
 [**specifications.md**](specifications.md) is the API/contract reference.

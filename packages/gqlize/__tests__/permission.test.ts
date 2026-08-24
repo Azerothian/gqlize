@@ -1,9 +1,8 @@
-import {PubSub} from "graphql-subscriptions";
-
 import {createInstance} from "./helper";
 import {createSchema} from "../src";
 import { GraphQLObjectType } from 'graphql';
-import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
+import {test,describe, it, beforeAll, beforeEach, expect, jest} from "@jest/globals";
+import {PERMISSION_KEYS} from "@azerothian/utilize";
 
 describe("permissions", () => {
   it("model", async() => {
@@ -286,22 +285,68 @@ describe("permissions", () => {
     return expect(fieldTypeInputFields.options2).toBeUndefined();
   });
 
-  // it("subscription", async() => {
-  //   const pubsub = new PubSub();
+  it("invokes every permission predicate", async() => {
+    // The regression guard for "the permission model never runs": a predicate
+    // that is never consulted is not a no-op, it is an ALLOW, so a key with no
+    // call site silently widens the schema. Driven off PERMISSION_KEYS so a new
+    // key added to the bag has to come with a call site or fail here.
+    const {GraphQLString} = await import("graphql");
+    const permission: any = {options: {role: "test"}};
+    PERMISSION_KEYS.forEach((key) => {
+      if (key !== "options") {
+        permission[key] = jest.fn(() => true);
+      }
+    });
 
-  //   const instance = await createInstance({subscriptions: {pubsub}});
-  //   // const {Task} = sqlInstance.models;
-  //   const schema = await createSchema(instance, {
-  //     permission: {
-  //       subscription(modelName, hookName) {
-  //         if (modelName === "Task" && hookName === "afterCreate") {
-  //           return false;
-  //         }
-  //         return true;
-  //       },
-  //     },
-  //   });
-  //   expect(schema.getSubscriptionType().getFields().afterCreateTask).not.toBeDefined();
-  //   return expect(schema.getSubscriptionType().getFields().afterUpdateTask).toBeDefined();
-  // });
+    const instance = await createInstance();
+    await createSchema(instance, {
+      extend: {
+        query: {health: {type: GraphQLString, resolve: () => "ok"}},
+        mutation: {ping: {type: GraphQLString, resolve: () => "pong"}},
+      },
+      permission,
+    });
+
+    const uncalled = PERMISSION_KEYS.filter((key) => key !== "options" && permission[key].mock.calls.length === 0);
+    expect(uncalled).toEqual([]);
+  });
+
+  it("threads permission.options into every predicate", async() => {
+    const options = {role: "test"};
+    const model = jest.fn(() => true);
+    const field = jest.fn(() => true);
+    const instance = await createInstance();
+    await createSchema(instance, {permission: {model, field, options}});
+
+    expect(model.mock.calls.every((call: any[]) => call[call.length - 1] === options)).toBe(true);
+    expect(field.mock.calls.every((call: any[]) => call[call.length - 1] === options)).toBe(true);
+  });
+
+  it("warns about an unknown permission key, and still builds", async() => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const instance = await createInstance();
+      // `modle` is never read, so the model is allowed — the warning is the only
+      // signal a JS caller gets. The `roundtrip` project builds twice, so assert
+      // on the calls made rather than on a call count.
+      const schema = await createSchema(instance, {permission: {modle: () => false}} as any);
+      const warned = warn.mock.calls.some((call) => String(call[0]).includes("modle"));
+      expect(warned).toBe(true);
+      expect((schema.getQueryType()?.getFields().models.type as GraphQLObjectType)?.getFields().Task).toBeDefined();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not warn about a valid permission bag", async() => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const instance = await createInstance();
+      await createSchema(instance, {permission: {model: () => true, options: {role: "test"}}});
+      const warned = warn.mock.calls.some((call) => String(call[0]).includes("permission"));
+      expect(warned).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

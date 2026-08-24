@@ -85,4 +85,59 @@ describe("permission helper", () => {
     expect(permission.query("Task")).toBeTruthy();
     expect(permission.field("Task", "name")).toBeTruthy();
   });
+
+  it("extend fields are denied under defaultDeny, and grantable by key", async() => {
+    // The 7.0 security fix: 6.x emitted no `queryExtension`, so an absent
+    // predicate meant ALLOW and every `options.extend.query` root field slipped
+    // past a defaultDeny role.
+    const {GraphQLString} = await import("graphql");
+    const extend = {
+      query: {
+        health: {type: GraphQLString, resolve: () => "ok"},
+        secret: {type: GraphQLString, resolve: () => "nope"},
+      },
+    };
+    const rules = {
+      anyone: {
+        query: {Task: "allow"},
+        model: {Task: "allow"},
+        field: {Task: "allow"},
+        queryExtension: {health: "allow"},
+      },
+    };
+
+    const permission = permissionHelper("anyone", rules);
+    expect(permission.queryExtension("health")).toBeTruthy();
+    expect(permission.queryExtension("secret")).toBeFalsy();
+
+    const instance = await createInstance();
+    const schema = await createSchema(instance, {extend, permission});
+    expect(schema.getQueryType()?.getFields().health).toBeDefined();
+    expect(schema.getQueryType()?.getFields().secret).not.toBeDefined();
+  });
+
+  it("a field granted for reading is writable as mutation input", async() => {
+    // Without the mutationCreateInput -> field fallback a defaultDeny role would
+    // deny every input field, emptying the input object and deleting the
+    // create/update mutations outright.
+    const permission = permissionHelper("anyone", {
+      anyone: {
+        query: {Task: "allow"},
+        model: {Task: "allow"},
+        field: {Task: {name: "allow"}},
+        mutation: {Task: "allow"},
+        mutationCreate: {Task: "allow"},
+      },
+    });
+    expect(permission.mutationCreateInput("Task", "name")).toBeTruthy();
+    expect(permission.mutationCreateInput("Task", "options")).toBeFalsy();
+
+    const instance = await createInstance();
+    const schema = await createSchema(instance, {permission});
+    const {args} = (schema.getMutationType() as any).getFields().models.type.getFields().Task;
+    const create = args.find((a: any) => a.name === "create");
+    const inputFields = create.type.ofType.getFields();
+    expect(inputFields.name).toBeDefined();
+    expect(inputFields.options).not.toBeDefined();
+  });
 });

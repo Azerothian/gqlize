@@ -368,8 +368,9 @@ Extra query fields may be injected via `options.extend.query`.
 | `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**. |
 | `classMethods` | Per-model exposed **mutation** class methods (`MutationClassMethods`). |
 
-Extra mutation fields may be injected via `options.extend.mutation`. Subscriptions are
-supported via `options.subscriptions`.
+Extra mutation fields may be injected via `options.extend.mutation`. Subscriptions are not
+generated: `options.subscriptions` is accepted and ignored (the generator is commented out —
+§13), so a subscription root has to be hand-written and merged in through `options.root`.
 
 ### Field builders (per model type)
 
@@ -538,22 +539,33 @@ corresponding schema element.
 | `model(defName, options)` | Whether the model type is generated at all. |
 | `query(defName, options)` | The list query for a model. |
 | `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` | Mutation operations. |
-| `mutationCreateInput` / `mutationUpdateInput` (field, fieldName, options) | Individual input fields. |
+| `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
-| `relationship(relName, targetName, options)` | Relationship fields. |
+| `relationship(defName, relName, targetName, options)` | Relationship fields. |
 | `queryClassMethods` / `mutationClassMethods` | Exposed class methods. |
 | `queryInstanceMethods` | Exposed instance-method query fields. |
-| `queryExtension` / `mutationExtension` | `options.extend.*` fields. |
+| `queryExtension` / `mutationExtension` (fieldName, options) | `options.extend.*` fields. The first argument is the extend field key, not a model name. |
 
 A shared `options.permission.options` value is threaded into every callback.
 
+This table is the whole set. `PERMISSION_KEYS` in `packages/utilize/src/gate.ts` is the
+machine-readable copy, and `createSchemaObjects` warns when a bag carries a key outside it —
+worth flagging because an absent predicate means *allow*, so an unread key fails open. There
+is no `subscription` callback while subscriptions remain unimplemented (§13).
+
 ### Role-based helper
 
-`packages/gqlize/src/permission-helper.ts` provides
+`packages/utilize/src/permissions.ts` provides
 `createRoleBasedPermissions(role, rules, options)`, which compiles an allow/deny rules tree
 (merged with defaults via `deepmerge`, honoring `defaultDeny` and `allow`/`deny` leaves)
 into the `permission` object above — so consumers can declare permissions per role rather
-than writing every callback by hand.
+than writing every callback by hand. It emits only callbacks from the table above; a rules
+key nothing reads is warned about rather than silently compiled into a dead predicate.
+
+Two rules keys feed more than one callback: `extensions` is accepted as a synonym for both
+`queryExtension` and `mutationExtension`, and `mutationCreateInput` / `mutationUpdateInput`
+fall back to `field` when unspecified, so a role that can read a field can also write it.
+The more specific key wins wherever both express an opinion.
 
 ---
 

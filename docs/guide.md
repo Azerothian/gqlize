@@ -666,16 +666,28 @@ const schema = await createSchema(db, {
     queryClassMethods:    (modelName, methodName) => true,
     mutationClassMethods: (modelName, methodName) => true,
     queryInstanceMethods: (modelName, methodName) => true,
+    queryExtension:    (fieldName) => true,                     // hide an `options.extend.query` field
+    mutationExtension: (fieldName) => true,                     // hide an `options.extend.mutation` field
     options: { /* shared value passed to every predicate */ },
   },
 });
 ```
 
+`queryExtension` / `mutationExtension` are the odd pair: their first argument is the
+**extend field key** from `options.extend.query` / `options.extend.mutation`, not a model
+name. There is no `subscription` predicate — subscriptions are not implemented, so such a
+predicate would never be called.
+
+A key that is not in this list is not a predicate at all, and an absent predicate means
+**allow** — so a typo silently widens the schema rather than narrowing it. `createSchema`
+types `options`, which turns a misspelled key into a compile error, and warns on
+`console.warn` at build time for callers who aren't typechecking.
+
 **Role-based helper.** `createRoleBasedPermissions(role, rules, options?)` compiles an
 allow/deny rules tree into the `permission` object above (defaults to deny):
 
 ```ts
-import createRoleBasedPermissions from "@azerothian/gqlize/permission-helper"; // default export
+import { createRoleBasedPermissions } from "@azerothian/utilize"; // named export via the barrel
 
 const permission = createRoleBasedPermissions("anyone", {
   someone: "deny",

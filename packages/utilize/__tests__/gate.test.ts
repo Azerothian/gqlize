@@ -1,5 +1,7 @@
 import { test, describe, it, expect } from "@jest/globals";
 import {
+  PERMISSION_KEYS,
+  unknownPermissionKeys,
   isAllowed,
   isModelAllowed,
   isFieldAllowed,
@@ -62,5 +64,29 @@ describe("utilize - gate helpers", () => {
     expect(isInputFieldAllowed({ mutationUpdateInput: () => false }, "Task", "name", "update")).toBe(false);
     // create predicate must not affect update
     expect(isInputFieldAllowed({ mutationCreateInput: () => false }, "Task", "name", "update")).toBe(true);
+  });
+
+  it("unknownPermissionKeys: a valid bag reports nothing", () => {
+    const perm: any = {};
+    PERMISSION_KEYS.forEach((key) => {
+      perm[key] = () => true;
+    });
+    expect(unknownPermissionKeys(perm)).toEqual([]);
+    expect(unknownPermissionKeys(undefined)).toEqual([]);
+    expect(unknownPermissionKeys({})).toEqual([]);
+    // `options` is data, not a predicate, but it is still a key we read.
+    expect(unknownPermissionKeys({ options: { role: "admin" } })).toEqual([]);
+  });
+
+  it("unknownPermissionKeys: reports a typo, which would otherwise fail open", () => {
+    const typo = { modle: () => false };
+    expect(unknownPermissionKeys(typo)).toEqual(["modle"]);
+    // the reason it matters: nothing reads `modle`, so the model is allowed.
+    expect(isModelAllowed(typo, "Task")).toBe(true);
+  });
+
+  it("unknownPermissionKeys: reports keys retired in 7.0", () => {
+    const legacy = { model: () => true, subscription: () => false, extensions: () => false };
+    expect(unknownPermissionKeys(legacy).sort()).toEqual(["extensions", "subscription"]);
   });
 });

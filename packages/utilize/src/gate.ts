@@ -127,3 +127,46 @@ export function isInputFieldWritable(
 ): boolean {
   return isStructurallyWritable(meta) && isInputFieldAllowed(permission, model, field, kind);
 }
+
+/**
+ * Every key any consumer reads off an `options.permission` bag — the union
+ * across gqlize, nestize, temporalize and ormize-zod4, mirroring
+ * `GqlizeOptions.permission` in `./types/index`.
+ *
+ * The siblings each read a strict subset (they reach permissions only through
+ * the `is*Allowed` helpers above), so this union is the right list for all of
+ * them: a key that is merely unused by one consumer is still valid.
+ */
+export const PERMISSION_KEYS = [
+  "options",
+  "model",
+  "query",
+  "mutation",
+  "mutationCreate",
+  "mutationUpdate",
+  "mutationDelete",
+  "mutationCreateInput",
+  "mutationUpdateInput",
+  "field",
+  "relationship",
+  "queryClassMethods",
+  "mutationClassMethods",
+  "queryInstanceMethods",
+  "queryExtension",
+  "mutationExtension",
+] as const;
+
+/**
+ * Keys present on a permission bag that nothing will ever read.
+ *
+ * Worth reporting rather than ignoring: `isAllowed` treats an absent predicate
+ * as ALLOW, so a misspelled key does not fail closed — it silently produces a
+ * schema more permissive than its author intended, with no error and (for JS
+ * callers, or a bag built programmatically) no type error either.
+ */
+export function unknownPermissionKeys(permission: Permission | undefined): string[] {
+  if (!permission) {
+    return [];
+  }
+  return Object.keys(permission).filter((key) => !(PERMISSION_KEYS as readonly string[]).includes(key));
+}

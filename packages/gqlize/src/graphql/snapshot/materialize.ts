@@ -16,7 +16,7 @@ import {
 
 import GqlizeBinding from "../../manager";
 import type { GqlizeOptions, SchemaCache } from "../../types";
-import { createSchema as buildSchema } from "../index";
+import { createSchema as buildSchema, warnUnknownPermissionKeys } from "../index";
 import createSchemaCache from "../create-schema-cache";
 import createNodeInterface from "../utils/create-node-interface";
 import { applyExtendFields } from "../extend";
@@ -126,6 +126,9 @@ export async function materializeSchema(
     log.warn(`${message}; rebuilding live`);
     return buildLiveSchema(orm, options);
   }
+  // Below the rebuild branch on purpose: that path warns for itself via
+  // `createSchemaObjects`.
+  warnUnknownPermissionKeys(options);
   if (options.checkStaleness === false) {
     // Never silent, for the same reason a missing fingerprint is not: an
     // unchecked load reads exactly like a fresh one until it doesn't.
