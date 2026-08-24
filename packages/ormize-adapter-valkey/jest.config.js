@@ -26,7 +26,12 @@ module.exports = {
     '^@azerothian/graphql-types$': '<rootDir>/../graphql-types/src/index.ts',
     '^@azerothian/graphql-types/(.*)$': '<rootDir>/../graphql-types/src/$1',
   },
-  collectCoverage: false,
+  collectCoverage: true,
+  // An allowlist, not a wildcard with exclusions: `build:src` copies the whole
+  // source tree into `publish/src`, so `**/*` counts every file twice for any
+  // run that follows a build — the second copy at 0%.
+  collectCoverageFrom: ["src/**/*.ts", "!src/**/*.d.ts"],
+  coverageReporters: ["text-summary", "lcov"],
   testMatch: ['**/__tests__/**/*.test.[jt]s?(x)'],
   testPathIgnorePatterns: ['/node_modules/', '/lib/', '/.yalc/', '/.devcontainer/'],
   watchPathIgnorePatterns: ['/node_modules/', '/lib/', '/.yalc/', '/.devcontainer/'],
