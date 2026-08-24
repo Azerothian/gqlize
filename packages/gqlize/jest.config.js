@@ -66,16 +66,11 @@ module.exports = {
   // On CI (few cores, slower) run fewer workers to avoid oversubscription.
   maxWorkers: process.env.CI ? 2 : 4,
   collectCoverage: true,
-  collectCoverageFrom: [
-    "**/*.{ts,js}",
-    "!**/node_modules/**",
-    "!**/coverage/**",
-    "!src/types/**",
-    "!lib/**",
-    "!jest.config.js",
-    "!.yalc/**",
-    "!__tests__/**",
-  ],
+  // An allowlist, not a wildcard with exclusions: `build:src` copies the whole
+  // source tree into `publish/src`, so `**/*` counts every file twice for any
+  // run that follows a build — the second copy at 0%.
+  collectCoverageFrom: ["src/**/*.ts", "!src/**/*.d.ts"],
+  coverageReporters: ["text-summary", "lcov"],
   coveragePathIgnorePatterns: ["/node_modules/"],
   projects: [
     {
