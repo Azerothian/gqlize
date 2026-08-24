@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import pluralize from "pluralize";
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, HookMap, Model,
@@ -610,7 +610,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     const obj = this.applyDefaults(model, input);
     let id = obj[model.primaryKey];
     if (id === undefined || id === null) {
-      id = model.pkStrategy === "sequence" ? await ex.incr(this.keys.seq(defName)) : uuidv4();
+      id = model.pkStrategy === "sequence" ? await ex.incr(this.keys.seq(defName)) : randomUUID();
       obj[model.primaryKey] = id;
     }
     const ttlMs = options.ttl ?? model.defaultTtl;

@@ -1,3 +1,5 @@
+const workspaceModuleNameMapper = require('../../scripts/jest/module-name-mapper');
+
 /** @type {import('jest').Config} */
 const base = {
   testEnvironment: 'node',
@@ -7,20 +9,7 @@ const base = {
       module: { type: 'commonjs' },
     }],
   },
-  // Resolve sibling workspace packages from source (their published `exports`
-  // subpaths only exist after a build). Order: most specific first.
-  moduleNameMapper: {
-    '^@azerothian/ormize-adapter-sequelize$': '<rootDir>/../ormize-adapter-sequelize/src/index.ts',
-    '^@azerothian/ormize-adapter-sequelize/(.*)$': '<rootDir>/../ormize-adapter-sequelize/src/$1',
-    '^@azerothian/ormize$': '<rootDir>/../ormize/src/index.ts',
-    '^@azerothian/ormize/(.*)$': '<rootDir>/../ormize/src/$1',
-    '^@azerothian/utilize$': '<rootDir>/../utilize/src/index.ts',
-    '^@azerothian/utilize/(.*)$': '<rootDir>/../utilize/src/$1',
-    '^@azerothian/gqlize$': '<rootDir>/src/index.ts',
-    '^@azerothian/gqlize/(.*)$': '<rootDir>/src/$1',
-    '^@azerothian/graphql-types$': '<rootDir>/../graphql-types/src/index.ts',
-    '^@azerothian/graphql-types/(.*)$': '<rootDir>/../graphql-types/src/$1',
-  },
+  moduleNameMapper: workspaceModuleNameMapper('gqlize'),
 };
 
 // Functional + DB-behaviour suites that exercise real adapter/DB behaviour and so

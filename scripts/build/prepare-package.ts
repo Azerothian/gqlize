@@ -5,6 +5,31 @@ import path from "node:path";
 /// file) with dual ESM/CJS output plus a `bun` condition that resolves to the
 /// TypeScript source, fix the top-level main/module/types fields, resolve
 /// workspace: dependency ranges to concrete versions, and strip dev-only fields.
+///
+/// Shared by every package: run from the package directory (`pnpm` already sets
+/// cwd there), which is what every path below is resolved against.
+///
+///   tsx ../../scripts/build/prepare-package.ts [--bin <name>=<path>]...
+///
+/// `--bin` adds a `bin` entry to the *published* manifest only. It is a flag
+/// rather than a field on the checked-in package.json because the target lives
+/// under `publish/`, so a checked-in `bin` would be a dangling link at install
+/// time.
+
+function parseBinFlags(argv: string[]): Record<string, string> {
+  const bin: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] !== '--bin') continue;
+    const value = argv[i + 1];
+    const eq = value === undefined ? -1 : value.indexOf('=');
+    if (eq <= 0) {
+      throw new Error('--bin expects <name>=<path>');
+    }
+    bin[value.slice(0, eq)] = value.slice(eq + 1);
+    i += 1;
+  }
+  return bin;
+}
 
 async function loadWorkspaceVersions() {
   const workspaceDir = path.resolve(process.cwd(), '..');
@@ -93,12 +118,6 @@ async function updatePackageJson() {
   packageJson.module = "lib/index.mjs";
   packageJson.types = "types/index.d.ts";
 
-  // The `gqlize` CLI. Points at the CJS build: it is the one that runs on every
-  // supported Node without an `exports`/extension dance. swc preserves the
-  // leading `#!/usr/bin/env node` verbatim (verified against `.swcrc-cjs`), so
-  // no post-processing step is required here.
-  packageJson.bin = { gqlize: "./cjs/cli/index.js" };
-
   // Replace workspace: protocol ranges with concrete versions so the published
   // package is installable outside the monorepo.
   const versions = await loadWorkspaceVersions();
@@ -108,6 +127,11 @@ async function updatePackageJson() {
     for (const name of Object.keys(deps)) {
       deps[name] = resolveWorkspaceRange(deps[name], name, versions);
     }
+  }
+
+  const bin = parseBinFlags(process.argv.slice(2));
+  if (Object.keys(bin).length > 0) {
+    packageJson.bin = bin;
   }
 
   delete packageJson.devDependencies;

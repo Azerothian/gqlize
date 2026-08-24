@@ -1,3 +1,5 @@
+const workspaceModuleNameMapper = require('../../scripts/jest/module-name-mapper');
+
 /** @type {import('jest').Config} */
 module.exports = {
   verbose: true,
@@ -13,19 +15,7 @@ module.exports = {
       module: { type: 'commonjs' },
     }],
   },
-  // Resolve sibling workspace packages from source. Order: most specific first.
-  moduleNameMapper: {
-    '^@azerothian/ormize-adapter-sequelize$': '<rootDir>/../ormize-adapter-sequelize/src/index.ts',
-    '^@azerothian/ormize-adapter-sequelize/(.*)$': '<rootDir>/../ormize-adapter-sequelize/src/$1',
-    '^@azerothian/ormize$': '<rootDir>/../ormize/src/index.ts',
-    '^@azerothian/ormize/(.*)$': '<rootDir>/../ormize/src/$1',
-    '^@azerothian/utilize$': '<rootDir>/../utilize/src/index.ts',
-    '^@azerothian/utilize/(.*)$': '<rootDir>/../utilize/src/$1',
-    '^@azerothian/gqlize$': '<rootDir>/../gqlize/src/index.ts',
-    '^@azerothian/gqlize/(.*)$': '<rootDir>/../gqlize/src/$1',
-    '^@azerothian/graphql-types$': '<rootDir>/../graphql-types/src/index.ts',
-    '^@azerothian/graphql-types/(.*)$': '<rootDir>/../graphql-types/src/$1',
-  },
+  moduleNameMapper: workspaceModuleNameMapper('ormize-adapter-valkey'),
   collectCoverage: true,
   // An allowlist, not a wildcard with exclusions: `build:src` copies the whole
   // source tree into `publish/src`, so `**/*` counts every file twice for any
