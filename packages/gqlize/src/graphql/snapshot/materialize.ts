@@ -595,7 +595,6 @@ function parseDefault(literal: string, coordinate: string) {
 
 function rebuildModelTypes(names: string[], typeMap: Map<string, GraphQLNamedType>): SchemaHatch["types"] {
   const out: SchemaHatch["types"] = {};
-  const wanted = new Set(names);
   for (const name of names) {
     if (name.endsWith("[]")) {
       const base = typeMap.get(name.slice(0, -2));
@@ -608,9 +607,14 @@ function rebuildModelTypes(names: string[], typeMap: Map<string, GraphQLNamedTyp
       out[name] = new GraphQLList(base);
     } else {
       const type = typeMap.get(name);
-      // A permission-denied model leaves a real `undefined` hole in the live
-      // cache, with no matching `[]` entry. Anything else is a genuine mismatch.
-      if (!type && wanted.has(`${name}[]`)) {
+      // Every model type the build recorded is in the artifact, including the
+      // ones no root field reaches — `reachability` seeds them deliberately. A
+      // permission-denied model leaves no entry here at all rather than an
+      // `undefined` hole: `createModelTypes` returns the accumulator untouched
+      // before anything can write one. So a name with nothing behind it is
+      // corruption, and admitting it would only defer the failure by one line,
+      // to `nodeTypeMapper.mapTypes`, as an opaque TypeError.
+      if (!type) {
         throw new Error(
           `gqlize: the artifact lists relay model type "${name}" but it is not in the schema — ` +
             "the artifact is inconsistent, rebuild it",
