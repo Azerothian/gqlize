@@ -468,7 +468,11 @@ export default class Ormize<
       this.addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, this.crossAdapterBtmGetter(association));
     } else {
       const findFunc = await targetAdapter.createFunctionForFind(rel.model);
-      const adaptOptions = (options: any) => this.optionsForAdapter(def.name, rel.model, options);
+      // Captured out of the closure: the `!def.name` guard at the top of this
+      // method narrows the property, but that narrowing does not survive into a
+      // callback.
+      const defName = def.name;
+      const adaptOptions = (options: any) => this.optionsForAdapter(defName, rel.model, options);
       // The proxy reads its join value off `this`, which is a *source* instance —
       // so the read goes through the source adapter, not the target's. `belongsTo`
       // keeps the key on the source and points at the target's `targetKey`; the
