@@ -186,20 +186,47 @@ export interface OrmAdapter {
  */
 export type Selection = {
   /** eager-include plan (relations to JOIN) */
-  include?: any[];
+  include?: IncludeMap[];
   /** selected scalar field names */
   fields?: string[];
   /** fetch count without rows */
   countOnly?: boolean;
   /** raw arg variables (caller-provided) */
-  variableValues?: any;
+  variableValues?: {[name: string]: any};
   /** opaque passthrough; gqlize stashes the real GraphQLResolveInfo here so hooks still see `info` */
-  raw?: any;
+  raw?: unknown;
   /** default identity; gqlize passes replaceIdDeep bound to variableValues */
-  translateFilter?: (where: any, globalKeys: string[]) => any;
+  translateFilter?: (where: AdapterWhere, globalKeys: string[]) => AdapterWhere;
   /** default identity; gqlize passes v => fromGlobalId(v).id */
   translateId?: (value: any) => any;
 };
+
+/**
+ * Descriptor for a single relationship that should be eager-loaded as part of
+ * the parent's root query. A superset of what an adapter's include handling
+ * consumes (`required`, `where`, `orderBy`, `include`), enriched with pagination
+ * and `separate` so collections can be batched at the root with correct
+ * per-parent limits.
+ *
+ * Lives here rather than in gqlize because it is what {@link Selection.include}
+ * carries, and `Selection` is the graphql-free hand-off between the two.
+ */
+export interface IncludeDescriptor {
+  target: string;
+  associationType: string;
+  required?: boolean;
+  where?: AdapterWhere;
+  orderBy?: any;
+  limit?: number;
+  offset?: number;
+  separate?: boolean;
+  include?: IncludeMap[];
+}
+
+/** One level of the include plan, keyed by relationship name. */
+export interface IncludeMap {
+  [relName: string]: IncludeDescriptor;
+}
 
 
 export type GqlizeOptions = {
@@ -214,20 +241,6 @@ export type GqlizeOptions = {
   subscriptions?: any
 }
 
-export type SchemaCache = {
-  mutationInputFields: { [x: string]: any; };
-  basicFields: { [x: string]: any; };
-  types: { [x: string]: any; };
-  lists: { [x: string]: any; };
-  complexFields: { [x: string]: any; };
-  typeFields: { [x: string]: any; };
-  orderBy: { [x: string]: any; };
-  classMethodQueries:  { [x: string]: any; };
-  classMethodMutations: { [x: string]: any; };
-  mutationInputs: { [x: string]: any; };
-  mutationModels: { [x: string]: any; };
-  relatedFields: { [x: string]: any; };
-}
 
 
 export type Association = {
@@ -367,8 +380,10 @@ export type Definition = {
       output?: any
     }
   }; 
-  ignoreFields?: any;
-  comments?: any;
+  /** Field names excluded from every generated type. */
+  ignoreFields?: string[];
+  /** Descriptions to attach to generated fields, keyed by the thing they describe. */
+  comments?: DefinitionComments;
   relationships?: Relationship[];
   whereOperators?: WhereOperators;
   whereOperatorTypes?: { [x: string]: any };
@@ -436,6 +451,13 @@ export interface DefinitionOptions {
   classMethods?: {
     [name: string]: (this: any, args?: any, context?: any) => any;
   }
+}
+
+/** See {@link Definition.comments}. */
+export type DefinitionComments = {
+  fields?: { [fieldName: string]: string };
+  classMethods?: { [methodName: string]: string };
+  instanceMethods?: { [methodName: string]: string };
 }
 
 export type Definitions = {

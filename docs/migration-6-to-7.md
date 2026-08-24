@@ -368,6 +368,20 @@ permission explicitly, leave it off.
 > is `string | {model?, foreignKey?, otherKey?}`. Adapters that only ever destructured the object
 > form need a `typeof === "object"` guard before reading `.model`.
 
+`SchemaCache` moved from `@azerothian/utilize` to `@azerothian/gqlize`, and is no longer twelve
+`{[x: string]: any}` buckets. Every bucket holds a `graphql` type, so it could never be described in
+a package that must not import `graphql`. Import it from `@azerothian/gqlize` (or
+`@azerothian/gqlize/types/index`, which is where it already resolved from for anyone using the
+gqlize barrel). The buckets are keyed differently from each other — `types` and
+`mutationInputFields` by type name, the `*Fields` buckets by model name, the class-method and
+mutation-model buckets flat — which the shared `any` shape hid.
+
+`Selection.include` is now `IncludeMap[]` rather than `any[]`. `IncludeDescriptor` and `IncludeMap`
+moved the other way, from gqlize into `@azerothian/utilize`, since they are what the graphql-free
+hand-off actually carries; `@azerothian/gqlize/graphql/utils/build-include-from-selection` still
+re-exports both. `Definition.ignoreFields` is `string[]` and `Definition.comments` is a
+`DefinitionComments` (`{fields?, classMethods?, instanceMethods?}`).
+
 ## 4. The graphql patch
 
 6.x solved [graphql-spec #252](https://github.com/graphql/graphql-spec/issues/252) — nested mutation

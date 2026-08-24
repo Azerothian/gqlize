@@ -4,7 +4,7 @@ import {
   GraphQLInputObjectType, GraphQLList, ThunkObjMap,
 } from "graphql";
 
-export default function createGQLInputObject(name: string, fields: ThunkObjMap<GraphQLInputFieldConfig>, schemaCache: SchemaCache, comment: string) {
+export default function createGQLInputObject(name: string, fields: ThunkObjMap<GraphQLInputFieldConfig>, schemaCache: SchemaCache, comment: string | undefined) {
   if (!schemaCache.mutationInputFields[name]) {
     schemaCache.mutationInputFields[name] = new GraphQLInputObjectType({
       name,

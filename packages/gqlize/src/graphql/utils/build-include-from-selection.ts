@@ -1,6 +1,7 @@
 import { getArgumentValues, GraphQLResolveInfo, GraphQLObjectType } from "graphql";
 import GQLManager from "../../manager";
 import { fromCursor } from "../objects/cursor";
+import type { IncludeDescriptor, IncludeMap } from "../../types";
 
 // Bound per-parent eager-load page size. This mirrors the adapter's root-query
 // backstop but is applied at the GraphQL layer, since a nested `first`/`last`
@@ -17,27 +18,10 @@ function clampIncludePageSize(value: any): number {
   return Math.min(n, MAX_INCLUDE_PAGE_SIZE);
 }
 
-/**
- * Descriptor for a single relationship that should be eager-loaded as part of the
- * parent's root query. Shape is a superset of what the sequelize adapter's
- * `processIncludeStatement` consumes (`required`, `where`, `orderBy`, `include`),
- * enriched with pagination + `separate` so collections can be batched at the root
- * with correct per-parent limits.
- */
-export interface IncludeDescriptor {
-  target: string;
-  associationType: string;
-  required?: boolean;
-  where?: any;
-  orderBy?: any;
-  limit?: number;
-  offset?: number;
-  separate?: boolean;
-  include?: IncludeMap[];
-}
-export interface IncludeMap {
-  [relName: string]: IncludeDescriptor;
-}
+// Both moved to `@azerothian/utilize`: they are what `Selection.include` carries,
+// and `Selection` is the graphql-free hand-off between gqlize and the engine.
+// Re-exported here because this module is where they are built.
+export type { IncludeDescriptor, IncludeMap };
 
 function isCollection(associationType: string) {
   return associationType === "hasMany" || associationType === "belongsToMany";
