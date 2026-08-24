@@ -22,6 +22,7 @@ cleanly — that section is where working code breaks.
    - [`createListObject` takes a data-source descriptor, not a resolver](#createlistobject-takes-a-data-source-descriptor-not-a-resolver)
    - [Role-based permissions now gate `extend` fields and mutation inputs](#role-based-permissions-now-gate-extend-fields-and-mutation-inputs)
    - [Unknown `permission` keys are a type error, and warn at build time](#unknown-permission-keys-are-a-type-error-and-warn-at-build-time)
+   - [The adapter contract is typed, and `setBuildPermission` is part of it](#the-adapter-contract-is-typed-and-setbuildpermission-is-part-of-it)
 4. [The graphql patch](#4-the-graphql-patch)
 5. [New in 7.x](#5-new-in-7x)
 6. [Checklist](#6-checklist)
@@ -343,6 +344,30 @@ the two together — adding a predicate to one and forgetting the other no longe
 > presence check. Under `defaultDeny: false` the absent case is real — an unmentioned gate is
 > genuinely omitted from the bag.
 
+### The adapter contract is typed, and `setBuildPermission` is part of it
+
+Only relevant if you maintain your own adapter. `OrmAdapter` and `GqlizeAdapter` described most of
+their surface as `any`; they now name the things that flow through them —
+`AdapterQueryOptions`, `AdapterWhere`, `AdapterRow`, `AdapterTransactionHandle`, `NativeDataType`,
+`AdapterCreateFunction` / `AdapterUpdateFunction` / `AdapterDeleteFunction`, and
+`AdapterRelationshipPage` for what a `resolveManyRelationship` hop returns (`{total, models}`).
+
+`AdapterRow` is `unknown`, so a *caller* cannot read a column off a row without saying what it
+expects. The members are declared with method syntax, which keeps parameters bivariant: your
+implementation may still narrow a row to your own instance type
+(`update(row: MyModel, ...)`) without a cast.
+
+`setBuildPermission` is now declared — optional — on `GqlizeAdapter`. It was already implemented by
+both bundled adapters and already called by `createSchema`, but through a
+`typeof adapter.setBuildPermission === "function"` duck-type check, so an adapter that misspelled it
+silently lost filter/order/include gating. Declaring it means the compiler catches that. If your
+adapter builds those three input types from a permission bag, implement it; if its builders take the
+permission explicitly, leave it off.
+
+> **Watch for:** `createRelationship`'s fifth parameter is `Relationship["options"]`, whose `through`
+> is `string | {model?, foreignKey?, otherKey?}`. Adapters that only ever destructured the object
+> form need a `typeof === "object"` guard before reading `.model`.
+
 ## 4. The graphql patch
 
 6.x solved [graphql-spec #252](https://github.com/graphql/graphql-spec/issues/252) — nested mutation
@@ -413,6 +438,9 @@ Not required for migration, but this is what the split bought:
 - [ ] Any `subscription`, `mutationUpdateAll`, `mutationDeleteAll` rules keys removed — they gated
       nothing in 6.x and now warn.
 - [ ] Hand-written `permission` bags checked against the build-time unknown-key warning.
+- [ ] Third-party adapters recompiled against the typed `OrmAdapter` / `GqlizeAdapter`, and
+      `setBuildPermission` implemented if their filter/order/include builders gate on a permission
+      bag.
 
 For everything else, [**guide.md**](guide.md) is the 7.x usage guide and
 [**specifications.md**](specifications.md) is the API/contract reference.

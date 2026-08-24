@@ -2,13 +2,88 @@ import Events from "../events";
 import { DataTypeDescriptor } from "./data-type";
 import type { Permission } from "../gate";
 
+// Re-exported so `./types/index` is a complete type barrel: `GqlizeOptions`
+// names `Permission`, and the packages that build on these types import both.
+export type { Permission, PermissionContext } from "../gate";
+
+/**
+ * An adapter-native transaction token — a Sequelize `Transaction`, a Valkey
+ * MULTI handle, whatever the backend uses. Threaded onto each operation's
+ * options and handed back to the adapter untouched, so nothing outside the
+ * adapter that produced it may look inside.
+ */
+export type AdapterTransactionHandle = unknown;
+
+/**
+ * An adapter-native type token (`DataTypes.STRING`, a column descriptor, ...).
+ * `mapDataType` classifies one into a {@link DataTypeDescriptor} and
+ * `toNativeType` produces one; it is opaque everywhere in between.
+ */
+export type NativeDataType = unknown;
+
+/**
+ * An adapter-native filter. `processFilterArgument` builds one from caller args
+ * plus the definition's `whereOperators`, and it goes straight back to the
+ * adapter — the shape belongs to the backend (Sequelize's `where`, a Valkey
+ * index query), not to us.
+ */
+export type AdapterWhere = { [key: string]: any };
+
+/**
+ * The options bag threaded through a backend operation: `where`, `limit`,
+ * `offset`, `order`, `include`, the transaction token, and whatever else the
+ * adapter understands. Produced by `processListArgsToOptions` and merged along
+ * the way, so it stays open by design.
+ */
+export type AdapterQueryOptions = { [key: string]: any };
+
+/**
+ * A row as the adapter returns it — a Sequelize model instance, a plain object,
+ * a decoded hash. Only the adapter knows the concrete shape, so the fetch
+ * methods take a type parameter and callers that know what they asked for can
+ * name it.
+ */
+export type AdapterRow = unknown;
+
+/**
+ * What one `resolveManyRelationship` hop returns: the page of rows, plus the
+ * true total behind it — which is *not* `models.length` once a per-parent limit
+ * has been applied, so relay `pageInfo` needs it reported separately.
+ */
+export type AdapterRelationshipPage = { total: number; models: AdapterRow[] };
+
+/** `getCreateFunction(defName)` — insert one row. */
+export type AdapterCreateFunction = (input: {[field: string]: any}, options: AdapterQueryOptions) => Promise<AdapterRow>;
+
+/**
+ * `getUpdateFunction(defName, whereOperators)` — update every row matching
+ * `where`. `processInput` is called per matched row and returns the patch to
+ * apply, so a hook can derive it from the row's current state.
+ */
+export type AdapterUpdateFunction = (
+  where: AdapterWhere,
+  processInput: (instance: AdapterRow) => Promise<{[field: string]: any}> | {[field: string]: any},
+  options: AdapterQueryOptions,
+) => Promise<AdapterRow[]>;
+
+/**
+ * `getDeleteFunction(defName, whereOperators)` — delete every row matching
+ * `where`, running `before`/`after` around each one.
+ */
+export type AdapterDeleteFunction = (
+  where: AdapterWhere,
+  options: AdapterQueryOptions,
+  before: (instance: AdapterRow) => Promise<AdapterRow> | AdapterRow,
+  after: (instance: AdapterRow) => Promise<AdapterRow> | AdapterRow,
+) => Promise<AdapterRow[]>;
+
 /**
  * An unmanaged, adapter-native transaction. `handle` is the token threaded onto
  * each operation's options (e.g. a Sequelize Transaction); `commit`/`rollback`
  * finalise it. Returned by `OrmAdapter.beginTransaction`.
  */
 export interface AdapterTransaction {
-  handle: any;
+  handle: AdapterTransactionHandle;
   commit: () => Promise<void>;
   rollback: () => Promise<void>;
 }
@@ -18,49 +93,64 @@ export interface AdapterTransaction {
  * `@azerothian/ormize` depends on. The GraphQL-typed extension lives in
  * `./gqlize-adapter` (`GqlizeAdapter extends OrmAdapter`) so importing ormize never
  * pulls `graphql`.
+ *
+ * Declared with method syntax rather than function-typed properties, and that is
+ * deliberate: parameters are then checked bivariantly, which is what an adapter
+ * contract wants. A row is `AdapterRow` (`unknown`) *here* because no caller may
+ * assume its shape, but the adapter that produced it knows exactly what it is
+ * and re-narrows on the way back in (`update(row: Sequelize.Model, ...)`).
+ * Property syntax would make every such narrowing an error under
+ * `strictFunctionTypes` and push adapters back to `any`.
  */
 export interface OrmAdapter {
   adapterName: string;
-  createModel: (def: Definition, hooks?: any) => Promise<any>;
-  getModel: (modelName: string) => Model;
-  getAssociations: (defName: string) => {[relName: string]: Association};
-  getValueFromInstance: (model: Model, sourceKey: string) => any;
-  getFields: (defName: any) => {[fieldName: string]: DefinitionField};
-  createRelationship: (defName: string, modelName: string, relName: string, relType: string, relOptons: any) => any;
-  getPrimaryKeyNameForModel: (modelName: string) => string[];
-  createFunctionForFind: (modelName: string) => (keyValue: string, filterKey: string, singular: boolean) => ((...args: any) => any);
-  reset: (options?: any) => Promise<void>;
-  initialise: () => Promise<void>;
-  sync: (options?: any) => Promise<void>;
-  hasInlineCountFeature: () => boolean;
-  findAll: (defName: string, options: any) => Promise<any>
-  getInlineCount: (models: any) => Promise<number>;
-  count: (defName: string, options: any) => Promise<number>;
-  processFilterArgument: (where: any, whereOperators: any, options: any) => any
+  createModel(def: Definition, hooks?: HookMap): Promise<Model>;
+  getModel(modelName: string): Model;
+  getAssociations(defName: string): {[relName: string]: Association};
+  getValueFromInstance(model: AdapterRow, sourceKey: string): unknown;
+  getFields(defName: string): {[fieldName: string]: DefinitionField};
+  createRelationship(defName: string, modelName: string, relName: string, relType: string, relOptions: Relationship["options"]): unknown;
+  getPrimaryKeyNameForModel(modelName: string): string[];
+  /**
+   * Returns a fetcher for one relationship hop: given the join key's value it
+   * resolves the target row(s). Used for cross-adapter relationships, where no
+   * native association exists to eager-load through.
+   */
+  createFunctionForFind(modelName: string): (keyValue: string, filterKey: string, singular: boolean) => ((options: AdapterQueryOptions) => Promise<AdapterRow>);
+  reset(options?: AdapterQueryOptions): Promise<void>;
+  initialise(): Promise<void>;
+  sync(options?: AdapterQueryOptions): Promise<void>;
+  hasInlineCountFeature(): boolean;
+  findAll(defName: string, options: AdapterQueryOptions): Promise<AdapterRow[]>;
+  /** Row count carried alongside the rows by backends that support it (`hasInlineCountFeature`). */
+  getInlineCount(models: AdapterRow[]): Promise<number>;
+  count(defName: string, options: AdapterQueryOptions): Promise<number>;
+  processFilterArgument(where: AdapterWhere, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): AdapterWhere | Promise<AdapterWhere>;
   /**
    * Optional: merge a single equality (or, for array values, membership) filter
    * into an already-processed `where`, returning the combined adapter-native
    * filter. Required for a model to be the *target* of a cross-adapter
    * relationship, which is resolved as a root query scoped to the join key.
    */
-  mergeFilterStatement?: (fieldName: string, value: any, match: boolean | undefined, originalWhere: any) => any;
+  mergeFilterStatement?(fieldName: string, value: unknown, match: boolean | undefined, originalWhere: AdapterWhere | undefined): AdapterWhere;
   /**
    * Optional: install an extra instance method on an already-defined model. Used
    * to attach cross-adapter relationship accessors to adapters whose "model" is a
    * plain descriptor rather than a class with a prototype.
    */
-  addInstanceFunction?: (modelName: string, name: string, fn: any) => void;
-  update: (model: any, i: any, defaultOptions: any) => Promise<any>;
-  getCreateFunction: (defName: string) => any;
-  getUpdateFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
-  getDeleteFunction: (defName: string, whereOperators: WhereOperators | undefined) => any;
+  addInstanceFunction?(modelName: string, name: string, fn: (...args: any[]) => any): void;
+  /** Apply a patch to one already-fetched row. */
+  update(row: AdapterRow, i: {[field: string]: any}, defaultOptions: AdapterQueryOptions): Promise<AdapterRow>;
+  getCreateFunction(defName: string): AdapterCreateFunction;
+  getUpdateFunction(defName: string, whereOperators: WhereOperators | undefined): AdapterUpdateFunction;
+  getDeleteFunction(defName: string, whereOperators: WhereOperators | undefined): AdapterDeleteFunction;
   /**
    * Optional: run a callback inside a transaction (auto-commit / auto-rollback).
    * When present, ormize wraps single-adapter multi-step mutations in it.
    * Adapters that cannot provide transactions may omit it — mutations then run
    * without one.
    */
-  transaction?: (cb: (t: any) => Promise<any>) => Promise<any>;
+  transaction?<T>(cb: (t: AdapterTransactionHandle) => Promise<T>): Promise<T>;
   /**
    * Optional: begin an UNMANAGED transaction, returning a handle the caller
    * commits or rolls back explicitly. Required for cross-adapter coordination
@@ -68,23 +158,23 @@ export interface OrmAdapter {
    * back them together. `handle` is the adapter-native transaction token that is
    * threaded onto each operation's options.
    */
-  beginTransaction?: () => Promise<AdapterTransaction>;
+  beginTransaction?(): Promise<AdapterTransaction>;
   /** Read: classify an adapter-native type into an abstract `DataTypeDescriptor`. */
-  mapDataType: (nativeType: any) => DataTypeDescriptor;
+  mapDataType(nativeType: NativeDataType): DataTypeDescriptor;
   /** Write: convert an abstract type token/descriptor back to an adapter-native type. */
-  toNativeType: (descriptor: DataTypeDescriptor) => any;
+  toNativeType(descriptor: DataTypeDescriptor): NativeDataType;
   /**
    * Turn list/relationship args into backend fetch options. GraphQL-free: the
    * caller passes a {@link Selection} carrying any selected-field/count hints; the
    * raw execution `info` (if any) rides along on `selection.raw`.
    */
-  processListArgsToOptions: (defName: string, args: any, offset: any, selection: Selection, whereOperators: WhereOperators | undefined, graphQLArgs: {getGraphQLArgs: () => {
+  processListArgsToOptions(defName: string, args: {[name: string]: any}, offset: number | undefined, selection: Selection, whereOperators: WhereOperators | undefined, graphQLArgs: {getGraphQLArgs: () => {
       context: any;
       info: any;
       source: any;
-  }}, selectedFields: any, runHook?: (defName: string, hookName: string, value: any, ...args: any) => Promise<any>) => any;
-  resolveManyRelationship: (defName: string, association: Association, source: any, args: any, offset: any, whereOperators: WhereOperators | undefined, selection: Selection, options: any, countOnly?: boolean) => Promise<any>;
-  resolveSingleRelationship: (defName: string, association: Association, source: any, args: any, context: any, selection: Selection, options: any) => Promise<any>;
+  }}, selectedFields: string[] | undefined, runHook?: (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>): AdapterQueryOptions | Promise<AdapterQueryOptions>;
+  resolveManyRelationship(defName: string, association: Association, source: AdapterRow, args: {[name: string]: any}, offset: number | undefined, whereOperators: WhereOperators | undefined, selection: Selection, options: AdapterQueryOptions, countOnly?: boolean): Promise<AdapterRelationshipPage>;
+  resolveSingleRelationship(defName: string, association: Association, source: AdapterRow, args: {[name: string]: any}, context: any, selection: Selection, options: AdapterQueryOptions): Promise<AdapterRow>;
 }
 
 /**

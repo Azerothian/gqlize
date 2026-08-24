@@ -39,7 +39,7 @@ import {
 // import {GraphQLObjectType} from "graphql";
 import { GraphQLInputObjectType } from "graphql";
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import { Association, WhereOperators, DefinitionFieldMeta, DataTypeDescriptor, Selection, isOrmizeDataType } from '@azerothian/utilize/types/index';
+import { Association, Relationship, WhereOperators, DefinitionFieldMeta, DataTypeDescriptor, Selection, isOrmizeDataType } from '@azerothian/utilize/types/index';
 import type { GqlizeAdapter } from '@azerothian/gqlize/types/gqlize-adapter';
 import { mapDataType as mapDataTypeImpl, toNativeType as toNativeTypeImpl } from "./data-type-mapper";
 import { SequelizeDefinition, SqlClassMethod } from "./types";
@@ -571,17 +571,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     sourceModel: string ,
     name: string,
     type: string,
-    options: {through?: {model?: any}} = {}
+    options: Relationship["options"] = {}
   ) => {
     let model = this.sequelize.models[targetModel];
     if (!(model as any).relationships) {
       (model as any).relationships = {};
     }
     try {
-      if (options.through) {
-        if (options.through.model) {
-          options.through.model = this.sequelize.models[options.through.model as any];
-        }
+      // `through` may also be a bare model name, which Sequelize accepts as-is.
+      // Only the object form carries a `model` to resolve — the previous
+      // unguarded property read simply found `undefined` on the string.
+      if (typeof options.through === "object" && options.through?.model) {
+        (options.through as {model?: unknown}).model = this.sequelize.models[options.through.model];
       }
       const opts = Object.assign(
         {

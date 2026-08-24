@@ -1,5 +1,5 @@
 import { GraphQLInputType, GraphQLOutputType } from "graphql";
-import { OrmAdapter, Definition } from "./index";
+import { OrmAdapter, Definition, NativeDataType, Permission, Selection } from "./index";
 
 /**
  * The GraphQL-facing adapter contract. Extends the GraphQL-free {@link OrmAdapter}
@@ -10,10 +10,23 @@ import { OrmAdapter, Definition } from "./index";
  * depends only on `OrmAdapter` and stays graphql-free.
  */
 export interface GqlizeAdapter extends OrmAdapter {
-  getTypeMapper: () => ((type: any, modelName: string, newTypeName: string) => GraphQLInputType | GraphQLOutputType);
-  getDefaultListArgs: (defName: string, definition: Definition, permission?: any) => GraphQLInputType;
-  getOrderByGraphQLType: (defName: string, permission?: any) => GraphQLInputType;
-  getFilterGraphQLType: (defName: string, definition: Definition, permission?: any) => GraphQLInputType;
-  replaceIdInArgs: (args: any, defName: string, variableValues: any) => any;
-  replaceIdInInclude: (include: any, defName: string, variableValues: any) => any;
+  getTypeMapper(): ((type: NativeDataType, modelName: string, newTypeName: string) => GraphQLInputType | GraphQLOutputType);
+  getDefaultListArgs(defName: string, definition: Definition, permission?: Permission): GraphQLInputType;
+  getOrderByGraphQLType(defName: string, permission?: Permission): GraphQLInputType;
+  getFilterGraphQLType(defName: string, definition: Definition, permission?: Permission): GraphQLInputType;
+  /**
+   * Relay global ids arrive opaque; both hooks rewrite them to their underlying
+   * values in place before the args reach the backend.
+   */
+  replaceIdInArgs(args: {[name: string]: any}, defName: string, variableValues: {[name: string]: any}): {[name: string]: any};
+  replaceIdInInclude(include: Selection["include"], defName: string, variableValues: {[name: string]: any}): Selection["include"];
+  /**
+   * Optional: capture the permission bag for the duration of a schema build.
+   * The filter/order/include type builders above fall back to it when no
+   * explicit permission is threaded through, so a denied field stays out of the
+   * filter and order inputs too — otherwise a hidden field remains filterable
+   * and a denied relationship joinable, which is an information-disclosure
+   * oracle. Adapters whose builders take the permission explicitly may omit it.
+   */
+  setBuildPermission?(permission: Permission | undefined): void;
 }

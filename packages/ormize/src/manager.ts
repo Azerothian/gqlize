@@ -769,7 +769,10 @@ export default class Ormize<
   }
   createProxyFunction(adapter: OrmAdapter, sourceKey: string, filterKey: string, singular: boolean, findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((...args: any) => any), adaptOptions?: (options: any) => Promise<any>)  {
     return async function(this: Model, options?: any) {
-      const keyValue = adapter.getValueFromInstance(this, sourceKey);
+      // The join key — whatever column `sourceKey` names, so its type belongs to
+      // the definition, not to this layer. `getValueFromInstance` returns
+      // `unknown` for that reason; the find function takes it as given.
+      const keyValue = adapter.getValueFromInstance(this, sourceKey) as string;
       // The find runs on the *target's* adapter while `options` were built for the
       // source's, so any transaction handle in them has to be swapped first.
       const opts = adaptOptions ? await adaptOptions(options) : options;

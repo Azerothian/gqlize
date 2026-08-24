@@ -16,7 +16,7 @@ import createMutationInput from "./create-mutation-input";
 import createSchemaCache from "./create-schema-cache";
 import computeVisibleModels from "./utils/visible-models";
 import GQLManager from '../manager';
-import { GqlizeOptions, SchemaCache } from '../types';
+import { GqlizeOptions, GqlizeAdapter, SchemaCache } from '../types';
 import { bindField } from "./resolvers/bind";
 import { applyExtendFields } from "./extend";
 import { createLedger, recordExternalType, setLedger } from "./snapshot/ledger";
@@ -148,10 +148,8 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   // relationships — otherwise a hidden field stays filterable/orderable and a
   // denied relationship stays joinable (information-disclosure oracle).
   Object.keys(definitions).forEach((defName) => {
-    const adapter: any = instance.getModelAdapter(defName);
-    if (adapter && typeof adapter.setBuildPermission === "function") {
-      adapter.setBuildPermission(options.permission);
-    }
+    const adapter = instance.getModelAdapter(defName) as GqlizeAdapter | undefined;
+    adapter?.setBuildPermission?.(options.permission);
     // `whereOperatorTypes` is read straight off the definition by the adapters'
     // filter builders, so a user type declared there reaches the schema without
     // passing any gqlize builder that could record it. Record it here instead:
