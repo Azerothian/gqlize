@@ -34,17 +34,20 @@ export default new GraphQLScalarType({
    * @param  {String} value date string
    * @return {Date}   Date object
    */
-  parseValue(value: any) {
+  parseValue(value) {
     try {
       if (!value) {
         return null;
       }
-      return new Date(value);
+      return new Date(value as string | number | Date);
     } catch (e) {
       return null;
     }
   },
-  parseLiteral(ast: any) {
-    return new Date(ast.value);
+  parseLiteral(ast) {
+    // Kinds that carry no `value` — lists, objects, null — yield an Invalid
+    // Date, which is what this did before the parameter was typed.
+    const value = "value" in ast ? ast.value : undefined;
+    return new Date(value as string);
   }
 });

@@ -7,12 +7,14 @@ BigInt.prototype.toJSON = function() { return this.toString(); }; //eslint-disab
 export default new GraphQLScalarType({
   name: "GQLTBigInt",
   description: "BigInt",
-  serialize(value: any) {
+  serialize(value) {
     return `${value}`;
   },
 
-  parseValue(value: any) {
-    return BigInt(value); //eslint-disable-line
+  parseValue(value) {
+    // graphql hands coercion inputs over as `unknown`; `BigInt` throws on
+    // anything it cannot convert, which is the error we want to surface.
+    return BigInt(value as string | number | bigint | boolean); //eslint-disable-line
   },
 
   parseLiteral(ast) {

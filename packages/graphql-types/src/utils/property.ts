@@ -7,8 +7,15 @@ const reEscapeChar = /\\(\\)?/g;
 const rePropName = RegExp(`[^.[\\]]+|\\[(?:([^"'].*)|(["'])((?:(?!\\2)[^\\\\]|\\\\.)*?)\\2)\\]|(?=(?:\\.|\\[\\])(?:\\.|\\[\\]|$))`, "g");
 const MAX_MEMOIZE_SIZE = 500;
 
+/** One segment of a property path. Named to avoid the global `PropertyKey`. */
+type PathKey = string | number | symbol;
 
-function memoize(func: { apply: (arg0: any, arg1: any[]) => any; }, resolver: { (key: any): any; apply?: any; } | null) {
+/** A dotted/bracketed path string, a single key, or an already-split key list. */
+export type PropertyPath = PathKey | readonly PathKey[];
+
+
+/** `...args: any[]` on the pass-through: a memoizer cannot constrain what it wraps. */
+function memoize(func: (...args: any[]) => any, resolver: ((...args: any[]) => unknown) | null) {
   if (typeof func !== "function" || (resolver !== null && typeof resolver !== "function")) {
     throw new TypeError("Expected a function");
   }
@@ -28,8 +35,8 @@ function memoize(func: { apply: (arg0: any, arg1: any[]) => any; }, resolver: { 
 }
 memoize.Cache = Map;
 
-function memoizeCapped(func: (string: any) => string[]) {
-  const result = memoize(func, (key: any) => {
+function memoizeCapped(func: (value: string) => string[]) {
+  const result = memoize(func, (key: unknown) => {
     const { cache } = result;
     if (cache.size === MAX_MEMOIZE_SIZE) {
       cache.clear();
@@ -41,12 +48,12 @@ function memoizeCapped(func: (string: any) => string[]) {
 }
 
 
-const stringToPath = memoizeCapped((string: { charCodeAt: (arg0: number) => number; replace: (arg0: RegExp, arg1: (match: any, expression: any, quote: any, subString: any) => void) => void; }) => {
-  const result = [];
+const stringToPath = memoizeCapped((string: string) => {
+  const result: string[] = [];
   if (string.charCodeAt(0) === charCodeOfDot) {
     result.push("");
   }
-  string.replace(rePropName, (match: any, expression: string, quote: any, subString: string) => {
+  string.replace(rePropName, (match: string, expression: string, quote: string, subString: string) => {
     let key = match;
     if (quote) {
       key = subString.replace(reEscapeChar, "$1");
@@ -55,56 +62,61 @@ const stringToPath = memoizeCapped((string: { charCodeAt: (arg0: number) => numb
       key = expression.trim();
     }
     result.push(key);
+    // `replace` is used here only for its callback; the returned string is
+    // discarded, so handing back the match leaves the input untouched.
+    return match;
   });
   return result;
 });
 
-function baseGetTag(value: null | undefined) {
+function baseGetTag(value: unknown) {
   if (value === null) {
     return value === undefined ? "[object Undefined]" : "[object Null]";
   }
   return toString.call(value);
 }
-function isSymbol(value: null) {
+function isSymbol(value: unknown): value is symbol {
   const type = typeof value;
   return type === "symbol" || (type === "object" && value !== null && baseGetTag(value) === "[object Symbol]");
 }
 
-function toKey(value: any) {
+function toKey(value: unknown): PathKey {
   if (typeof value === "string" || isSymbol(value)) {
     return value;
   }
   const result = `${value}`;
-  return (result === "0" && (1 / value) === -INFINITY) ? "-0" : result;
+  return (result === "0" && (1 / (value as number)) === -INFINITY) ? "-0" : result;
 }
-function baseProperty(key: string | number) {
-  return (object: { [x: string]: any; } | null) => object === null ? undefined : object[key];
+function baseProperty(key: PathKey) {
+  return (object: unknown) => object === null || object === undefined
+    ? undefined
+    : (object as Record<PathKey, unknown>)[key];
 }
 
-function castPath(value: any, object: any) {
+function castPath(value: PropertyPath, object: unknown): readonly PathKey[] {
   if (Array.isArray(value)) {
     return value;
   }
-  return isKey(value, object) ? [value] : stringToPath(value);
+  return isKey(value, object) ? [value as PathKey] : stringToPath(value as string);
 }
 
-function baseGet(object: { [x: string]: any; } | null, path: string | any[]) {
-  path = castPath(path, object);
+function baseGet(object: unknown, path: PropertyPath) {
+  const keys = castPath(path, object);
 
   let index = 0;
-  const length = path.length;
+  const length = keys.length;
 
-  while (object !== null && index < length) {
-    object = object[toKey(path[index++])];
+  while (object !== null && object !== undefined && index < length) {
+    object = (object as Record<PathKey, unknown>)[toKey(keys[index++])];
   }
   return (index && index === length) ? object : undefined;
 }
 
-function basePropertyDeep(path: any) {
-  return (object: any) => baseGet(object, path);
+function basePropertyDeep(path: PropertyPath) {
+  return (object: unknown) => baseGet(object, path);
 }
 
-function isKey(value: any, object?: any) {
+function isKey(value: unknown, object?: unknown) {
   if (Array.isArray(value)) {
     return false;
   }
@@ -112,9 +124,15 @@ function isKey(value: any, object?: any) {
   if (type === "number" || type === "boolean" || value === null || isSymbol(value)) {
     return true;
   }
-  return reIsPlainProp.test(value) || !reIsDeepProp.test(value) ||
-    (object !== null && value in Object(object));
+  return reIsPlainProp.test(value as string) || !reIsDeepProp.test(value as string) ||
+    (object !== null && (value as PathKey) in Object(object));
 }
-export default function property(path: any) {
+
+/**
+ * Lodash's `_.property`, ported. Returns a getter that reads `path` off whatever
+ * it is handed — hence `unknown` in and out: the path is a runtime string, so no
+ * static type can say what comes back.
+ */
+export default function property(path: PropertyPath): (object: unknown) => unknown {
   return isKey(path) ? baseProperty(toKey(path)) : basePropertyDeep(path);
 }
