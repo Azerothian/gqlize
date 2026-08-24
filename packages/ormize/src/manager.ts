@@ -4,7 +4,7 @@ import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Model, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
-import { OrmAdapter, DataTypeDescriptor, Selection } from '@azerothian/utilize/types/index';
+import { OrmAdapter, DataTypeDescriptor, Selection, FindAllArgs } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import Events from "./events";
 import OrmizeTransaction from "./transaction";
@@ -927,7 +927,7 @@ export default class Ormize<
    * query on top of the caller's `where`. Used to scope a cross-adapter
    * relationship to its join key.
    */
-  resolveFindAll = async(defName: any, source: any, args: { after?: { index: number; }; before?: { index: number; }; limit?: any; }, context: any, selection?: Selection, scope?: {field: string, value: any}) => {
+  resolveFindAll = async(defName: any, source: any, args: FindAllArgs, context: any, selection?: Selection, scope?: {field: string, value: any}) => {
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
     const options = createResolveContext(context, selection, source);

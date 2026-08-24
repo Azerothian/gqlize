@@ -38,6 +38,24 @@ export type AdapterWhere = { [key: string]: any };
 export type AdapterQueryOptions = { [key: string]: any };
 
 /**
+ * The list arguments `Ormize.resolveFindAll` accepts.
+ *
+ * Only the cursor keys are named, because `cursorOffset` is the one thing ormize
+ * itself reads off the bag; everything else — `where`, `orderBy`, `first`,
+ * `include`, and whatever vocabulary a backend adds — is forwarded verbatim to
+ * `adapter.processListArgsToOptions`, whose own `args` parameter is equally open.
+ * Naming *only* the cursor keys and nothing else would make this a weak type, and
+ * TypeScript rejects a weak type outright when the value shares no key with it —
+ * which is every caller that passes just `where` and `first`.
+ */
+export type FindAllArgs = {
+  after?: { index: number };
+  before?: { index: number };
+  limit?: number;
+  [arg: string]: unknown;
+};
+
+/**
  * A row as the adapter returns it — a Sequelize model instance, a plain object,
  * a decoded hash. Only the adapter knows the concrete shape, so the fetch
  * methods take a type parameter and callers that know what they asked for can
