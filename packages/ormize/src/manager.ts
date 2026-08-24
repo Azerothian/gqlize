@@ -4,7 +4,7 @@ import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Model, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
-import { OrmAdapter, DataTypeDescriptor, Selection, FindAllArgs } from '@azerothian/utilize/types/index';
+import { OrmAdapter, AdapterRow, DataTypeDescriptor, Selection, FindAllArgs } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import Events from "./events";
 import OrmizeTransaction from "./transaction";
@@ -886,7 +886,7 @@ export default class Ormize<
     const targetContext = await this.optionsForAdapter(association.source, defName, context);
     return this.resolveFindAll(defName, source, args, targetContext, selection, scope);
   }
-  resolveManyRelationship = async(defName: string, association: Association, source: Model, args: any, context: any, selection?: Selection) => {
+  resolveManyRelationship = async(defName: string, association: Association, source: AdapterRow, args: any, context: any, selection?: Selection) => {
     if (association.crossAdapter) {
       return this.resolveCrossAdapterRelationship(defName, association, source, args, context, selection);
     }
@@ -908,7 +908,7 @@ export default class Ormize<
     // query and the separate path both fire it natively.
     return result;
   }
-  resolveSingleRelationship = async(defName: string, association: Association, source: any, args: any, context: any, selection?: Selection) => {
+  resolveSingleRelationship = async(defName: string, association: Association, source: AdapterRow, args: any, context: any, selection?: Selection) => {
     if (association.crossAdapter) {
       // `countOnly` is inferred from a connection's selection set; a singular
       // relation has no `edges`, so the inference misreads it. It always wants
