@@ -30,7 +30,7 @@ export async function applyExtendFields(
 
   return waterfall(Object.keys(extendFields), async(k: string, o: Record<string, any>) => {
     if (gate) {
-      const result = await gate(k, options.permission.options);
+      const result = await gate(k, options.permission?.options);
       if (!result) {
         return o;
       }
