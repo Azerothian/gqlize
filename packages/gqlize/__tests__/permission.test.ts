@@ -329,6 +329,8 @@ describe("permissions", () => {
       // `modle` is never read, so the model is allowed — the warning is the only
       // signal a JS caller gets. The `roundtrip` project builds twice, so assert
       // on the calls made rather than on a call count.
+      // `as any` stands in for the JS caller: `Permission` is closed, so a
+      // misspelled key is a compile error for a TS one.
       const schema = await createSchema(instance, {permission: {modle: () => false}} as any);
       const warned = warn.mock.calls.some((call) => String(call[0]).includes("modle"));
       expect(warned).toBe(true);

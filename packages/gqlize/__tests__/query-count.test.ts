@@ -26,7 +26,7 @@ async function build(afterCountTransform?: (total: number) => number) {
       type: "hasMany", model: "CChild", name: "children",
       options: { as: "children", foreignKey: "parentId" },
     }],
-  } as any);
+  });
   db.addDefinition({
     name: "CChild",
     define: { name: { type: Sequelize.STRING, allowNull: false } },
@@ -45,7 +45,7 @@ async function build(afterCountTransform?: (total: number) => number) {
         },
       },
     },
-  } as any);
+  });
   await db.initialise();
   await db.sync();
   return db;
@@ -54,7 +54,7 @@ async function build(afterCountTransform?: (total: number) => number) {
 describe("count-only resolution (select total without edges)", () => {
   it("runs a count (beforeCount + afterCount) instead of a findAll for a nested total", async () => {
     const db = await build();
-    const { CParent, CChild } = db.models as any;
+    const { CParent, CChild } = db.models;
     const p = await CParent.create({ name: "p1" });
     await CChild.create({ name: "c1", parentId: p.get("id") });
     await CChild.create({ name: "c2", parentId: p.get("id") });
@@ -75,7 +75,7 @@ describe("count-only resolution (select total without edges)", () => {
 
   it("afterCount can transform the reported total", async () => {
     const db = await build((total) => total * 10);
-    const { CParent, CChild } = db.models as any;
+    const { CParent, CChild } = db.models;
     const p = await CParent.create({ name: "p1" });
     await CChild.create({ name: "c1", parentId: p.get("id") });
     await CChild.create({ name: "c2", parentId: p.get("id") });
@@ -91,7 +91,7 @@ describe("count-only resolution (select total without edges)", () => {
 
   it("selecting edges fetches rows (findAll), not the count-only path", async () => {
     const db = await build();
-    const { CParent, CChild } = db.models as any;
+    const { CParent, CChild } = db.models;
     const p = await CParent.create({ name: "p1" });
     await CChild.create({ name: "c1", parentId: p.get("id") });
 
@@ -108,7 +108,7 @@ describe("count-only resolution (select total without edges)", () => {
 
   it("fires child beforeFind + afterFind exactly once on a JOIN-loaded relation (no double-fire)", async () => {
     const db = await build();
-    const { CParent, CChild } = db.models as any;
+    const { CParent, CChild } = db.models;
     const p = await CParent.create({ name: "p1" });
     await CChild.create({ name: "c1", parentId: p.get("id") });
     await CChild.create({ name: "c2", parentId: p.get("id") });
@@ -127,7 +127,7 @@ describe("count-only resolution (select total without edges)", () => {
 
   it("fires child hooks once via native path on a separate:true (paginated) relation", async () => {
     const db = await build();
-    const { CParent, CChild } = db.models as any;
+    const { CParent, CChild } = db.models;
     const p = await CParent.create({ name: "p1" });
     await CChild.create({ name: "c1", parentId: p.get("id") });
     await CChild.create({ name: "c2", parentId: p.get("id") });
@@ -146,7 +146,7 @@ describe("count-only resolution (select total without edges)", () => {
 
   it("fires child hooks once when separate:true is forced without pagination (no double-fire)", async () => {
     const db = await build();
-    const { CParent, CChild } = db.models as any;
+    const { CParent, CChild } = db.models;
     const p = await CParent.create({ name: "p1" });
     await CChild.create({ name: "c1", parentId: p.get("id") });
     await CChild.create({ name: "c2", parentId: p.get("id") });
@@ -171,7 +171,7 @@ describe("count-only resolution (select total without edges)", () => {
 
   it("top-level total-only runs a count + afterCount", async () => {
     const db = await build();
-    const { CChild } = db.models as any;
+    const { CChild } = db.models;
     await CChild.create({ name: "c1" });
     await CChild.create({ name: "c2" });
     await CChild.create({ name: "c3" });

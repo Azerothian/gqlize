@@ -41,7 +41,7 @@ jest.setTimeout(120000);
 
 async function chainedOrm(models: number) {
   const db = new Ormize();
-  db.registerAdapter(new SequelizeAdapter({}, {dialect: "sqlite", logging: false}) as any, "db");
+  db.registerAdapter(new SequelizeAdapter({}, {dialect: "sqlite", logging: false}), "db");
   // two columns per model: the depth is what is under test, not the width, and
   // every extra column is another few thousand IR entries to serialize
   for (const definition of syntheticDefinitions({models, topology: "chain", fields: 2})) {

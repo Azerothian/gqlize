@@ -43,7 +43,7 @@ function defs(extra = false): any[] {
 
 async function orm(extra = false) {
   const db = new Ormize();
-  db.registerAdapter(new SequelizeAdapter({}, {dialect: "sqlite", logging: false}) as any, "db");
+  db.registerAdapter(new SequelizeAdapter({}, {dialect: "sqlite", logging: false}), "db");
   defs(extra).forEach((def) => db.addDefinition(def));
   await db.initialise();
   return db;
@@ -162,7 +162,7 @@ describe("materializeSchema staleness", () => {
 
   it("loads the stale artifact anyway under `warn`", async() => {
     const artifact = await artifactFor(await orm());
-    const rebuilt = await materializeSchema(artifact, await orm(true), {onMismatch: "warn"} as any);
+    const rebuilt = await materializeSchema(artifact, await orm(true), {onMismatch: "warn"});
     // the artifact's shape, not the live one — `extra` is genuinely absent
     expect(rebuilt.getType("Child")).toBeDefined();
     expect((rebuilt.getType("Child") as any).getFields().extra).toBeUndefined();
@@ -171,7 +171,7 @@ describe("materializeSchema staleness", () => {
   it("falls back to a live build under `rebuild`", async() => {
     const artifact = await artifactFor(await orm());
     const live = await orm(true);
-    const rebuilt = await materializeSchema(artifact, live, {onMismatch: "rebuild"} as any);
+    const rebuilt = await materializeSchema(artifact, live, {onMismatch: "rebuild"});
     // the *live* shape, so the new field is there
     expect((rebuilt.getType("Child") as any).getFields().extra).toBeDefined();
     expect(printSchema(rebuilt)).toEqual(printSchema(await createSchema(live)));
@@ -199,7 +199,7 @@ describe("materializeSchema staleness", () => {
 
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const rebuilt = await materializeSchema(artifact, changed, {checkStaleness: false} as any);
+      const rebuilt = await materializeSchema(artifact, changed, {checkStaleness: false});
       // the artifact's shape, exactly as under `warn` — the model moved and the
       // load did not notice, which is the deal being struck
       expect((rebuilt.getType("Child") as any).getFields().extra).toBeUndefined();

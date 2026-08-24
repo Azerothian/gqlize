@@ -15,17 +15,17 @@ describe("include type for leaf relationship targets", () => {
 
     // Leaf has no relationships of its own -> no include type. `Root.leaf` (belongsTo)
     // previously produced `include: { type: undefined }` and crashed createSchema.
-    db.addDefinition({name: "Leaf", define: {name: {type: Sequelize.STRING, allowNull: false}}} as any);
+    db.addDefinition({name: "Leaf", define: {name: {type: Sequelize.STRING, allowNull: false}}});
     db.addDefinition({
       name: "Root",
       define: {title: {type: Sequelize.STRING, allowNull: false}},
       relationships: [{type: "belongsTo", model: "Leaf", name: "leaf", options: {foreignKey: "leafId"}}],
-    } as any);
+    });
     await db.initialise();
     await db.sync();
 
     const schema = await createSchema(db); // must not throw
-    const {Root, Leaf} = db.models as any;
+    const {Root, Leaf} = db.models;
     const leaf = await Leaf.create({name: "leaf1"});
     await Root.create({title: "root1", leafId: leaf.get("id")});
 
