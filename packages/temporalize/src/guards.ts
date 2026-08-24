@@ -1,8 +1,9 @@
 import { ApplicationFailure } from "@temporalio/common";
-import { isAllowed, isFieldAllowed, isMutationAllowed } from "@azerothian/utilize";
-import type { Permission } from "@azerothian/utilize";
+import { isAllowed, isMutationAllowed } from "@azerothian/utilize";
+import * as shared from "@azerothian/utilize/guards";
+import type { Fail, GuardFailure, Permission } from "@azerothian/utilize";
 import { ErrorType } from "./workflow-types";
-import type { CallerContext, PlainRow, WhereClause } from "./workflow-types";
+import type { CallerContext, PlainRow } from "./workflow-types";
 import type { SchemaSet } from "./registry";
 
 /**
@@ -15,6 +16,19 @@ import type { SchemaSet } from "./registry";
 export function fail(type: string, message: string): never {
   throw ApplicationFailure.nonRetryable(message, type);
 }
+
+/**
+ * The `Fail` the shared guards in `@azerothian/utilize/guards` are given: it
+ * maps their transport-neutral failure kinds onto this package's `ErrorType`
+ * vocabulary and namespaces the message, so a guard rejection is
+ * indistinguishable from one raised here directly.
+ */
+const GUARD_ERROR_TYPE: {[K in GuardFailure]: string} = {
+  "read-only": ErrorType.Forbidden,
+  "denied-field": ErrorType.Forbidden,
+  "unscoped-mutation": ErrorType.UnscopedMutation,
+};
+const guardFail: Fail = (kind, message) => fail(GUARD_ERROR_TYPE[kind], `temporalize: ${message}`);
 
 /**
  * The opaque per-call context. temporalize does not prescribe its shape, but it
@@ -53,9 +67,7 @@ export function assertPagination(limit: unknown, offset: unknown): void {
 }
 
 export function assertWritable(readOnly?: boolean): void {
-  if (readOnly) {
-    fail(ErrorType.Forbidden, "temporalize: worker is read-only");
-  }
+  shared.assertWritable(readOnly, guardFail);
 }
 
 export function assertMutationAllowed(permission: Permission | undefined, name: string, kind: "create" | "update" | "delete"): void {
@@ -73,60 +85,19 @@ export function assertMutationAllowed(permission: Permission | undefined, name: 
   }
 }
 
-/**
- * Guard against unscoped bulk mutations. An empty `where` on an update/delete
- * would match — and mutate/destroy — every row in the table, so a non-empty
- * filter is required unless the caller explicitly opts in via `all: true`.
- */
+/** Guard against unscoped bulk mutations — see `@azerothian/utilize/guards`. */
 export function assertScopedMutation(where: unknown, optIn?: boolean): void {
-  const hasFilter = where && typeof where === "object" && Object.keys(where).length > 0;
-  if (!hasFilter && !optIn) {
-    fail(
-      ErrorType.UnscopedMutation,
-      "temporalize: a 'where' filter is required for a bulk update/delete. Pass all: true to intentionally affect every row."
-    );
-  }
+  shared.assertScopedMutation(where, optIn, "all: true", guardFail);
 }
 
-/**
- * Validate that every field referenced by a filter is permitted for the model.
- * Without this a caller could filter on a permission-denied field (e.g. a
- * password hash) and use the returned row count as a boolean oracle to read its
- * value, even though the field never appears in an activity result.
- */
+/** Validate that every filter field is permitted — see `@azerothian/utilize/guards`. */
 export function assertFilterAllowed(permission: Permission | undefined, name: string, where: unknown): void {
-  if (!where || typeof where !== "object") {
-    return;
-  }
-  const clause = where as WhereClause;
-  const logical = new Set(["and", "or", "not"]);
-  for (const key of Object.keys(clause)) {
-    if (logical.has(key.toLowerCase())) {
-      const branch = clause[key];
-      if (Array.isArray(branch)) {
-        branch.forEach((c) => assertFilterAllowed(permission, name, c));
-      } else {
-        assertFilterAllowed(permission, name, branch);
-      }
-      continue;
-    }
-    if (!isFieldAllowed(permission, name, key)) {
-      fail(ErrorType.Forbidden, `temporalize: unknown or not permitted filter field '${key}'`);
-    }
-  }
+  shared.assertFilterAllowed(permission, name, where, guardFail);
 }
 
 /** Validate that every `orderBy` field is permitted for the model. */
 export function assertOrderAllowed(permission: Permission | undefined, name: string, orderBy: unknown): void {
-  if (!Array.isArray(orderBy)) {
-    return;
-  }
-  for (const entry of orderBy) {
-    const field = Array.isArray(entry) ? entry[0] : entry;
-    if (typeof field === "string" && field && !isFieldAllowed(permission, name, field)) {
-      fail(ErrorType.Forbidden, `temporalize: unknown or not permitted order field '${field}'`);
-    }
-  }
+  shared.assertOrderAllowed(permission, name, orderBy, guardFail);
 }
 
 /** Parse `input` through the model's create/update schema, if one exists. */
@@ -143,57 +114,20 @@ export function validateInput(schemas: SchemaSet, name: string, kind: "create" |
 }
 
 /**
- * ORM instances are not safely serializable into a Temporal activity result —
- * they carry adapter internals and circular references — so every result is
- * flattened to plain JSON before it leaves the activity.
+ * Flatten an ORM instance to plain JSON. Instances are not safely serializable
+ * into a Temporal activity result — they carry adapter internals and circular
+ * references — so every result goes through this before it leaves the activity.
  */
-export function toPlain(v: unknown): unknown {
-  if (Array.isArray(v)) {
-    return v.map((x) => toPlain(x));
-  }
-  // Duck-typed rather than instance-checked: the ORM instance type belongs to the
-  // adapter, and temporalize only knows that one of these two escape hatches
-  // yields plain JSON.
-  const instance = v as { toJSON?: () => unknown; get?: (options: { plain: boolean }) => unknown };
-  if (v && typeof instance.toJSON === "function") {
-    return instance.toJSON();
-  }
-  if (v && typeof instance.get === "function") {
-    return instance.get({ plain: true });
-  }
-  return v;
-}
+export const toPlain = shared.toPlain;
 
 /**
- * Strip permission-denied fields from an output value for model `name`.
- *
- * The generated `entity` schema only contains fields/relationships that pass
- * `isFieldAllowed`/`isRelationshipAllowed`, so its shape keys are exactly the
- * output allow-list. This closes the leak where a denied column (e.g. a password
- * hash) or an adapter-internal attribute (e.g. `full_count`) would otherwise be
- * serialized straight from the raw ORM instance. When no schema exists for the
- * model, the value is returned unchanged.
+ * Strip permission-denied fields from an output value for model `name`, using
+ * the generated `entity` schema's shape as the allow-list. When no schema
+ * exists for the model, the value is returned unchanged.
  */
 export function project(schemas: SchemaSet, name: string, v: unknown): unknown {
-  if (Array.isArray(v)) {
-    return v.map((x) => project(schemas, name, x));
-  }
-  if (!v || typeof v !== "object") {
-    return v;
-  }
   const schema = schemas.entity[name];
-  if (!schema) {
-    return v;
-  }
-  const row = v as { [key: string]: unknown };
-  const allowed = new Set(Object.keys(schema.shape));
-  const out: { [key: string]: unknown } = {};
-  for (const key of Object.keys(row)) {
-    if (allowed.has(key)) {
-      out[key] = row[key];
-    }
-  }
-  return out;
+  return shared.project(v, schema && new Set(Object.keys(schema.shape)));
 }
 
 /** `project(toPlain(v))` — the standard activity result path. */

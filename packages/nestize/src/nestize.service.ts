@@ -9,12 +9,12 @@ import {
 } from "@nestjs/common";
 import {
   isAllowed,
-  isFieldAllowed,
   isModelAllowed,
   isMutationAllowed,
   isRelationshipAllowed,
 } from "@azerothian/utilize";
-import type { AdapterWhere, Association } from "@azerothian/utilize";
+import * as guards from "@azerothian/utilize/guards";
+import type { AdapterWhere, Association, Fail, GuardFailure } from "@azerothian/utilize";
 import type { MutationInputTree, Ormize } from "@azerothian/ormize";
 import { NestizeSchemaRegistry } from "./schema-registry";
 import {
@@ -41,6 +41,19 @@ export type SelectBody = {
   /** Required to run an unscoped (empty `where`) bulk select-mutation. */
   all?: boolean;
 } | undefined;
+
+/**
+ * How this service answers a shared guard rejection. The status codes are the
+ * contract — a denied filter field is a bad request, not a 403, because saying
+ * "forbidden" would itself confirm the field exists — so each kind is mapped
+ * explicitly rather than collapsed onto one exception.
+ */
+const FAIL: Fail = (kind: GuardFailure, message: string): never => {
+  if (kind === "read-only") {
+    throw new HttpException(message, HttpStatus.METHOD_NOT_ALLOWED);
+  }
+  throw new BadRequestException(message);
+};
 
 /**
  * Generic REST facade over the graphql-free ormize resolution engine. Every method
@@ -71,65 +84,22 @@ export class NestizeService {
   }
 
   private assertWritable(): void {
-    if (this.options.readOnly) {
-      throw new HttpException("Read-only API", HttpStatus.METHOD_NOT_ALLOWED);
-    }
+    guards.assertWritable(this.options.readOnly, FAIL);
   }
 
-  /**
-   * Guard against unscoped bulk mutations. An empty `where` on a collection
-   * update/delete would match — and mutate/destroy — every row in the table, so
-   * a non-empty filter is required unless the caller explicitly opts in via
-   * `?all=true` (or `all: true` in a select body).
-   */
+  /** Refuse an unscoped bulk mutation — see `@azerothian/utilize/guards`. */
   private assertScopedMutation(where: unknown, optIn: boolean): void {
-    const hasFilter = where && typeof where === "object" && Object.keys(where).length > 0;
-    if (!hasFilter && !optIn) {
-      throw new BadRequestException(
-        "A 'filter' is required for a bulk update/delete. Pass ?all=true to intentionally affect every row."
-      );
-    }
+    guards.assertScopedMutation(where, optIn, "?all=true", FAIL);
   }
 
-  /**
-   * Validate that every field referenced by a filter is permitted for the model.
-   * Without this, a client could filter on a permission-denied field (e.g. a
-   * password hash) and use the row count as a boolean oracle to read its value,
-   * even though the field never appears in a response body.
-   */
+  /** Validate that every filter field is permitted — see `@azerothian/utilize/guards`. */
   private assertFilterAllowed(name: string, where: unknown): void {
-    if (!where || typeof where !== "object") {
-      return;
-    }
-    const clause = where as AdapterWhere;
-    const logical = new Set(["and", "or", "not"]);
-    for (const key of Object.keys(clause)) {
-      if (logical.has(key.toLowerCase())) {
-        const branch = clause[key];
-        if (Array.isArray(branch)) {
-          branch.forEach((c) => this.assertFilterAllowed(name, c));
-        } else {
-          this.assertFilterAllowed(name, branch);
-        }
-        continue;
-      }
-      if (!isFieldAllowed(this.permission, name, key)) {
-        throw new BadRequestException(`Unknown or not permitted filter field '${key}'`);
-      }
-    }
+    guards.assertFilterAllowed(this.permission, name, where, FAIL);
   }
 
   /** Validate that every `orderBy` field is permitted for the model. */
   private assertOrderAllowed(name: string, orderBy: unknown): void {
-    if (!Array.isArray(orderBy)) {
-      return;
-    }
-    for (const entry of orderBy) {
-      const field = Array.isArray(entry) ? entry[0] : entry;
-      if (typeof field === "string" && field && !isFieldAllowed(this.permission, name, field)) {
-        throw new BadRequestException(`Unknown or not permitted order field '${field}'`);
-      }
-    }
+    guards.assertOrderAllowed(this.permission, name, orderBy, FAIL);
   }
 
   private pkName(name: string): string {
@@ -146,57 +116,18 @@ export class NestizeService {
   }
 
   private toPlain(v: unknown): unknown {
-    if (Array.isArray(v)) {
-      return v.map((x) => this.toPlain(x));
-    }
-    // Duck-typed rather than instance-checked: the ORM instance type belongs to
-    // the adapter, and nestize only knows that one of these two escape hatches
-    // yields plain JSON.
-    const instance = v as { toJSON?: () => unknown; get?: (options: { plain: boolean }) => unknown };
-    if (v && typeof instance.toJSON === "function") {
-      return instance.toJSON();
-    }
-    if (v && typeof instance.get === "function") {
-      return instance.get({ plain: true });
-    }
-    return v;
+    return guards.toPlain(v);
   }
 
   /**
-   * Strip permission-denied fields from an output value for model `name`.
-   *
-   * The generated `entity` schema only contains fields/relationships that pass
-   * `isFieldAllowed`/`isRelationshipAllowed`, so its shape keys are exactly the
-   * output allow-list. This closes the leak where a denied column (e.g. a
-   * password hash) or an adapter-internal attribute (e.g. `full_count`) would
-   * otherwise be serialized straight from the raw ORM instance. When no schema
-   * exists for the model (nothing gated), the value is returned unchanged.
+   * Serialize an ORM instance/list to plain JSON, keeping only the fields the
+   * model's generated `entity` schema exposes — which is exactly the set that
+   * passed the permission gate. See `project` in `@azerothian/utilize/guards`
+   * for why the raw instance must not be serialized directly.
    */
-  private project(name: string, v: unknown): unknown {
-    if (Array.isArray(v)) {
-      return v.map((x) => this.project(name, x));
-    }
-    if (!v || typeof v !== "object") {
-      return v;
-    }
-    const schema = this.registry.entity(name);
-    if (!schema) {
-      return v;
-    }
-    const row = v as PlainRow;
-    const allowed = new Set(Object.keys(schema.shape));
-    const out: PlainRow = {};
-    for (const key of Object.keys(row)) {
-      if (allowed.has(key)) {
-        out[key] = row[key];
-      }
-    }
-    return out;
-  }
-
-  /** Serialize an ORM instance/list to plain JSON, filtered to allowed fields. */
   private present(name: string, v: unknown): unknown {
-    return this.project(name, this.toPlain(v));
+    const schema = this.registry.entity(name);
+    return guards.present(v, schema && new Set(Object.keys(schema.shape)));
   }
 
   /** Load the raw model instance for a pk (needed for relationship accessors). */
