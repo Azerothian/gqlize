@@ -5,6 +5,7 @@ import {Ormize} from "@azerothian/ormize";
 import {describe, it, expect} from "@jest/globals";
 
 import {compareFingerprints, fingerprintDefinitions} from "../../src/snapshot";
+import {describeDrift, stableStringify} from "../../src/graphql/snapshot/fingerprint";
 
 /**
  * The fingerprint is the artifact's staleness check. Two properties matter and
@@ -278,5 +279,104 @@ describe("compareFingerprints", () => {
     const fp = fingerprintDefinitions(await orm());
     expect(compareFingerprints(fp, {...fp, models: "x", gqlizeVersion: "0.0.0"}))
       .toEqual(["gqlizeVersion", "models"]);
+  });
+});
+
+describe("the field-type fallback ladder", () => {
+  /**
+   * `fieldType` tries three projections in order — the GraphQL output type, then
+   * ormize's abstract descriptor, then `String(nativeType)` — and only the first
+   * one ever runs in a healthy build. The lower two exist for an adapter that
+   * cannot answer, and they are load-bearing: the descriptor rung is what keeps
+   * the fingerprint from flipping on sqlite -> postgres, and if the build ever
+   * fell through to the `native:` rung it would flip on exactly that, silently.
+   *
+   * The rungs are module-private, so each is pinned by the `models` digest it
+   * produces: three distinct digests is three distinct code paths, and the
+   * dialect-stability assertion is what says *which* rung produced the middle one.
+   */
+  async function binding(patch: (instance: any) => void, dialect: any = "sqlite") {
+    const {default: GqlizeBinding} = await import("../../src/manager");
+    const instance: any = new GqlizeBinding(await orm(baseDefs(), dialect));
+    patch(instance);
+    return fingerprintDefinitions(instance).models;
+  }
+
+  const blindToGraphQL = (instance: any) => {
+    instance.getGraphQLOutputType = () => {
+      throw new Error("no type mapper");
+    };
+  };
+
+  it("falls back to the ormize descriptor when there is no GraphQL type", async() => {
+    const native = fingerprintDefinitions(await orm()).models;
+    expect(await binding(blindToGraphQL)).not.toEqual(native);
+  });
+
+  it("keeps the descriptor rung dialect-independent", async() => {
+    // The reason this rung sits above `native:`: `String(nativeType)` is
+    // "VARCHAR(255)" on one dialect and something else on the next, so falling
+    // through to it would make a sqlite-built artifact look stale on postgres.
+    expect(await binding(blindToGraphQL, "sqlite"))
+      .toEqual(await binding(blindToGraphQL, "postgres"));
+  });
+
+  it("falls back to the native type when the adapter cannot classify it either", async() => {
+    const descriptor = await binding(blindToGraphQL);
+    const nativeRung = await binding((instance) => {
+      blindToGraphQL(instance);
+      const getModelAdapter = instance.getModelAdapter.bind(instance);
+      instance.getModelAdapter = (defName: string) => {
+        const adapter = getModelAdapter(defName);
+        return adapter && Object.create(adapter, {
+          mapDataType: {value: () => {
+            throw new Error("unclassifiable");
+          }},
+        });
+      };
+    });
+    expect(nativeRung).not.toEqual(descriptor);
+  });
+});
+
+describe("stableStringify", () => {
+  it("writes `undefined` as null rather than dropping it", () => {
+    // `JSON.stringify(undefined)` is itself `undefined`, which would concatenate
+    // into the digest as the literal text "undefined" — or, inside an array,
+    // silently shift every later element. Both would make the hash unstable.
+    expect(stableStringify(undefined)).toBe("null");
+    expect(stableStringify([1, undefined, 2])).toBe("[1,null,2]");
+    expect(stableStringify(() => 1)).toBe("null");
+  });
+
+  it("sorts keys and omits undefined members", () => {
+    expect(stableStringify({b: 1, a: 2, c: undefined})).toBe('{"a":2,"b":1}');
+  });
+});
+
+describe("describeDrift", () => {
+  const artifact: any = {
+    formatVersion: 1, gqlizeVersion: "7.0.0-beta.5", graphqlVersion: "17.0.2",
+    adapters: "aaa", models: "bbb", permissionProfile: "public", optionsShape: "ccc",
+  };
+
+  it("prints the value for the keys where the value is the diagnosis", () => {
+    const live = {...artifact, gqlizeVersion: "7.0.0-beta.6", permissionProfile: null};
+    expect(describeDrift(["gqlizeVersion", "permissionProfile"], artifact, live)).toBe(
+      'gqlizeVersion (artifact "7.0.0-beta.5", live "7.0.0-beta.6"), ' +
+      'permissionProfile (artifact "public", live null)',
+    );
+  });
+
+  it("names a digest key without printing it", () => {
+    // Two sha256s side by side tell an operator nothing; the key alone says
+    // "a model moved, rebuild", which is the whole actionable content.
+    expect(describeDrift(["models", "adapters"], artifact, {...artifact, models: "x"}))
+      .toBe("models, adapters");
+  });
+
+  it("degrades to bare keys when either side is missing", () => {
+    expect(describeDrift(["gqlizeVersion"], artifact, null)).toBe("gqlizeVersion");
+    expect(describeDrift(["gqlizeVersion"], undefined, artifact)).toBe("gqlizeVersion");
   });
 });
