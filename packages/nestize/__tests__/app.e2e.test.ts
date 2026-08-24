@@ -4,11 +4,12 @@ import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { createRoleBasedPermissions } from "@azerothian/utilize";
 import { NestizeModule } from "../src";
+import type { Ormize } from "@azerothian/ormize";
 import { buildOrm } from "./helper";
 
 describe("nestize - REST e2e", () => {
   let app: INestApplication;
-  let orm: any;
+  let orm: Ormize;
   let http: any;
 
   beforeAll(async () => {

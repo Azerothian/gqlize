@@ -1,15 +1,19 @@
 import { Controller, DynamicModule, Module, Provider, Type } from "@nestjs/common";
+import type { FactoryProvider, ModuleMetadata } from "@nestjs/common";
+import type { Ormize } from "@azerothian/ormize";
 import { NestizeService } from "./nestize.service";
 import { NestizeSchemaRegistry } from "./schema-registry";
 import { NestizeController } from "./controllers";
 import { NestizeOptions, NESTIZE_OPTIONS, ORMIZE } from "./types";
 
+/** What `useFactory` must resolve to: the initialised instance, plus options. */
+export type NestizeAsyncResult = { orm: Ormize; options?: NestizeOptions };
+
 export type NestizeAsyncOptions = {
-  imports?: any[];
-  inject?: any[];
-  useFactory: (
-    ...args: any[]
-  ) => { orm: any; options?: NestizeOptions } | Promise<{ orm: any; options?: NestizeOptions }>;
+  imports?: ModuleMetadata["imports"];
+  inject?: FactoryProvider["inject"];
+  /** `...args: any[]` mirrors Nest's own factory contract: what is injected is `inject`'s business. */
+  useFactory: (...args: any[]) => NestizeAsyncResult | Promise<NestizeAsyncResult>;
   /**
    * Route path prefix. Must be supplied here (not via the async `options`)
    * because Nest needs `controllers` synchronously at module-definition time,
@@ -22,7 +26,7 @@ export type NestizeAsyncOptions = {
 // Apply the optional pathPrefix by subclassing the base controller and (re)applying
 // `@Controller(prefix)` — this overrides the base's empty path without mutating the
 // shared base metadata (so multiple modules with different prefixes coexist).
-function buildControllers(prefix?: string): Type<any>[] {
+function buildControllers(prefix?: string): Type<NestizeController>[] {
   if (!prefix) {
     return [NestizeController];
   }
@@ -44,7 +48,7 @@ const sharedProviders: Provider[] = [
  */
 @Module({})
 export class NestizeModule {
-  static forRoot(orm: any, options: NestizeOptions = {}): DynamicModule {
+  static forRoot(orm: Ormize, options: NestizeOptions = {}): DynamicModule {
     return {
       module: NestizeModule,
       controllers: buildControllers(options.pathPrefix),
@@ -72,12 +76,12 @@ export class NestizeModule {
         {
           provide: ORMIZE,
           inject: ["NESTIZE_ASYNC_RESULT"],
-          useFactory: (r: { orm: any }) => r.orm,
+          useFactory: (r: NestizeAsyncResult) => r.orm,
         },
         {
           provide: NESTIZE_OPTIONS,
           inject: ["NESTIZE_ASYNC_RESULT"],
-          useFactory: (r: { options?: NestizeOptions }) => r.options || {},
+          useFactory: (r: NestizeAsyncResult) => r.options || {},
         },
         ...sharedProviders,
       ],

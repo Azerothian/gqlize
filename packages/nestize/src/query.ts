@@ -3,15 +3,18 @@
 // `[field, "ASC"|"DESC"]` tuples, and REST `offset` is mapped onto the engine's
 // cursor model (`after.index = offset - 1`).
 import { BadRequestException } from "@nestjs/common";
+import type { AdapterWhere } from "@azerothian/utilize";
+import type { RestQuery } from "./types";
 
 export type ParsedListArgs = {
-  where?: any;
+  where?: AdapterWhere;
   orderBy?: [string, "ASC" | "DESC"][];
   first?: number;
   last?: number;
   after?: { index: number };
   before?: { index: number };
-  include?: any;
+  /** Eager-include plan. Never set by `parseListQuery`; the engine fills it in. */
+  include?: unknown;
 };
 
 export type ParsedQuery = {
@@ -22,22 +25,23 @@ export type ParsedQuery = {
   count?: boolean;
 };
 
-function parseFilter(raw: any): any {
+function parseFilter(raw: unknown): AdapterWhere | undefined {
   if (raw === undefined || raw === null || raw === "") {
     return undefined;
   }
   if (typeof raw === "object") {
-    return raw;
+    return raw as AdapterWhere;
   }
   try {
     return JSON.parse(String(raw));
-  } catch (e: any) {
-    throw new BadRequestException(`Invalid 'filter' query parameter (expected JSON): ${e?.message || e}`);
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new BadRequestException(`Invalid 'filter' query parameter (expected JSON): ${detail}`);
   }
 }
 
 // `?order=name,-createdAt` or `?order=nameASC,fooDESC` → tuples.
-function parseOrder(raw: any): [string, "ASC" | "DESC"][] | undefined {
+function parseOrder(raw: unknown): [string, "ASC" | "DESC"][] | undefined {
   if (!raw) {
     return undefined;
   }
@@ -73,7 +77,7 @@ function parseOrder(raw: any): [string, "ASC" | "DESC"][] | undefined {
   });
 }
 
-function toInt(raw: any): number | undefined {
+function toInt(raw: unknown): number | undefined {
   if (raw === undefined || raw === null || raw === "") {
     return undefined;
   }
@@ -86,7 +90,7 @@ function toInt(raw: any): number | undefined {
  * engine arg shape. `offset` is translated to the engine's cursor form:
  * `args.after = { index: offset - 1 }` when `offset > 0`, and `limit` → `args.first`.
  */
-export function parseListQuery(query: any = {}): ParsedQuery {
+export function parseListQuery(query: RestQuery = {}): ParsedQuery {
   const where = parseFilter(query.filter);
   const orderBy = parseOrder(query.order);
   const limit = toInt(query.limit);
@@ -126,6 +130,6 @@ export function parseListQuery(query: any = {}): ParsedQuery {
 }
 
 /** Parse just the filter object from `?filter=<json>` (used by update/delete). */
-export function parseWhere(query: any = {}): any {
+export function parseWhere(query: RestQuery = {}): AdapterWhere | undefined {
   return parseFilter(query.filter);
 }
