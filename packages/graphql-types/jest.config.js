@@ -1,3 +1,5 @@
+const workspaceModuleNameMapper = require('../../scripts/jest/module-name-mapper');
+
 /** @type {import('jest').Config} */
 module.exports = {
   collectCoverage: true,
@@ -13,6 +15,7 @@ module.exports = {
       module: { type: 'commonjs' },
     }],
   },
+  moduleNameMapper: workspaceModuleNameMapper('graphql-types'),
   testMatch: ["**/__tests__/**/?(*.)+(spec|test).[jt]s?(x)"],
   passWithNoTests: true,
 };
