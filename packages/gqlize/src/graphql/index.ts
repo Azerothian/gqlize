@@ -16,7 +16,7 @@ import createMutationInput from "./create-mutation-input";
 import createSchemaCache from "./create-schema-cache";
 import computeVisibleModels from "./utils/visible-models";
 import GQLManager from '../manager';
-import { GqlizeOptions, GqlizeAdapter, SchemaCache } from '../types';
+import { GqlizeOptions, GqlizeAdapter, SchemaCache, SchemaHatch } from '../types';
 import { bindField } from "./resolvers/bind";
 import { applyExtendFields } from "./extend";
 import { createLedger, recordExternalType, setLedger } from "./snapshot/ledger";
@@ -315,7 +315,7 @@ export async function createSchema(dbInstance: GQLManager, options: GqlizeOption
     );
   }
 
-  (schema as any).$sql2gql = {
+  (schema as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql = {
     types: schemaObjects.types,
   };
   // Lets `snapshotSchema(schema)` fingerprint the definitions later without the

@@ -140,7 +140,13 @@ export interface OrmAdapter {
   getModel(modelName: string): Model;
   getAssociations(defName: string): {[relName: string]: Association};
   getValueFromInstance(model: AdapterRow, sourceKey: string): unknown;
-  getFields(defName: string): {[fieldName: string]: DefinitionField};
+  /**
+   * The fields of a created model, as the adapter knows them — which is
+   * {@link DefinitionFieldMeta}, not the {@link DefinitionField} a user authors:
+   * the adapter fills in `name` and resolves `foreignTarget` from the
+   * associations it wired.
+   */
+  getFields(defName: string): {[fieldName: string]: DefinitionFieldMeta};
   createRelationship(defName: string, modelName: string, relName: string, relType: string, relOptions: Relationship["options"]): unknown;
   getPrimaryKeyNameForModel(modelName: string): string[];
   /**

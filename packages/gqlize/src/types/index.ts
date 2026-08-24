@@ -13,6 +13,7 @@ import type {
   GraphQLInputType,
   GraphQLNullableInputType,
   GraphQLOutputType,
+  GraphQLType,
 } from "graphql";
 
 /** Already-built field configs, keyed by field name — what a `fields()` thunk returns. */
@@ -57,4 +58,32 @@ export type SchemaCache = {
   basicFields: { [modelName: string]: GqlFieldMap };
   complexFields: { [modelName: string]: GqlFieldMap };
   relatedFields: { [modelName: string]: GqlFieldMap };
+};
+
+/**
+ * The `$sql2gql` escape hatch hung off every generated model type: the three
+ * field partitions the builder assembled the type from, still as thunks, so a
+ * caller can take a model's fields apart the same way. `fields` is an empty slot
+ * the builder never fills — it is there for callers to hang their own on.
+ *
+ * Not part of the GraphQL type system, which is why every site that attaches one
+ * has to widen the type it is attaching to.
+ */
+export type ModelTypeHatch = {
+  basicFields: () => GqlFieldMap;
+  relatedFields: () => GqlFieldMap;
+  complexFields: () => GqlFieldMap;
+  fields: GqlFieldMap;
+};
+
+/**
+ * The `$sql2gql` escape hatch hung off the built `GraphQLSchema`: every generated
+ * model type by name, with a `Name[]` entry per list wrapper. Documented in
+ * `docs/specifications.md`.
+ *
+ * A key can hold `undefined` — a permission-denied model leaves a hole rather
+ * than dropping the key, and the relay node mapper is fed this exact map.
+ */
+export type SchemaHatch = {
+  types: { [name: string]: GraphQLType | undefined };
 };
