@@ -2,6 +2,7 @@ import { Definition, GqlizeOptions, SchemaCache } from "../types";
 import GQLManager from '../manager';
 import { bindField } from "./resolvers/bind";
 import { recordExternalType } from "./snapshot/ledger";
+import type { GraphQLOutputType } from "graphql";
 
 
 export default function createComplexFieldsFunc(
@@ -20,7 +21,10 @@ export default function createComplexFieldsFunc(
         const instanceMethods = definition.expose.instanceMethods.query;
         Object.keys(instanceMethods).forEach((methodName) => {
           const {type, args} = instanceMethods[methodName];
-          let targetType = (typeof type === "string") ? schemaCache.types[type] : type;
+          // A `string` names a model whose type is in the cache; anything else is
+          // the built output type itself. The slot is `unknown` because the layer
+          // that declares it is graphql-free — see `utils/authored-type`.
+          const targetType = ((typeof type === "string") ? schemaCache.types[type] : type) as GraphQLOutputType | undefined;
           if (!targetType) {
             //target does not exist.. excluded from base types?
             return;

@@ -23,6 +23,7 @@ cleanly — that section is where working code breaks.
    - [Role-based permissions now gate `extend` fields and mutation inputs](#role-based-permissions-now-gate-extend-fields-and-mutation-inputs)
    - [Unknown `permission` keys are a type error, and warn at build time](#unknown-permission-keys-are-a-type-error-and-warn-at-build-time)
    - [The adapter contract is typed, and `setBuildPermission` is part of it](#the-adapter-contract-is-typed-and-setbuildpermission-is-part-of-it)
+   - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
 4. [The graphql patch](#4-the-graphql-patch)
 5. [New in 7.x](#5-new-in-7x)
 6. [Checklist](#6-checklist)
@@ -382,6 +383,41 @@ hand-off actually carries; `@azerothian/gqlize/graphql/utils/build-include-from-
 re-exports both. `Definition.ignoreFields` is `string[]` and `Definition.comments` is a
 `DefinitionComments` (`{fields?, classMethods?, instanceMethods?}`).
 
+### Definition `type` slots are `unknown`, not `any`
+
+`DefinitionField.type`, `Definition.override.*.type` / `.inputType` and the four
+`Definition.expose.*.type` slots are now `unknown`. Nothing changes for authoring a definition:
+`unknown` accepts every value, so `type: DataTypes.String`, `type: GraphQLString` and
+`type: {name: "Point", fields: {...}}` all still assign. They cannot be typed more tightly here,
+because what belongs in them is a `DataType` member, an adapter-native type *or* a `graphql` type —
+and `@azerothian/utilize` must not import `graphql`.
+
+What changes is *reading* them. Code that pulled a property straight off one of these slots now has
+to narrow first, which is what the builders already did at runtime:
+
+```ts
+// before — `any`, so this compiled whether or not the author supplied a built type
+const name = definition.override.point.type.name;
+
+// after — say which form you are handling
+import {isBuiltOutputType} from "@azerothian/gqlize/graphql/utils/authored-type";
+
+const slot = definition.override.point.type;
+const type = isBuiltOutputType(slot)
+  ? slot                                                  // already a GraphQLObjectType/Scalar/Enum
+  : new GraphQLObjectType(slot as GraphQLObjectTypeConfig<any, any>);  // a config for one
+```
+
+`isBuiltOutputType` / `isBuiltInputType` and the `AuthoredTypeSlot` shape (`{name, fields?}` — what
+both forms have in common) are exported from
+`@azerothian/gqlize/graphql/utils/authored-type` for exactly this.
+
+Two smaller consequences, both only visible to code that touches the internals: `recordExternalType`
+now accepts any `GraphQLType`, wrappers included, rather than only named types — it unwraps with
+`getNamedType` and always did. And `SchemaCache.mutationInputFields` is `GraphQLNullableInputType`,
+since the bucket only ever holds an input object or a list of one; callers apply
+`GraphQLNonNull` themselves.
+
 ## 4. The graphql patch
 
 6.x solved [graphql-spec #252](https://github.com/graphql/graphql-spec/issues/252) — nested mutation
@@ -455,6 +491,9 @@ Not required for migration, but this is what the split bought:
 - [ ] Third-party adapters recompiled against the typed `OrmAdapter` / `GqlizeAdapter`, and
       `setBuildPermission` implemented if their filter/order/include builders gate on a permission
       bag.
+- [ ] Code that *reads* a definition's `type` / `inputType` slot narrows it — `isBuiltOutputType` /
+      `isBuiltInputType` — instead of reading properties off what used to be `any`. Authoring a
+      definition is unaffected.
 
 For everything else, [**guide.md**](guide.md) is the 7.x usage guide and
 [**specifications.md**](specifications.md) is the API/contract reference.

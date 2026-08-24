@@ -1,7 +1,8 @@
 import {
-  GraphQLInputObjectType, GraphQLNonNull, GraphQLScalarType, GraphQLEnumType, GraphQLList, GraphQLInt,
+  GraphQLNonNull, GraphQLList, GraphQLInt,
   GraphQLID, GraphQLBoolean,
 } from "graphql";
+import type { GraphQLNullableInputType } from "graphql";
 import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
@@ -12,6 +13,7 @@ import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
 import { Relationship } from '../types/index';
 import { recordExternalType } from "./snapshot/ledger";
+import { isBuiltInputType, type AuthoredTypeSlot } from "./utils/authored-type";
 
 /** Whether a relationship may appear on a create/update input object. */
 function isRelationshipInputAllowed(options: GqlizeOptions, defName: string, relName: string, forceOptional: boolean) {
@@ -66,7 +68,9 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       const overrideFieldDefinition = definition.override[fieldName];
 
       if (overrideFieldDefinition) {
-        const type = overrideFieldDefinition.inputType || overrideFieldDefinition.type;
+        // Both forms an author may write carry a `name`; only the config form
+        // carries `fields`, which is read in the build branch below.
+        const type = (overrideFieldDefinition.inputType || overrideFieldDefinition.type) as AuthoredTypeSlot;
         let name = type.name;
         if (!overrideFieldDefinition.inputType) {
           name = `${type.name}${capitalize(fieldName)}Input`;
@@ -74,14 +78,11 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         if (forceOptional) {
           name = `${capitalize(type.name)}Optional${capitalize(fieldName)}`;
         }
-        let inputType;
-        if (!(overrideFieldDefinition.type instanceof GraphQLInputObjectType) &&
-          !(overrideFieldDefinition.type instanceof GraphQLScalarType) &&
-          !(overrideFieldDefinition.type instanceof GraphQLEnumType)) {
-          inputType = createGQLInputObject(name, type.fields, schemaCache, comment);
-        } else {
-          inputType = type;
-        }
+        // The guard reads `type`, not `inputType`, exactly as before: an override
+        // that supplies a built `inputType` supplies a built `type` alongside it.
+        const inputType: GraphQLNullableInputType = isBuiltInputType(overrideFieldDefinition.type)
+          ? type as unknown as GraphQLNullableInputType
+          : createGQLInputObject(name, type.fields, schemaCache, comment);
         recordExternalType(schemaCache, inputType, {
           via: "definitionOverride",
           defName,

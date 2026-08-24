@@ -2,10 +2,9 @@ import {
   // GraphQLSchema,
   GraphQLObjectType,
   GraphQLNonNull,
-  GraphQLScalarType,
-  GraphQLEnumType,
   // GraphQLList,
 } from "graphql";
+import type { GraphQLObjectTypeConfig } from "graphql";
 
 // import {
 //   fromGlobalId,
@@ -20,6 +19,7 @@ import GQLManager from '../manager';
 import { Definition, GqlizeOptions, SchemaCache } from '../types';
 import { bindField } from "./resolvers/bind";
 import { recordExternalType } from "./snapshot/ledger";
+import { isBuiltOutputType } from "./utils/authored-type";
 
 
 export default function createBasicFieldsFunc(defName: string, instance: GQLManager, definition: Definition, options: GqlizeOptions, schemaCache: SchemaCache) {
@@ -91,23 +91,18 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
             throw new Error(`Unable to find the field definition for ${defName}->${fieldName}. Please check your model definition for invalid configuration.`);
           }
           const overrideFieldDefinition = overrideDefs[fieldName];
-          let type;
-          if (!(overrideFieldDefinition.type instanceof GraphQLObjectType) &&
-            !(overrideFieldDefinition.type instanceof GraphQLScalarType) &&
-            !(overrideFieldDefinition.type instanceof GraphQLEnumType)) {
-            type = new GraphQLObjectType(overrideFieldDefinition.type);
-          } else {
-            type = overrideFieldDefinition.type;
-          }
-          recordExternalType(schemaCache, type, {
+          // An override may name an already-built type or the config to build one.
+          // See `isBuiltOutputType` for why the slot arrives here as `unknown`.
+          const namedType = isBuiltOutputType(overrideFieldDefinition.type)
+            ? overrideFieldDefinition.type
+            : new GraphQLObjectType(overrideFieldDefinition.type as GraphQLObjectTypeConfig<any, any>);
+          recordExternalType(schemaCache, namedType, {
             via: "definitionOverride",
             defName,
             fieldName,
             use: "type",
           });
-          if (!fieldDefinition.allowNull) {
-            type = new GraphQLNonNull(type);
-          }
+          const type = fieldDefinition.allowNull ? namedType : new GraphQLNonNull(namedType);
           const config = {
             // description: overrideFieldDefinition.description || fieldDefinition.description,
             type,

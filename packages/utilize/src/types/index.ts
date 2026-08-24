@@ -312,7 +312,8 @@ export type Relationship = {
 
 export type DefinitionFieldMeta = {
   name?: string;
-  type: any;
+  /** See {@link DefinitionField.type}. */
+  type: unknown;
   foreignKey?: boolean;
   unique?: boolean;
   // Non-unique secondary index marker (see DefinitionField.index).
@@ -333,7 +334,13 @@ export type DefinitionFieldMeta = {
 }
 
 export type DefinitionField = {
-  type: any;
+  /**
+   * The field's type token, as authored: a `DataType` member, an adapter-native
+   * type, or a GraphQL type. `unknown` rather than `any` because this package is
+   * graphql-free and adapter-agnostic — it cannot name the union, and every
+   * reader (adapter or gqlize builder) already dispatches on it at runtime.
+   */
+  type: unknown;
   foreignKey?: boolean;
   unique?: boolean;
   // Marks a field as a (non-unique) secondary index. Adapters that build their
@@ -374,8 +381,10 @@ export type Definition = {
   override?: { 
     [fieldName: string]: {
       description?: string
-      type?: any,
-      inputType?: any,
+      /** See {@link DefinitionField.type}. */
+      type?: unknown,
+      /** See {@link DefinitionField.type}. */
+      inputType?: unknown,
       input?: (o: any, args: any, context: any, info: any, model: any) => any;
       output?: any
     }
@@ -393,7 +402,8 @@ export type Definition = {
     classMethods?: {
       query?: {
         [name: string]: {
-          type: any;
+          /** See {@link DefinitionField.type}. */
+          type: unknown;
           args?: any;
           before?: any;
           after?: any;
@@ -401,7 +411,8 @@ export type Definition = {
       }
       mutations?: {
         [name: string]: {
-          type: any;
+          /** See {@link DefinitionField.type}. */
+          type: unknown;
           args?: any;
           before?: any;
           after?: any;
@@ -411,7 +422,8 @@ export type Definition = {
     instanceMethods?: {
       query?: {
         [name: string]: {
-          type: any;
+          /** See {@link DefinitionField.type}. */
+          type: unknown;
           args?: any;
           before?: any;
           after?: any;
@@ -419,7 +431,8 @@ export type Definition = {
       }
       mutations?: {
         [name: string]: {
-          type: any;
+          /** See {@link DefinitionField.type}. */
+          type: unknown;
           args?: any;
           before?: any;
           after?: any;
@@ -464,9 +477,15 @@ export type Definitions = {
   [name: string]: Definition
 }
 
+/**
+ * An adapter's model handle — a Sequelize `ModelStatic`, a descriptor object,
+ * whatever the backend registers. Indexed by name because adapters install
+ * relationship accessors and definition methods onto it dynamically, which is
+ * the whole reason it cannot be described more tightly here.
+ */
 export type Model = {
   [name: string]: any
-  prototype: any
+  prototype: Record<string, unknown>
 }
 
 export type HookMap = {

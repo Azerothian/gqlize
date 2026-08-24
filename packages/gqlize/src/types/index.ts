@@ -11,6 +11,7 @@ export * from "./gqlize-adapter";
 import type {
   GraphQLFieldConfig,
   GraphQLInputType,
+  GraphQLNullableInputType,
   GraphQLOutputType,
 } from "graphql";
 
@@ -47,7 +48,12 @@ export type SchemaCache = {
   classMethodMutations: GqlFieldMap;
   mutationInputs: { [modelName: string]: MutationInputSet };
   mutationModels: GqlFieldMap;
-  mutationInputFields: { [name: string]: GraphQLInputType };
+  /**
+   * Nullable rather than the full input union on purpose: this bucket only ever
+   * holds an input object or a list of one, and callers wrap it in
+   * `GraphQLNonNull` themselves.
+   */
+  mutationInputFields: { [name: string]: GraphQLNullableInputType };
   basicFields: { [modelName: string]: GqlFieldMap };
   complexFields: { [modelName: string]: GqlFieldMap };
   relatedFields: { [modelName: string]: GqlFieldMap };

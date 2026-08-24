@@ -1,4 +1,4 @@
-import { getNamedType, isIntrospectionType, isSpecifiedScalarType, type GraphQLNamedType } from "graphql";
+import { getNamedType, isIntrospectionType, isSpecifiedScalarType, type GraphQLNamedType, type GraphQLType } from "graphql";
 
 /**
  * Where a user-authored GraphQL type entered the schema.
@@ -98,7 +98,9 @@ export function getLedger(schemaCache: any): GqlizeBuildLedger | undefined {
  */
 export function recordExternalType(
   schemaCache: any,
-  type: GraphQLNamedType | { name?: string } | undefined,
+  // Wrappers are accepted as well as named types: `getNamedType` below unwraps
+  // them, and callers legitimately hand over a `GraphQLNonNull`/`GraphQLList`.
+  type: GraphQLType | { name?: string } | undefined,
   ref: ExternalTypeRef,
 ) {
   const ledger = getLedger(schemaCache);
