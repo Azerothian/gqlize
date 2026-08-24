@@ -38,6 +38,20 @@ export type AdapterWhere = { [key: string]: any };
 export type AdapterQueryOptions = { [key: string]: any };
 
 /**
+ * The caller's per-request context, threaded through every resolve and mutation,
+ * handed to `definition.before`/`after` hooks and merged into the options bag the
+ * adapter receives.
+ *
+ * Deliberately `any`: the shape belongs to the application — gqlize passes the
+ * GraphQL execution context, nestize passes `{req}` — and ormize forwards it
+ * untouched apart from one optional key it reads and re-stamps itself
+ * (`transaction`). The same value is also accepted anywhere an
+ * {@link AdapterQueryOptions} bag is, so `unknown` would move the narrowing out
+ * to every call site without making anything more certain.
+ */
+export type RequestContext = any;
+
+/**
  * The list arguments `Ormize.resolveFindAll` accepts.
  *
  * Only the cursor keys are named, because `cursorOffset` is the one thing ormize
@@ -143,7 +157,8 @@ export interface OrmAdapter {
   /** Row count carried alongside the rows by backends that support it (`hasInlineCountFeature`). */
   getInlineCount(models: AdapterRow[]): Promise<number>;
   count(defName: string, options: AdapterQueryOptions): Promise<number>;
-  processFilterArgument(where: AdapterWhere, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): AdapterWhere | Promise<AdapterWhere>;
+  /** `where` may be absent — an operation with no filter — which every adapter reads as "match everything". */
+  processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): AdapterWhere | Promise<AdapterWhere>;
   /**
    * Optional: merge a single equality (or, for array values, membership) filter
    * into an already-processed `where`, returning the combined adapter-native
@@ -213,10 +228,14 @@ export type Selection = {
   variableValues?: {[name: string]: any};
   /** opaque passthrough; gqlize stashes the real GraphQLResolveInfo here so hooks still see `info` */
   raw?: unknown;
-  /** default identity; gqlize passes replaceIdDeep bound to variableValues */
-  translateFilter?: (where: AdapterWhere, globalKeys: string[]) => AdapterWhere;
+  /**
+   * default identity; gqlize passes replaceIdDeep bound to variableValues.
+   * Generic so an absent filter stays absent: a relationship sub-mutation may
+   * carry no `where` at all, and translating one is not what supplies it.
+   */
+  translateFilter?: <W extends AdapterWhere | undefined>(where: W, globalKeys: string[]) => W;
   /** default identity; gqlize passes v => fromGlobalId(v).id */
-  translateId?: (value: any) => any;
+  translateId?: (value: unknown) => unknown;
 };
 
 /**
@@ -248,7 +267,8 @@ export interface IncludeMap {
 
 
 export type GqlizeOptions = {
-  globalHooks?: {[name: string]: {}}
+  /** Hooks applied to every model, keyed by hook name — see {@link HookMap}. */
+  globalHooks?: HookMap
   /**
    * The predicate bag gating what gets generated. Closed by design — see
    * {@link Permission} in `../gate` for why a typo has to be a compile error.
