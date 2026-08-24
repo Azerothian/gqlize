@@ -15,7 +15,7 @@ import {
   isRelationshipAllowed,
 } from "@azerothian/utilize";
 import type { AdapterWhere, Association } from "@azerothian/utilize";
-import type { Ormize } from "@azerothian/ormize";
+import type { MutationInputTree, Ormize } from "@azerothian/ormize";
 import { NestizeSchemaRegistry } from "./schema-registry";
 import {
   NESTIZE_OPTIONS,
@@ -35,7 +35,7 @@ export type MethodKind = "query" | "mutation";
 
 /** Body of `POST /:resource/select`. */
 export type SelectBody = {
-  input?: unknown;
+  input?: MutationInputTree;
   where?: AdapterWhere;
   limit?: number;
   /** Required to run an unscoped (empty `where`) bulk select-mutation. */
