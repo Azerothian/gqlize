@@ -16,6 +16,7 @@ import { mapDataType, toNativeType } from "./data-type-mapper";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "./utils/replace-id-deep";
 import * as G from "./graphql";
+import type { GqlizeAdapter } from "@azerothian/gqlize/types/gqlize-adapter";
 
 const log = logger("ormize::adapter::valkey::");
 
@@ -77,7 +78,7 @@ function relNames(name: string): { nameCap: string; singCap: string } {
  * driven exclusively by index/mapping structures (never a keyspace scan). See the
  * package README + docs/guide.md.
  */
-export default class ValkeyAdapter implements OrmAdapter {
+export default class ValkeyAdapter implements GqlizeAdapter {
   adapterName = "valkey";
   client: ValkeyClient;
   options: ValkeyAdapterOptions;

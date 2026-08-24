@@ -18,7 +18,13 @@ export interface GqlizeAdapter extends OrmAdapter {
    * alongside the relay cursor arguments it adds itself.
    */
   getDefaultListArgs(defName: string, definition: Definition, permission?: Permission): GraphQLFieldConfigArgumentMap;
-  getOrderByGraphQLType(defName: string, permission?: Permission): GraphQLInputType;
+  /**
+   * Undefined when the model has nothing orderable — which happens when the
+   * permission bag denies every field. An enum with no members is an invalid
+   * GraphQL type, so an adapter must return nothing rather than an empty one,
+   * and callers omit the `orderBy` argument entirely.
+   */
+  getOrderByGraphQLType(defName: string, permission?: Permission): GraphQLInputType | undefined;
   getFilterGraphQLType(defName: string, definition: Definition, permission?: Permission): GraphQLInputType;
   /**
    * Relay global ids arrive opaque; both hooks rewrite them to their underlying
