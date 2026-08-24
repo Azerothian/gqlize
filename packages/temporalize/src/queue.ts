@@ -1,8 +1,9 @@
+import type { Ormize } from "@azerothian/ormize";
 import type { QueueMap, TemporalizeOptions } from "./types";
 
 /** Definitions the options allow us to generate for, in registration order. */
-export function listModels(orm: any, options: TemporalizeOptions = {}): string[] {
-  const defs = (orm.getDefinitions && orm.getDefinitions()) || {};
+export function listModels(orm: Ormize, options: TemporalizeOptions = {}): string[] {
+  const defs = orm.getDefinitions() || {};
   const names = Object.keys(defs);
   if (!options.models) {
     return names;
@@ -17,7 +18,7 @@ export function listModels(orm: any, options: TemporalizeOptions = {}): string[]
  * wins outright; otherwise a `queueName` callback wins; otherwise the segments
  * are composed.
  */
-export function resolveQueueName(orm: any, model: string, options: TemporalizeOptions = {}): string {
+export function resolveQueueName(orm: Ormize, model: string, options: TemporalizeOptions = {}): string {
   const override = options.queues && options.queues[model];
   if (override) {
     return override;
@@ -26,7 +27,7 @@ export function resolveQueueName(orm: any, model: string, options: TemporalizeOp
   if (!definition) {
     throw new Error(`temporalize: unknown model '${model}'`);
   }
-  const datasource = (orm.defsAdapters && orm.defsAdapters[model]) || definition.datasource || "";
+  const datasource = orm.defsAdapters[model] || definition.datasource || "";
   if (options.queueName) {
     return options.queueName({ model, datasource, definition });
   }
@@ -42,7 +43,7 @@ export function resolveQueueName(orm: any, model: string, options: TemporalizeOp
  * factory iterates: a `queues` override can legitimately land several models on
  * one queue, and that worker must register all of their activities.
  */
-export function buildQueueMap(orm: any, options: TemporalizeOptions = {}): QueueMap {
+export function buildQueueMap(orm: Ormize, options: TemporalizeOptions = {}): QueueMap {
   const byModel: { [model: string]: string } = {};
   const byQueue: { [queue: string]: string[] } = {};
   for (const model of listModels(orm, options)) {

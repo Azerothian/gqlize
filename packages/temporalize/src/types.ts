@@ -1,4 +1,4 @@
-import type { Definition, Permission } from "@azerothian/utilize";
+import type { Definition, Permission, PermissionContext } from "@azerothian/utilize";
 
 export type QueueNameInput = {
   /** Definition (model) name, e.g. `"Task"`. */
@@ -26,7 +26,7 @@ export interface TemporalizeOptions {
    * When omitted temporalize does no gating — it only propagates `context` into
    * ormize's ambient store for `definition.before`/`after` hooks to act on.
    */
-  resolvePermission?: (context: any) => Permission | undefined | Promise<Permission | undefined>;
+  resolvePermission?: (context: PermissionContext) => Permission | undefined | Promise<Permission | undefined>;
   /** Validate `input` against the ormize-zod4 create/update schemas. Defaults to `true`. */
   validate?: boolean;
   /** Refuse every mutating activity. Defaults to `false`. */
@@ -50,4 +50,11 @@ export type QueueMap = {
   byQueue: { [queue: string]: string[] };
 };
 
-export type ActivityMap = { [activityName: string]: (req: any) => Promise<any> };
+/**
+ * The generated activities, keyed by activity name. `req` stays `any`: this is a
+ * heterogeneous dispatch map — `Task.findAll` and `Task.create` take different
+ * argument shapes — and Temporal's `Worker.create` indexes it by string. The
+ * per-model shapes are named by `ModelActivities` in `workflow-types`, which is
+ * what a caller should reach for when it knows the model.
+ */
+export type ActivityMap = { [activityName: string]: (req: any) => Promise<unknown> };

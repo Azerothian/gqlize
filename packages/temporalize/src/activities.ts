@@ -1,9 +1,25 @@
 import { isAllowed, isModelAllowed } from "@azerothian/utilize";
-import type { Permission } from "@azerothian/utilize";
+import type { Definition, Permission, PermissionContext } from "@azerothian/utilize";
+import type { Ormize } from "@azerothian/ormize";
 import { TemporalizeRegistry } from "./registry";
 import type { SchemaSet } from "./registry";
 import type { ActivityMap, TemporalizeOptions } from "./types";
 import { listModels } from "./queue";
+import type {
+  ActivityRequest,
+  ByPkArgs,
+  CreateArgs,
+  DestroyArgs,
+  FindArgs,
+  InstanceMethodArgs,
+  MethodArgs,
+  OrderEntry,
+  PlainRow,
+  PrimaryKeyValue,
+  SelectArgs,
+  UpdateArgs,
+  WhereClause,
+} from "./workflow-types";
 import {
   activityName,
   classMethodActivityName,
@@ -27,14 +43,14 @@ import {
 
 /** Per-call state shared by every handler: the caller's context and its gates. */
 type Call = {
-  context: any;
+  context: PermissionContext;
   permission?: Permission;
   schemas: SchemaSet;
 };
 
 /** Method names declared either top-level or under `options` (the adapter merges both, `options` winning). */
-function methodNames(definition: any, key: "classMethods" | "instanceMethods"): string[] {
-  const source = (definition && definition.options && definition.options[key]) || (definition && definition[key]);
+function methodNames(definition: Definition, key: "classMethods" | "instanceMethods"): string[] {
+  const source = definition.options?.[key] || definition[key];
   if (!source) {
     return [];
   }
@@ -50,7 +66,7 @@ function methodNames(definition: any, key: "classMethods" | "instanceMethods"): 
  * `models` narrows the output to a single queue's models; omit it for all of them.
  */
 export function createActivities(
-  orm: any,
+  orm: Ormize,
   options: TemporalizeOptions = {},
   models?: string[],
   registry: TemporalizeRegistry = new TemporalizeRegistry(orm, options)
@@ -68,7 +84,7 @@ export function createActivities(
    * engine as its `context` argument, so it also reaches hooks through
    * `options.getGraphQLArgs()`.
    */
-  const invoke = async (name: string, req: any, mutating: boolean, fn: (call: Call) => Promise<any>) => {
+  const invoke = async (name: string, req: unknown, mutating: boolean, fn: (call: Call) => Promise<unknown>) => {
     const context = requireContext(req);
     const permission = options.resolvePermission ? await options.resolvePermission(context) : undefined;
     if (!isModelAllowed(permission, name)) {
@@ -84,11 +100,18 @@ export function createActivities(
   };
 
   /** Public `{ limit, offset }` -> the engine's cursor arg shape (`first` / `after.index`). */
-  const listArgs = (name: string, call: Call, req: any) => {
+  const listArgs = (name: string, call: Call, req: FindArgs) => {
     assertPagination(req.limit, req.offset);
     assertFilterAllowed(call.permission, name, req.where);
     assertOrderAllowed(call.permission, name, req.orderBy);
-    const args: any = {};
+    // The engine's cursor shape, not the public one: `first`/`after.index` rather
+    // than `limit`/`offset`.
+    const args: {
+      where?: WhereClause;
+      orderBy?: OrderEntry[];
+      first?: number;
+      after?: { index: number };
+    } = {};
     if (req.where !== undefined) {
       args.where = req.where;
     }
@@ -109,7 +132,7 @@ export function createActivities(
     return (keys && keys[0]) || "id";
   };
 
-  const loadInstance = async (name: string, call: Call, id: any) => {
+  const loadInstance = async (name: string, call: Call, id: PrimaryKeyValue | undefined): Promise<PlainRow> => {
     if (id === undefined || id === null) {
       fail(ErrorType.Validation, `temporalize: 'id' is required to address a ${name} instance`);
     }
@@ -118,7 +141,9 @@ export function createActivities(
     if (!found || found.length === 0) {
       fail(ErrorType.NotFound, `temporalize: ${name} '${id}' not found`);
     }
-    return found[0];
+    // An adapter row is opaque by contract, so the engine hands it back as
+    // `unknown`. The only thing read off it here is a method looked up by name.
+    return found[0] as PlainRow;
   };
 
   const assertMutable = (call: Call, name: string, op: string) => {
@@ -138,27 +163,27 @@ export function createActivities(
 
     // --- reads ---------------------------------------------------------------
 
-    activities[activityName(name, "findAll")] = (req: any) =>
+    activities[activityName(name, "findAll")] = (req: ActivityRequest<FindArgs>) =>
       invoke(name, req, false, async (call) => {
         const { total, models: rows } = await orm.resolveFindAll(name, null, listArgs(name, call, req), call.context);
         return { total, rows: present(call.schemas, name, rows) };
       });
 
-    activities[activityName(name, "findOne")] = (req: any) =>
+    activities[activityName(name, "findOne")] = (req: ActivityRequest<FindArgs>) =>
       invoke(name, req, false, async (call) => {
         const args = Object.assign(listArgs(name, call, req), { first: 1 });
         const { models: rows } = await orm.resolveFindAll(name, null, args, call.context);
         return rows && rows.length ? present(call.schemas, name, rows[0]) : null;
       });
 
-    activities[activityName(name, "findByPk")] = (req: any) =>
+    activities[activityName(name, "findByPk")] = (req: ActivityRequest<ByPkArgs>) =>
       invoke(name, req, false, async (call) => {
         const args = { where: { [pkName(name)]: { eq: req.id } }, first: 1 };
         const { models: rows } = await orm.resolveFindAll(name, null, args, call.context);
         return rows && rows.length ? present(call.schemas, name, rows[0]) : null;
       });
 
-    activities[activityName(name, "count")] = (req: any) =>
+    activities[activityName(name, "count")] = (req: ActivityRequest<FindArgs>) =>
       invoke(name, req, false, async (call) => {
         const { total } = await orm.resolveFindAll(name, null, listArgs(name, call, req), call.context, {
           countOnly: true,
@@ -168,7 +193,7 @@ export function createActivities(
 
     // --- writes --------------------------------------------------------------
 
-    activities[activityName(name, "create")] = (req: any) =>
+    activities[activityName(name, "create")] = (req: ActivityRequest<CreateArgs>) =>
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "create");
         const input = validate ? validateInput(call.schemas, name, "create", req.input) : req.input;
@@ -176,7 +201,7 @@ export function createActivities(
         return present(call.schemas, name, rows);
       });
 
-    activities[activityName(name, "update")] = (req: any) =>
+    activities[activityName(name, "update")] = (req: ActivityRequest<UpdateArgs>) =>
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "update");
         assertScopedMutation(req.where, req.all);
@@ -187,7 +212,7 @@ export function createActivities(
         return present(call.schemas, name, rows);
       });
 
-    activities[activityName(name, "destroy")] = (req: any) =>
+    activities[activityName(name, "destroy")] = (req: ActivityRequest<DestroyArgs>) =>
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "destroy");
         assertScopedMutation(req.where, req.all);
@@ -200,7 +225,7 @@ export function createActivities(
     // `input` against each match. Scalar `input` fields are ignored and the
     // matched rows are never written — but it is still a mutation, so it is gated
     // and scoped exactly like `update`.
-    activities[activityName(name, "select")] = (req: any) =>
+    activities[activityName(name, "select")] = (req: ActivityRequest<SelectArgs>) =>
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "select");
         assertScopedMutation(req.where, req.all);
@@ -219,11 +244,10 @@ export function createActivities(
 
     if (exposeClass) {
       for (const method of methodNames(definition, "classMethods")) {
-        activities[classMethodActivityName(name, method)] = (req: any) =>
+        activities[classMethodActivityName(name, method)] = (req: ActivityRequest<MethodArgs>) =>
           invoke(name, req, true, async (call) => {
             assertWritable(options.readOnly);
-            const gate = (call.permission as any)?.mutationClassMethods;
-            if (!isAllowed(gate, name, method, (call.permission as any)?.options)) {
+            if (!isAllowed(call.permission?.mutationClassMethods, name, method, call.permission?.options)) {
               fail(ErrorType.Forbidden, `temporalize: class method '${method}' not allowed for ${name}`);
             }
             return toPlain(await orm.resolveClassMethod(name, method, req.args, call.context));
@@ -233,18 +257,20 @@ export function createActivities(
 
     if (exposeInstance) {
       for (const method of methodNames(definition, "instanceMethods")) {
-        activities[instanceMethodActivityName(name, method)] = (req: any) =>
+        activities[instanceMethodActivityName(name, method)] = (req: ActivityRequest<InstanceMethodArgs>) =>
           invoke(name, req, true, async (call) => {
             assertWritable(options.readOnly);
-            const gate = (call.permission as any)?.queryInstanceMethods;
-            if (!isAllowed(gate, name, method, (call.permission as any)?.options)) {
+            if (!isAllowed(call.permission?.queryInstanceMethods, name, method, call.permission?.options)) {
               fail(ErrorType.Forbidden, `temporalize: instance method '${method}' not allowed for ${name}`);
             }
             const row = await loadInstance(name, call, req.id);
-            if (typeof row[method] !== "function") {
+            // The loaded row is an adapter instance, so its methods are not
+            // visible on the plain-row type the engine's return is described by.
+            const instanceMethod = row[method];
+            if (typeof instanceMethod !== "function") {
               fail(ErrorType.UnknownMethod, `temporalize: unknown method '${method}' on ${name}`);
             }
-            return toPlain(await row[method](req.args, call.context));
+            return toPlain(await instanceMethod.call(row, req.args, call.context));
           });
       }
     }

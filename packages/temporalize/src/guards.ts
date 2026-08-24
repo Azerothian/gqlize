@@ -2,6 +2,7 @@ import { ApplicationFailure } from "@temporalio/common";
 import { isAllowed, isFieldAllowed, isModelAllowed, isMutationAllowed } from "@azerothian/utilize";
 import type { Permission } from "@azerothian/utilize";
 import { ErrorType } from "./workflow-types";
+import type { CallerContext, PlainRow, WhereClause } from "./workflow-types";
 import type { SchemaSet } from "./registry";
 
 /**
@@ -20,11 +21,11 @@ export function fail(type: string, message: string): never {
  * must be present and be an object — it is the carrier for the caller's identity
  * and role, and `resolvePermission` derives the whole permission gate from it.
  */
-export function requireContext(req: any): any {
+export function requireContext(req: unknown): CallerContext {
   if (!req || typeof req !== "object") {
     fail(ErrorType.ContextMissing, "temporalize: activity input must be an object carrying a 'context'");
   }
-  const context = req.context;
+  const context = (req as { context?: unknown }).context;
   if (context === undefined || context === null || typeof context !== "object") {
     fail(
       ErrorType.ContextMissing,
@@ -42,7 +43,7 @@ export function requireContext(req: any): any {
 }
 
 /** Reject nonsensical pagination before it reaches the driver as raw SQL. */
-export function assertPagination(limit: any, offset: any): void {
+export function assertPagination(limit: unknown, offset: unknown): void {
   if (limit !== undefined && (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0)) {
     fail(ErrorType.Validation, "temporalize: 'limit' must be a positive integer");
   }
@@ -86,7 +87,7 @@ export function assertMutationAllowed(permission: Permission | undefined, name: 
  * would match — and mutate/destroy — every row in the table, so a non-empty
  * filter is required unless the caller explicitly opts in via `all: true`.
  */
-export function assertScopedMutation(where: any, optIn?: boolean): void {
+export function assertScopedMutation(where: unknown, optIn?: boolean): void {
   const hasFilter = where && typeof where === "object" && Object.keys(where).length > 0;
   if (!hasFilter && !optIn) {
     fail(
@@ -102,14 +103,15 @@ export function assertScopedMutation(where: any, optIn?: boolean): void {
  * password hash) and use the returned row count as a boolean oracle to read its
  * value, even though the field never appears in an activity result.
  */
-export function assertFilterAllowed(permission: Permission | undefined, name: string, where: any): void {
+export function assertFilterAllowed(permission: Permission | undefined, name: string, where: unknown): void {
   if (!where || typeof where !== "object") {
     return;
   }
+  const clause = where as WhereClause;
   const logical = new Set(["and", "or", "not"]);
-  for (const key of Object.keys(where)) {
+  for (const key of Object.keys(clause)) {
     if (logical.has(key.toLowerCase())) {
-      const branch = where[key];
+      const branch = clause[key];
       if (Array.isArray(branch)) {
         branch.forEach((c) => assertFilterAllowed(permission, name, c));
       } else {
@@ -124,7 +126,7 @@ export function assertFilterAllowed(permission: Permission | undefined, name: st
 }
 
 /** Validate that every `orderBy` field is permitted for the model. */
-export function assertOrderAllowed(permission: Permission | undefined, name: string, orderBy: any): void {
+export function assertOrderAllowed(permission: Permission | undefined, name: string, orderBy: unknown): void {
   if (!Array.isArray(orderBy)) {
     return;
   }
@@ -137,7 +139,7 @@ export function assertOrderAllowed(permission: Permission | undefined, name: str
 }
 
 /** Parse `input` through the model's create/update schema, if one exists. */
-export function validateInput(schemas: SchemaSet, name: string, kind: "create" | "update", input: any): any {
+export function validateInput(schemas: SchemaSet, name: string, kind: "create" | "update", input: PlainRow): PlainRow {
   const schema = kind === "create" ? schemas.create[name] : schemas.update[name];
   if (!schema) {
     return input;
@@ -154,15 +156,19 @@ export function validateInput(schemas: SchemaSet, name: string, kind: "create" |
  * they carry adapter internals and circular references — so every result is
  * flattened to plain JSON before it leaves the activity.
  */
-export function toPlain(v: any): any {
+export function toPlain(v: unknown): unknown {
   if (Array.isArray(v)) {
     return v.map((x) => toPlain(x));
   }
-  if (v && typeof v.toJSON === "function") {
-    return v.toJSON();
+  // Duck-typed rather than instance-checked: the ORM instance type belongs to the
+  // adapter, and temporalize only knows that one of these two escape hatches
+  // yields plain JSON.
+  const instance = v as { toJSON?: () => unknown; get?: (options: { plain: boolean }) => unknown };
+  if (v && typeof instance.toJSON === "function") {
+    return instance.toJSON();
   }
-  if (v && typeof v.get === "function") {
-    return v.get({ plain: true });
+  if (v && typeof instance.get === "function") {
+    return instance.get({ plain: true });
   }
   return v;
 }
@@ -177,7 +183,7 @@ export function toPlain(v: any): any {
  * serialized straight from the raw ORM instance. When no schema exists for the
  * model, the value is returned unchanged.
  */
-export function project(schemas: SchemaSet, name: string, v: any): any {
+export function project(schemas: SchemaSet, name: string, v: unknown): unknown {
   if (Array.isArray(v)) {
     return v.map((x) => project(schemas, name, x));
   }
@@ -188,17 +194,18 @@ export function project(schemas: SchemaSet, name: string, v: any): any {
   if (!schema) {
     return v;
   }
+  const row = v as { [key: string]: unknown };
   const allowed = new Set(Object.keys(schema.shape));
-  const out: any = {};
-  for (const key of Object.keys(v)) {
+  const out: { [key: string]: unknown } = {};
+  for (const key of Object.keys(row)) {
     if (allowed.has(key)) {
-      out[key] = v[key];
+      out[key] = row[key];
     }
   }
   return out;
 }
 
 /** `project(toPlain(v))` — the standard activity result path. */
-export function present(schemas: SchemaSet, name: string, v: any): any {
+export function present(schemas: SchemaSet, name: string, v: unknown): unknown {
   return project(schemas, name, toPlain(v));
 }
