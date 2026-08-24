@@ -548,7 +548,21 @@ export type Definitions = {
  */
 export type Model = {
   [name: string]: any
-  prototype: Record<string, unknown>
+  /**
+   * Present on a class-based adapter's model (Sequelize's `ModelStatic`) and
+   * absent on one whose model is a plain descriptor. Ormize tests for it before
+   * installing a cross-adapter accessor and falls back to
+   * {@link OrmAdapter.addInstanceFunction}, which is the whole reason that method
+   * exists — so it has to be optional here or a descriptor-model adapter cannot
+   * satisfy this contract at all.
+   *
+   * `object`, not a keyed record: Sequelize types its prototype as a `Model`,
+   * which has no index signature, so a keyed record excludes the one adapter
+   * that definitely has a prototype. The single place that installs a method by
+   * name narrows it there instead — as the sequelize adapter's own `prototypeOf`
+   * helper already does.
+   */
+  prototype?: object
 }
 
 export type HookMap = {

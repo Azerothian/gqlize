@@ -858,7 +858,9 @@ export default class Ormize<
    */
   private addProxyAccessor(sourceAdapter: OrmAdapter, defName: string, modelClass: Model | undefined, funcName: string, func: (...args: any[]) => any) {
     if (modelClass?.prototype) {
-      modelClass.prototype[funcName] = func;
+      // Installing by name onto a prototype the adapter's own types describe
+      // without an index signature — see {@link Model.prototype}.
+      (modelClass.prototype as Record<string, unknown>)[funcName] = func;
       return;
     }
     if (sourceAdapter.addInstanceFunction) {
