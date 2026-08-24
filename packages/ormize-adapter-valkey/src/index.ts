@@ -5,7 +5,8 @@ import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
 import {capitalize, lowercase} from "@azerothian/utilize/utils/word";
 import type {
-  AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, HookMap, Model,
+  AdapterListOptions, AdapterListRequest, AdapterQueryOptions, AdapterRelationshipRequest,
+  AdapterRow, AdapterWhere, Association, Definition, HookMap, Model,
   OrmAdapter, Permission, Relationship, Selection, WhereOperators,
 } from "@azerothian/utilize/types/index";
 import { Keys } from "./keys";
@@ -563,16 +564,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   hasInlineCountFeature = () => false;
   getInlineCount = async (_models: AdapterRow[]) => 0;
 
-  processListArgsToOptions = (
-    defName: string,
-    args: { [name: string]: any },
-    offset: number | undefined,
-    _selection: Selection,
-    whereOperators: WhereOperators | undefined,
-    _graphQLArgs: { getGraphQLArgs: () => { context: any; info: any; source: any } },
-    _selectedFields: string[] | undefined,
-    _runHook?: (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>,
-  ) => {
+  processListArgsToOptions = (_defName: string, {args, offset, whereOperators}: AdapterListRequest): AdapterListOptions => {
     const limit = (args?.first != null || args?.last != null) ? clampPageSize(args.first ?? args.last) : DEFAULT_PAGE_SIZE;
     const base = { where: args?.where || {}, whereOperators, order: args?.orderBy };
     return {
@@ -705,9 +697,9 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   }
 
   resolveSingleRelationship = async (
-    defName: string, association: ValkeyAssociation, source: ValkeyRow, _args: { [name: string]: any },
-    _context: any, _selection: Selection, options: AdapterQueryOptions,
+    defName: string, association: ValkeyAssociation, source: ValkeyRow, request: AdapterRelationshipRequest,
   ) => {
+    const options = request.options || {};
     if (association.associationType === "belongsTo") {
       const targetId = source[association.foreignKey];
       if (targetId == null) return null;
@@ -720,10 +712,9 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   };
 
   resolveManyRelationship = async (
-    _defName: string, association: ValkeyAssociation, source: ValkeyRow, args: { [name: string]: any },
-    offset: number | undefined, whereOperators: WhereOperators | undefined, _selection: Selection,
-    options: AdapterQueryOptions, countOnly?: boolean,
+    _defName: string, association: ValkeyAssociation, source: ValkeyRow, request: AdapterRelationshipRequest,
   ) => {
+    const {args, offset, whereOperators, options = {}, countOnly} = request;
     const limit = (args?.first != null || args?.last != null) ? clampPageSize(args.first ?? args.last) : undefined;
     if (association.associationType === "belongsToMany") {
       let models = await this.btmTargets(association, source, options);

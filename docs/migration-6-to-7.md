@@ -23,6 +23,7 @@ cleanly — that section is where working code breaks.
    - [Role-based permissions now gate `extend` fields and mutation inputs](#role-based-permissions-now-gate-extend-fields-and-mutation-inputs)
    - [Unknown `permission` keys are a type error, and warn at build time](#unknown-permission-keys-are-a-type-error-and-warn-at-build-time)
    - [The adapter contract is typed, and `setBuildPermission` is part of it](#the-adapter-contract-is-typed-and-setbuildpermission-is-part-of-it)
+   - [Adapter list and relationship methods take a request object](#adapter-list-and-relationship-methods-take-a-request-object)
    - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
    - [Unreferenced exports removed](#unreferenced-exports-removed)
 4. [The graphql patch](#4-the-graphql-patch)
@@ -383,6 +384,61 @@ moved the other way, from gqlize into `@azerothian/utilize`, since they are what
 hand-off actually carries; `@azerothian/gqlize/graphql/utils/build-include-from-selection` still
 re-exports both. `Definition.ignoreFields` is `string[]` and `Definition.comments` is a
 `DefinitionComments` (`{fields?, classMethods?, instanceMethods?}`).
+
+### Adapter list and relationship methods take a request object
+
+Only relevant if you maintain your own adapter, or call these three directly. Their interchangeable
+tail of positional parameters is now one named-field object:
+
+```ts
+// 6.x
+processListArgsToOptions(defName, args, offset, selection, whereOperators, graphQLArgs, selectedFields, runHook)
+resolveManyRelationship(defName, association, source, args, offset, whereOperators, selection, options, countOnly)
+resolveSingleRelationship(defName, association, source, args, context, selection, options)
+
+// 7.x
+processListArgsToOptions(defName, request: AdapterListRequest)
+resolveManyRelationship(defName, association, source, request: AdapterRelationshipRequest)
+resolveSingleRelationship(defName, association, source, request: AdapterRelationshipRequest)
+```
+
+`AdapterListRequest` is `{args, offset?, selection?, whereOperators?, options?, selectedFields?,
+runHook?}`; `AdapterRelationshipRequest` adds `countOnly?` and `context?`. A call site migrates by
+naming what it was passing:
+
+```ts
+// 6.x
+const {getOptions} = await adapter.processListArgsToOptions(defName, args, offset, selection, ops, options, fields, runHook);
+// 7.x
+const {getOptions} = await adapter.processListArgsToOptions(defName, {
+  args, offset, selection, whereOperators: ops, options, selectedFields: fields, runHook,
+});
+```
+
+Three things the positional form was hiding, all fixed by the move:
+
+- **The contract and the implementations disagreed.** `processListArgsToOptions` declared
+  `graphQLArgs` at position six; every implementation used that slot for `defaultOptions`. The bag
+  is `{[key: string]: any}`, so nothing caught it. That parameter is now `options`, which is what it
+  always was.
+- **`beforeFind` now fires for JOIN-loaded includes on the relationship path.** *This is a behaviour
+  change.* The Sequelize adapter's internal call inside `resolveManyRelationship` passed six of the
+  eight arguments, silently dropping `selectedFields` and `runHook` — so a JOIN include reached
+  through a relationship never got its child model's `beforeFind` fired, while the same include
+  reached from a root query did. If you use `beforeFind` to add a tenancy filter, it now applies on
+  both paths; if you use it for logging or metrics, expect more calls. The same fix means
+  `selectedFields` reaches the relationship query, so it fetches the selected columns rather than
+  every column.
+- **Caller options no longer override computed ones.** `processListArgsToOptions` built its result
+  as `Object.assign({...computed}, defaultOptions)` — `defaultOptions` last, so a caller-supplied
+  `attributes` silently replaced the adapter's computed primary-key/selected-field list *and* its
+  inline-count column. The computed values now win. If you were relying on passing `attributes`
+  through `options` to widen a query, select the fields instead.
+
+`processListArgsToOptions` also returns a named `AdapterListOptions` (`{getOptions, countOptions?}`)
+rather than the untyped bag. `countOptions` is optional exactly when the adapter counts inline; an
+adapter that reports `hasInlineCountFeature() === false` and returns no `countOptions` now gets a
+clear error instead of an unfiltered count.
 
 ### Definition `type` slots are `unknown`, not `any`
 

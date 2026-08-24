@@ -60,7 +60,7 @@ describe("valkey adapter — ormize integration", () => {
     await orm.processCreate("Task", null, { input: { name: "t1", itemId: item.id } }, {}, undefined);
     await orm.processCreate("Task", null, { input: { name: "t2", itemId: item.id } }, {}, undefined);
     const assoc = adapter.getAssociations("Item").tasks;
-    const { total, models } = await adapter.resolveManyRelationship("Task", assoc, item, {}, 0, undefined, {}, {}, false);
+    const { total, models } = await adapter.resolveManyRelationship("Task", assoc, item, {args: {}, offset: 0});
     expect(total).toBe(2);
     expect(models.map((m: any) => m.name).sort()).toEqual(["t1", "t2"]);
   });

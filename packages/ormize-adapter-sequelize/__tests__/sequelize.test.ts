@@ -834,7 +834,7 @@ describe("tests", () => {
     await adapter.createModel(itemDef);
 
     const {getOptions, countOptions} = await adapter.processListArgsToOptions("Item", {
-      first: 1,
+      args: {first: 1},
     });
     expect(countOptions).toBeUndefined();
     expect(getOptions).toBeDefined();
@@ -856,16 +856,17 @@ describe("tests", () => {
     };
 
     await adapter.createModel(itemDef);
-    // The seeded column goes in as `defaultOptions` (the sixth argument) — it
-    // used to be passed third, i.e. as `offset`, which meant this test never
-    // reached the branch it names.
+    // The seeded column goes in on `options`. Under the old positional form it
+    // was passed third, i.e. as `offset`, so this test never reached the branch
+    // it names — the kind of silent misalignment the request object removes.
     const {getOptions, countOptions} = await adapter.processListArgsToOptions("Item", {
-      first: 1,
-    }, undefined, undefined, undefined, {
-      attributes: [[
-        adapter.sequelize.literal("COUNT(1) OVER()"),
-        "full_count",
-      ]],
+      args: {first: 1},
+      options: {
+        attributes: [[
+          adapter.sequelize.literal("COUNT(1) OVER()"),
+          "full_count",
+        ]],
+      },
     });
     expect(countOptions).toBeUndefined();
     expect(getOptions).toBeDefined();
@@ -890,7 +891,7 @@ describe("tests", () => {
     await adapter.createModel(itemDef);
     adapter.sequelize.dialect.name = "mssql";
     const {getOptions, countOptions} = await adapter.processListArgsToOptions("Item", {
-      first: 1,
+      args: {first: 1},
     });
     expect(countOptions).toBeUndefined();
     expect(getOptions).toBeDefined();
@@ -914,7 +915,7 @@ describe("tests", () => {
 
     await adapter.createModel(itemDef);
     const {getOptions, countOptions} = await adapter.processListArgsToOptions("Item", {
-      first: 1,
+      args: {first: 1},
     });
     expect(countOptions).toBeUndefined();
     expect(getOptions).toBeDefined();
@@ -938,13 +939,48 @@ describe("tests", () => {
     await adapter.createModel(itemDef);
     adapter.sequelize.getDialect = () => "unknown";
     const {getOptions, countOptions} = await adapter.processListArgsToOptions("Item", {
-      first: 1,
+      args: {first: 1},
     });
     expect(countOptions).toBeDefined();
     expect(countOptions.limit).toBeUndefined();
     expect(getOptions).toBeDefined();
     expect(getOptions.limit).toEqual(1);
     expect(getOptions.attributes).toHaveLength(3);
+  });
+
+  it("adapter - resolveManyRelationship - fires beforeFind for a JOIN include", async() => {
+    const adapter = new SequelizeAdapter({}, {
+      dialect: "sqlite",
+    }) as any;
+    await adapter.createModel(TaskModel);
+    await adapter.createModel(TaskItemModel);
+    // Only `items` and its inverse `task` — the include under test is TaskItem
+    // JOINing back to Task.
+    adapter.createRelationship("Task", "TaskItem", "items", "hasMany", {foreignKey: "taskId"});
+    adapter.createRelationship("TaskItem", "Task", "task", "belongsTo", {foreignKey: "taskId"});
+    await adapter.initialise();
+    await adapter.reset();
+
+    const task = await adapter.getModel("Task").create({name: "parenttask"});
+    await adapter.getModel("TaskItem").create({name: "childitem", taskId: task.id});
+
+    // Sequelize does not fire a JOIN-loaded child's beforeFind, so the adapter
+    // fires it by hand — but only if `runHook` reaches it. It used to be dropped
+    // on this path: the internal call passed six of eight positional arguments.
+    const hookCalls: string[] = [];
+    const runHook = async(defName: string, hookName: string, value: any) => {
+      hookCalls.push(`${defName}.${hookName}`);
+      return value;
+    };
+    // `defName` is the relationship's *target* — the model whose rows come back.
+    const {models} = await adapter.resolveManyRelationship(
+      "TaskItem",
+      adapter.getAssociations("Task").items,
+      task,
+      {args: {include: [{task: {}}]}, runHook},
+    );
+    expect(hookCalls).toEqual(["Task.beforeFind"]);
+    expect(models.map((m: any) => m.name)).toEqual(["childitem"]);
   });
 
   it("adapter - getTypeMapper", async() => {
