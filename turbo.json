@@ -1,17 +1,67 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  // Every package tsconfig extends the root base, and nothing else hashes it.
+  "globalDependencies": ["tsconfig.base.json", "tsconfig.json"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["publish/**", "lib/**", "cjs/**"]
+      // Without this, inputs default to every non-gitignored file in the package,
+      // so editing a test or a jest config busts a build that cannot read either.
+      // This list is exactly what the `build:*` scripts consume.
+      "inputs": [
+        "src/**",
+        "scripts/**",
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.types.json",
+        ".swcrc",
+        ".swcrc-cjs",
+        "README.md"
+      ],
+      // `publish/` is the only build target; the old `lib/**` and `cjs/**` entries
+      // named directories no package writes any more.
+      "outputs": ["publish/**"]
     },
     "test": {
-      "dependsOn": [],
+      // Not `[]` — empty explicitly severs the upstream edge. Both jest
+      // `moduleNameMapper` and tsconfig `paths` resolve siblings from *source*,
+      // so a test really does read its dependencies' `src/`.
+      "dependsOn": ["^test"],
       "outputs": ["coverage/**"],
-      "env": ["REDIS_URL"]
+      // Turbo 2 defaults to strict env mode: an unlisted variable is filtered out
+      // before the task sees it.
+      "env": ["REDIS_URL", "TEMPORALIZE_INTEGRATION"]
     },
     "typecheck": {
-      "dependsOn": [],
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    },
+    // `gqlize` and `ormize` have 15 test files that import
+    // `@azerothian/ormize-adapter-sequelize` as a fixture, but the adapter's own
+    // `src/` imports both of them back — so the dependency cannot be declared in
+    // package.json without turbo rejecting the task graph as cyclic. `$TURBO_ROOT$`
+    // names the file dependency directly instead, which is acyclic because it is a
+    // hash input rather than a scheduling edge.
+    "@azerothian/gqlize#test": {
+      "dependsOn": ["^test"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/ormize-adapter-sequelize/src/**"],
+      "outputs": ["coverage/**"],
+      "env": ["REDIS_URL", "TEMPORALIZE_INTEGRATION"]
+    },
+    "@azerothian/ormize#test": {
+      "dependsOn": ["^test"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/ormize-adapter-sequelize/src/**"],
+      "outputs": ["coverage/**"],
+      "env": ["REDIS_URL", "TEMPORALIZE_INTEGRATION"]
+    },
+    "@azerothian/gqlize#typecheck": {
+      "dependsOn": ["^typecheck"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/ormize-adapter-sequelize/src/**"],
+      "outputs": []
+    },
+    "@azerothian/ormize#typecheck": {
+      "dependsOn": ["^typecheck"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/ormize-adapter-sequelize/src/**"],
       "outputs": []
     },
     "watch": {
