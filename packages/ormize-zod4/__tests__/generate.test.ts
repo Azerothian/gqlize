@@ -3,8 +3,9 @@ import Sequelize, { DataTypes } from "sequelize";
 import { Ormize, createRoleBasedPermissions, DataType, DataTypes as OrmizeDataTypes } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { generateZodSchemas } from "../src";
+import type { Definition } from "@azerothian/utilize";
 
-const ItemDef: any = {
+const ItemDef: Definition = {
   name: "Item",
   define: {
     label: { type: DataTypes.STRING, allowNull: false },
@@ -15,7 +16,7 @@ const ItemDef: any = {
   ],
 };
 
-const TaskDef: any = {
+const TaskDef: Definition = {
   name: "Task",
   define: {
     name: {
@@ -36,7 +37,7 @@ const TaskDef: any = {
 };
 
 async function buildOrm() {
-  const orm: any = new Ormize();
+  const orm = new Ormize();
   orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }), "sqlite");
   await orm.addDefinition(ItemDef);
   await orm.addDefinition(TaskDef);
@@ -46,7 +47,7 @@ async function buildOrm() {
 }
 
 describe("ormize-zod4 - generateZodSchemas", () => {
-  let orm: any;
+  let orm: Ormize;
   beforeAll(async () => {
     orm = await buildOrm();
   });

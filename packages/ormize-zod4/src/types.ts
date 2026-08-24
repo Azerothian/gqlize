@@ -1,8 +1,12 @@
 import { z } from "zod";
 import { Permission } from "@azerothian/utilize";
 
-/** Map of model name → generated Zod object schema. */
-export type ZodObjectMap = { [modelName: string]: z.ZodObject<any> };
+/**
+ * Map of model name → generated Zod object schema. The shape parameter is
+ * `z.ZodRawShape` — the schemas are built from a runtime definition, so the keys
+ * are not known statically; parse them and read `.shape` for the columns.
+ */
+export type ZodObjectMap = { [modelName: string]: z.ZodObject<z.ZodRawShape> };
 
 /** The three schema projections generated per model. */
 export type GeneratedZodSchemas = {

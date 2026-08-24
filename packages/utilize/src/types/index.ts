@@ -358,11 +358,17 @@ export type DefinitionField = {
   comment?: string;
   defaultValue?: any;
   values?: string[];
-  validate?:  {
-    [key: string]: {
-      [key: string]: any
-    };
-  }
+  validate?: FieldValidators;
+}
+
+/**
+ * A field's validation rules, keyed by validator name. The values are `unknown`
+ * because each validator takes a different shape — a bare value (`min: 0`), a
+ * flag (`isEmail: true`), a pair (`len: [1, 50]`), or the `{args, msg}` wrapper —
+ * and it is the consumer that knows which form its own validators use.
+ */
+export type FieldValidators = {
+  [validatorName: string]: unknown;
 }
 
 export type DefinitionFields = {
@@ -452,6 +458,13 @@ export type Definition = {
 };
 
 export interface DefinitionOptions {
+  /**
+   * Whatever ormize does not name here is handed to the adapter's model
+   * constructor verbatim — `timestamps`, `paranoid`, `tableName` and the rest of
+   * the backend's own model options. There is no closed list because that set
+   * belongs to the backend, not to ormize.
+   */
+  [option: string]: unknown;
   hooks?: HookMap;
   /**
    * When false, disables root-level eager resolution (auto-generated include tree)
