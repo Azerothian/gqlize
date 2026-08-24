@@ -9,11 +9,9 @@ import {
   QueryTypes,
   Sequelize,
   type Association as NativeAssociation,
-  type IncludeOptions,
   type Options as SequelizeOptions,
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
-import unique from "@azerothian/utilize/utils/unique";
 import { isFieldAllowed } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
@@ -49,44 +47,8 @@ function rowFields(row: SequelizeRow): Record<string, any> {
   return row as unknown as Record<string, any>;
 }
 
-/**
- * A model class, augmented with the two statics this adapter installs on it:
- * `createModel` stamps the authored definition onto the class, and
- * `createRelationship` builds `relationships` up on it as each one is wired.
- * Sequelize's `ModelCtor` knows about neither.
- *
- * Both are declared non-optional rather than `?`: every model reaching this
- * adapter's read paths came out of `createModel`, which installs `definition`
- * before it returns. A model without one is a wiring error, not a case for every
- * read site to branch on.
- */
-export type SequelizeModelClass = ModelCtor<Model<any, any>> & {
-  definition: SequelizeDefinition;
-  relationships: { [relName: string]: SequelizeRelationship };
-};
 
-/**
- * A wired relationship as this adapter records it on the model class: the
- * arguments `createRelationship` was given, plus `rel` — the live Sequelize
- * association object it produced. Nothing here reads `rel` back; it is kept
- * because it is the only handle onto the native association.
- */
-export type SequelizeRelationship = {
-  name: string;
-  type: string;
-  source: string;
-  target: string;
-  options: Relationship["options"];
-  rel: unknown;
-};
 
-/**
- * A row as this adapter produces and consumes it: a Sequelize model instance.
- * The contract calls a row `AdapterRow` (`unknown`) because no caller may assume
- * a shape — but the adapter that produced it may, which is precisely why
- * `OrmAdapter` is declared with method syntax rather than function properties.
- */
-export type SequelizeRow = Model<any, any>;
 
 /**
  * A column as ormize authors one: Sequelize's own attribute options plus the two
@@ -153,67 +115,12 @@ export type SequelizeConnection =
  */
 export type AuthoredAttributes = { [fieldName: string]: unknown };
 
-/**
- * The list arguments this adapter reads off a field's args bag. Open, because
- * everything not named here is forwarded verbatim — which is also why the
- * contract declares this parameter as an open bag.
- */
-export type ListArgs = {
-  first?: number;
-  last?: number;
-  orderBy?: SequelizeOrder[];
-  where?: AdapterWhere;
-  include?: IncludeMap[];
-  [arg: string]: unknown;
-};
 
-/**
- * The hook dispatcher ormize threads down so a JOIN-loaded include can still
- * fire the child model's `beforeFind` — see `processIncludeStatement`. Typed as
- * the contract declares it: the hook name selects the value's shape, so neither
- * it nor the return can be narrowed here.
- */
-export type RunHook = (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>;
 
-/** An association prefix in an ORDER BY entry — Sequelize's `{model, as}` form. */
-export type SequelizeOrderPrefix = { model: SequelizeModelClass; as: string };
 
-/**
- * One ORDER BY entry as this adapter builds one: the association prefixes needed
- * to reach the column, then the column and its direction. Sequelize's own
- * `OrderItem` is a union of fixed-length tuples, which cannot describe an entry
- * assembled by spreading a variable number of prefixes onto an authored
- * `[column, direction]` pair.
- */
-export type SequelizeOrder = (SequelizeOrderPrefix | string)[];
 
-/**
- * One selected column: a name, or the `[expression, alias]` pair the inline
- * count is pushed on as.
- */
-export type SequelizeAttribute = string | [ReturnType<Sequelize["literal"]>, string];
 
-/**
- * One eager-load entry. Sequelize's own `IncludeOptions`, with three members
- * restated: `order` and `include` because they are built here in this adapter's
- * own shapes, and `getGraphQLArgs` because a `separate` include runs as its own
- * query — so the accessor has to ride on the include for the child model's find
- * hooks to reach the GraphQL args at all.
- */
-export type SequelizeInclude = Omit<IncludeOptions, "order" | "include"> & {
-  order?: SequelizeOrder[];
-  include?: SequelizeInclude[];
-  /**
-   * `separate` only. Sequelize's `IncludeOptions` declares `limit` but not
-   * `offset`, though a separate include is run as its own query and honours it —
-   * which is what makes per-parent pagination of a `hasMany` possible at all.
-   */
-  offset?: number;
-  getGraphQLArgs?: GetGraphQLArgs;
-};
 
-/** Reaches the live GraphQL execution args from inside an options bag. */
-type GetGraphQLArgs = () => { context: RequestContext; info: unknown; source: unknown };
 
 import { type QueryTypeConfig } from "@azerothian/graphql-types/query";
 import {
@@ -228,7 +135,6 @@ import {
   SQL_ARRAY_FUNCS,
   SQL_ARRAY_VALUES,
 } from "@azerothian/graphql-types/operators";
-import {clampPageSize} from "@azerothian/utilize/utils/page-size";
 import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 
 import {
@@ -236,7 +142,6 @@ import {
   GraphQLID,
   type GraphQLInputType,
 } from "graphql";
-import waterfall from "@azerothian/utilize/utils/waterfall";
 import {
   isOrmizeDataType,
   type AdapterCreateFunction,
@@ -259,7 +164,6 @@ import {
   type IncludeDescriptor,
   type IncludeMap,
   type NativeDataType,
-  type OrderEntry,
   type Permission,
   type RequestContext,
   type Relationship,
@@ -269,6 +173,24 @@ import {
 import type { GqlizeAdapter } from '@azerothian/gqlize/types/gqlize-adapter';
 import { mapDataType as mapDataTypeImpl, toNativeType as toNativeTypeImpl } from "./data-type-mapper";
 import { SequelizeDefinition, SqlClassMethod } from "./types";
+import type {
+  ListArgs,
+  RunHook,
+  SequelizeModelClass,
+  SequelizeOrder,
+  SequelizeOrderPrefix,
+  SequelizeRow,
+} from "./types/query";
+import {
+  INLINE_COUNT_EXPRESSION,
+  processIncludeStatement,
+  processListArgsToOptions,
+  type QueryOptionsHost,
+} from "./query-options";
+// The query-shape types moved to `./types/query` so the option builders could be
+// built over them; they stay exported from here, which is where they have always
+// been imported from.
+export type * from "./types/query";
 import { replaceWhereOperators, reservedOperatorNames } from "./utils/where-ops";
 
 // Pagination safety bounds. This is the central backstop that bounds every list
@@ -538,6 +460,55 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // `type` is `unknown` by design (see {@link AuthoredAttributes}).
     return out as ModelAttributes;
   };
+  /**
+   * Warn about columns whose name collides with a reserved where-operator:
+   * `replaceWhereOperators` would silently reinterpret a filter on such a column
+   * as the operator instead of an equality filter — a hard-to-diagnose footgun.
+   */
+  private warnReservedFieldNames = (defName: string, define: SequelizeDefinition["define"]) => {
+    for (const fieldName of Object.keys(define || {})) {
+      if (reservedOperatorNames.has(fieldName)) {
+        log.error(
+          `Model "${defName}" field "${fieldName}" collides with a reserved where-operator; ` +
+          `filters on this column may be misinterpreted. Consider renaming it.`,
+        );
+      }
+    }
+  };
+  /** Collect a definition's raw create/drop DDL, replayed by {@link initialise}. */
+  private registerStartupQueries = (queries: SequelizeDefinition["queries"]) => {
+    Object.keys(queries || {}).forEach((k) => {
+      const q = queries[k];
+      if (q.drop) {
+        this.startup.drop += `${isFunction(q.drop) ? q.drop() : q.drop}\n`;
+      }
+      if (q.create) {
+        this.startup.create += `${isFunction(q.create) ? q.create() : q.create}\n`;
+      }
+    });
+  };
+  private installClassMethods = async (defName: string, classMethods: {[name: string]: unknown}) => {
+    const statics = staticsOf(this.model(defName));
+    await Promise.all(
+      Object.keys(classMethods).map(async (classMethod) => {
+        if (isFunction(classMethods[classMethod])) {
+          statics[classMethod] = classMethods[classMethod];
+          return;
+        }
+        // Not a function, so it is a {@link SqlClassMethod} descriptor — a raw
+        // query or a Postgres function call — compiled into a static here.
+        // `Definition.classMethods` names only the function form, so the
+        // descriptor form is narrowed at this one branch.
+        statics[classMethod] = await this.generateSQLFunction(classMethods[classMethod] as SqlClassMethod);
+      })
+    );
+  };
+  private installInstanceMethods = (defName: string, instanceMethods: {[name: string]: unknown}) => {
+    const proto = prototypeOf(this.sequelize.models[defName]);
+    Object.keys(instanceMethods).forEach((instanceMethod) => {
+      proto[instanceMethod] = instanceMethods[instanceMethod];
+    });
+  };
   createModel = async (def: SequelizeDefinition, hooks?: HookMap): Promise<SequelizeModelClass> => {
     const { defaultAttr, defaultModel } = this.options;
     const newDef = Object.assign({}, def, {
@@ -549,81 +520,31 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       throw "Unable to create model with no name";
     }
     const defName = newDef.name;
-    // Warn about columns whose name collides with a reserved where-operator:
-    // replaceWhereOperators would silently reinterpret a filter on such a column
-    // as the operator instead of an equality filter (a hard-to-diagnose footgun).
-    for (const fieldName of Object.keys(newDef.define || {})) {
-      if (reservedOperatorNames.has(fieldName)) {
-        log.error(
-          `Model "${defName}" field "${fieldName}" collides with a reserved where-operator; ` +
-          `filters on this column may be misinterpreted. Consider renaming it.`,
-        );
-      }
-    }
+    this.warnReservedFieldNames(defName, newDef.define);
     this.sequelize.define(
       defName,
       this.resolveAttributeTypes(Object.assign({}, defaultAttr, newDef.define)),
       newDef.options
     );
+    this.registerStartupQueries(newDef.queries);
 
-    let { classMethods, instanceMethods, queries } = newDef;
-    if (queries) {
-      Object.keys(queries).forEach((k) => {
-        const q = queries[k];
-        if (q.drop) {
-          this.startup.drop += `${isFunction(q.drop) ? q.drop() : q.drop}\n`;
-        }
-        if (q.create) {
-          this.startup.create += `${
-            isFunction(q.create) ? q.create() : q.create
-          }\n`;
-        }
-      });
+    if (newDef.disablePrimaryKey) {
+      this.sequelize.models[defName].removeAttribute("id");
     }
-    if (newDef.options) {
-      if (newDef.disablePrimaryKey) {
-        this.sequelize.models[newDef.name].removeAttribute("id");
-      }
-      if (newDef.removeAttributes) {
-        newDef.removeAttributes.forEach((attr) => {
-          this.sequelize.models[defName].removeAttribute(attr);
-        });
-      }
-      if (newDef.options.classMethods) {
-        classMethods = newDef.options.classMethods;
-      }
-      if (newDef.options.instanceMethods) {
-        instanceMethods = newDef.options.instanceMethods;
-      }
-    }
+    (newDef.removeAttributes || []).forEach((attr) => {
+      this.sequelize.models[defName].removeAttribute(attr);
+    });
+    // `options.classMethods`/`options.instanceMethods` are the nested spelling
+    // and win over the top-level one when both are authored.
+    const classMethods = newDef.options?.classMethods || newDef.classMethods;
+    const instanceMethods = newDef.options?.instanceMethods || newDef.instanceMethods;
     if (classMethods) {
-      await Promise.all(
-        Object.keys(classMethods).map(async (classMethod) => {
-          if (classMethods) {
-            const statics = staticsOf(this.model(defName));
-            if (isFunction(classMethods[classMethod])) {
-              statics[classMethod] = classMethods[classMethod];
-            } else {
-              // Not a function, so it is a {@link SqlClassMethod} descriptor —
-              // a raw query or a Postgres function call — compiled into a static
-              // here. `Definition.classMethods` names only the function form, so
-              // the descriptor form is narrowed at this one branch.
-              statics[classMethod] = await this.generateSQLFunction(
-                classMethods[classMethod] as unknown as SqlClassMethod
-              );
-            }
-          }
-        })
-      );
+      await this.installClassMethods(defName, classMethods);
     }
     if (instanceMethods) {
-      Object.keys(instanceMethods).forEach((instanceMethod) => {
-        if (instanceMethods) {
-          prototypeOf(this.sequelize.models[defName])[instanceMethod] =
-            instanceMethods[instanceMethod];
-        }
-      });
+      this.installInstanceMethods(defName, instanceMethods);
     }
+
     const model = this.model(defName);
     prototypeOf(model).Model = model;
     model.definition = newDef;
@@ -879,10 +800,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (this.options.disableInlineCount) {
       return false;
     }
-    const dialect = this.sequelize.getDialect();
-    return (
-      dialect === "postgres" || dialect === "mssql" || dialect === "sqlite"
-    );
+    return Boolean(INLINE_COUNT_EXPRESSION[this.sequelize.getDialect()]);
   };
   getInlineCount = async(values: SequelizeRow[]) => {
     // The count rides along as a `full_count` column on every row of the page
@@ -895,126 +813,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return parseInt(row.full_count, 10);
   };
-  processListArgsToOptions = async (
-    defName: string,
-    request: AdapterListRequest,
-  ): Promise<AdapterListOptions> => {
-    const {
-      args,
-      offset,
-      whereOperators,
-      options: defaultOptions = {},
-      selectedFields,
-      runHook,
-    } = request as AdapterListRequest & {args: ListArgs; runHook?: RunHook};
-    let limit,
-      include: SequelizeInclude[] = [],
-      order: SequelizeOrder[] = [],
-      // Clone rather than alias: the array is mutated in place below
-      // (unshift/push), so aliasing a caller-provided `defaultOptions.attributes`
-      // would accumulate entries across calls.
-      attributes: SequelizeAttribute[] = [...(defaultOptions.attributes || [])],
-      where;
-
-    // Always bound the page size — an absent first/last must not mean "no limit".
-    const requestedPageSize = args.first != null ? args.first : args.last;
-    limit = clampPageSize(requestedPageSize);
-    if (args.orderBy) {
-      order = args.orderBy;
-    }
-    const fields = this.getFields(defName);
-    Object.keys(fields).forEach((key) => {
-      const field = fields[key];
-      if (!field.primaryKey) {
-        if (selectedFields) {
-          const fieldForeignTarget = field.foreignTarget
-            ? field.foreignTarget.toLowerCase()
-            : undefined;
-          if (selectedFields.indexOf(key) === -1) {
-            if (fieldForeignTarget === undefined) {
-              return;
-            }
-            if (
-              fieldForeignTarget !==
-              selectedFields[selectedFields.indexOf(fieldForeignTarget)]
-            ) {
-              return;
-            }
-          }
-        }
-        // `DefinitionFieldMeta.name` is optional because a user-authored field
-        // carries none — the adapter fills it in. Either way the map is keyed by
-        // field name, so `key` is the same value.
-        attributes.unshift(field.name || key);
-      }
-    });
-    this.getPrimaryKeyNameForModel(defName).forEach((key) => {
-      if (key) {
-        attributes.unshift(key);
-      }
-    });
-    if (this.hasInlineCountFeature()) {
-      // Either form counts as already present: a plain column named
-      // `full_count`, or the `[expression, "full_count"]` alias pair this pushes.
-      const hasCountColumn = attributes.some((a) =>
-        typeof a === "string" ? a.indexOf("full_count") > -1 : a[1] === "full_count"
-      );
-      if (!hasCountColumn) {
-        if (this.sequelize.getDialect() === "postgres") {
-          attributes.push([
-            this.sequelize.literal("COUNT(*) OVER()"),
-            "full_count",
-          ]);
-        } else if (
-          this.sequelize.getDialect() === "mssql" ||
-          this.sequelize.getDialect() === "sqlite"
-        ) {
-          attributes.push([
-            this.sequelize.literal("COUNT(1) OVER()"),
-            "full_count",
-          ]);
-        } else {
-          throw new Error(
-            `Inline count feature enabled but dialect does not match`
-          );
-        }
-      }
-    }
-    if (args.where) {
-      where = await this.processFilterArgument(args.where, whereOperators, defaultOptions);
-    }
-    const includeStatements = args.include || [];
-    if (includeStatements.length > 0) {
-      const result = await this.processIncludeStatement(
-        defName,
-        includeStatements,
-        order,
-        defaultOptions,
-        [],
-        runHook
-      );
-      order = result.order;
-      include = result.include;
-    }
-    // `defaultOptions` first: everything after it is computed for *this* request
-    // and must win. `attributes` in particular is the permission-filtered column
-    // list (plus the inline-count expression), so a caller-supplied one silently
-    // overriding it would widen the query and drop the count.
-    return {
-      getOptions: Object.assign({}, defaultOptions, {
-        order,
-        where,
-        limit,
-        offset,
-        include,
-        attributes: unique(attributes),
-      }),
-      countOptions: !this.hasInlineCountFeature()
-        ? Object.assign({}, defaultOptions, {where, attributes, include})
-        : undefined,
-    };
-  };
-  async processIncludeStatement(
+  /**
+   * Build the fetch (and count) options for one list request. The steps live in
+   * `./query-options` as free functions over {@link QueryOptionsHost}, which
+   * this class satisfies structurally.
+   */
+  processListArgsToOptions = (defName: string, request: AdapterListRequest): Promise<AdapterListOptions> =>
+    processListArgsToOptions(this as QueryOptionsHost, defName, request);
+  processIncludeStatement(
     defName: string,
     includeStatements: IncludeMap[],
     order: SequelizeOrder[],
@@ -1022,95 +828,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     parentRelsForOrder: SequelizeOrderPrefix[] = [],
     runHook?: RunHook
   ) {
-    let orders = order;
-    const incs = await waterfall(
-      includeStatements,
-      (i, o) => {
-        return waterfall(
-          Object.keys(i),
-          async (relName, oo) => {
-            const inc = i[relName];
-            const rel = this.getAssociation(defName, relName);
-            const TargetModel = this.model(rel.target);
-            const targetDefName = TargetModel.definition.name as string;
-            const { whereOperators } = TargetModel.definition;
-            const orderAssocPrefix = { model: TargetModel, as: relName };
-            // A `separate` include runs as its own batched root query, so its
-            // ordering/limit/offset live on the include entry itself rather than
-            // being hoisted onto the parent query's order. A `required` include
-            // must stay an INNER JOIN (it filters the parent rows), which a
-            // separate query cannot do — so `required` always wins over separate.
-            const separate = Boolean(inc.separate) && !inc.required && rel.associationType === "hasMany";
-            if (!separate && (inc.orderBy || []).length > 0) {
-              orders = [
-                ...orders,
-                ...inc.orderBy.map((ob: OrderEntry) => {
-                  return [...parentRelsForOrder, orderAssocPrefix, ...ob];
-                }),
-              ];
-            }
-            let retVal = {
-              model: TargetModel,
-              required: inc.required,
-              as: relName,
-              where: await this.processFilterArgument(
-                inc.where || {},
-                whereOperators,
-                options
-              ),
-            } as SequelizeInclude;
-            if (separate) {
-              retVal.separate = true;
-              if ((inc.orderBy || []).length > 0) {
-                retVal.order = inc.orderBy;
-              }
-              if (inc.limit != null) {
-                retVal.limit = inc.limit;
-              }
-              if (inc.offset != null) {
-                retVal.offset = inc.offset;
-              }
-              // propagate the GraphQL args accessor so the child model's native
-              // find hooks (fired by the separate query) can read rootValue/args.
-              if (options && options.getGraphQLArgs) {
-                retVal.getGraphQLArgs = options.getGraphQLArgs;
-              }
-            } else if (runHook) {
-              // JOIN-loaded relation: Sequelize does not fire the child model's
-              // beforeFind for a JOIN include, so fire it manually with only this
-              // relation's `where` and merge any change back into the include's
-              // where (keeping the filter part of the single combined query).
-              const hookOptions: AdapterQueryOptions = { where: retVal.where, getGraphQLArgs: options?.getGraphQLArgs };
-              const res = await runHook(targetDefName, "beforeFind", hookOptions);
-              if (res && res.where !== undefined) {
-                retVal.where = res.where;
-              }
-            }
-            if (inc.include) {
-              const v = await this.processIncludeStatement(
-                targetDefName,
-                inc.include,
-                order,
-                options,
-                separate ? [] : [...parentRelsForOrder, orderAssocPrefix],
-                runHook
-              );
-              retVal.include = v.include;
-              if (!separate) {
-                orders = [...orders, ...(v.order || [])];
-              }
-            }
-            return [...oo, retVal];
-          },
-          o
-        );
-      },
-      []
+    return processIncludeStatement(
+      this as QueryOptionsHost, defName, includeStatements, order, options, parentRelsForOrder, runHook,
     );
-    return {
-      include: incs,
-      order: orders,
-    };
   }
   async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): Promise<AdapterWhere> {
     const w = replaceWhereOperators(where);
