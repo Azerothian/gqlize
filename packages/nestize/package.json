@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=24"
   },
-  "description": "Generate a NestJS REST API + Swagger/OpenAPI from an @azerothian/ormize instance — the REST analogue of @azerothian/gqlize (GraphQL)",
+  "description": "Generate a NestJS REST API + Swagger/OpenAPI from an @azerothian/ormize instance \u2014 the REST analogue of @azerothian/gqlize (GraphQL)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Azerothian/gqlize.git",
@@ -19,6 +19,7 @@
   "scripts": {
     "watch": "tsc --watch",
     "test": "jest",
+    "typecheck": "tsc -p tsconfig.test.json",
     "package:yalc": "pnpm run build && cd publish && yalc publish",
     "package:npm": "pnpm run build && cd publish && npm publish",
     "build": "rm -Rf ./publish || true; mkdir ./publish && run-p build:*",

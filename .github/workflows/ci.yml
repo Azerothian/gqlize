@@ -43,11 +43,10 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # Covers src (tsc -b), every __tests__ tree, and the strict
+      # definition-typesystem assertions in ormize-adapter-sequelize.
       - name: Typecheck
         run: pnpm typecheck
-
-      - name: Typecheck (definition typesystem, strict)
-        run: pnpm typecheck:types
 
       - name: Build
         run: pnpm build

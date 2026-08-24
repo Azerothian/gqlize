@@ -5,7 +5,9 @@ import {
   isEnumType,
   lexicographicSortSchema,
   printSchema,
+  type GraphQLNamedType,
   type GraphQLSchema,
+  type GraphQLType,
 } from "graphql";
 import {describe, it, expect} from "@jest/globals";
 
@@ -136,9 +138,13 @@ describe("snapshot round-trip", () => {
         continue;
       }
       for (const field of Object.values<any>((type as any).getFields())) {
-        expect(getNamedType(field.type)).toBe(rebuilt.getType(getNamedType(field.type).name));
+        // `getNamedType` is overloaded on nullable input; annotate so the
+        // non-nullable overload is the one selected for an `any` argument.
+        const fieldType: GraphQLNamedType = getNamedType(field.type as GraphQLType);
+        expect(fieldType).toBe(rebuilt.getType(fieldType.name));
         for (const arg of field.args || []) {
-          expect(getNamedType(arg.type)).toBe(rebuilt.getType(getNamedType(arg.type).name));
+          const argType: GraphQLNamedType = getNamedType(arg.type as GraphQLType);
+          expect(argType).toBe(rebuilt.getType(argType.name));
         }
       }
     }

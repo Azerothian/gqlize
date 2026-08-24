@@ -1,6 +1,7 @@
 import { Ormize as Database } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import createComplexFieldsFunc from "../../src/graphql/create-complex-fields";
+import GqlizeBinding from "../../src/manager";
 import {GraphQLObjectType, GraphQLInt} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import { Definition, GqlizeAdapter } from '../../src/types';
@@ -37,7 +38,7 @@ test("createComplexFieldsFunc - empty define", async() => {
     name: "Item",
     fields: {}
   });
-  const func = createComplexFieldsFunc(itemDef.name || "", db, itemDef, {}, schemaCache);
+  const func = createComplexFieldsFunc(itemDef.name || "", new GqlizeBinding(db), itemDef, {}, schemaCache);
   expect(func).toBeInstanceOf(Function);
   const fields = func();
   expect(fields).toBeDefined();
@@ -87,7 +88,7 @@ test("createComplexFieldsFunc - before/after hooks", async() => {
     name: "Item",
     fields: {}
   });
-  const func = createComplexFieldsFunc(itemDef.name || "", db, itemDef, {}, schemaCache);
+  const func = createComplexFieldsFunc(itemDef.name || "", new GqlizeBinding(db), itemDef, {}, schemaCache);
   const fields = func();
   const result = await fields.testInstanceMethod.resolve({
     testInstanceMethod(args: any) {

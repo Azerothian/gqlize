@@ -684,7 +684,7 @@ each with its own subpath export:
 ## 11. Build, Test & Tooling
 
 - **Orchestration:** Turborepo + pnpm. Root scripts: `build` (`turbo run build`), `test`
-  (`turbo run test`), `typecheck` (`tsc -b`), `watch`.
+  (`turbo run test`), `typecheck` (`tsc -b && turbo run typecheck`), `watch`.
 - **Compilation:** **SWC** emits two module formats per package into a `publish/` dir —
   `import` → ESM (extensions fixed by each package's `scripts/fix-esm-extensions.ts`),
   `require` → CJS. Type declarations via `tsc`. A `bun` export condition serves the raw
@@ -703,6 +703,21 @@ each with its own subpath export:
   `createSchema` performs the round trip. The anchored match leaves the per-builder unit tests,
   which import `../../src/graphql/create-*`, untouched. This project is the always-on gate against
   the live builder and the materializer drifting apart, and is expected to stay green in CI.
+- **Typecheck:** two programs, both run by the root `typecheck` script and one CI step.
+  `tsc -b` builds the composite `src` projects (each package's `tsconfig.json` is
+  `include: ["src/**/*"]`, so it never sees a test file). `turbo run typecheck` then runs each
+  package's `tsc -p tsconfig.test.json`, a `noEmit` program over `src` **and** `__tests__`.
+  That second program matters because Jest compiles with `@swc/jest`, which strips types
+  without checking them — without it a test could call a function with the wrong arity, or pass
+  the wrong object, and nothing would ever say so. Notes on its shape:
+  - `rootDir` is `../..`: `paths` resolves sibling packages to their **source**, so the program
+    genuinely spans the workspace and needs no built declarations — every package's check runs
+    in parallel with no `dependsOn`.
+  - `types: ["node", "jest"]` is set explicitly because pnpm installs `@types/*` per package.
+  - `ormize-adapter-sequelize` additionally runs `tsc -p tsconfig.test-d.json`, the `strict: true`
+    program over `src/types` + `__tests__/types` that backs its `@ts-expect-error` assertions.
+    `tsconfig.test.json` excludes `__tests__/types` there, since a file cannot satisfy
+    `@ts-expect-error` under two different strictness settings at once.
 - **Runtime:** Node.js ≥ 24.
 - **Binary:** `@azerothian/gqlize` ships a `gqlize` command. `scripts/prepare-package.ts` sets
   `bin: { gqlize: "./cjs/cli/index.js" }` — the CJS build, because it runs on every supported Node

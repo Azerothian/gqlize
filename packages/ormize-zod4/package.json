@@ -19,6 +19,7 @@
   "scripts": {
     "watch": "tsc --watch",
     "test": "jest",
+    "typecheck": "tsc -p tsconfig.test.json",
     "package:yalc": "pnpm run build && cd publish && yalc publish",
     "package:npm": "pnpm run build && cd publish && npm publish",
     "build": "rm -Rf ./publish || true; mkdir ./publish && run-p build:*",

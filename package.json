@@ -5,8 +5,7 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
-    "typecheck": "tsc -b",
-    "typecheck:types": "pnpm --filter @azerothian/ormize-adapter-sequelize run typecheck:types",
+    "typecheck": "tsc -b && turbo run typecheck",
     "watch": "turbo run watch"
   },
   "devDependencies": {

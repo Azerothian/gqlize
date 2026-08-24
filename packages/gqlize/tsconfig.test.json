@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    // The program spans the workspace: `paths` resolves sibling packages to
+    // their source, so every one of them is a "source file" of this program.
+    "rootDir": "../..",
+    "types": ["node", "jest"]
+  },
+  "include": ["src/**/*", "__tests__/**/*"]
+}
