@@ -33,6 +33,8 @@
       "@azerothian/ormize/*": ["./packages/ormize/src/*"],
       "@azerothian/ormize-adapter-sequelize": ["./packages/ormize-adapter-sequelize/src/index.ts"],
       "@azerothian/ormize-adapter-sequelize/*": ["./packages/ormize-adapter-sequelize/src/*"],
+      "@azerothian/ormize-adapter-valkey": ["./packages/ormize-adapter-valkey/src/index.ts"],
+      "@azerothian/ormize-adapter-valkey/*": ["./packages/ormize-adapter-valkey/src/*"],
       "@azerothian/utilize": ["./packages/utilize/src/index.ts"],
       "@azerothian/utilize/*": ["./packages/utilize/src/*"],
       "@azerothian/ormize-zod4": ["./packages/ormize-zod4/src/index.ts"],

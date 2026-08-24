@@ -1,13 +1,5 @@
 {
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "composite": false,
-    "noEmit": true,
-    // The program spans the workspace: `paths` resolves sibling packages to
-    // their source, so every one of them is a "source file" of this program.
-    "rootDir": "../..",
-    "types": ["node", "jest"]
-  },
+  "extends": ["./tsconfig.json", "../../tsconfig.test.base.json"],
   "include": ["src/**/*", "__tests__/**/*"],
   // `__tests__/types` is the `tsc -p tsconfig.test-d.json` program, which runs
   // the same files under `strict: true`. Checking them twice under two

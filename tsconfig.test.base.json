@@ -1,0 +1,15 @@
+{
+  // Shared by every package's `tsconfig.test.json`. Only `compilerOptions` can
+  // live here: TypeScript resolves `include`/`exclude` relative to the file that
+  // declares them, so hoisting those would point them at the repo root.
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    // The program spans the workspace: `paths` resolves sibling packages to
+    // their source, so every one of them is a "source file" of this program.
+    // Relative to *this* file, so it is the repo root — the same place each
+    // package's own `"../.."` used to point.
+    "rootDir": ".",
+    "types": ["node", "jest"]
+  }
+}

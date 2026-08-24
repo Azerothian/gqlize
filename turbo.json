@@ -1,7 +1,8 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  // Every package tsconfig extends the root base, and nothing else hashes it.
-  "globalDependencies": ["tsconfig.base.json", "tsconfig.json"],
+  // Root configs every package extends. Nothing else hashes them, and a change
+  // to any of them changes what every task compiles.
+  "globalDependencies": ["tsconfig.base.json", "tsconfig.json", "tsconfig.test.base.json"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -16,7 +17,10 @@
         "tsconfig.types.json",
         ".swcrc",
         ".swcrc-cjs",
-        "README.md"
+        "README.md",
+        // `build:main` and `build:package` live outside the package now, in
+        // scripts shared by all nine.
+        "$TURBO_ROOT$/scripts/build/**"
       ],
       // `publish/` is the only build target; the old `lib/**` and `cjs/**` entries
       // named directories no package writes any more.
@@ -27,6 +31,9 @@
       // `moduleNameMapper` and tsconfig `paths` resolve siblings from *source*,
       // so a test really does read its dependencies' `src/`.
       "dependsOn": ["^test"],
+      // Every `jest.config.js` gets its workspace module map from this shared
+      // generator, so a change there changes what every test resolves.
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/jest/**"],
       "outputs": ["coverage/**"],
       // Turbo 2 defaults to strict env mode: an unlisted variable is filtered out
       // before the task sees it.
@@ -44,13 +51,21 @@
     // hash input rather than a scheduling edge.
     "@azerothian/gqlize#test": {
       "dependsOn": ["^test"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/ormize-adapter-sequelize/src/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/ormize-adapter-sequelize/src/**",
+        "$TURBO_ROOT$/scripts/jest/**"
+      ],
       "outputs": ["coverage/**"],
       "env": ["REDIS_URL", "TEMPORALIZE_INTEGRATION"]
     },
     "@azerothian/ormize#test": {
       "dependsOn": ["^test"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/ormize-adapter-sequelize/src/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/ormize-adapter-sequelize/src/**",
+        "$TURBO_ROOT$/scripts/jest/**"
+      ],
       "outputs": ["coverage/**"],
       "env": ["REDIS_URL", "TEMPORALIZE_INTEGRATION"]
     },
