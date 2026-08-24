@@ -370,6 +370,12 @@ export type DefinitionField = {
   description?: string;
   allowNull?: boolean;
   autoPopulated?: boolean;
+  /**
+   * Opts a primary key or foreign key back into client-writable mutation input.
+   * Both are excluded by default as a mass-assignment / IDOR guard — see
+   * {@link isStructurallyWritable}.
+   */
+  writable?: boolean;
   foreignTarget?: string;
   resolve?: any;
   args?: any;
