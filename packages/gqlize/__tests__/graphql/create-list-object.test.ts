@@ -6,7 +6,6 @@ import createListObject from "../../src/graphql/create-list-object";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import createNodeInterface from "../../src/graphql/utils/create-node-interface";
 import {GraphQLObjectType} from "graphql";
-import { GqlizeAdapter } from '../../src/types/index';
 import {test,expect} from "@jest/globals";
 
 
@@ -14,7 +13,7 @@ test("createListObject", async() => {
   const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {},

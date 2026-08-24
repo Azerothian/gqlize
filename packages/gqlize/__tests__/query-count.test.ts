@@ -19,7 +19,7 @@ async function build(afterCountTransform?: (total: number) => number) {
   const { adapter, name, teardown } = await createAdapterForDialect();
   registerTeardown(teardown);
   db.registerAdapter(adapter, name);
-  db.addDefinition({
+  await db.addDefinition({
     name: "CParent",
     define: { name: { type: Sequelize.STRING, allowNull: false } },
     relationships: [{
@@ -27,7 +27,7 @@ async function build(afterCountTransform?: (total: number) => number) {
       options: { as: "children", foreignKey: "parentId" },
     }],
   });
-  db.addDefinition({
+  await db.addDefinition({
     name: "CChild",
     define: { name: { type: Sequelize.STRING, allowNull: false } },
     relationships: [{

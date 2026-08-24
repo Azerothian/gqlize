@@ -127,7 +127,7 @@ describe("eager resolution (root-level include from selection)", () => {
     const {Task, Item} = instance.models;
     const task = await Task.create({name: "task1"});
     const item = await Item.create({name: "itemone"});
-    await (task as any).addBtmItem(item);
+    await task.addBtmItem(item);
 
     const schema = await createSchema(instance);
     const result = (await graphql({

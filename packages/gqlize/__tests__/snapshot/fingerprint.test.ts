@@ -53,7 +53,9 @@ function baseDefs(): any[] {
 async function orm(defs: any[] = baseDefs(), dialect: any = "sqlite") {
   const db = new Ormize();
   db.registerAdapter(new SequelizeAdapter({}, {dialect, logging: false}), "db");
-  defs.forEach((def) => db.addDefinition(def));
+  for (const def of defs) {
+    await db.addDefinition(def);
+  }
   await db.initialise();
   return db;
 }

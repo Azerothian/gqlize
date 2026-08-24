@@ -69,7 +69,7 @@ export function createClassMethodFields(instance: GQLManager, defName: string, d
       }
     }
     const {type, args} = query[methodName];
-    let outputType = (typeof type === "string") ? schemaCache.types[type] : type;
+    const outputType = (typeof type === "string") ? schemaCache.types[type] : type;
     if (!outputType) {
       return o;
     }
@@ -83,9 +83,9 @@ export function createClassMethodFields(instance: GQLManager, defName: string, d
     let newArgs;
     if (args) {
       newArgs = Object.keys(args).reduce((oa, argName) => {
-        let arg = args[argName];
+        const arg = args[argName];
         const isNamedRef = arg.type instanceof String || typeof arg.type === "string";
-        let argType = isNamedRef ? schemaCache.mutationInputFields[arg.type] : arg.type;
+        const argType = isNamedRef ? schemaCache.mutationInputFields[arg.type] : arg.type;
         if (argType) {
           if (!isNamedRef) {
             recordExternalType(schemaCache, argType, {

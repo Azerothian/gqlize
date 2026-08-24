@@ -54,12 +54,14 @@ export async function createInstance(extraDefinitions: any[] = []) {
       },
     ],
   };
-  db.addDefinition(parentDef);
-  db.addDefinition(childDef);
-  db.addDefinition(TaskModel);
-  db.addDefinition(TaskItemModel);
-  db.addDefinition(Item);
-  extraDefinitions.forEach((definition) => db.addDefinition(definition));
+  await db.addDefinition(parentDef);
+  await db.addDefinition(childDef);
+  await db.addDefinition(TaskModel);
+  await db.addDefinition(TaskItemModel);
+  await db.addDefinition(Item);
+  for (const definition of extraDefinitions) {
+    await db.addDefinition(definition);
+  }
 
   await db.initialise();
   await db.sync();

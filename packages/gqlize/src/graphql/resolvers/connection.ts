@@ -76,7 +76,7 @@ export function buildConnectionResolver(
     context: any,
     info: any,
   ) {
-    const a = processDefaultArgs(args as any);
+    const a = processDefaultArgs(args);
     let cursor: { index: any; id?: any } | null = null;
     if (args.after || args.before) {
       cursor = fromCursor(args.after || args.before);

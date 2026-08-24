@@ -7,7 +7,7 @@ import { bindField } from "./resolvers/bind";
 export default function createMutationModel(instance: GQLManager, defName: string, schemaCache: SchemaCache, create: any, update: any, del: any, options: GqlizeOptions = {}) {
 
   const input = schemaCache.mutationInputs[defName];
-  let inp: any = {};
+  const inp: any = {};
   // `input.create`/`input.update` are absent when permissions leave the model
   // with nothing writable — there is no type for the argument to reference.
   if (create && input.create) {

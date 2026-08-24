@@ -82,7 +82,7 @@ async function checkOne(
       ...profile.options,
       scalars: resolved.config.scalars,
       permissionProfile: profile.permissionProfile,
-    } as any),
+    }),
   ));
   if (live !== rebuilt) {
     err(`${label}${path} does not match a live build:\n${firstDiff(live, rebuilt)}`);

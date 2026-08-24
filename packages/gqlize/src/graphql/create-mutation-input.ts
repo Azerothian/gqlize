@@ -56,7 +56,7 @@ function hasInputFields(defName: string, defFields: DefinitionFields, associatio
 
 //(instance, defName, fields, relationships, inputTypes, false)
 export function generateInputFields(instance: GQLManager, defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, inputTypes: any, schemaCache: SchemaCache, forceOptional: boolean, options: GqlizeOptions) {
-  let def = waterfallSync(Object.keys(defFields), (fieldName: string, fields: {[key: string]: any}) => {
+  const def = waterfallSync(Object.keys(defFields), (fieldName: string, fields: {[key: string]: any}) => {
     const doNotSkip = isInputFieldWritable(options.permission, defName, fieldName, forceOptional ? "update" : "create", defFields[fieldName]);
     if (!doNotSkip) {
       return fields;
@@ -111,7 +111,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         };
       } else {
         const type = instance.getGraphQLInputType(defName, `${fieldName}${forceOptional ? "Optional" : "Required"}`, field.type);
-        let t = field.allowNull || field.autoPopulated || forceOptional ? type : new GraphQLNonNull(type as any);
+        const t = field.allowNull || field.autoPopulated || forceOptional ? type : new GraphQLNonNull(type as any);
         fields[fieldName] = {
           type: t,
           description: comment,
@@ -119,7 +119,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       }
     }
     return fields;
-  }, {} as {[key: string]: any});
+  }, {});
 
   return waterfallSync(Object.keys(associations), (relName: string, fields: any) => {
     if (!isRelationshipInputAllowed(options, defName, relName, forceOptional)) {
@@ -131,7 +131,8 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
     }
     const fld: any = {};
     const filterType = instance.getFilterGraphQLType(association.target);
-    let updateInput, selectInput, createInput = inputTypes[association.target].required;
+    const createInput = inputTypes[association.target].required;
+    let updateInput, selectInput;
     if (inputTypes[association.target].optional) {
       updateInput = createGQLInputObject(`${defName}${capitalize(relName)}Update`, {
         where: {

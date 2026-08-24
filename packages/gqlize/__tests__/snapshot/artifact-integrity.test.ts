@@ -45,7 +45,9 @@ function defs(): any[] {
 async function orm(extra: any[] = []) {
   const db = new Ormize();
   db.registerAdapter(new SequelizeAdapter({}, {dialect: "sqlite", logging: false}), "db");
-  [...defs(), ...extra].forEach((def) => db.addDefinition(def));
+  for (const def of [...defs(), ...extra]) {
+    await db.addDefinition(def);
+  }
   await db.initialise();
   return db;
 }
@@ -59,7 +61,7 @@ async function artifact(options?: any): Promise<SchemaSnapshot> {
 async function loadBroken(breakIt: (snapshot: any) => void, options?: any) {
   const snapshot = await artifact(options);
   breakIt(snapshot);
-  return materializeSchema(snapshot as SchemaSnapshot, await orm(), options);
+  return materializeSchema(snapshot, await orm(), options);
 }
 
 /** Make a type reachable from the query root, so its lazy thunks actually run. */

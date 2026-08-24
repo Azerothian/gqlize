@@ -39,6 +39,7 @@ export function decodeTypeRef(
     throw new Error(
       `gqlize: could not parse type reference ${JSON.stringify(ref)}` +
         `${coordinate ? ` at ${coordinate}` : ""}: ${err.message}`,
+      {cause: err},
     );
   }
   return fromTypeNode(node, lookup, ref, coordinate);

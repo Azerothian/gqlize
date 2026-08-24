@@ -3,14 +3,13 @@
 import { Ormize as Database } from "@azerothian/ormize";
 import GqlizeBinding from "../src/manager";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
-import { OrmAdapter } from "@azerothian/utilize/types/index";
 import {test,expect} from "@jest/globals";
 
 test("manager - resolveManyRelationship - hasMany", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
 
   const itemDef = {
     name: "Item",
@@ -56,7 +55,7 @@ test("manager - resolveManyRelationship - hasMany - with limit", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
 
   const itemDef = {
     name: "Item",
@@ -106,7 +105,7 @@ test("manager - resolveManyRelationship - belongsToMany", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
 
   const parentDef = {
     name: "Parent",
@@ -184,7 +183,7 @@ test("manager - resolveManyRelationship - belongsToMany - with limit", async() =
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
 
   const parentDef = {
     name: "Parent",
@@ -261,7 +260,7 @@ test("manager - resolveSingleRelationship - belongsTo", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
 
   const itemDef = {
     name: "Item",
@@ -303,7 +302,7 @@ test("manager - resolveSingleRelationship - hasOne", async() => {
   const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as OrmAdapter, "sqlite");
+  }), "sqlite");
 
   const itemDef = {
     name: "Item",

@@ -20,7 +20,7 @@ export function bindField<T extends Record<string, any>>(
     ...config,
     ...(resolve ? { resolve } : {}),
     extensions: {
-      ...(config.extensions as any),
+      ...(config.extensions),
       [GQLIZE_EXT]: binding,
     },
   };

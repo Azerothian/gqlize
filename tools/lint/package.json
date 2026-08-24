@@ -1,0 +1,19 @@
+{
+  "name": "@gqlize/lint",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The repo's eslint flat config, and the TypeScript the linter runs on.",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "dependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint-plugin-jest": "^29.16.1",
+    "globals": "^16.5.0",
+    "typescript-eslint": "^8.67.0",
+    "typescript": "5.9.3"
+  },
+  "//typescript": "Not the version the repo builds with. typescript-eslint's type-aware rules are written against the TypeScript 5 JS compiler API, and typescript@7 -- the native port -- no longer ships one: its package entry exports `version` and nothing else. Declaring 5.9 here rather than at the root is what keeps the two apart, because pnpm resolves typescript-eslint's `typescript` peer from this package. TS 5.9 reads every tsconfig in the repo (nothing here is 7-only), so the linter sees the same types tsc does."
+}

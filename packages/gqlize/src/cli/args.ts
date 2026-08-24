@@ -92,21 +92,21 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
     // bare `gqlize` is a request for help; `gqlize --out x` is not
     help: Boolean(values.help) || args.length === 0,
     version: Boolean(values.version),
-    config: values.config as string | undefined,
-    out: values.out as string | undefined,
-    sdl: values.sdl as string | undefined,
-    profile: values.profile as string | undefined,
+    config: values.config,
+    out: values.out,
+    sdl: values.sdl,
+    profile: values.profile,
     allProfiles: Boolean(values["all-profiles"]),
-    permissionProfile: values["permission-profile"] as string | undefined,
+    permissionProfile: values["permission-profile"],
     // `--no-pretty` wins over `--pretty`; `undefined` means "defer to the config"
-    pretty: values["no-pretty"] ? false : (values.pretty as boolean | undefined),
+    pretty: values["no-pretty"] ? false : (values.pretty),
     gzip: Boolean(values.gzip),
-    fromArtifact: values["from-artifact"] as string | undefined,
-    artifact: values.artifact as string | undefined,
+    fromArtifact: values["from-artifact"],
+    artifact: values.artifact,
     sorted: Boolean(values.sorted),
     // strict is the default for `check`: the weaker fingerprint-only comparison
     // cannot see permission drift, so opting out has to be deliberate
-    strict: values["no-strict"] ? false : (values.strict as boolean | undefined) ?? true,
+    strict: values["no-strict"] ? false : (values.strict) ?? true,
   };
 }
 

@@ -11,7 +11,7 @@ async function build() {
   const {adapter, name, teardown} = await createAdapterForDialect();
   registerTeardown(teardown);
   db.registerAdapter(adapter, name);
-  db.addDefinition({
+  await db.addDefinition({
     name: "Widget",
     define: {
       name: {type: Sequelize.STRING, allowNull: false},
@@ -20,7 +20,7 @@ async function build() {
     },
     relationships: [{type: "hasMany", model: "Part", name: "parts", options: {foreignKey: "widgetId"}}],
   });
-  db.addDefinition({
+  await db.addDefinition({
     name: "Part",
     define: {name: {type: Sequelize.STRING, allowNull: false}},
     relationships: [{type: "belongsTo", model: "Widget", name: "widget", options: {foreignKey: "widgetId"}}],

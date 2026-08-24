@@ -177,6 +177,7 @@ export default class Ormize<
     // The runtime is unchanged; the return type narrows the typesystem base URI
     // (e.g. "sequelize") from the adapter's `__base` brand so `define()` produces
     // adapter-typed models.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- ts7 needs it
     return this as unknown as Ormize<TModels, BaseOf<A>>;
   }
   /**
@@ -200,6 +201,7 @@ export default class Ormize<
     TBase
   > => {
     this._pendingDefs.push({ def, adapterName });
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- ts7 needs it
     return this as unknown as Ormize<
       TModels & { [K in ModelNameOf<D>]: IORModel<TBase, [D], []> },
       TBase
@@ -235,7 +237,7 @@ export default class Ormize<
     this.hooks[def.name] = gqlizeHookList.reduce((o, hookName) => {
       o[hookName] = this.createHook(hookName, def);
       return o;
-    }, { ...nativeHooks } as HookMap);
+    }, { ...nativeHooks });
 
     (this.models as Record<string, any>)[def.name] = await adapter.createModel(def, nativeHooks);
   }
@@ -258,7 +260,7 @@ export default class Ormize<
       }
       if (this.globalHooks[hookName]) {
         if (this.globalHooks[hookName] instanceof Function) {
-          v = await (this.globalHooks[hookName] as HookFunction)(def.name, v, ...args);
+          v = await (this.globalHooks[hookName])(def.name, v, ...args);
         } else if (Array.isArray(this.globalHooks[hookName])) {
           if (this.globalHooks[hookName].length > 0) {
             v = await waterfall(this.globalHooks[hookName], async(hook: HookFunction, f: any) => {
@@ -391,7 +393,7 @@ export default class Ormize<
       crossAdapter: true,
       through: rel.through,
       otherKey: rel.otherKey,
-      accessors: relationshipAccessors(rel.name, rel.funcName as string),
+      accessors: relationshipAccessors(rel.name, rel.funcName),
     };
   }
   getModelAdapter = (modelName: string) => {
@@ -422,7 +424,7 @@ export default class Ormize<
     }
     // Same keys as what came in, one of them re-pointed — so the caller keeps the
     // certainty it had about whether it handed over an options bag at all.
-    return o as T;
+    return o;
   }
   /**
    * Convert an adapter-native type (e.g. `Sequelize.DataTypes.STRING`) into the
@@ -783,7 +785,7 @@ export default class Ormize<
     }
     // Count-only: the connection selects `total` but not `edges`/rows — skip the
     // findAll and run a count (fires beforeCount natively + afterCount manually).
-    if (Boolean(selection?.countOnly)) {
+    if (selection?.countOnly) {
       const countOnlyOptions = countOptions || {
         where: getOptions.where,
         include: (getOptions.include || []).filter((i: {required?: boolean, separate?: boolean}) => i.required && !i.separate),

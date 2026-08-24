@@ -47,7 +47,8 @@ export function generateZodSchemas(orm: Ormize, options: GenerateOptions = {}): 
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       throw new Error(
-        `generateZodSchemas: could not read fields for "${name}". Ensure \`await orm.initialise()\` has run. (${detail})`
+        `generateZodSchemas: could not read fields for "${name}". Ensure \`await orm.initialise()\` has run. (${detail})`,
+        {cause: e}
       );
     }
     const fieldNames = Object.keys(fields).filter((f) => !ignore.has(f));

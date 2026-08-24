@@ -50,7 +50,7 @@ export type DataTypeDescriptor = {
 
 /** Runtime guard: is `x` an ormize abstract type token/descriptor (not a native type)? */
 export function isOrmizeDataType(x: any): x is DataTypeDescriptor {
-  return !!x && typeof x === "object" && (x as any)[ORMIZE_DATATYPE] === true;
+  return !!x && typeof x === "object" && x[ORMIZE_DATATYPE] === true;
 }
 
 function desc(type: DataType, extra?: Omit<DataTypeDescriptor, typeof ORMIZE_DATATYPE | "type">): DataTypeDescriptor {

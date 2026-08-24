@@ -79,6 +79,20 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/ormize-adapter-sequelize/src/**"],
       "outputs": []
     },
+    // A root task (`//#lint`) rather than one per package: eslint reads a single
+    // flat config and builds one type-aware program spanning the workspace, so
+    // nine per-package invocations would each pay for the same program.
+    "//#lint": {
+      "inputs": [
+        "eslint.config.mjs",
+        "tools/lint/**",
+        "packages/*/{src,__tests__,scripts}/**",
+        "packages/*/tsconfig.test.json",
+        "tsconfig.base.json",
+        "tsconfig.test.base.json"
+      ],
+      "outputs": []
+    },
     "watch": {
       "cache": false,
       "persistent": true

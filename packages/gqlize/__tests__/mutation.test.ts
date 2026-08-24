@@ -560,8 +560,8 @@ describe("mutations", () => {
     const db = new Database();
     db.registerAdapter(new SequelizeAdapter({}, {
       dialect: "sqlite",
-    }) as GqlizeAdapter, "sqlite");
-    db.addDefinition(taskModel);
+    }), "sqlite");
+    await db.addDefinition(taskModel);
     await db.initialise();
     await db.sync();
     const schema = await createSchema(db);
@@ -619,8 +619,8 @@ describe("mutations", () => {
     const db = new Database();
     db.registerAdapter(new SequelizeAdapter({}, {
       dialect: "sqlite",
-    }) as GqlizeAdapter, "sqlite");
-    db.addDefinition(taskModel);
+    }), "sqlite");
+    await db.addDefinition(taskModel);
     await db.initialise();
     await db.sync();
     const {Task} = db.models;
@@ -681,8 +681,8 @@ describe("mutations", () => {
     const db = new Database();
     db.registerAdapter(new SequelizeAdapter({}, {
       dialect: "sqlite",
-    }) as GqlizeAdapter, "sqlite");
-    db.addDefinition(taskModel);
+    }), "sqlite");
+    await db.addDefinition(taskModel);
     await db.initialise();
     await db.sync();
     const {Task} = db.models;
@@ -1296,7 +1296,7 @@ describe("2 degree mutation(nested)", () => {
 
     //when
     const res = await graphql({schema, source:mutation, variableValues}) as any;
-    let isChildStillExisting = await ChildModel.findOne({
+    const isChildStillExisting = await ChildModel.findOne({
       where: {id: child.id},
     });
 
@@ -1348,7 +1348,7 @@ describe("2 degree mutation(nested)", () => {
 
     //when
     const res = await graphql({schema, source:mutation, variableValues}) as any;
-    let isChildStillExisting = await ChildModel.findOne({
+    const isChildStillExisting = await ChildModel.findOne({
       where: {id: child.id},
     });
 

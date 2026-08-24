@@ -29,7 +29,7 @@ import NodeTypeMapper from "./node-type-mapper";
 
 export default function typeResolver(nodeTypeMapper: NodeTypeMapper) {
   return (obj: { __graphqlType__: any; Model: { options: { name: { singular: any; }; }; }; _modelOptions: { name: { singular: any; }; }; name: any; }, context: any, info: { schema: { getType: (arg0: any) => any; }; }) => {
-    var type =
+    const type =
       obj.__graphqlType__ || //eslint-disable-line
       (obj.Model
         ? obj.Model.options.name.singular

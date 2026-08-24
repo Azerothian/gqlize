@@ -4,14 +4,13 @@ import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import Sequelize from "sequelize";
 import createMutationInput from "../../src/graphql/create-mutation-input";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
-import { GqlizeAdapter } from "../../src/types";
 import {test,expect} from "@jest/globals";
 
 test("createMutationInput", async() => {
   const db = new GqlizeBinding(new Ormize());
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
-  }) as GqlizeAdapter, "sqlite");
+  }), "sqlite");
   const itemDef = {
     name: "Item",
     define: {

@@ -271,6 +271,7 @@ export function setupSwagger(app: INestApplication, orm: Ormize, options: OpenAp
   const doc = buildOpenApiDocument(orm, options);
   // Required lazily so @nestjs/swagger stays a peer dependency (not needed for the
   // pure `buildOpenApiDocument` path).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- `import()` would make this async and change the API
   const { SwaggerModule } = require("@nestjs/swagger");
   SwaggerModule.setup(options.path || "docs", app, doc as any);
   return doc;

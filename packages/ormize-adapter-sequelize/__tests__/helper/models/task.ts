@@ -10,7 +10,7 @@ import {
 } from "graphql";
 
 import events from "../events";
-import { SequelizeDefinition, SequelizeDefinitionOptions } from '../../../src/types/index';
+import { SequelizeDefinition } from '../../../src/types/index';
 
 
 function delay(ms = 1) {
@@ -263,7 +263,7 @@ const taskModel: SequelizeDefinition = {
     indexes: [
       // {unique: true, fields: ["name"]},
     ],
-  } as SequelizeDefinitionOptions,
+  },
 };
 
 

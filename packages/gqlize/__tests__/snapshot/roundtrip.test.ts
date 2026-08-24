@@ -177,7 +177,7 @@ describe("snapshot round-trip", () => {
   it("refuses an artifact from another format version", async() => {
     const {artifact} = await roundtrip();
     const instance = await createInstance();
-    await expect(materializeSchema({...artifact, formatVersion: 99} as any, instance))
+    await expect(materializeSchema({...artifact, formatVersion: 99}, instance))
       .rejects.toThrow(/formatVersion 99 is not supported/);
   });
 });

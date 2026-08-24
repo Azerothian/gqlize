@@ -32,7 +32,7 @@ import idFetcher from "./id-fetcher";
 import typeResolver from "./type-resolver";
 
 export default function createNodeInterface(dbInstance: any, options?: any) {
-  let nodeTypeMapper = new NodeTypeMapper();
+  const nodeTypeMapper = new NodeTypeMapper();
   const nodeObjects = nodeDefinitions(
     idFetcher(dbInstance, nodeTypeMapper, options),
     typeResolver(nodeTypeMapper)

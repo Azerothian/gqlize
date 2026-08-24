@@ -105,7 +105,7 @@ const applyUpdate = async(s: MutationScope, entries: { where?: MutationFilter; l
     }
     await Promise.all(targets.map(async(model: InstanceRow) => {
       const m = await s.targetAdapter.update(model, i, s.targetOptions);
-      await s.host.processRelationshipMutation(s.targetDef.name as string, m, input as MutationInputTree, s.targetContext, s.selection);
+      await s.host.processRelationshipMutation(s.targetDef.name as string, m, input, s.targetContext, s.selection);
       return m;
     }));
   });
@@ -157,7 +157,7 @@ const applyAdd = async(s: MutationScope, entries: (MutationFilter | LinkEntry)[]
     // pass the filter directly.
     const entry = (arg || {}) as LinkEntry;
     const through = s.isBtm ? entry.through : undefined;
-    const results = await findByFilter(s, s.isBtm ? entry.where : (arg as MutationFilter));
+    const results = await findByFilter(s, s.isBtm ? entry.where : (arg));
     if (results.length > 0) {
       await s.row[s.association.accessors.addMultiple](results, withThrough(s, through));
     }
@@ -180,7 +180,7 @@ const applySet = async(s: MutationScope, value: MutationFilter | (MutationFilter
     if (s.isBtm && entry.through !== undefined) {
       through = entry.through;
     }
-    all.push(...await findByFilter(s, s.isBtm ? entry.where : (arg as MutationFilter)));
+    all.push(...await findByFilter(s, s.isBtm ? entry.where : (arg)));
   });
   await s.row[s.association.accessors.set](all, withThrough(s, through));
 };
@@ -205,7 +205,7 @@ const applySelect = async(s: MutationScope, value: SelectEntry | SelectEntry[]) 
   await eachFilter(s, value, async(arg: SelectEntry) => {
     const records = await getRelated(s, {where: await s.where(arg.where)});
     await waterfall(records, async(m: InstanceRow) => {
-      await s.host.processRelationshipMutation(s.targetDef.name as string, m, arg.input as MutationInputTree, s.targetContext, s.selection);
+      await s.host.processRelationshipMutation(s.targetDef.name as string, m, arg.input, s.targetContext, s.selection);
     });
   });
 };

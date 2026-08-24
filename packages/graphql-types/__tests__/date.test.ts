@@ -28,13 +28,13 @@ describe("graphql-types - GQLTDate", () => {
     expect((DateType.parseValue(ms) as Date).toISOString()).toBe(ISO);
   });
   it("parseLiteral reads a string literal", () => {
-    expect((DateType.parseLiteral!(parseLiteralNode(`"${ISO}"`), undefined) as Date).toISOString()).toBe(ISO);
+    expect((DateType.parseLiteral(parseLiteralNode(`"${ISO}"`), undefined) as Date).toISOString()).toBe(ISO);
   });
   it("parseLiteral yields an Invalid Date for a literal kind carrying no value", () => {
     // Lists and objects have no `value` member; the result is a Date that fails
     // every comparison rather than a throw, which is what it did before the
     // parameter was typed.
-    const invalid = DateType.parseLiteral!(parseLiteralNode("[1, 2]"), undefined) as Date;
+    const invalid = DateType.parseLiteral(parseLiteralNode("[1, 2]"), undefined) as Date;
     expect(invalid).toBeInstanceOf(Date);
     expect(Number.isNaN(invalid.getTime())).toBe(true);
   });

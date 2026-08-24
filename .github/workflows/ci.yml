@@ -48,6 +48,11 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # After Typecheck: the type-aware rules need a program that compiles, and a
+      # type error here reads as a confusing lint failure rather than as itself.
+      - name: Lint
+        run: pnpm lint
+
       - name: Build
         run: pnpm build
 

@@ -33,7 +33,7 @@ export default class NodeTypeMapper {
 
   mapTypes(types: {[key: string]: any}) {
     Object.keys(types).forEach((k) => {
-      let v = types[k];
+      const v = types[k];
       this.map[k] = v.type
         ? v
         : {type: v};

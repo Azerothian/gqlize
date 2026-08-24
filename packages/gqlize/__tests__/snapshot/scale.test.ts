@@ -45,7 +45,7 @@ async function chainedOrm(models: number) {
   // two columns per model: the depth is what is under test, not the width, and
   // every extra column is another few thousand IR entries to serialize
   for (const definition of syntheticDefinitions({models, topology: "chain", fields: 2})) {
-    db.addDefinition(definition);
+    await db.addDefinition(definition);
   }
   await db.initialise();
   return db;
