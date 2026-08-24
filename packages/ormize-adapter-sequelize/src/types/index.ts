@@ -5,7 +5,12 @@ export interface SequelizeDefinitionOptions extends DefinitionOptions {
 export interface SequelizeDefinition extends Definition {
   tableName?: string;
   disablePrimaryKey?: boolean;
-  removeAttributes?: { [key: string]: string }[];
+  /**
+   * Columns to drop off the model after it is defined — `removeAttribute` takes
+   * a column name, so this is the list of names. Chiefly for shedding an
+   * inherited default attribute a particular model should not have.
+   */
+  removeAttributes?: string[];
 
   // classMethods?: {
   //   [key: string]: any;// SqlClassMethod | ((args: any, context: any) => any);

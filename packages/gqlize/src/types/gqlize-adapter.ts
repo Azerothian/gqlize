@@ -1,4 +1,4 @@
-import { GraphQLInputType, GraphQLOutputType } from "graphql";
+import { GraphQLFieldConfigArgumentMap, GraphQLInputType, GraphQLOutputType } from "graphql";
 import { OrmAdapter, Definition, NativeDataType, Permission, Selection } from "./index";
 
 /**
@@ -11,7 +11,13 @@ import { OrmAdapter, Definition, NativeDataType, Permission, Selection } from ".
  */
 export interface GqlizeAdapter extends OrmAdapter {
   getTypeMapper(): ((type: NativeDataType, modelName: string, newTypeName: string) => GraphQLInputType | GraphQLOutputType);
-  getDefaultListArgs(defName: string, definition: Definition, permission?: Permission): GraphQLInputType;
+  /**
+   * The extra arguments this adapter contributes to a list field — `where`, and
+   * `include` when the model has any includable relationship. A *map* of argument
+   * configs, not a single input type: gqlize merges it into the field's `args`
+   * alongside the relay cursor arguments it adds itself.
+   */
+  getDefaultListArgs(defName: string, definition: Definition, permission?: Permission): GraphQLFieldConfigArgumentMap;
   getOrderByGraphQLType(defName: string, permission?: Permission): GraphQLInputType;
   getFilterGraphQLType(defName: string, definition: Definition, permission?: Permission): GraphQLInputType;
   /**

@@ -856,9 +856,12 @@ describe("tests", () => {
     };
 
     await adapter.createModel(itemDef);
+    // The seeded column goes in as `defaultOptions` (the sixth argument) — it
+    // used to be passed third, i.e. as `offset`, which meant this test never
+    // reached the branch it names.
     const {getOptions, countOptions} = await adapter.processListArgsToOptions("Item", {
       first: 1,
-    }, {
+    }, undefined, undefined, undefined, {
       attributes: [[
         adapter.sequelize.literal("COUNT(1) OVER()"),
         "full_count",
@@ -867,10 +870,11 @@ describe("tests", () => {
     expect(countOptions).toBeUndefined();
     expect(getOptions).toBeDefined();
     expect(getOptions.limit).toEqual(1);
-    expect(getOptions.attributes).toHaveLength(4);
-    expect(getOptions.attributes[getOptions.attributes.length - 1]).toHaveLength(2);
-    expect(getOptions.attributes[getOptions.attributes.length - 1][0].val).toEqual("COUNT(1) OVER()");
-    expect(getOptions.attributes[getOptions.attributes.length - 1][1]).toEqual("full_count");
+    // One count column, not two: the alias pair is recognised, so the adapter
+    // does not add a second.
+    const countColumns = getOptions.attributes.filter((a: unknown) => Array.isArray(a) && a[1] === "full_count");
+    expect(countColumns).toHaveLength(1);
+    expect(countColumns[0][0].val).toEqual("COUNT(1) OVER()");
   });
 
   it("adapter - processListArgsToOptions - hasInlineCount - mssql", async() => {
@@ -963,7 +967,7 @@ describe("tests", () => {
       name: "ttttttttttttttt",
     });
 
-    const func = await adapter.getDeleteFunction("Task", null);
+    const func = await adapter.getDeleteFunction("Task", undefined);
     await func({}, {}, (i) => i, (i) => i);
     // const result = await proxyFunc();
     // expect(result).not.toBeUndefined();

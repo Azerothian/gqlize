@@ -26,8 +26,12 @@ export type NativeDataType = unknown;
  * plus the definition's `whereOperators`, and it goes straight back to the
  * adapter — the shape belongs to the backend (Sequelize's `where`, a Valkey
  * index query), not to us.
+ *
+ * Symbol keys are admitted alongside string ones because a backend may key by
+ * symbol: Sequelize's operators (`Op.and`, `Op.eq`) are symbols, and the
+ * combined filter this type describes is largely made of them.
  */
-export type AdapterWhere = { [key: string]: any };
+export type AdapterWhere = { [key: string | symbol]: any };
 
 /**
  * The options bag threaded through a backend operation: `where`, `limit`,
@@ -259,7 +263,7 @@ export interface IncludeDescriptor {
   associationType: string;
   required?: boolean;
   where?: AdapterWhere;
-  orderBy?: any;
+  orderBy?: OrderEntry[];
   limit?: number;
   offset?: number;
   separate?: boolean;
@@ -270,6 +274,16 @@ export interface IncludeDescriptor {
 export interface IncludeMap {
   [relName: string]: IncludeDescriptor;
 }
+
+/**
+ * One ORDER BY entry: a column, and the direction to sort it. This is the value
+ * carried by a generated `${defName}OrderBy` enum member, so it is what arrives
+ * on an `orderBy` argument and what an adapter translates into backend ordering.
+ * The direction stays a plain `string` rather than `"ASC" | "DESC"` because a
+ * backend may accept more (`NULLS LAST`, a collation), and this type is the
+ * hand-off, not the vocabulary.
+ */
+export type OrderEntry = [column: string, direction: string];
 
 
 export type GqlizeOptions = {

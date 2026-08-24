@@ -2,7 +2,7 @@ import { getArgumentValues, GraphQLResolveInfo, GraphQLObjectType, GraphQLFieldM
 import type { FieldNode, SelectionSetNode } from "graphql";
 import GQLManager from "../../manager";
 import { fromCursor } from "../objects/cursor";
-import type { AdapterWhere, Association, GqlizeAdapter, IncludeDescriptor, IncludeMap } from "../../types";
+import type { AdapterWhere, Association, GqlizeAdapter, IncludeDescriptor, IncludeMap, OrderEntry } from "../../types";
 
 /**
  * The arguments of a relationship field, resolved against the request's
@@ -15,7 +15,7 @@ type IncludeFieldArgs = {
   required?: unknown;
   separate?: unknown;
   where?: AdapterWhere;
-  orderBy?: unknown;
+  orderBy?: OrderEntry[];
   first?: unknown;
   last?: unknown;
   after?: unknown;
