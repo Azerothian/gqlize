@@ -1,5 +1,8 @@
 import Cache from "./utils/cache";
 import pluralize from "pluralize";
+import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
+import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
+import {lowercase} from "@azerothian/utilize/utils/word";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
@@ -381,12 +384,7 @@ export default class Ormize<
   getDefinition = (defName: string) => {
     return this.defs[defName];
   }
-  getGlobalKeys = (defName: string) => {
-    const fields = this.getFields(defName);
-    return Object.keys(fields).filter((key) => {
-      return (fields[key].foreignKey || fields[key].primaryKey) && !fields[key].ignoreGlobalKey;
-    });
-  }
+  getGlobalKeys = (defName: string) => globalKeysFromFields(this.getFields(defName));
   getFields = (defName: string) => {
     const adapter = this.getModelAdapter(defName);
     //TODO: add cross adapter fields
@@ -422,8 +420,6 @@ export default class Ormize<
   }
   /** Build an {@link Association} descriptor for an ormize-wired cross-adapter relationship. */
   private buildCrossAdapterAssociation(defName: string, rel: WiredRelationship): Association {
-    const nameCap = capitalize(rel.name);
-    const singCap = capitalize(pluralize.singular(rel.name));
     return {
       name: rel.name,
       target: rel.model,
@@ -437,18 +433,7 @@ export default class Ormize<
       crossAdapter: true,
       through: rel.through,
       otherKey: rel.otherKey,
-      accessors: {
-        get: rel.funcName as string,
-        set: `set${nameCap}`,
-        add: `add${singCap}`,
-        addMultiple: `add${nameCap}`,
-        remove: `remove${singCap}`,
-        removeMultiple: `remove${nameCap}`,
-        count: `count${nameCap}`,
-        create: `create${singCap}`,
-        hasSingle: `has${singCap}`,
-        hasAll: `has${nameCap}`,
-      },
+      accessors: relationshipAccessors(rel.name, rel.funcName as string),
     };
   }
   getModelAdapter = (modelName: string) => {
@@ -600,7 +585,7 @@ export default class Ormize<
     const otherKey = rel.options?.otherKey
       || (typeof through === "object" ? through?.otherKey : undefined)
       || this.deriveOtherKey(rel.model, throughName)
-      || `${rel.model.charAt(0).toLowerCase()}${rel.model.slice(1)}Id`;
+      || `${lowercase(rel.model)}Id`;
     if (!this.defs[throughName] && !this._joinModels[throughName]) {
       this._joinModels[throughName] = {source: defName, target: rel.model, otherKey, ...keys};
     }

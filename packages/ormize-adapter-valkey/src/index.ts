@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import pluralize from "pluralize";
+import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
+import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
+import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
+import {capitalize, lowercase} from "@azerothian/utilize/utils/word";
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, HookMap, Model,
   OrmAdapter, Permission, Relationship, Selection, WhereOperators,
@@ -18,13 +22,6 @@ import * as G from "./graphql";
 import type { GqlizeAdapter } from "@azerothian/gqlize/types/gqlize-adapter";
 
 
-const DEFAULT_PAGE_SIZE = 100;
-const MAX_PAGE_SIZE = 1000;
-function clampPageSize(v: unknown): number {
-  const n = parseInt(String(v), 10);
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_PAGE_SIZE;
-  return Math.min(n, MAX_PAGE_SIZE);
-}
 
 function looksLikeClient(x: unknown): x is ValkeyClient {
   const c = x as Partial<ValkeyClient> | null | undefined;
@@ -65,10 +62,9 @@ export type ValkeyConnection = string | { [option: string]: unknown };
  */
 export type ValkeyAssociation = Association & { fkA?: string; fkB?: string };
 
-const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 /** Sequelize-style accessor name parts for a relation: capitalized name + singular. */
 function relNames(name: string): { nameCap: string; singCap: string } {
-  return { nameCap: cap(name), singCap: cap(pluralize.singular(name)) };
+  return { nameCap: capitalize(name), singCap: capitalize(pluralize.singular(name)) };
 }
 
 /**
@@ -142,10 +138,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   getDefaultListArgs = (defName: string, definition: Definition, permission?: Permission) => G.getDefaultListArgs(this, defName, definition, permission);
 
   // ---- relay global-id rewriting (gqlize passes global ids for id/fk fields) ----
-  getGlobalKeys = (defName: string): string[] => {
-    const m = this.model(defName);
-    return Object.keys(m.fields).filter((k) => (m.fields[k].primaryKey || m.fields[k].foreignKey) && !m.fields[k].ignoreGlobalKey);
-  };
+  getGlobalKeys = (defName: string): string[] => globalKeysFromFields(this.model(defName).fields);
   replaceIdInWhere = (where: AdapterWhere | undefined, defName: string) => replaceIdDeep(where, this.getGlobalKeys(defName));
   replaceIdInInclude = (include: Selection["include"], _defName: string) => include;
   replaceIdInArgs = async (args: { [name: string]: any }, defName: string) => {
@@ -258,15 +251,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
         fkB: join?.fkB,
         // Sequelize-style accessor names (singular for the -one variants, plural
         // for the -many). `tag()` defines exactly these on returned records.
-        accessors: (() => {
-          const { nameCap, singCap } = relNames(rel.name);
-          return {
-            get: `get${nameCap}`, set: `set${nameCap}`, add: `add${singCap}`,
-            addMultiple: `add${nameCap}`, remove: `remove${singCap}`,
-            removeMultiple: `remove${nameCap}`, count: `count${nameCap}`,
-            create: `create${singCap}`, hasSingle: `has${singCap}`, hasAll: `has${nameCap}`,
-          };
-        })(),
+        accessors: relationshipAccessors(rel.name),
       };
     }
     return out;
@@ -291,7 +276,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       // Model the through/join as a normal indexed record with two foreign keys.
       const throughName = typeof options.through === "string" ? options.through : options.through?.model;
       const fkA = fk;
-      const fkB = options.otherKey || this.deriveOtherKey(targetModel, throughName, options.through) || `${targetModel.charAt(0).toLowerCase()}${targetModel.slice(1)}Id`;
+      const fkB = options.otherKey || this.deriveOtherKey(targetModel, throughName, options.through) || `${lowercase(targetModel)}Id`;
       if (throughName && fkA && fkB) {
         this.ensureJoinModel(throughName, fkA, fkB);
         const relObj = source.relationships.find((r) => r.name === relName);

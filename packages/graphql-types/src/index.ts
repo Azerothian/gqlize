@@ -5,3 +5,11 @@ export { default as JSONType } from "./json";
 export { default as UploadType } from "./upload";
 export { default as createQueryType } from "./query";
 export type { QueryTypeConfig } from "./query";
+export {
+  CORE_VALUE_FUNCS,
+  REGEX_VALUE_FUNCS,
+  CORE_ARRAY_FUNCS,
+  SQL_ARRAY_FUNCS,
+  CORE_ARRAY_VALUES,
+  SQL_ARRAY_VALUES,
+} from "./operators";
