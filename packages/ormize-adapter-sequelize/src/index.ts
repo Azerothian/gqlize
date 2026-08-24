@@ -14,7 +14,7 @@ import {
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
 import unique from "@azerothian/utilize/utils/unique";
-import { isFieldAllowed, isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
+import { isFieldAllowed } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import { replaceDefWhereOperators } from "./utils/where-operators";
@@ -215,7 +215,13 @@ export type SequelizeInclude = Omit<IncludeOptions, "order" | "include"> & {
 /** Reaches the live GraphQL execution args from inside an options bag. */
 type GetGraphQLArgs = () => { context: RequestContext; info: unknown; source: unknown };
 
-import createQueryType, { type QueryTypeConfig } from "@azerothian/graphql-types/query";
+import { type QueryTypeConfig } from "@azerothian/graphql-types/query";
+import {
+  getDefaultListArgs,
+  getFilterGraphQLType,
+  getIncludeGraphQLType,
+  getOrderByGraphQLType,
+} from "@azerothian/graphql-types/adapter-args";
 import {
   CORE_VALUE_FUNCS,
   REGEX_VALUE_FUNCS,
@@ -227,14 +233,9 @@ import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 
 import {
   GraphQLBoolean,
-  GraphQLEnumType,
   GraphQLID,
-  GraphQLList,
-  type GraphQLFieldConfigArgumentMap,
-  type GraphQLInputFieldConfigMap,
   type GraphQLInputType,
 } from "graphql";
-import { GraphQLInputObjectType } from "graphql";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {
   isOrmizeDataType,
@@ -844,166 +845,33 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return fields[keyName];
   }
-  getFilterGraphQLType = (defName: string, definition: Definition, permission?: Permission): GraphQLInputObjectType => {
-    if (!this.getMetaObj(defName, "queryType")) {
-      this.setMetaObj(
-        defName,
-        "queryType",
-        createQueryType(this.createQueryConfig(definition, permission))
-      );
-    }
-    return this.getMetaObj(defName, "queryType") as GraphQLInputObjectType;
+  // --- `AdapterArgsHost`: what the shared argument builders reach into. ---
+  /** The SQL filter vocabulary and its belongsTo-FK pass are this adapter's own. */
+  queryConfigFor = (defName: string, definition?: Definition, permission?: Permission): QueryTypeConfig =>
+    this.createQueryConfig((definition ?? this.targetOf(defName)?.definition) as SequelizeDefinition, permission);
+  orderableFields = (defName: string): string[] => Object.keys(this.getFields(defName));
+  relationshipsOf = (defName: string, definition?: Definition): Relationship[] =>
+    (definition?.relationships || []) as Relationship[];
+  /**
+   * A relationship whose target lives on another adapter has no Sequelize model
+   * here and no JOIN can reach it, so it is not includable — it is resolved by
+   * the target's own adapter as a separate query.
+   */
+  targetOf = (modelName: string) => {
+    const model = this.getModel(modelName) as SequelizeModelClass | undefined;
+    return model ? {name: model.name, definition: model.definition} : undefined;
   };
-  getOrderByGraphQLType = (defName: string, permission?: Permission): GraphQLInputObjectType => {
-    if (!this.getMetaObj(defName, "orderByType")) {
-      const perm = permission !== undefined ? permission : this._buildPermission;
-      const fields = this.getFields(defName);
-      // Only permission-allowed fields are orderable — a denied field must
-      // not be sortable (another way to leak ordering-based information).
-      const values = Object.keys(fields).reduce((o, fieldName) => {
-        if (!isFieldAllowed(perm, defName, fieldName)) {
-          return o;
-        }
-        o[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
-        o[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
-        return o;
-      }, {} as { [enumValueName: string]: { value: [string, "ASC" | "DESC"] } });
-      // An enum with no values is an invalid GraphQL type. When permissions deny
-      // every orderable field, leave the meta unset so callers omit `orderBy`
-      // entirely rather than emitting an empty `${defName}OrderBy`.
-      if (Object.keys(values).length > 0) {
-        this.setMetaObj(
-          defName,
-          "orderByType",
-          new GraphQLList(
-            new GraphQLEnumType({
-              name: `${defName}OrderBy`,
-              values,
-              // description: "",
-            })
-          )
-        );
-      }
-    }
-    return this.getMetaObj(defName, "orderByType") as GraphQLInputObjectType;
-  };
+  /** An include is a JOIN, and a model may be joined more than once per query. */
+  readonly includeIsList = true;
 
-  getIncludeGraphQLType = (
-    defName: string,
-    definition: Definition,
-    permission?: Permission
-  ): GraphQLInputObjectType => {
-    const perm = permission !== undefined ? permission : this._buildPermission;
-    const relationships = definition.relationships || [];
-    if (
-      !this.getMetaObj(defName, "includeType") &&
-      relationships.length > 0
-    ) {
-      const fields = relationships.reduce(
-        (
-          o: { [relName: string]: { type: GraphQLInputObjectType } },
-          relationship: Relationship
-        ) => {
-          // Skip relationships the permission layer denies — otherwise a denied
-          // association stays joinable/orderable via `include`.
-          if (!isRelationshipAllowed(perm, defName, relationship.name, relationship.model)) {
-            return o;
-          }
-          // A relationship whose target model is denied has no output type in the
-          // schema either (see gqlize's create-related-fields), so it must not be
-          // includable — that would expose a restricted datatype as a join target.
-          if (!isModelAllowed(perm, relationship.model)) {
-            return o;
-          }
-          const targetModel = this.getModel(relationship.model);
-          // A relationship whose target lives on another adapter has no Sequelize
-          // model here, and no SQL JOIN can reach it — it is resolved by the
-          // target's own adapter as a separate query. Leaving it in would build
-          // the nested input object against `undefined` and crash schema
-          // construction, so omit it from `include` entirely.
-          if (!targetModel) {
-            return o;
-          }
-          o[relationship.name] = {
-            type: new GraphQLInputObjectType({
-              name: `GQLT${defName}Include${relationship.name}Object`,
-              fields: () => {
-                const includeFields: GraphQLInputFieldConfigMap = {
-                  required: {
-                    type: GraphQLBoolean,
-                  },
-                  separate: {
-                    type: GraphQLBoolean,
-                  },
-                  where: {
-                    type: this.getFilterGraphQLType(
-                      targetModel.name,
-                      (targetModel as SequelizeModelClass).definition,
-                      permission
-                    ),
-                  },
-                };
-                // A target whose orderable fields are all denied has no orderBy
-                // enum; only expose the field when one exists.
-                const targetOrderByType = this.getOrderByGraphQLType(
-                  targetModel.name,
-                  permission
-                );
-                if (targetOrderByType) {
-                  includeFields.orderBy = {
-                    type: targetOrderByType,
-                  };
-                }
-                // A leaf target (no relationships of its own) has no include type;
-                // only expose the nested `include` field when one exists.
-                const nestedIncludeType = this.getIncludeGraphQLType(
-                  targetModel.name,
-                  (targetModel as SequelizeModelClass).definition,
-                  permission
-                );
-                if (nestedIncludeType) {
-                  includeFields.include = {
-                    type: nestedIncludeType,
-                  };
-                }
-                return includeFields;
-              },
-            }),
-          };
-          return o;
-        },
-        {} as { [relName: string]: { type: GraphQLInputObjectType } }
-      );
-      // The `relationships.length` check above is against the raw list, before
-      // permission filtering. If every relationship is denied (or targets a denied
-      // model) the field map is empty, and an input object with no fields is an
-      // invalid GraphQL type. Leave the meta unset so getDefaultListArgs and the
-      // nested `include` guard omit the argument entirely.
-      if (Object.keys(fields).length > 0) {
-        const includeType = new GraphQLInputObjectType({
-          name: `GQLT${defName}IncludeObject`,
-          fields,
-        });
-        this.setMetaObj(defName, "includeType", new GraphQLList(includeType));
-      }
-    }
-    return this.getMetaObj(defName, "includeType");
-  };
-  getDefaultListArgs = (defName: string, definition: Definition, permission?: Permission): GraphQLFieldConfigArgumentMap => {
-    const includeType = this.getIncludeGraphQLType(defName, definition, permission);
-    const retVal: GraphQLFieldConfigArgumentMap = {
-      where: {
-        type: this.getFilterGraphQLType(defName, definition, permission),
-      },
-    };
-
-    if (includeType) {
-      retVal.include = {
-        type: includeType,
-      };
-    }
-    return retVal;
-  };
+  getFilterGraphQLType = (defName: string, definition: Definition, permission?: Permission) =>
+    getFilterGraphQLType(this, defName, definition, permission);
+  getOrderByGraphQLType = (defName: string, permission?: Permission) =>
+    getOrderByGraphQLType(this, defName, permission);
+  getIncludeGraphQLType = (defName: string, definition: Definition, permission?: Permission) =>
+    getIncludeGraphQLType(this, defName, definition, permission);
+  getDefaultListArgs = (defName: string, definition: Definition, permission?: Permission) =>
+    getDefaultListArgs(this, defName, definition, permission);
   hasInlineCountFeature = () => {
     if (this.options.disableInlineCount) {
       return false;

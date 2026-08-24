@@ -18,7 +18,13 @@ import { ttlToScore, getExpiry, setExpiry } from "./expiry";
 import { mapDataType, toNativeType } from "./data-type-mapper";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
-import * as G from "./graphql";
+import {
+  getDefaultListArgs,
+  getFilterGraphQLType,
+  getIncludeGraphQLType,
+  getOrderByGraphQLType,
+} from "@azerothian/graphql-types/adapter-args";
+import { createQueryConfig } from "./graphql";
 import type { GqlizeAdapter } from "@azerothian/gqlize/types/gqlize-adapter";
 
 
@@ -132,10 +138,23 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     (this.meta[model] = this.meta[model] || {})[key] = value;
   };
   getTypeMapper = () => typeMapper;
-  getFilterGraphQLType = (defName: string, definition: Definition, permission?: Permission) => G.getFilterGraphQLType(this, defName, definition, permission);
-  getOrderByGraphQLType = (defName: string, permission?: Permission) => G.getOrderByGraphQLType(this, defName, permission);
-  getIncludeGraphQLType = (defName: string, definition: Definition, permission?: Permission) => G.getIncludeGraphQLType(this, defName, definition, permission);
-  getDefaultListArgs = (defName: string, definition: Definition, permission?: Permission) => G.getDefaultListArgs(this, defName, definition, permission);
+  // --- `AdapterArgsHost`: what the shared argument builders reach into. ---
+  /** Valkey filters by index, so the filterable-field rule is its own — see `./graphql`. */
+  queryConfigFor = (defName: string, _definition?: Definition, permission?: Permission) =>
+    createQueryConfig(this.model(defName), permission);
+  orderableFields = (defName: string) => Object.keys(this.model(defName).fields);
+  relationshipsOf = (defName: string) => this.model(defName).relationships || [];
+  /** A target that is not one of this adapter's models cannot be eager-loaded here. */
+  targetOf = (modelName: string) => (this.getModel(modelName)
+    ? {name: modelName, definition: this.model(modelName).definition}
+    : undefined);
+  /** One include object keyed by relationship name — there is no JOIN to repeat. */
+  readonly includeIsList = false;
+
+  getFilterGraphQLType = (defName: string, definition: Definition, permission?: Permission) => getFilterGraphQLType(this, defName, definition, permission);
+  getOrderByGraphQLType = (defName: string, permission?: Permission) => getOrderByGraphQLType(this, defName, permission);
+  getIncludeGraphQLType = (defName: string, definition: Definition, permission?: Permission) => getIncludeGraphQLType(this, defName, definition, permission);
+  getDefaultListArgs = (defName: string, definition: Definition, permission?: Permission) => getDefaultListArgs(this, defName, definition, permission);
 
   // ---- relay global-id rewriting (gqlize passes global ids for id/fk fields) ----
   getGlobalKeys = (defName: string): string[] => globalKeysFromFields(this.model(defName).fields);

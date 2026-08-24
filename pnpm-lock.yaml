@@ -338,6 +338,9 @@ importers:
 
   packages/graphql-types:
     devDependencies:
+      '@azerothian/utilize':
+        specifier: workspace:*
+        version: link:../utilize
       '@jest/globals':
         specifier: ^30.4.1
         version: 30.4.1

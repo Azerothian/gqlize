@@ -6,6 +6,13 @@ export { default as UploadType } from "./upload";
 export { default as createQueryType } from "./query";
 export type { QueryTypeConfig } from "./query";
 export {
+  getDefaultListArgs,
+  getFilterGraphQLType,
+  getIncludeGraphQLType,
+  getOrderByGraphQLType,
+} from "./adapter-args";
+export type { AdapterArgsHost, HostRelationship, HostTarget } from "./adapter-args";
+export {
   CORE_VALUE_FUNCS,
   REGEX_VALUE_FUNCS,
   CORE_ARRAY_FUNCS,

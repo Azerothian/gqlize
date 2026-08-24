@@ -36,6 +36,7 @@
     "url": "https://github.com/azerothian/gqlize/issues"
   },
   "devDependencies": {
+    "@azerothian/utilize": "workspace:*",
     "@jest/globals": "^30.4.1",
     "@swc/cli": "^0.8.1",
     "@swc/core": "^1.15.43",
@@ -50,6 +51,7 @@
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
+    "@azerothian/utilize": "^6.0.0",
     "graphql": "^17.0.0"
   }
 }
