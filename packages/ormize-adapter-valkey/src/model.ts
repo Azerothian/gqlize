@@ -1,5 +1,23 @@
 import { DataTypeDescriptor, DataTypes } from "@azerothian/utilize/types/data-type";
+import type { Definition, Relationship } from "@azerothian/utilize/types/index";
 import { resolveAttributeTypes } from "./data-type-mapper";
+
+/**
+ * A relationship as this adapter carries it: the definition's own
+ * {@link Relationship}, plus the join descriptor `createRelationship` stamps on
+ * a `belongsToMany` once it has resolved the join model and both of its keys.
+ */
+export type ValkeyRelationship = Relationship & {
+  __join?: { through: string; fkA: string; fkB: string };
+};
+
+/**
+ * Sequelize-style `options.indexes`, the one adapter-native model option this
+ * package reads. {@link DefinitionOptions} carries unnamed options as `unknown`
+ * by design — the set belongs to the backend — so the shape is named and
+ * narrowed here, at the single place it is read.
+ */
+type IndexOption = { fields?: string[]; unique?: boolean };
 
 export interface FieldMeta {
   name: string;
@@ -24,20 +42,27 @@ export interface FieldMeta {
  */
 export class ValkeyModel {
   name: string;
-  definition: any;
+  definition: Definition;
   fields: { [k: string]: FieldMeta } = {};
   primaryKey!: string;
   pkStrategy: "uuid" | "sequence" | "provided" = "provided";
   indexes = new Set<string>();
   uniques = new Set<string>();
-  relationships: any[];
+  relationships: ValkeyRelationship[];
   defaultTtl?: number;
 
-  constructor(def: any) {
+  constructor(def: Definition) {
+    // Every key this adapter writes is built from the model name, so an unnamed
+    // definition has no keyspace to live in. Ormize guards the same thing before
+    // it gets here; this covers a caller driving the adapter directly.
+    if (!def.name) throw new Error("ValkeyModel: a definition must have a name");
     this.name = def.name;
     this.definition = def;
     this.relationships = def.relationships || [];
-    this.defaultTtl = def.options?.ttl;
+    // A model-level `ttl` is one of those adapter-native options, so it arrives
+    // as `unknown` and is checked rather than assumed.
+    const ttl = def.options?.ttl;
+    this.defaultTtl = typeof ttl === "number" ? ttl : undefined;
 
     const resolved = resolveAttributeTypes(def.define || {});
     for (const key of Object.keys(resolved)) {
@@ -85,7 +110,7 @@ export class ValkeyModel {
     }
 
     // Sequelize-style single-field `options.indexes: [{ fields: [f], unique? }]`.
-    for (const idx of def.options?.indexes || []) {
+    for (const idx of (def.options?.indexes || []) as IndexOption[]) {
       const flds: string[] = idx.fields || [];
       if (flds.length === 1) {
         const f = flds[0];
