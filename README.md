@@ -87,8 +87,16 @@ pnpm install
 pnpm build        # turbo run build   — builds every package into its publish/ dir
 pnpm test         # turbo run test    — Jest (swc-jest) across all packages
 pnpm typecheck    # tsc -b + turbo  — src via project references, then __tests__ per package
+pnpm lint         # eslint .          — type-aware, one program across the workspace
 pnpm watch        # turbo run watch   — tsc --watch per package
 ```
+
+`lint` deliberately overlaps `typecheck` as little as possible: `tsc` already runs
+`strict` and `noUnusedLocals` over every file, so the lint layer enforces only what
+a type system structurally cannot see — chiefly unawaited promises. Everything else
+it reports is a warning under a ceiling that may only be lowered. See
+[`tools/lint`](tools/lint/index.mjs), which also explains why the linter runs on a
+different TypeScript than the build.
 
 Turbo caches task results and respects the dependency graph (e.g. `build` runs
 `utilize` → `ormize` → `gqlize` → `ormize-adapter-sequelize`). Tests run against **source** via Jest
@@ -102,6 +110,7 @@ Turbo caches task results and respects the dependency graph (e.g. `build` runs
 ├── tsconfig.base.json    # shared compiler options + path aliases (source resolution)
 ├── tsconfig.json         # solution config referencing every package (tsc -b)
 ├── pnpm-workspace.yaml
+├── tools/lint/           # eslint flat config (+ the TypeScript the linter runs on)
 └── packages/
     ├── ormize/
     ├── gqlize/
