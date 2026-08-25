@@ -141,6 +141,16 @@ export interface AdapterTransaction {
 export interface OrmAdapter {
   adapterName: string;
   createModel(def: Definition, hooks?: HookMap): Promise<Model>;
+  /**
+   * Register hooks on the adapter's *connection* rather than on a model, for
+   * backends that draw that distinction (Sequelize fires `beforeQuery`,
+   * `beforeConnect` and friends off the Sequelize instance, and a model never
+   * sees them). Called once per adapter from `Ormize.initialise()`.
+   *
+   * Optional: an adapter with no connection-level hooks — or none at all — omits
+   * it, and ormize skips the registration.
+   */
+  installInstanceHooks?(hooks: HookMap): void;
   getModel(modelName: string): Model;
   getAssociations(defName: string): {[relName: string]: Association};
   getValueFromInstance(model: AdapterRow, sourceKey: string): unknown;

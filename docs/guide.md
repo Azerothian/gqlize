@@ -980,7 +980,11 @@ options: {
 ```
 
 Global hooks (all models) can be supplied via `new Ormize({ globalHooks: { … } })` or
-`db.addHook(name, fn)`. The count-only query path additionally fires `beforeCount` and a
+`db.addHook(name, fn)`. Some hook names — `beforeQuery`/`afterQuery`,
+`beforeConnect`/`afterConnect`, `beforeDefine`/`afterDefine`, `beforeInit`/`afterInit` and
+`beforeBulkSync`/`afterBulkSync` — fire off the Sequelize **instance**, not a model, so they
+are available *only* this way; putting one in a definition's `options.hooks` warns and is
+ignored, because a model would never fire it. The count-only query path additionally fires `beforeCount` and a
 gqlize-level `afterCount(total)` (which may transform the returned count).
 
 ---
