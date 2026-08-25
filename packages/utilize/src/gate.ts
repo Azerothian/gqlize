@@ -558,6 +558,142 @@ export function mergeScopeWhere(
   return { and: [userWhere, scoped] };
 }
 
+/**
+ * A named parameter reserved for the resolved scope, as it appears in raw SQL.
+ *
+ * `:scopeOwnerId` binds whatever the scope constrains `ownerId` to. The prefix
+ * is reserved rather than configurable because the build-time audit (§12) has to
+ * recognise one by reading the query text, and a convention it can only
+ * recognise sometimes is not a check.
+ */
+export const SCOPE_PARAMETER = /:(scope[A-Za-z0-9_]*)/g;
+
+/** Every `:scope…` a raw query binds, from its text and its argument list alike. */
+export function scopeParametersIn(query: string | undefined, args?: string[]): string[] {
+  const found = new Set<string>();
+  if (typeof query === "string") {
+    // `matchAll` needs the /g flag and a fresh cursor; `lastIndex` on a shared
+    // literal is exactly the sort of state that makes the second call wrong.
+    for (const match of query.matchAll(new RegExp(SCOPE_PARAMETER.source, "g"))) {
+      found.add(match[1]);
+    }
+  }
+  // The generated `SELECT * FROM fn(:a,:b)` form has no authored text, so there
+  // the argument list *is* the text. See `generateSQLFunction`.
+  (args || []).filter((arg) => /^scope[A-Za-z0-9_]*$/.test(arg)).forEach((arg) => found.add(arg));
+  return Array.from(found);
+}
+
+/** `"scopeOwnerId"` → `"ownerId"`; the empty `"scope"` names no field. */
+export function scopeFieldOf(parameter: string): string {
+  const rest = parameter.slice("scope".length);
+  return rest ? rest[0].toLowerCase() + rest.slice(1) : "";
+}
+
+/**
+ * Collect the equalities a scope's filter imposes, and everything about it that
+ * a named parameter cannot carry.
+ *
+ * A parameter is one value in one comparison, so `and`-nested equalities are the
+ * whole of what it can express. `or` and `not` are not a lesser case of that —
+ * they are a different shape, and binding around them would leave the query
+ * enforcing something narrower than the scope actually said.
+ */
+function collectScopeEqualities(
+  where: PortableWhere | undefined,
+  into: { [field: string]: unknown[] },
+  unbindable: string[],
+): void {
+  if (isEmptyWhere(where)) {
+    return;
+  }
+  const clause = where as PortableWhere;
+  for (const key of Object.keys(clause)) {
+    const value = clause[key];
+    if (key === "and") {
+      (Array.isArray(value) ? value : [value]).forEach(
+        (branch) => collectScopeEqualities(branch as PortableWhere, into, unbindable));
+      continue;
+    }
+    if (key === "or" || key === "not") {
+      unbindable.push(key);
+      continue;
+    }
+    const operators = value as { [operator: string]: unknown } | null;
+    const isOperatorBag = Boolean(operators) && typeof operators === "object" && !Array.isArray(operators);
+    if (isOperatorBag) {
+      const names = Object.keys(operators as object);
+      if (names.length !== 1 || names[0] !== "eq") {
+        // `gt`, `in`, `like` — real filters, and none of them survive being
+        // reduced to a single bound value.
+        unbindable.push(`${key} (${names.join(", ") || "empty"})`);
+        continue;
+      }
+      (into[key] = into[key] || []).push((operators as { eq: unknown }).eq);
+      continue;
+    }
+    (into[key] = into[key] || []).push(value);
+  }
+}
+
+/** The result of binding a raw query's `:scope…` parameters; `false` is a deny. */
+export type ScopeBinding = { [parameter: string]: unknown } | false;
+
+/**
+ * Bind a resolved scope into the named parameters a raw query reserved for it.
+ *
+ * The engine cannot rewrite SQL — by the time a statement reaches the adapter it
+ * is text — so a parameter is the only lever it has, and §12's audit exists to
+ * guarantee the lever is there. This fills it: every `:scope…` gets the value
+ * the scope pins its field to, or `null` where the scope says nothing about it.
+ *
+ * The documented idiom is `(:scopeOwnerId IS NULL OR "ownerId" = :scopeOwnerId)`,
+ * which reads "unconstrained unless the scope said otherwise" — and an author
+ * who omits the permissive half gets a query that returns nothing, because
+ * `= NULL` matches no row. Failing that way round is deliberate.
+ *
+ * Throws {@link ScopeConfigurationError} rather than binding partially when the
+ * scope says something the parameters cannot carry. A query enforcing *some* of
+ * a scope is the failure this whole feature exists to prevent, and it is
+ * invisible from the outside — the rows come back looking filtered.
+ */
+export function bindScopeParameters(
+  query: string | undefined,
+  args: string[] | undefined,
+  resolved: ResolvedScope,
+  where: string,
+): ScopeBinding {
+  if (resolved === false) {
+    return false;
+  }
+  const parameters = scopeParametersIn(query, args);
+  const equalities: { [field: string]: unknown[] } = {};
+  const unbindable: string[] = [];
+  collectScopeEqualities(resolved?.where, equalities, unbindable);
+
+  const bound: { [parameter: string]: unknown } = {};
+  for (const parameter of parameters) {
+    const field = scopeFieldOf(parameter);
+    const values = equalities[field] || [];
+    if (values.length > 1 && values.some((value) => value !== values[0])) {
+      // Two branches pinning one field to two values: unsatisfiable, so the
+      // honest binding is a deny rather than whichever value was written last.
+      return false;
+    }
+    bound[parameter] = values.length ? values[0] : null;
+    delete equalities[field];
+  }
+  const unbound = Object.keys(equalities).concat(unbindable);
+  if (unbound.length) {
+    throw new ScopeConfigurationError(
+      `${where} does not bind the whole of its row-level scope: ${unbound.join(", ")} `
+      + "cannot be carried by a ':scope…' parameter. Reference one per constrained field, "
+      + "or route the read through the orm.",
+    );
+  }
+  return bound;
+}
+
 function asResolvedScope(result: ScopeResult, defName: string, operation: ScopeOperation): ResolvedScope {
   if (result === undefined || result === null) {
     return undefined;

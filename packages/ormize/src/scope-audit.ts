@@ -21,11 +21,8 @@
 // admit the surface is unscoped with `unscoped`. The last two are the same one
 // line, so the cheap answer is not the silent one.
 
-import { scopeDispositionOf } from "@azerothian/utilize/gate";
+import { scopeDispositionOf, scopeParametersIn } from "@azerothian/utilize/gate";
 import type { Definition, OrmAdapter } from "@azerothian/utilize/types/index";
-
-/** The named parameter a scope-aware raw query binds the resolved scope through. */
-export const SCOPE_PLACEHOLDER = /:scope[A-Za-z0-9_]*/;
 
 export type ScopeSurfaceKind = "classMethod" | "instanceMethod" | "sqlClassMethod" | "extendField";
 
@@ -61,10 +58,7 @@ type SqlDescriptor = { type?: string; query?: string; args?: string[] };
  * argument list *is* the text.
  */
 function referencesScope(descriptor: SqlDescriptor): boolean {
-  if (typeof descriptor.query === "string" && SCOPE_PLACEHOLDER.test(descriptor.query)) {
-    return true;
-  }
-  return (descriptor.args || []).some((arg) => /^scope/.test(arg));
+  return scopeParametersIn(descriptor.query, descriptor.args).length > 0;
 }
 
 function auditEntry(defName: string, kind: ScopeSurfaceKind, name: string, value: unknown): ScopeSurfaceFinding | undefined {

@@ -9,10 +9,13 @@ import {
   RESOLUTION_TIME_PERMISSION_KEYS,
   ScopeConfigurationError,
   andScopes,
+  bindScopeParameters,
   isAllowed,
   mergeScopeWhere,
   normaliseScopeWhere,
   resolveScope,
+  scopeFieldOf,
+  scopeParametersIn,
   type Permission,
   type PermissionContext,
   type PortableWhere,
@@ -385,5 +388,70 @@ describe("scope - F11: filter validation runs on caller input only", () => {
     expect(check(mergeScopeWhere({ title: { eq: "a" } }, { ownerId: { eq: "u1" } })))
       .toEqual(["denied-field"]);
     expect(check({ title: { eq: "a" } })).toEqual([]);
+  });
+});
+
+describe("utilize - binding a scope into raw SQL (\u00a712)", () => {
+  const bind = (query: string, resolved: Parameters<typeof bindScopeParameters>[2], args: string[] = []) =>
+    bindScopeParameters(query, args, resolved, "Doc's raw SQL");
+
+  it("finds the reserved parameters in a statement", () => {
+    expect(scopeParametersIn("SELECT * FROM d WHERE o = :scopeOwnerId AND t = :tenant"))
+      .toEqual(["scopeOwnerId"]);
+    // Named twice, bound once: the idiom mentions each parameter on both sides
+    // of an `IS NULL OR`, and a duplicate replacement key is a sequelize error.
+    expect(scopeParametersIn("(:scopeOwnerId IS NULL OR o = :scopeOwnerId)")).toEqual(["scopeOwnerId"]);
+    expect(scopeParametersIn(undefined, ["limit", "scopeOwnerId"])).toEqual(["scopeOwnerId"]);
+    expect(scopeParametersIn("SELECT 1")).toEqual([]);
+  });
+
+  it("reads a parameter's field off its name", () => {
+    expect(scopeFieldOf("scopeOwnerId")).toEqual("ownerId");
+    expect(scopeFieldOf("scopeTenant_id")).toEqual("tenant_id");
+  });
+
+  it("binds the value the scope pins the field to", () => {
+    expect(bind("o = :scopeOwnerId", { where: { ownerId: { eq: "u1" } } }))
+      .toEqual({ scopeOwnerId: "u1" });
+    // The shorthand form, without an operator bag.
+    expect(bind("o = :scopeOwnerId", { where: { ownerId: "u1" } }))
+      .toEqual({ scopeOwnerId: "u1" });
+  });
+
+  it("binds null where the scope says nothing at all", () => {
+    // Which the documented `(:scopeOwnerId IS NULL OR o = :scopeOwnerId)` reads
+    // as unconstrained \u2014 and an author who omits that permissive half gets no
+    // rows rather than every row, which is the direction to fail in.
+    expect(bind("o = :scopeOwnerId", undefined)).toEqual({ scopeOwnerId: null });
+    expect(bind("o = :scopeOwnerId", { where: {} })).toEqual({ scopeOwnerId: null });
+  });
+
+  it("reports a denial rather than a binding", () => {
+    expect(bind("o = :scopeOwnerId", false)).toEqual(false);
+  });
+
+  it("flattens an `and` of equalities across parameters", () => {
+    expect(bind("o = :scopeOwnerId AND t = :scopeTenantId", {
+      where: { and: [{ ownerId: { eq: "u1" } }, { tenantId: { eq: "t9" } }] },
+    })).toEqual({ scopeOwnerId: "u1", scopeTenantId: "t9" });
+  });
+
+  it("denies rather than picks when two branches pin one field to two values", () => {
+    expect(bind("o = :scopeOwnerId", {
+      where: { and: [{ ownerId: { eq: "u1" } }, { ownerId: { eq: "u2" } }] },
+    })).toEqual(false);
+  });
+
+  it("refuses to bind a scope the parameters cannot carry", () => {
+    // Each of these would otherwise bind *part* of the scope and hand back rows
+    // that look filtered. A stack trace is the only honest answer \u2014 the same
+    // reasoning `ScopeConfigurationError` exists for.
+    expect(() => bind("o = :scopeOwnerId", { where: { ownerId: { in: ["u1", "u2"] } } }))
+      .toThrow(ScopeConfigurationError);
+    expect(() => bind("o = :scopeOwnerId", { where: { or: [{ ownerId: { eq: "u1" } }, { public: { eq: true } }] } }))
+      .toThrow(/or/);
+    // Constrains a second field the statement never reserved a parameter for.
+    expect(() => bind("o = :scopeOwnerId", { where: { ownerId: { eq: "u1" }, tenantId: { eq: "t9" } } }))
+      .toThrow(/tenantId/);
   });
 });

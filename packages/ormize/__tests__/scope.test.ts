@@ -7,6 +7,7 @@ import type { Permission, ScopePredicate, ResolvedScope } from "@azerothian/util
 import { scopeAware, unscoped } from "@azerothian/utilize/gate";
 import type { HookMap } from "../src/types";
 import { ScopeDeniedError, ScopeEscapeError } from "../src/scope";
+import { ScopeConfigurationError } from "@azerothian/utilize/gate";
 
 // One flat model. `ownerId` is an ordinary column rather than a relationship's
 // foreign key, so it survives `isStructurallyWritable` — which is what lets the
@@ -1347,5 +1348,69 @@ describe("ormize - row-level scope, raw SQL (\u00a712)", () => {
     });
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("ormize - row-level scope through a raw SQL class method (\u00a712)", () => {
+  // The end of the road for a scope: by the time a statement reaches the driver
+  // it is text, so there is nothing left to rewrite. A reserved named parameter
+  // is the only lever, which is why \u00a712's audit refuses to build a scoped model
+  // whose raw query does not pull it.
+  const OWNED = "SELECT name FROM docs WHERE (:scopeOwnerId IS NULL OR ownerId = :scopeOwnerId) ORDER BY name";
+  const owned = (args: string[] = []) => ({ type: "query", query: OWNED, args });
+  const call = (db: Orm, args: unknown = {}, context: unknown = ctx(1)) =>
+    db.resolveClassMethod("Doc", "owned", args, context) as Promise<NamedRow[]>;
+
+  it("binds the value the scope pins the field to", async () => {
+    const db = await buildOrm({ scope: ownedBy(1), classMethods: { owned: owned() } });
+    await seed(db);
+    expect((await call(db)).map((r) => r.name)).toEqual(["mine-1", "mine-2"]);
+  });
+
+  it("binds null, and returns everything, when no scope is configured", async () => {
+    const db = await buildOrm({ classMethods: { owned: owned() } });
+    await seed(db);
+    // The permissive half of the idiom doing its job. Its absence is the failure
+    // mode worth having: `ownerId = NULL` matches nothing, so an author who
+    // writes only the comparison gets an empty page, not the whole table.
+    expect((await call(db)).map((r) => r.name)).toEqual(["mine-1", "mine-2", "theirs"]);
+  });
+
+  it("returns an empty page when the scope denies outright", async () => {
+    const db = await buildOrm({ scope: () => false, classMethods: { owned: owned() } });
+    await seed(db);
+    expect(await call(db)).toEqual([]);
+  });
+
+  it("will not let the caller supply the value that decides what it may read", async () => {
+    // `args` is caller-vocabulary and reaches the statement as replacements, so
+    // a method declaring `scopeOwnerId` among them hands a request the pen. The
+    // binding is applied after that reduction for exactly this reason.
+    const db = await buildOrm({ scope: ownedBy(1), classMethods: { owned: owned(["scopeOwnerId"]) } });
+    await seed(db);
+    expect((await call(db, { scopeOwnerId: 2 })).map((r) => r.name)).toEqual(["mine-1", "mine-2"]);
+  });
+
+  it("binds null for a static reached without going through the engine", async () => {
+    const db = await buildOrm({ scope: ownedBy(1), classMethods: { owned: owned() } });
+    await seed(db);
+    // `scopeFor` rides on the request context, so a static called straight off
+    // the model has none and this layer cannot tell "unscoped deployment" from
+    // "engine bypassed". It binds null and leaves the refusal to the layer that
+    // can tell them apart — the instance-level `beforeQuery`.
+    const rows = await (db.models.Doc as { owned(a: unknown, c: unknown): Promise<NamedRow[]> })
+      .owned({}, undefined);
+    expect(rows.map((r) => r.name)).toEqual(["mine-1", "mine-2", "theirs"]);
+  });
+
+  it("raises a configuration error for a scope the parameters cannot carry", async () => {
+    const db = await buildOrm({
+      scope: () => ({ where: { ownerId: { in: [1, 2] } } }),
+      classMethods: { owned: owned() },
+    });
+    await seed(db);
+    // Not an empty page: a query enforcing *part* of a scope hands back rows
+    // that look filtered, and nothing downstream can tell that they are not.
+    await expect(call(db)).rejects.toThrow(ScopeConfigurationError);
   });
 });

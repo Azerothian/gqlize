@@ -12,7 +12,8 @@ import {
   type Options as SequelizeOptions,
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
-import { isFieldAllowed } from "@azerothian/utilize/gate";
+import { isFieldAllowed, scopeParametersIn, bindScopeParameters } from "@azerothian/utilize/gate";
+import type { ResolvedScope } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import { replaceDefWhereOperators } from "./utils/where-operators";
@@ -523,7 +524,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         // query or a Postgres function call — compiled into a static here.
         // `Definition.classMethods` names only the function form, so the
         // descriptor form is narrowed at this one branch.
-        statics[classMethod] = await this.generateSQLFunction(classMethods[classMethod] as SqlClassMethod);
+        statics[classMethod] = await this.generateSQLFunction(classMethods[classMethod] as SqlClassMethod, defName);
       })
     );
   };
@@ -596,8 +597,20 @@ export default class SequelizeAdapter implements GqlizeAdapter {
 
     return model;
   };
-  createSQLFunction = async (query: string, modelName: string | undefined, args: string[]) => {
-    return (a: { [argName: string]: unknown }, _context: RequestContext) => {
+  /**
+   * @param modelName the model rows are mapped onto, which is often absent.
+   * @param scopeModel the model whose row-level scope this statement is bound
+   *   to (§12) — the definition the class method was installed on, not the one
+   *   results are mapped to. Those are usually the same and need not be: a
+   *   statement mapped onto nothing at all is still a read of *some* model.
+   */
+  createSQLFunction = async (query: string, modelName: string | undefined, args: string[], scopeModel?: string) => {
+    // Read once, at build: the parameter list is a property of the statement,
+    // and re-parsing it per call would be work done on every request to learn
+    // something that cannot have changed.
+    const scopeParameters = scopeParametersIn(query, args);
+    const label = scopeModel ? `${scopeModel}'s raw SQL` : "a raw SQL class method";
+    return async (a: { [argName: string]: unknown }, context: RequestContext) => {
       // security check?
       const opts = {
         replacements: args.reduce(
@@ -613,13 +626,41 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         replacements: { [argName: string]: unknown };
         type: QueryTypes;
       };
+      if (scopeParameters.length > 0) {
+        // §12: the engine cannot rewrite a statement that is already text, so a
+        // reserved parameter is the whole of its reach into one. The audit
+        // guarantees the parameter is there; this puts the value in it.
+        //
+        // `scopeFor` arrives on the context from `resolveClassMethod`. A static
+        // called straight off the model has none, and binds nulls — which the
+        // documented `(:scopeOwnerId IS NULL OR …)` idiom reads as unconstrained.
+        // That path is closed by its runtime twin, the instance-level
+        // `beforeQuery`, not here: this layer cannot tell "no scope configured"
+        // from "the engine was bypassed", and guessing either way is worse than
+        // letting the layer that knows decide.
+        const scopeOf = (context as { scopeFor?: (m: string, o: string) => Promise<ResolvedScope> } | undefined)?.scopeFor;
+        const resolved = scopeModel && typeof scopeOf === "function"
+          ? await scopeOf(scopeModel, "read")
+          : undefined;
+        const bound = bindScopeParameters(query, args, resolved, label);
+        if (bound === false) {
+          // Denied outright. An empty page is what a caller with no matching
+          // rows already sees, and a read has nothing louder to say that would
+          // not itself confirm the rows exist.
+          return [];
+        }
+        // After the argument reduction, never before it: `args` is caller-supplied
+        // and a request that named `scopeOwnerId` among them would otherwise be
+        // choosing the value that decides what it may read.
+        Object.assign(opts.replacements, bound);
+      }
       if (modelName) {
         opts.model = this.sequelize.models[modelName];
       }
       return this.sequelize.query(query, opts);
     };
   };
-  generateSQLFunction = async (sqlFunc: SqlClassMethod) => {
+  generateSQLFunction = async (sqlFunc: SqlClassMethod, scopeModel?: string) => {
     // PostgreSQL supported only atm?
     const {
       type = "query",
@@ -643,7 +684,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             .join(",")});`;
         }
     }
-    return this.createSQLFunction(q, modelName, args);
+    return this.createSQLFunction(q, modelName, args, scopeModel);
   };
   // Permission object captured at schema-build time. The GraphQL filter/order/
   // include type builders below fall back to it when no explicit permission is
