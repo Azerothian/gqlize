@@ -109,6 +109,36 @@ function memoFor(context: RequestContext): ScopeMemo | undefined {
 }
 
 /**
+ * Carry a request's memo onto a context derived from another one.
+ *
+ * The engine re-points a context at an adapter's transaction handle by copying
+ * it — `Object.assign({}, context, {transaction})` — and the memo hangs off a
+ * *non-enumerable symbol*, which a copy does not bring along. Without this every
+ * nested mutation entry starts an empty memo and resolves the predicate again,
+ * which is exactly the repetition F7 exists to prevent: a predicate that reads a
+ * database can answer differently the second time, and a request scoped two ways
+ * is worse than one scoped either way.
+ *
+ * Sharing the same `Map` rather than copying it is deliberate — a decision made
+ * on the derived context should be visible to the original, since they are the
+ * same request acting as the same principal.
+ */
+export function inheritScopeMemo<T>(source: unknown, derived: T): T {
+  if (!source || typeof source !== "object" || !derived || typeof derived !== "object") {
+    return derived;
+  }
+  const memo = (source as { [MEMO]?: ScopeMemo })[MEMO];
+  const target = derived as { [MEMO]?: ScopeMemo };
+  if (!memo || target[MEMO]) {
+    return derived;
+  }
+  Object.defineProperty(target, MEMO, {
+    value: memo, enumerable: false, writable: false, configurable: true,
+  });
+  return derived;
+}
+
+/**
  * Resolve `permission.scope` for one model and operation, once per request.
  *
  * Returns `undefined` when nothing is imposed, `false` when the principal may

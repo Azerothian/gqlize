@@ -7,7 +7,7 @@ import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
-import { ScopeDeniedError, applyScopeWhere, scopeFor, scopeMiss } from "./scope";
+import { ScopeDeniedError, applyScopeWhere, inheritScopeMemo, scopeFor, scopeMiss } from "./scope";
 import type { ScopeMissBehaviour } from "./scope";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
@@ -626,7 +626,7 @@ export default class Ormize<
       return options;
     }
     const handle = await getStore()?.transaction?.handleFor(this.defsAdapters[toDefName]);
-    const o = Object.assign({}, options);
+    const o = inheritScopeMemo(options, Object.assign({}, options));
     if (handle === undefined) {
       delete o.transaction;
     } else {
@@ -901,10 +901,12 @@ export default class Ormize<
     getAssociations: (defName) => this.getAssociations(defName),
     getDefinition: (defName) => this.getDefinition(defName),
     getGlobalKeys: (defName) => this.getGlobalKeys(defName),
-    processInputs: (defName, input, args, context, info, model) => this.processInputs(defName, input, args, context, info, model),
+    processInputs: (defName, input, args, context, info, model, operation) => this.processInputs(defName, input, args, context, info, model, operation),
     processCreate: (defName, source, args, context, selection) => this.processCreate(defName, source, args, context, selection),
     processDelete: (defName, source, args, context, selection) => this.processDelete(defName, source, args, context, selection),
     processRelationshipMutation: (defName, source, input, context, selection) => this.processRelationshipMutation(defName, source, input, context, selection),
+    resolveScope: (defName, operation, context) => this.resolveRowScope(defName, operation, context),
+    scopeMiss: (defName, operation) => scopeMiss(defName, operation, this.onScopeMiss),
   };
   /**
    * @deprecated Kept for the published surface; prefer the free
@@ -1217,7 +1219,7 @@ export default class Ormize<
       total, models,
     };
   }
-  processInputs = async(defName: string, input: MutationInputTree, args: unknown, context: RequestContext, info: unknown, model?: AdapterRow): Promise<MutationInput> => {
+  processInputs = async(defName: string, input: MutationInputTree, args: unknown, context: RequestContext, info: unknown, model?: AdapterRow, operationHint?: ScopeOperation): Promise<MutationInput> => {
     const definition = this.getDefinition(defName);
     const fields = this.getFields(defName);
     // Allow-list scalar input to writable columns. `isStructurallyWritable`
@@ -1255,7 +1257,12 @@ export default class Ormize<
     // complementary half — `ownerId` is a foreign key, so
     // `isStructurallyWritable` has already dropped whatever the client sent, and
     // `set` supplies a value the client had no way to send.
-    const operation: ScopeOperation = model === undefined ? "create" : "update";
+    // `model` is the row being written, so its presence names the operation —
+    // except where the caller already knows and has no row to hand over. The
+    // nested `update` verb is exactly that: it processes one input for the whole
+    // set of rows a filter matched, so it passes the hint rather than an
+    // arbitrary member of that set (which `definition.override` would then see).
+    const operation: ScopeOperation = operationHint || (model === undefined ? "create" : "update");
     const rowScope = await this.resolveRowScope(defName, operation, context);
     const forced = rowScope ? rowScope.set : undefined;
     if (forced) {
@@ -1335,7 +1342,7 @@ export default class Ormize<
     const active = getStore()?.transaction;
     if (active) {
       const handle = await active.handleFor(adapterName);
-      return fn(Object.assign({}, context, { transaction: handle }));
+      return fn(inheritScopeMemo(context, Object.assign({}, context, { transaction: handle })));
     }
     if (context && context.transaction) {
       return fn(context);

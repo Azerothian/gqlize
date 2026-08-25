@@ -280,3 +280,225 @@ describe("ormize - row-level scope, `set`", () => {
     expect(await db.models.Doc.count()).toEqual(3);
   });
 });
+
+// A `Folder hasMany Doc` pair, so the nested-mutation verbs have a target model
+// to reach. Only `Doc` is scoped: the verbs run against the *target*, and a
+// scoped source would confuse which of the two a blocked write was blocked by.
+async function buildRelated(options: {
+  scope?: ScopePredicate;
+  onScopeMiss?: "empty" | "throw";
+} = {}) {
+  const permission: Permission | undefined = options.scope ? { scope: options.scope } : undefined;
+  const db = new Database({
+    permission,
+    onScopeMiss: options.onScopeMiss,
+  });
+  db.registerAdapter(
+    new SequelizeAdapter({}, { dialect: "sqlite", logging: false }),
+    "sqlite",
+  );
+  await db.addDefinition({
+    name: "Folder",
+    define: { title: { type: Sequelize.STRING, allowNull: true } },
+    options: { timestamps: false, tableName: "folders" },
+    relationships: [{
+      type: "hasMany",
+      model: "Doc",
+      name: "docs",
+      options: { foreignKey: "folderId" },
+    }],
+  });
+  await db.addDefinition({
+    name: "Doc",
+    define: {
+      name: { type: Sequelize.STRING, allowNull: false },
+      ownerId: { type: Sequelize.INTEGER, allowNull: true },
+    },
+    options: { timestamps: false, tableName: "docs" },
+    relationships: [{
+      type: "belongsTo",
+      model: "Folder",
+      name: "folder",
+      options: { foreignKey: "folderId" },
+    }],
+  });
+  await db.initialise();
+  await db.sync();
+  return db;
+}
+
+type Related = Awaited<ReturnType<typeof buildRelated>>;
+
+/** A folder holding one owned and one unowned doc — the pair every verb below sorts. */
+async function seedFolder(db: Related, attached: boolean) {
+  const folder = await db.models.Folder.create({ title: "f" });
+  const folderId = attached ? folder.id : null;
+  await db.models.Doc.bulkCreate([
+    { name: "mine", ownerId: 1, folderId },
+    { name: "theirs", ownerId: 2, folderId },
+  ]);
+  return folder;
+}
+
+/** Which docs the folder currently holds, by name. */
+async function docsIn(db: Related, folder: { id: unknown }) {
+  const rows = await db.models.Doc.findAll({ where: { folderId: folder.id } });
+  return (rows as NamedRow[]).map((r) => r.name).sort();
+}
+
+const scopeDoc = (fn: ScopePredicate): ScopePredicate =>
+  (defName, operation, options, context) =>
+    (defName === "Doc" ? fn(defName, operation, options, context) : undefined);
+
+describe("ormize - row-level scope, nested relationship mutations", () => {
+  it("scopes the rows a nested `update` reaches", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(1)) });
+    const folder = await seedFolder(db, true);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { update: [{ where: {}, input: { name: "renamed" } }] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1));
+    // The nested filter is empty — every doc in the folder matches it — so the
+    // only thing standing between the caller and someone else's row is the
+    // scope merged into `s.where`.
+    const names = (await db.models.Doc.findAll({})) as NamedRow[];
+    expect(names.map((r) => r.name).sort()).toEqual(["renamed", "theirs"]);
+  });
+
+  it("scopes the rows a nested `remove` detaches", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(1)) });
+    const folder = await seedFolder(db, true);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { remove: [{}] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1));
+    expect(await docsIn(db, folder)).toEqual(["theirs"]);
+  });
+
+  it("scopes the rows a nested `add` attaches (findByFilter)", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(1)) });
+    const folder = await seedFolder(db, false);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { add: [{}] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1));
+    // `add` reaches its rows through `findByFilter` rather than the association
+    // accessor, which is the second of the two seams and is easy to miss.
+    expect(await docsIn(db, folder)).toEqual(["mine"]);
+  });
+
+  it("scopes the rows a nested `set` replaces the collection with", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(1)) });
+    const folder = await seedFolder(db, false);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { set: [{}] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1));
+    expect(await docsIn(db, folder)).toEqual(["mine"]);
+  });
+
+  it("still narrows a nested verb by the target's read scope alone", async () => {
+    const db = await buildRelated({
+      scope: scopeDoc((_d, operation) => (operation === "read" ? { where: { ownerId: { eq: 1 } } } : undefined)),
+    });
+    const folder = await seedFolder(db, true);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { update: [{ where: {}, input: { name: "renamed" } }] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1));
+    // Reaching an existing row is a read whatever is done to it next, so a
+    // deployment that scopes only reads still cannot write through a nested verb
+    // to a row it cannot see.
+    const names = (await db.models.Doc.findAll({})) as NamedRow[];
+    expect(names.map((r) => r.name).sort()).toEqual(["renamed", "theirs"]);
+  });
+
+  it("applies no nested verb at all when the target denies that operation", async () => {
+    const db = await buildRelated({
+      scope: scopeDoc((_d, operation) => (operation === "update" ? false : undefined)),
+    });
+    const folder = await seedFolder(db, true);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { update: [{ where: {}, input: { name: "renamed" } }] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1));
+    // Denied outright: there is no filter that matches nothing, so the verb has
+    // to be skipped rather than narrowed.
+    expect(await db.models.Doc.count({ where: { name: "renamed" } })).toEqual(0);
+  });
+
+  it("applies no nested verb when the target denies reads outright", async () => {
+    const db = await buildRelated({
+      scope: scopeDoc((_d, operation) => (operation === "read" ? false : undefined)),
+    });
+    const folder = await seedFolder(db, true);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { update: [{ where: {}, input: { name: "renamed" } }] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1));
+    // A deny has no filter to narrow with, so a `false` read scope has to skip
+    // the verb rather than fall through to the operation's own scope — which
+    // here imposes nothing, and would run the write against every row.
+    expect(await db.models.Doc.count({ where: { name: "renamed" } })).toEqual(0);
+  });
+
+  it("asks the target's scope for the operation each verb performs", async () => {
+    const seen: string[] = [];
+    const db = await buildRelated({
+      scope: scopeDoc((_defName, operation) => {
+        seen.push(operation);
+        return undefined;
+      }),
+    });
+    const folder = await seedFolder(db, true);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { delete: [{}] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1));
+    // `delete` first, then the read that reaching the rows is; the re-entered
+    // `processDelete` asks for the same pair and gets the memo. A verb table
+    // that scoped everything as an update would show that third entry.
+    expect(seen).toEqual(["delete", "read"]);
+  });
+
+  it("refuses a denied nested verb loudly when onScopeMiss is 'throw'", async () => {
+    const db = await buildRelated({
+      scope: scopeDoc((_d, operation) => (operation === "update" ? false : undefined)),
+      onScopeMiss: "throw",
+    });
+    const folder = await seedFolder(db, true);
+    await expect(db.processUpdate("Folder", null, {
+      input: { docs: { update: [{ where: {}, input: { name: "renamed" } }] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1))).rejects.toBeInstanceOf(ScopeDeniedError);
+  });
+
+  it("forces `set` on a nested create, through processCreate", async () => {
+    const db = await buildRelated({ scope: scopeDoc(() => ({ set: { ownerId: 7 } })) });
+    const folder = await seedFolder(db, false);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { create: [{ name: "fresh" }] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(7));
+    const fresh = await db.models.Doc.findOne({ where: { name: "fresh" } });
+    expect((fresh as OwnedRow).ownerId).toEqual(7);
+  });
+
+  it("does not force the create scope's `set` on a nested update", async () => {
+    const db = await buildRelated({
+      scope: scopeDoc((_d, operation) => (operation === "create"
+        ? { set: { ownerId: 7 } }
+        : { where: { ownerId: { eq: 1 } } })),
+    });
+    const folder = await seedFolder(db, true);
+    await db.processUpdate("Folder", null, {
+      input: { docs: { update: [{ where: {}, input: { name: "renamed" } }] } },
+      where: { id: { eq: folder.id } },
+    }, ctx(1));
+    // The nested `update` verb has no single row to hand `processInputs`, so an
+    // implementation that reads the absent row as "this must be a create" would
+    // hand the caller's own row to someone else.
+    const mine = await db.models.Doc.findOne({ where: { name: "renamed" } });
+    expect((mine as OwnedRow).ownerId).toEqual(1);
+  });
+});

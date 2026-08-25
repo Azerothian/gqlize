@@ -9,6 +9,8 @@
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
+import { mergeScopeWhere } from "@azerothian/utilize/gate";
+import type { PortableWhere, ScopeOperation } from "@azerothian/utilize/gate";
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, OrmAdapter,
   RequestContext, Selection,
@@ -56,7 +58,16 @@ export interface MutationScope {
   /** belongsTo/hasOne: one record where a collection takes a list of them. */
   singular: boolean;
   isBtm: boolean;
-  /** A caller filter with relay global ids translated out, ready for the target. */
+  /**
+   * A caller filter with relay global ids translated out and the target model's
+   * row-level scope AND-ed in, ready for the target's adapter.
+   *
+   * The single seam every verb but `create` reaches existing target rows
+   * through — directly, or via {@link findByFilter} / the `where` handed to
+   * {@link getRelated}. Which scope it carries depends on the verb currently
+   * running, so it is set per verb by {@link applyRelationshipMutations} rather
+   * than once per association.
+   */
   where(filter: unknown): Promise<AdapterWhere>;
   /** A singular accessor returns one record or null; every verb wants a list. */
   asList(res: unknown): InstanceRow[];
@@ -96,7 +107,11 @@ const applyUpdate = async(s: MutationScope, entries: { where?: MutationFilter; l
   await waterfall(entries, async(arg: { where?: MutationFilter; limit?: number; input?: MutationInput }) => {
     const {where, limit, input} = arg;
     const targets = await getRelated(s, {limit, where: await s.where(where)});
-    let i: MutationInput = await s.host.processInputs(s.targetName, input as MutationInputTree, s.args, s.targetContext, s.selection?.raw);
+    // The operation is passed explicitly because there is no single row to hand
+    // over: one input is processed for the whole set `where` matched. Without it
+    // `processInputs` would read the absent model as a create and force the
+    // create scope's `set` onto an update.
+    let i: MutationInput = await s.host.processInputs(s.targetName, input as MutationInputTree, s.args, s.targetContext, s.selection?.raw, undefined, "update");
     if (s.targetDef.before) {
       i = await s.targetDef.before({
         params: input, args: s.args, context: s.context, info: s.selection?.raw,
@@ -136,6 +151,13 @@ const applyDelete = async(s: MutationScope, filters: MutationFilter[]) => {
 const applyRemove = async(s: MutationScope, value: true | MutationFilter[]) => {
   if (s.singular) {
     // belongsTo/hasOne: disassociate by nulling the relationship.
+    //
+    // The one verb branch with no filter for a scope to narrow: it names no
+    // target row, it nulls whichever one is attached. A `false` scope still
+    // stops it (the verb never runs), but a filter-shaped one cannot reach here
+    // — the row is reached through the accessor. §13's instance-level
+    // `beforeUpdate`, which checks and rejects rather than merging a filter, is
+    // the layer that closes it.
     if (value === true) {
       await s.row[s.association.accessors.set](null, s.defaultOptions);
     }
@@ -252,6 +274,27 @@ const VERBS: {
 ];
 
 /**
+ * The operation each verb is scoped as.
+ *
+ * Only `create` makes a row. Every other verb reaches *existing* target rows
+ * through a filter in order to change something about them — the foreign key
+ * `remove`/`add`/`set` re-points and the `deletedAt` a `restore` clears are
+ * writes even where no scalar field is named. `select` writes nothing itself but
+ * applies sub-mutations to everything it matches, which is the same reason
+ * `processSelect` is scoped as an update at the root.
+ */
+const VERB_OPERATIONS: { [name in keyof RelationshipMutation]-?: ScopeOperation } = {
+  create: "create",
+  update: "update",
+  delete: "delete",
+  remove: "update",
+  add: "update",
+  set: "update",
+  restore: "update",
+  select: "update",
+};
+
+/**
  * Apply the relationship sub-mutations nested under each association name of
  * `input` to the row that was just created, updated or selected. Returns `source`
  * so callers can keep chaining off it.
@@ -294,6 +337,10 @@ export async function applyRelationshipMutations(
     const targetOptions = await host.optionsForAdapter(defName, targetName, defaultOptions);
     const targetContext = await host.optionsForAdapter(defName, targetName, context);
     const args = input[key] as RelationshipMutation;
+    // The target's scope for whichever verb is running, read by `where` below.
+    // Reassigned per verb rather than captured once: the verbs are not all the
+    // same operation, and `permission.scope` is asked per operation.
+    let scopeWhere: PortableWhere | undefined;
     const scope: MutationScope = {
       host, association, targetName, targetDef, targetAdapter,
       targetOptions, targetContext, defaultOptions, context, selection,
@@ -301,7 +348,10 @@ export async function applyRelationshipMutations(
       singular: association.associationType === "belongsTo" || association.associationType === "hasOne",
       isBtm: association.associationType === "belongsToMany",
       where: async(filter) => targetAdapter.processFilterArgument(
-        translateFilter(filter as AdapterWhere, targetGlobalKeys),
+        // Merged *after* `translateFilter`, as the root chokepoints do:
+        // `translateFilter` decodes relay global ids out of a **caller's**
+        // filter, and a scope resolved on the server already holds raw ones.
+        mergeScopeWhere(translateFilter(filter as AdapterWhere, targetGlobalKeys), scopeWhere),
         whereOperatorsFor(targetDef),
         targetOptions,
       ),
@@ -309,9 +359,29 @@ export async function applyRelationshipMutations(
     };
     for (const verb of VERBS) {
       const value = args[verb.name];
-      if (verb.present(value)) {
-        await verb.apply(scope, value);
+      if (!verb.present(value)) {
+        continue;
       }
+      const operation = VERB_OPERATIONS[verb.name];
+      const opScope = await host.resolveScope(targetName, operation, context);
+      if (opScope === false) {
+        host.scopeMiss(targetName, operation);
+        continue;
+      }
+      scopeWhere = undefined;
+      if (operation !== "create") {
+        // Reaching an existing row is a read whatever is done to it next, so the
+        // read scope applies on top of the verb's own. `create` needs neither
+        // half: `applyCreate` re-enters `host.processCreate`, which resolves the
+        // create scope — and applies its `set` — for itself.
+        const readScope = await host.resolveScope(targetName, "read", context);
+        if (readScope === false) {
+          host.scopeMiss(targetName, operation);
+          continue;
+        }
+        scopeWhere = mergeScopeWhere(readScope ? readScope.where : undefined, opScope ? opScope.where : undefined);
+      }
+      await verb.apply(scope, value);
     }
   });
   return source;
