@@ -3,7 +3,8 @@ import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { describe, it, expect, jest } from "@jest/globals";
 import Sequelize from "sequelize";
 import Events from "../src/events";
-import type { Permission, ScopePredicate } from "@azerothian/utilize/gate";
+import type { Permission, ScopePredicate, ResolvedScope } from "@azerothian/utilize/gate";
+import { scopeAware, unscoped } from "@azerothian/utilize/gate";
 import type { HookMap } from "../src/types";
 import { ScopeDeniedError, ScopeEscapeError } from "../src/scope";
 
@@ -16,6 +17,8 @@ async function buildOrm(options: {
   onScopeMiss?: "empty" | "throw";
   before?: (req: BeforeRequest) => unknown;
   hooks?: HookMap;
+  classMethods?: {[name: string]: unknown};
+  instanceMethods?: {[name: string]: unknown};
 } = {}) {
   const permission: Permission | undefined = options.scope ? { scope: options.scope } : undefined;
   const db = new Database({
@@ -35,6 +38,8 @@ async function buildOrm(options: {
     options: { timestamps: false, tableName: "docs" },
     before: options.before,
     hooks: options.hooks,
+    classMethods: options.classMethods as never,
+    instanceMethods: options.instanceMethods as never,
   });
   await db.initialise();
   await db.sync();
@@ -1178,5 +1183,169 @@ describe("ormize - row-level scope, the adapter hooks (\u00a713)", () => {
     // to satisfy the scope that predicate is in the middle of deciding.
     expect(seenByPredicate).toEqual(3);
     expect(total).toEqual(2);
+  });
+});
+
+describe("ormize - row-level scope, the surfaces the engine cannot reach (\u00a712)", () => {
+  // A class method, an instance method or a raw query runs userland code holding
+  // the model directly: no query for the engine to own, and \u2014 on an adapter with
+  // no hook layer \u2014 nothing underneath that knows a request is happening. The
+  // scope does not apply there. These pin that the build says so.
+  const warned = () => jest.spyOn(console, "warn").mockImplementation(() => {});
+
+  it("says nothing at all when no scope is configured", async () => {
+    const warn = warned();
+    await buildOrm({ classMethods: { tally: () => 1 } });
+    // The audit is about a scope that exists and cannot reach somewhere. With no
+    // scope configured there is nothing to fail to apply, and a build that
+    // scolded every class method in the repo would be ignored within a week.
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("warns about an unannotated class method on an adapter that enforces below the engine", async () => {
+    const warn = warned();
+    await buildOrm({ scope: ownedBy(1), classMethods: { tally: () => 1 } });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("Doc.tally (class method)");
+    warn.mockRestore();
+  });
+
+  it("warns about an unannotated instance method too", async () => {
+    const warn = warned();
+    await buildOrm({ scope: ownedBy(1), instanceMethods: { describe: () => "x" } });
+    expect(String(warn.mock.calls[0][0])).toContain("Doc.describe (instance method)");
+    warn.mockRestore();
+  });
+
+  it("is silent about a method that admits it runs unscoped", async () => {
+    const warn = warned();
+    await buildOrm({ scope: ownedBy(1), classMethods: { tally: unscoped(() => 1) } });
+    // An admission, not a suppression: it is one line, it lands in the diff next
+    // to the code it excuses, and `grep unscoped` finds every one of them.
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("is silent about a method that claims it applies the scope itself", async () => {
+    const warn = warned();
+    await buildOrm({ scope: ownedBy(1), classMethods: { tally: scopeAware(() => 1) } });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("refuses to build a method that claims both at once", async () => {
+    const warn = warned();
+    const both = unscoped(scopeAware(() => 1));
+    await expect(buildOrm({ scope: ownedBy(1), classMethods: { tally: both } }))
+      .rejects.toThrow(/marked both scopeAware and unscoped/);
+    warn.mockRestore();
+  });
+
+  it("audits a permission bag that arrives after the build", async () => {
+    const warn = warned();
+    const db = await buildOrm({ classMethods: { tally: () => 1 } });
+    expect(warn).not.toHaveBeenCalled();
+    db.setPermission({ scope: ownedBy(1) });
+    // Hosts that compile permissions from a config file or a Nest module build
+    // the bag after the orm exists. Auditing only in `initialise()` would make
+    // the check depend on the order a host happened to assemble its options in.
+    expect(String(warn.mock.calls[0][0])).toContain("Doc.tally (class method)");
+    warn.mockRestore();
+  });
+
+  it("hands a scope-aware method the resolved scope", async () => {
+    let seen: ResolvedScope | "never asked" = "never asked";
+    const db = await buildOrm({
+      scope: ownedBy(1),
+      classMethods: {
+        tally: scopeAware(async(_args: unknown, context: { scopeFor(m: string, o: string): Promise<ResolvedScope> }) => {
+          seen = await context.scopeFor("Doc", "read");
+          return 1;
+        }),
+      },
+    });
+    await db.resolveClassMethod("Doc", "tally", {}, ctx(1));
+    // The engine cannot verify the method applied it \u2014 that is exactly why the
+    // claim has to be explicit. What it can do is make sure the filter is there
+    // to apply, from the same memo every other call site reads.
+    expect(seen).toEqual({ where: { ownerId: { eq: 1 } } });
+  });
+
+  it("does not put `scopeFor` anywhere a serialiser or a spread would find it", async () => {
+    const db = await buildOrm({ scope: ownedBy(1), classMethods: { tally: scopeAware(() => 1) } });
+    const context = ctx(1) as { scopeFor?: unknown };
+    await db.resolveClassMethod("Doc", "tally", {}, context);
+    expect(typeof context.scopeFor).toEqual("function");
+    // The context belongs to the host. An enumerable key would reach anything
+    // that logs it, spreads it into a job payload, or sends it over a wire.
+    expect(Object.keys(context)).toEqual(["user"]);
+    expect(JSON.parse(JSON.stringify(context))).toEqual({ user: { id: 1 } });
+  });
+
+  it("does not overwrite a `scopeFor` the host put there itself", async () => {
+    const db = await buildOrm({ scope: ownedBy(1), classMethods: { tally: scopeAware(() => 1) } });
+    const own = () => Promise.resolve(undefined);
+    const context = Object.assign(ctx(1), { scopeFor: own });
+    await db.resolveClassMethod("Doc", "tally", {}, context);
+    expect(context.scopeFor).toBe(own);
+  });
+});
+
+describe("ormize - row-level scope, raw SQL (\u00a712)", () => {
+  // The sharpest case, because a SQL descriptor is not code the engine can hand
+  // anything to. A named parameter is the only lever it has, so the presence of
+  // one *is* the opt-in and the build can check for it in the text.
+  const warned = () => jest.spyOn(console, "warn").mockImplementation(() => {});
+  const sql = (query: string) => ({ type: "query", query, args: ["id"] });
+
+  it("warns about a raw query that never mentions the scope", async () => {
+    const warn = warned();
+    await buildOrm({ scope: ownedBy(1), classMethods: { recent: sql("SELECT * FROM docs") } });
+    expect(String(warn.mock.calls[0][0])).toContain("Doc.recent (raw-SQL class method)");
+    warn.mockRestore();
+  });
+
+  it("is silent about one that binds the scope as a named parameter", async () => {
+    const warn = warned();
+    await buildOrm({
+      scope: ownedBy(1),
+      classMethods: { recent: sql("SELECT * FROM docs WHERE ownerId = :scopeOwnerId") },
+    });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("reads the generated function form's argument list as its text", async () => {
+    const warn = warned();
+    await buildOrm({
+      scope: ownedBy(1),
+      classMethods: { recent: { type: "sqlfunction", functionName: "recent_docs", args: ["scopeOwnerId"] } },
+    });
+    // `generateSQLFunction` builds `SELECT * FROM fn(:a,:b)` from the argument
+    // list when no query text is authored, so there the list *is* the text.
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("refuses to build a raw query whose text contradicts its own scopeAware claim", async () => {
+    const warn = warned();
+    await expect(buildOrm({
+      scope: ownedBy(1),
+      classMethods: { recent: Object.assign(sql("SELECT * FROM docs"), { scopeAware: true }) },
+    })).rejects.toThrow(/never references a ':scope/);
+    // Not a judgement about how deeply the backend enforces \u2014 the claim and the
+    // query are three lines apart and disagree, which is wrong on every adapter.
+    warn.mockRestore();
+  });
+
+  it("is silent about a raw query that admits it runs unscoped", async () => {
+    const warn = warned();
+    await buildOrm({
+      scope: ownedBy(1),
+      classMethods: { recent: Object.assign(sql("SELECT * FROM docs"), { unscoped: true }) },
+    });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

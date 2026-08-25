@@ -422,6 +422,75 @@ export class ScopeConfigurationError extends Error {
   }
 }
 
+/**
+ * What a surface the engine cannot scope has declared about itself (§12).
+ *
+ * A class method, an instance method or an `extend` resolver runs userland code
+ * holding the model directly. There is no filter for the engine to merge into
+ * and no hook underneath it that knows a request is happening, so a scope
+ * configured for that model simply does not apply there — quietly, which is the
+ * problem. The three answers are: route the work back through the engine (best,
+ * and requires nothing here), claim the filter and apply it yourself
+ * ({@link scopeAware}), or admit the surface is unscoped ({@link unscoped}).
+ *
+ * `"conflict"` is both markers at once, which is a contradiction rather than a
+ * disposition and is reported as one.
+ */
+export type ScopeDisposition = "aware" | "unscoped" | "conflict" | undefined;
+
+function mark<T extends object>(value: T, property: string): T {
+  // Non-enumerable: these ride on the method itself so the admission sits in the
+  // diff next to the code it excuses, and a marker that showed up in
+  // `Object.keys` would leak into anything that serialises a definition.
+  Object.defineProperty(value, property, {
+    value: true, enumerable: false, writable: false, configurable: true,
+  });
+  return value;
+}
+
+/**
+ * Declare that a method resolves the scope itself.
+ *
+ * The engine hands it the resolved filter and cannot verify it was applied —
+ * which is exactly why the claim has to be explicit and greppable rather than
+ * inferred. See {@link ScopeDisposition}.
+ */
+export function scopeAware<T extends object>(value: T): T {
+  return mark(value, "scopeAware");
+}
+
+/**
+ * Declare that a method deliberately runs unscoped.
+ *
+ * An admission, not a suppression: it is the same one line as
+ * {@link scopeAware}, so the cheap answer is not the silent one.
+ */
+export function unscoped<T extends object>(value: T): T {
+  return mark(value, "unscoped");
+}
+
+/**
+ * Read a surface's disposition, from the wrappers above or from plain
+ * properties.
+ *
+ * Plain properties are read too because the SQL class-method form is a
+ * descriptor object a deployment authors as a literal — `{query, args,
+ * unscoped: true}` is the natural spelling there, and demanding a wrapper call
+ * around an object literal would buy nothing.
+ */
+export function scopeDispositionOf(value: unknown): ScopeDisposition {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) {
+    return undefined;
+  }
+  const marked = value as { scopeAware?: unknown; unscoped?: unknown };
+  const aware = marked.scopeAware === true;
+  const opted = marked.unscoped === true;
+  if (aware && opted) {
+    return "conflict";
+  }
+  return aware ? "aware" : (opted ? "unscoped" : undefined);
+}
+
 /** Logical combinators in the portable vocabulary, in the casing `guards.ts` matches. */
 const PORTABLE_LOGICAL_OPERATORS = ["and", "or", "not"];
 

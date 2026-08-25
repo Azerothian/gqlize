@@ -534,6 +534,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     });
   };
   /**
+   * The model hooks ormize installs do fire here, which is what §13's
+   * enforcement layer is built on and what makes §12's audit a warning rather
+   * than an error on this backend.
+   */
+  enforcesRowScope = true;
+  /**
    * Sequelize-instance hooks go on the Sequelize object itself. Routing them
    * through `sequelize.define` — which accepts the names without complaint —
    * files them under `Model.options.hooks`, where `runHooks` will never look:

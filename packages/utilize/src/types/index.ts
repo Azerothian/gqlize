@@ -157,6 +157,18 @@ export interface OrmAdapter {
    * it, and ormize skips the registration.
    */
   installInstanceHooks?(hooks: HookMap): void;
+  /**
+   * Whether this adapter fires the model hooks ormize installs, so a row-level
+   * scope is re-imposed *below* the engine (§13).
+   *
+   * Read by §12's build-time audit, and the reason its verdict differs by
+   * backend: an adapter with a hook layer has a runtime backstop under every
+   * surface the engine cannot see, so an unannotated class method there is a
+   * warning. An adapter without one has nothing under it at all, so the same
+   * method is an error. Absent means absent — an adapter that ignores hooks says
+   * so by saying nothing.
+   */
+  enforcesRowScope?: boolean;
   getModel(modelName: string): Model;
   getAssociations(defName: string): {[relName: string]: Association};
   getValueFromInstance(model: AdapterRow, sourceKey: string): unknown;

@@ -3,6 +3,7 @@ import { Ormize } from "@azerothian/ormize";
 import { ScopeDeniedError } from "@azerothian/ormize/scope";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { ScopePredicate } from "@azerothian/utilize/gate";
+import { scopeAware, unscoped } from "@azerothian/utilize/gate";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
 
@@ -180,5 +181,36 @@ describe("valkey adapter \u2014 row-level scope, writes", () => {
       orm.processCreate("Doc", null, { input: { name: "forged", ownerId: "u2" } }, ctx("u1")),
     ).rejects.toBeInstanceOf(ScopeDeniedError);
     expect(await adapter.findAll("Doc", {})).toEqual([]);
+  });
+});
+
+describe("valkey - row-level scope, the surfaces the engine cannot reach (\u00a712)", () => {
+  // Decision 7 and decision 9 are the same rule read against different backends,
+  // and this is the half that cannot be tested on sequelize. There a class
+  // method that ignores the scope still has \u00a713's model hooks underneath it, so
+  // the build warns. Here there is nothing underneath at all \u2014 the engine merge
+  // is the only enforcement this adapter has ever had \u2014 so the same method is a
+  // hole, and the build refuses.
+  async function buildWithMethods(classMethods: {[name: string]: unknown}) {
+    const orm = new Ormize({ permission: { scope: ownedBy("u1") } });
+    orm.registerAdapter(new ValkeyAdapter({ prefix: "scope" }, client), "valkey");
+    await orm.addDefinition(Object.assign({}, DocDef, { classMethods }) as never);
+    await orm.initialise();
+    return orm;
+  }
+
+  it("refuses to build an unannotated class method", async () => {
+    await expect(buildWithMethods({ tally: () => 1 }))
+      .rejects.toThrow(/Doc\.tally \(class method\)/);
+  });
+
+  it("still takes the written admission", async () => {
+    // The escape hatch is not adapter-specific: what changes by backend is how
+    // loudly the *absence* of one is reported, not whether one is accepted.
+    await expect(buildWithMethods({ tally: unscoped(() => 1) })).resolves.toBeDefined();
+  });
+
+  it("still takes the claim that the method applies the scope itself", async () => {
+    await expect(buildWithMethods({ tally: scopeAware(() => 1) })).resolves.toBeDefined();
   });
 });

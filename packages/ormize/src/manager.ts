@@ -10,6 +10,7 @@ import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@
 import { ScopeDeniedError, ScopeEscapeError, applyScopeWhere, inheritScopeMemo, markSystemQuery, scopeFor, scopeIncludePlan, scopeMiss } from "./scope";
 import type { ScopeMissBehaviour } from "./scope";
 import { buildScopeHooks } from "./scope-hooks";
+import { auditDefinitionScopeSurfaces, reportScopeSurfaces } from "./scope-audit";
 import type { ScopeHook } from "./scope-hooks";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
@@ -154,6 +155,8 @@ export default class Ormize<
   relationships: {[defName: string]: {[relName: string]: WiredRelationship}};
   /** Adapters whose instance-level hooks are already installed; see `installInstanceHooks`. */
   private _instanceHookedAdapters = new Set<string>();
+  /** Whether `initialise()` has run, so a later `setPermission` knows to re-audit. */
+  private _initialised = false;
   /**
    * The permission bag, for the one key the engine reads at *resolution* time.
    *
@@ -213,6 +216,31 @@ export default class Ormize<
    */
   setPermission = (permission: Permission | undefined) => {
     this.permission = permission;
+    if (this._initialised) {
+      // A bag that arrives after the models exist gets the same §12 audit the
+      // build would have run, at the moment the scope actually starts applying.
+      // Skipping it here would make the check depend on the order a host happened
+      // to assemble its options in, which is precisely what it exists to stop.
+      this.auditScopeSurfaces();
+    }
+  }
+  /**
+   * §12: refuse to build a scoped model whose methods the engine cannot reach.
+   *
+   * Runs from `initialise()` and from a later `setPermission`. A no-op unless a
+   * row-level scope is configured, which is also why it is safe to call twice —
+   * it reads definitions and reports, and changes nothing.
+   */
+  auditScopeSurfaces = () => {
+    if (typeof this.permission?.scope !== "function") {
+      return;
+    }
+    const findings = Object.keys(this.defs).reduce(
+      (all: ReturnType<typeof auditDefinitionScopeSurfaces>, defName) =>
+        all.concat(auditDefinitionScopeSurfaces(defName, this.defs[defName])),
+      [],
+    );
+    reportScopeSurfaces(findings, (defName) => this.adapters[this.defsAdapters[defName]]);
   }
   /**
    * Resolve `permission.scope` for one model and operation.
@@ -1090,6 +1118,10 @@ export default class Ormize<
       this.installInstanceHooks(adapterName, adapter);
       return adapter.initialise();
     }));
+    this._initialised = true;
+    // Last, deliberately: a build that is broken for an ordinary reason should
+    // say so before it starts talking about permissions.
+    this.auditScopeSurfaces();
   }
 
   /**
@@ -1120,10 +1152,38 @@ export default class Ormize<
       return adapter.sync(options);
     }));
   }
+  /**
+   * Hand a request context the resolved scope, for the surfaces §12 names.
+   *
+   * A `scopeAware` method has claimed it will apply the filter itself, and this
+   * is where it gets one. Backed by the same per-request memo every other call
+   * site uses, so a method that asks costs nothing extra.
+   *
+   * Non-enumerable, and only ever added: the context belongs to the host, and a
+   * key that showed up in `Object.keys` would reach anything that serialises or
+   * spreads it. Defined rather than assigned for the same reason `markSystemQuery`
+   * is — a property `args` cannot carry is a property a request cannot forge.
+   */
+  private withScopeFor = <T>(context: T): T => {
+    if (!context || typeof context !== "object" || typeof this.permission?.scope !== "function") {
+      return context;
+    }
+    const target = context as { scopeFor?: unknown };
+    if (target.scopeFor !== undefined) {
+      return context;
+    }
+    Object.defineProperty(target, "scopeFor", {
+      value: (defName: string, operation: ScopeOperation = "read") =>
+        this.resolveRowScope(defName, operation, context as RequestContext),
+      enumerable: false, writable: false, configurable: true,
+    });
+    return context;
+  }
   resolveClassMethod = async(defName: string, methodName: string, args: unknown, context: RequestContext,
     before?: (args: unknown, context: RequestContext) => unknown,
     after?: (result: unknown, context: RequestContext) => unknown) => {
     const Model = this.getModel(defName);
+    context = this.withScopeFor(context);
     if(before) {
       args = await before(args, context);
     }
