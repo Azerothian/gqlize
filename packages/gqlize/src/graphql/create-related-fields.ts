@@ -7,6 +7,16 @@ import GQLManager from '../manager';
 import { GraphQLBoolean } from "graphql";
 import { bindField } from "./resolvers/bind";
 
+/**
+ * Deliberately `console.warn` and not the `debug`-based logger, for the reason
+ * given in `./index.ts`: `debug` is silent unless `DEBUG` is set, which would
+ * make a silently dropped relationship invisible - the thing this warning
+ * exists to surface.
+ */
+const log = {
+  warn: (message: string) => console.warn(message), // eslint-disable-line no-console
+};
+
 export default function createRelatedFieldsFunc(
   defName: string,
   instance: GQLManager,
@@ -30,7 +40,20 @@ export default function createRelatedFieldsFunc(
           const targetObject = schemaCache.types[association.target];
           const targetDef = instance.getDefinition(association.target);
           if (!targetObject) {
-            // `targetType ${relationship.target} not defined for relationship`;
+            // A relationship with no target type cannot become a field, but it
+            // used to vanish without a word - leaving a schema quietly missing a
+            // field its author declared. See #14.
+            //
+            // Only warn when there is no definition behind the target either: a
+            // type absent despite a definition was omitted on purpose (denied by
+            // `permission.model`, or emptied of every field by `permission.field`
+            // - see `permission-empty-types.test.ts`), and dropping the
+            // relationship is how that omission is meant to propagate. A target
+            // with no definition at all is an authoring mistake: a typo'd
+            // `rel.model`, or a model that ormize knows and gqlize was not given.
+            if (!targetDef) {
+              log.warn(`gqlize: relationship '${defName}.${relName}' targets '${association.target}', which has no definition - the field has been omitted from the schema.`);
+            }
             return f;
           }
           switch (association.associationType) {

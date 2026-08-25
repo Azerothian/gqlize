@@ -8,7 +8,7 @@ import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, DataTypeDescriptor, NativeDataType,
-  RequestContext, Selection, IncludeMap, FindAllArgs } from '@azerothian/utilize/types/index';
+  RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { InstanceRow, MutationFilter, MutationHost, MutationInput,
   MutationInputTree, ResolveOptions } from "./types/engine";
@@ -17,6 +17,9 @@ import { applyRelationshipMutations } from "./relationship-mutations";
 import Events from "./events";
 import OrmizeTransaction from "./transaction";
 import { store, getStore } from "./context";
+
+/** The relationship types ormize knows how to wire; `Relationship.type` is a widened string. */
+const relationshipTypes: string[] = Object.values(RelationshipType);
 
 const hookList = [
   "beforeValidate",
@@ -170,6 +173,12 @@ export default class Ormize<
     if (overrideName) {
       adapter.adapterName = overrideName;
     }
+    // Without this the adapter lands under the string key "undefined" and
+    // `defaultAdapter` stays unset, so the *next* `addDefinition` fails blaming
+    // the definition for a name the adapter never supplied.
+    if (!adapter.adapterName) {
+      throw new Error("Ormize.registerAdapter: adapter has no adapterName and no override name was given");
+    }
     if (!this.defaultAdapter) {
       this.defaultAdapter = adapter.adapterName;
     }
@@ -208,8 +217,61 @@ export default class Ormize<
     >;
   }
   getDefinitionHooks = async(defName: string): Promise<HookMap> => {
-    const def = this.getDefinition(defName);
+    const def = this.requireDefinition(defName, "Ormize.getDefinitionHooks");
     return (def.hooks || def.options?.hooks) || {};
+  }
+  /**
+   * The adapter registered under `datasource`, or a message that says which name
+   * failed, where the caller got it from, and what is actually registered.
+   *
+   * Every adapter lookup used to be a bare `this.adapters[name]`, so a name that
+   * did not resolve surfaced as `Cannot read properties of undefined` several
+   * frames below the mistake — and the deferred `define()`/`initialise()` path
+   * has no stack frame pointing back at the call that made it, so the message is
+   * the only thing that can carry the model name. See #14.
+   *
+   * @param subject what the caller was doing, e.g. `Cannot add definition 'Task'`.
+   * @param origin  where `datasource` came from, e.g. `from def.datasource`.
+   */
+  private requireAdapter(datasource: string, subject: string, origin: string): OrmAdapter {
+    const adapter = this.adapters[datasource];
+    if (adapter) {
+      return adapter;
+    }
+    const known = Object.keys(this.adapters);
+    throw new Error(`${subject}: no adapter named '${datasource}' is registered (${origin}). ${known.length
+      ? `Registered adapters: ${known.map((n) => `'${n}'`).join(", ")}.`
+      : "No adapters are registered - call registerAdapter() before addDefinition()/initialise()."}`);
+  }
+  /** The lenient form of {@link requireAdapter}, for the call sites that treat a missing adapter as "not applicable". */
+  private findAdapter(datasource: string | undefined): OrmAdapter | undefined {
+    return datasource === undefined ? undefined : this.adapters[datasource];
+  }
+  /** True once `defName` has been added (via `addDefinition`, or `define()` after `initialise()` drains it). */
+  hasDefinition = (defName: string): boolean => {
+    return Boolean(this.defs[defName]);
+  }
+  /** The definition of `defName`, or a message naming the models that *are* defined. */
+  private requireDefinition(defName: string, subject: string): Definition {
+    const def = this.defs[defName];
+    if (def) {
+      return def;
+    }
+    const known = Object.keys(this.defs);
+    throw new Error(`${subject}: no model named '${defName}' has been defined. ${known.length
+      ? `Defined models: ${known.map((n) => `'${n}'`).join(", ")}.`
+      : "No models have been defined."}`);
+  }
+  /**
+   * The adapter a model was defined against, checking both hops.
+   *
+   * "No model named X" and "model X's adapter is not registered" are different
+   * mistakes with different fixes; the single unchecked index they replaced
+   * produced the same `TypeError` for both.
+   */
+  private requireModelAdapter(defName: string, subject: string): OrmAdapter {
+    this.requireDefinition(defName, subject);
+    return this.requireAdapter(this.defsAdapters[defName], subject, `model '${defName}' was defined against it`);
   }
   addDefinition = async(def: Definition, adapterName?: string | undefined) => {
     const datasource = adapterName || def.datasource || this.defaultAdapter
@@ -221,10 +283,21 @@ export default class Ormize<
       throw new Error(`Model with the name ${def.name} has already been added`);
     }
     if(!datasource) {
+      // With adapters registered, a falsy `datasource` really is the definition's
+      // fault; with none, the definition is fine and the setup call is missing.
+      if (Object.keys(this.adapters).length === 0) {
+        throw new Error(`Cannot add definition '${def.name}': no adapters are registered - call registerAdapter() before addDefinition().`);
+      }
       throw new Error(`Model definition does not have a adapter name defined`);
     }
+    // Resolved before anything is written: a throw between the `defs` write and
+    // `createModel` used to leave the manager holding a half-added model, so a
+    // retry after registering the adapter hit "has already been added".
+    const adapter = this.requireAdapter(datasource, `Cannot add definition '${def.name}'`,
+      adapterName ? "from the adapterName argument"
+        : def.datasource ? "from def.datasource"
+          : "the default adapter");
     this.defs[def.name] = def;
-    const adapter = this.adapters[datasource];
     this.defsAdapters[def.name] = datasource
     
 
@@ -396,9 +469,16 @@ export default class Ormize<
       accessors: relationshipAccessors(rel.name, rel.funcName),
     };
   }
+  /**
+   * The adapter a model was defined against.
+   *
+   * Throws rather than returning `undefined` for an unknown model: the declared
+   * return type has always been non-optional and every caller dereferences it
+   * unguarded, so a miss became a `TypeError` on `undefined` inside whichever
+   * adapter method was reached first. See #14.
+   */
   getModelAdapter = (modelName: string) => {
-    const adapterName = this.defsAdapters[modelName];
-    return this.adapters[adapterName];
+    return this.requireModelAdapter(modelName, "Ormize.getModelAdapter");
   }
   /**
    * Re-point an options (or context) object's transaction handle from one model's
@@ -440,11 +520,95 @@ export default class Ormize<
     }
     return adapter.mapDataType(nativeType);
   }
+  /**
+   * Everything about `rel` that can be judged before any of it is wired: that it
+   * has a name and a known type, that its target exists, and - for a
+   * cross-adapter relationship, whose keys nobody can synthesize - that the
+   * columns it names are really there.
+   *
+   * Up front and covering both branches on purpose. The type guard used to sit
+   * below the same-adapter early return (so it only ever ran for cross-adapter
+   * relationships, leaving the same-adapter case to whichever adapter happened to
+   * validate), a missing `rel.name` was silently stored under the key
+   * `"undefined"`, and a missing target crashed inside `getPrimaryKeyNameForModel`
+   * after the relationship had already been recorded. See #14.
+   */
+  private validateRelationship(defName: string, rel: Relationship) {
+    const subject = `Relationship '${defName}.${rel.name}'`;
+    if (!rel.name) {
+      throw new Error(`Relationship on '${defName}' targeting '${rel.model}' has no name.`);
+    }
+    if (!relationshipTypes.includes(rel.type)) {
+      throw new Error(`${subject}: unknown relationship type '${rel.type}'. Expected one of ${relationshipTypes.map((t) => `'${t}'`).join(", ")}.`);
+    }
+    if (!rel.model) {
+      throw new Error(`${subject} (${rel.type}) does not name a target model.`);
+    }
+    this.requireDefinition(rel.model, `${subject} (${rel.type}) targets model '${rel.model}', which has not been defined`);
+  }
+  /**
+   * The keys of every cross-adapter relationship, checked against the models they
+   * sit on. No JOIN spans two datastores, so ormize resolves the pair itself by
+   * reading these columns - and unlike a native association it cannot create the
+   * foreign key, which has to be declared on the target definition by hand. An
+   * unchecked name wired cleanly and then failed at the first query as a raw
+   * driver error (`no such column: Bar.nopeId`) naming neither the relationship
+   * nor the option that produced it. See #14.
+   *
+   * A pass at the end of `initialise()` rather than a check inside
+   * `processRelationship`, because a column is not necessarily there yet when the
+   * relationship naming it is wired: relationships are processed concurrently,
+   * and a same-adapter association on the target creates its foreign key as a
+   * side effect. Only once every relationship is wired - and every generated join
+   * model defined - does `getFields` answer for the finished schema.
+   */
+  private validateCrossAdapterKeys() {
+    for (const defName of Object.keys(this.relationships)) {
+      for (const relName of Object.keys(this.relationships[defName])) {
+        const rel = this.relationships[defName][relName];
+        if (rel.internal !== false) {
+          continue;
+        }
+        const subject = `Cross-adapter relationship '${defName}.${relName}' (${rel.type})`;
+        // `belongsTo` keeps the foreign key on the source and points at the
+        // target's `targetKey`; `hasMany`/`hasOne` keep it on each target and
+        // point back at the source's `sourceKey`. `belongsToMany` keeps it on
+        // neither - both join columns live on the through model.
+        const checks: [string, string | undefined, string][] = rel.type === "belongsToMany"
+          ? [
+            [defName, rel.sourceKey, "sourceKey"],
+            [rel.model, rel.targetKey, "targetKey"],
+            [rel.through as string, rel.foreignKey, "foreignKey (on the join model)"],
+            [rel.through as string, rel.otherKey, "otherKey (on the join model)"],
+          ]
+          : rel.type === "belongsTo"
+            ? [[defName, rel.foreignKey, "foreignKey"], [rel.model, rel.targetKey, "targetKey"]]
+            : [[defName, rel.sourceKey, "sourceKey"], [rel.model, rel.foreignKey, "foreignKey"]];
+        for (const [modelName, keyName, option] of checks) {
+          if (!keyName) {
+            continue;
+          }
+          const fields = this.getModelAdapter(modelName).getFields(modelName);
+          if (fields[keyName]) {
+            continue;
+          }
+          throw new Error(`${subject} declares ${option} '${keyName}', but model '${modelName}' has no such field. `
+            + "A cross-adapter key must be declared on the definition - ormize cannot create it. "
+            + `Fields on '${modelName}': ${Object.keys(fields).map((f) => `'${f}'`).join(", ")}.`);
+        }
+      }
+    }
+  }
   processRelationship = async(def: Definition, sourceAdapter: OrmAdapter , rel: Relationship) => {
-    const targetAdapter = this.getModelAdapter(rel.model);
     if(!def.name) {
       throw new Error(`Attempting to use a definition without a name: ${JSON.stringify(def)}`);
     }
+    this.validateRelationship(def.name, rel);
+    // Normalised once: the cross-adapter branch used to destructure `rel.options`
+    // blind, and an omitted `options` is a legitimate shape for a same-adapter
+    // relationship that leaves every key to the adapter.
+    rel = rel.options ? rel : {...rel, options: {}};
+    const targetAdapter = this.getModelAdapter(rel.model);
     if (!this.relationships[def.name]) {
       this.relationships[def.name] = {};
     }
@@ -642,6 +806,7 @@ export default class Ormize<
         this.processRelationship(def, sourceAdapter, rel));
     }));
     await this.generateJoinModels();
+    this.validateCrossAdapterKeys();
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       return adapter.initialise();
@@ -921,7 +1086,8 @@ export default class Ormize<
     if (context && context.transaction) {
       return fn(context);
     }
-    const adapter = this.adapters[adapterName];
+    // Lenient by design: an adapter with no transaction support runs unenrolled.
+    const adapter = this.findAdapter(adapterName);
     if (!adapter || (typeof adapter.beginTransaction !== "function" && typeof adapter.transaction !== "function")) {
       return fn(context);
     }
