@@ -121,9 +121,10 @@ describe("live types shared with the artifact", () => {
   it("records and re-derives a type declared on a model field's args", async() => {
     // `create-basic-fields` passes `define[field].args` to graphql verbatim, so
     // those types are user-authored and invisible to every other recording site.
-    // Only adapters that carry `args` through `getFields` reach this (the
-    // sequelize adapter rebuilds its field meta from `rawAttributes` and drops
-    // it), so record and resolve are exercised against the same contract here.
+    // This drives `recordExternalType`/`resolveExternalType` against the
+    // `getFields` contract directly, including the stale-definition branch,
+    // which no full build can reach; the case below it does the same through a
+    // real adapter and a real artifact.
     const Casing = new GraphQLEnumType({
       name: "Casing",
       values: {UPPER: {value: "upper"}, LOWER: {value: "lower"}},
@@ -150,6 +151,47 @@ describe("live types shared with the artifact", () => {
     };
     expect(() => resolveExternalType("Casing", ref, stale, schemaCache))
       .toThrow(/argument "casing" on Note\.body/);
+  });
+
+  it("round-trips a model field's arg type through a real adapter", async() => {
+    // gqlize#20 — the previous case had to hand-stub `getFields` because both
+    // adapters dropped `define[field].args`, which left the `definitionField`
+    // ledger entry and its rehydration branch unreachable from a real build.
+    // They carry it now, so this goes the whole way: definition -> adapter ->
+    // build -> JSON artifact -> materialize.
+    const Casing = new GraphQLEnumType({
+      name: "Casing",
+      values: {UPPER: {value: "upper"}, LOWER: {value: "lower"}},
+    });
+    const {live, rebuilt, artifact} = await roundtrip([{
+      name: "Page",
+      define: {
+        body: {
+          type: Sequelize.STRING,
+          allowNull: true,
+          args: {casing: {type: Casing}},
+          resolve: (source: {body: string}, args: {casing?: string}) => (
+            args.casing === "upper" ? source.body.toUpperCase() : source.body.toLowerCase()
+          ),
+        },
+      },
+      options: {tableName: "pages"},
+    }]);
+
+    // The enum is user-authored, so it is never serialized into the artifact —
+    // it is re-derived off the live definition instead.
+    expect(typeNames(artifact)).not.toContain("Casing");
+    expect(printSchema(rebuilt)).toEqual(printSchema(live));
+    expect(rebuilt.getTypeMap().Casing).toBe(Casing);
+    // ...including the SDL-invisible internal values, which is the whole point
+    // of re-deriving rather than rebuilding.
+    expect(enumValues(rebuilt, "Casing")).toEqual([["UPPER", "upper"], ["LOWER", "lower"]]);
+
+    const body = (rebuilt.getType("Page") as GraphQLObjectType).getFields().body;
+    expect(body.args.map((a) => a.name)).toEqual(["casing"]);
+    expect(body.args[0].type).toBe(Casing);
+    // and the authored resolver is re-bound, not lost with the build
+    expect(typeof body.resolve).toEqual("function");
   });
 
   it("does not record types for a permission-denied instance method", async() => {
