@@ -110,11 +110,15 @@ export default tseslint.config(
 
   {
     linterOptions: {
-      // The repo carries `eslint-disable` comments from an airbnb-era config,
-      // naming rules this one does not enable. Reporting those as unused invites
-      // `--fix` to delete comments that document a deliberate choice, so the
-      // check is off and stale directives are cleaned by hand.
-      reportUnusedDisableDirectives: "off",
+      // The airbnb-era `eslint-disable` comments this repo carried — naming rules
+      // this config does not enable — have all been cleaned out by hand, so the
+      // check is on to stop them accumulating again. Clean the reports by hand
+      // too, never with `--fix`: a directive's `-- reason` prose often states a
+      // fact worth keeping as an ordinary comment, and `--fix` deletes the whole
+      // line. `error` rather than `warn` because `pnpm lint` runs
+      // `--max-warnings 0`, where the two are the same outcome and only `error`
+      // says so.
+      reportUnusedDisableDirectives: "error",
     },
   },
 

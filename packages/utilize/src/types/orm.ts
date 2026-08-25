@@ -52,16 +52,7 @@ export type ModelNameOf<D> = D extends ITypedDefinition<infer N, any, any>
  * }
  * ```
  */
-export interface IORBaseRegistry<
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  ReqInstance,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  OptInstance,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  ReqStatics,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  OptStatics,
-> {}
+export interface IORBaseRegistry<ReqInstance, OptInstance, ReqStatics, OptStatics> {}
 
 /** Union of registered adapter base URIs (e.g. `"sequelize"`). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- only the *keys* of the registry are wanted; the four arguments are placeholders that must not restrict which adapter augmentations are counted, whatever those augmentations do with their slots.

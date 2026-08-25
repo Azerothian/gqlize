@@ -2,7 +2,7 @@ import { GraphQLScalarType, GraphQLError, Kind } from "graphql";
 
 
 // @ts-ignore
-BigInt.prototype.toJSON = function() { return this.toString(); }; //eslint-disable-line
+BigInt.prototype.toJSON = function() { return this.toString(); };
 
 export default new GraphQLScalarType({
   name: "GQLTBigInt",
@@ -35,7 +35,7 @@ export default new GraphQLScalarType({
   parseValue(value) {
     // graphql hands coercion inputs over as `unknown`; `BigInt` throws on
     // anything it cannot convert, which is the error we want to surface.
-    return BigInt(value as string | number | bigint | boolean); //eslint-disable-line
+    return BigInt(value as string | number | bigint | boolean);
   },
 
   parseLiteral(ast) {
@@ -48,6 +48,6 @@ export default new GraphQLScalarType({
     }
     // Match parseValue: return a precise BigInt (the old parseFloat lost precision
     // and returned a different runtime type than the variable path).
-    return BigInt(ast.value); //eslint-disable-line
+    return BigInt(ast.value);
   },
 });

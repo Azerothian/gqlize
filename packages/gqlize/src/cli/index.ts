@@ -14,7 +14,6 @@ run(process.argv.slice(2))
     process.exitCode = code;
   })
   .catch((err) => {
-    // eslint-disable-next-line no-console
     console.error(err?.stack || String(err));
     process.exitCode = 1;
   });

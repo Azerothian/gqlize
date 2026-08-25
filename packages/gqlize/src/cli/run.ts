@@ -17,10 +17,8 @@ export interface RunIO {
  * artifact), `2` the invocation itself was wrong.
  */
 export async function run(argv: string[], io: RunIO = {}): Promise<number> {
-  /* eslint-disable no-console */
   const out = io.out || ((line: string) => console.log(line));
   const err = io.err || ((line: string) => console.error(line));
-  /* eslint-enable no-console */
 
   let args;
   try {

@@ -139,7 +139,6 @@ async function equalitySet(ex: Executor, keys: Keys, model: ValkeyModel, field: 
     // A primary-key value is always a `KeyId` (string/number/bigint) by
     // construction — see `keys.ts`. A cast would be flagged as unnecessary
     // (`String`'s parameter is `any`), so the invariant is documented instead.
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- see comment above
     return new Set([String(value)]); // direct lookup; existence verified at fetch
   }
   if (model.uniques.has(field)) {
