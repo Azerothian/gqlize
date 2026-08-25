@@ -2434,6 +2434,11 @@ type MutationModels {
 
     """This will delete a new element for Task"""
     delete: [GQLTQueryTaskWhere]
+
+    """
+    Instance-method transforms to run against each Task being created or updated, before it is committed
+    """
+    apply: GQLTTaskInstanceMutations
   ): [Task]
   TaskItem(
     """This will create a new element for TaskItem"""
@@ -3485,6 +3490,15 @@ input TaskSelectInput {
   Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
   """
   input: TaskOptionalInput
+}
+
+input GQLTTaskInstanceMutations {
+  appendSuffix: GQLTTaskApplyAppendSuffix
+  markChecked: Boolean
+}
+
+input GQLTTaskApplyAppendSuffix {
+  suffix: String!
 }
 
 """"""
@@ -5623,6 +5637,11 @@ type MutationModels {
 
     """This will delete a new element for Task"""
     delete: [GQLTQueryTaskWhere]
+
+    """
+    Instance-method transforms to run against each Task being created or updated, before it is committed
+    """
+    apply: GQLTTaskInstanceMutations
   ): [Task]
   TaskItem(
     """This will create a new element for TaskItem"""
@@ -6441,6 +6460,15 @@ input TaskSelectInput {
   Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
   """
   input: TaskOptionalInput
+}
+
+input GQLTTaskInstanceMutations {
+  appendSuffix: GQLTTaskApplyAppendSuffix
+  markChecked: Boolean
+}
+
+input GQLTTaskApplyAppendSuffix {
+  suffix: String!
 }
 
 """"""

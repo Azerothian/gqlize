@@ -7,8 +7,10 @@ import {
   type GraphQLInputFieldConfigMap,
 } from "graphql";
 import { isFieldAllowed, isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
+import { computedWhereFields } from "@azerothian/utilize/exposed-methods";
 import type { Definition, OrderEntry, Permission } from "@azerothian/utilize/types/index";
 import createQueryType, { type QueryTypeConfig } from "./query";
+import { GraphQLString, type GraphQLInputType } from "graphql";
 
 /**
  * The `where` / `orderBy` / `include` argument builders every ORM adapter needs.
@@ -53,6 +55,16 @@ export interface AdapterArgsHost {
   queryConfigFor(defName: string, definition: Definition | undefined, permission?: Permission): QueryTypeConfig;
   /** Every field name the model could be ordered by, before permission filtering. */
   orderableFields(defName: string): string[];
+  /**
+   * Exposed query instance methods that declared an `orderBy`, already permission
+   * filtered. A computed sort is a property of the *definition*, and this layer
+   * stays definition-blind by convention — the same reason `queryConfigFor` and
+   * `orderableFields` are host members rather than reads of `expose` from here.
+   *
+   * Optional so an adapter predating computed ordering keeps working: absent
+   * means "this backend contributes none".
+   */
+  computedOrderableFields?(defName: string, permission?: Permission): string[];
   /** Declared relationships, before permission filtering. */
   relationshipsOf(defName: string, definition: Definition | undefined): HostRelationship[];
   /**
@@ -80,10 +92,57 @@ export function getFilterGraphQLType(
   host: AdapterArgsHost, defName: string, definition?: Definition, permission?: Permission,
 ): GraphQLInputObjectType {
   if (!host.getMetaObj(defName, "queryType")) {
-    const config = host.queryConfigFor(defName, definition, effective(host, permission));
+    const perm = effective(host, permission);
+    const config = withComputedFilters(host, defName, definition, perm, host.queryConfigFor(defName, definition, perm));
     host.setMetaObj(defName, "queryType", createQueryType(config));
   }
   return host.getMetaObj(defName, "queryType") as GraphQLInputObjectType;
+}
+
+/**
+ * Fold an exposed method's declared `where` into the model's filter config, so
+ * `createQueryType` generates the ordinary `{eq, like, in, …}` object for it and
+ * `where: {fullName: {like: "%smith%"}}` works like any column.
+ *
+ * No new runtime is needed on the other side: the method name is registered as a
+ * custom where-operator (see `whereOperatorsFor`), and the expander that applies
+ * those matches its key map at every depth of the where tree — so the same field
+ * works at the root, inside an `include`, and under `and`/`or`.
+ *
+ * The portable `where: "column"` form borrows the named column's value type, and
+ * is dropped when that column is not itself filterable. A denied column must not
+ * become reachable through a computed alias: filterability is a boolean oracle
+ * on the value either way.
+ */
+function withComputedFilters(
+  host: AdapterArgsHost,
+  defName: string,
+  definition: Definition | undefined,
+  permission: Permission | undefined,
+  config: QueryTypeConfig,
+): QueryTypeConfig {
+  const def = definition ?? host.targetOf(defName)?.definition;
+  const computed = computedWhereFields(def, defName, permission);
+  if (computed.length === 0) {
+    return config;
+  }
+  const fields = { ...config.fields };
+  const fieldOperators = { ...(config.fieldOperators || {}) };
+  for (const { methodName, column, type, operators } of computed) {
+    if (column !== undefined) {
+      const borrowed = fields[column];
+      if (!borrowed) {
+        continue; // the column it filters through is not filterable here
+      }
+      fields[methodName] = borrowed;
+    } else {
+      fields[methodName] = (type as GraphQLInputType | undefined) || GraphQLString;
+    }
+    if (operators) {
+      fieldOperators[methodName] = operators;
+    }
+  }
+  return { ...config, fields, fieldOperators };
 }
 
 /**
@@ -105,6 +164,14 @@ export function getOrderByGraphQLType(
       }
       values[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
       values[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
+    }
+    // A computed sort contributes the same pair, carrying the *method's* name as
+    // the column. The engine expands it to the real ordering at query time
+    // (`expandOrderBy`), which keeps the enum value stable across a declaration
+    // change and so keeps a materialized schema snapshot valid.
+    for (const methodName of (host.computedOrderableFields?.(defName, perm) || [])) {
+      values[`${methodName}ASC`] = { value: [methodName, "ASC"] };
+      values[`${methodName}DESC`] = { value: [methodName, "DESC"] };
     }
     if (Object.keys(values).length > 0) {
       host.setMetaObj(defName, "orderByType", new GraphQLList(new GraphQLEnumType({

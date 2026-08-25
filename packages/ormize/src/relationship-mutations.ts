@@ -8,6 +8,7 @@
 // the order of eight statements.
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
+import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, OrmAdapter,
   RequestContext, Selection,
@@ -301,7 +302,7 @@ export async function applyRelationshipMutations(
       isBtm: association.associationType === "belongsToMany",
       where: async(filter) => targetAdapter.processFilterArgument(
         translateFilter(filter as AdapterWhere, targetGlobalKeys),
-        targetDef.whereOperators,
+        whereOperatorsFor(targetDef),
         targetOptions,
       ),
       asList,

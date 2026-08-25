@@ -8,6 +8,7 @@ import {
 import { capitalize } from "@azerothian/utilize/utils/word";
 import GQLManager from '../manager';
 import { Definitions, GqlizeOptions, SchemaCache, Definition } from '../types';
+import type { ExposedMethods } from "@azerothian/utilize/types/index";
 import { bindField } from "./resolvers/bind";
 import { recordExternalType } from "./snapshot/ledger";
 
@@ -40,14 +41,7 @@ export default function createClassMethods(instance: GQLManager, definitions: De
   };
 }
 
-export function createClassMethodFields(instance: GQLManager, defName: string, definition: Definition, query: {
-  [x: string]: { 
-    type: any; 
-    args?: any; 
-    before?: any;
-    after?: any;
-  };
-}, options: GqlizeOptions, schemaCache: SchemaCache, targetName: string) {
+export function createClassMethodFields(instance: GQLManager, defName: string, definition: Definition, query: ExposedMethods, options: GqlizeOptions, schemaCache: SchemaCache, targetName: string) {
   return waterfall(Object.keys(query), async(methodName: string, o: {
     [x: string]: {
       type: any;

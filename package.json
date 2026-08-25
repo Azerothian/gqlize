@@ -5,7 +5,7 @@
   "scripts": {
     "build": "turbo run build",
     "//lint": "The ceiling is a ratchet, not a target: it is today's warning count, so the number may only ever be lowered. About 1150 of them are `no-explicit-any` in the ported v5-era code; see tools/lint for what the rest are and why none of them is an error yet.",
-    "lint": "eslint . --max-warnings 1237",
+    "lint": "eslint . --max-warnings 1233",
     "test": "turbo run test",
     "typecheck": "tsc -b && turbo run typecheck",
     "watch": "turbo run watch"

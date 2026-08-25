@@ -151,6 +151,8 @@ export default {
       query: {
         testInstanceMethod: {
           type: "Task[]",
+          // Reads `this.name`, which the selection set need not have asked for.
+          fields: ["name"],
           args: {
             input: {
               type: new GraphQLNonNull(new GraphQLInputObjectType({
@@ -162,6 +164,14 @@ export default {
             },
           },
         },
+      },
+      mutations: {
+        appendSuffix: {
+          args: {
+            suffix: {type: new GraphQLNonNull(GraphQLString)},
+          },
+        },
+        markChecked: {},
       },
     },
     classMethods: {
@@ -256,6 +266,15 @@ export default {
           id: this.id,
           name: `${this.name}${amount}`,
         }];
+      },
+      // Pre-commit transform, direct-write flavour: mutates `this`, returns nothing.
+      appendSuffix({suffix}) {
+        this.name = `${this.name}${suffix}`;
+      },
+      // Pre-commit transform, returned-values flavour. Runs after `before`, so
+      // this wins over the `mutationCheck` that hook sets.
+      markChecked() {
+        return {mutationCheck: "applied"};
       },
     },
     hooks: {

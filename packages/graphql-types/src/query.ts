@@ -32,6 +32,14 @@ export interface QueryTypeConfig {
   arrayFuncs: string[];
   /** Operators that stand alone rather than nesting under a field, keyed by operator name. */
   isolatedFields?: { [operatorName: string]: GraphQLInputType };
+  /**
+   * Per-field operator allow-lists, keyed by field name. A field listed here is
+   * generated with only these operators instead of the full `valueFuncs` +
+   * `arrayValues` vocabulary — for a computed filter whose `resolve` can only
+   * express some of them, offering the rest would be a promise the backend
+   * cannot keep. Absent (the normal case) means the full vocabulary.
+   */
+  fieldOperators?: { [fieldName: string]: string[] };
   /** Last look at one field's operator map, e.g. to add a backend-specific operator. */
   processInnerFields?: (
     innerFields: ObjMap<GraphQLInputFieldConfig>,
@@ -48,16 +56,19 @@ export default function createQueryType(config: QueryTypeConfig) {
     fields() {
       let fields = Object.keys(config.fields).reduce((o, fieldName) => {
         const actualFieldType = config.fields[fieldName];
+        const allowed = config.fieldOperators?.[fieldName];
         const fieldType = new GraphQLInputObjectType({
           name: `${mainInputName}${fieldName}`,
           fields() {
-            let innerFields = config.valueFuncs.reduce((i, funcName) => {
+            const valueFuncs = allowed ? config.valueFuncs.filter((f) => allowed.includes(f)) : config.valueFuncs;
+            const arrayValues = allowed ? config.arrayValues.filter((f) => allowed.includes(f)) : config.arrayValues;
+            let innerFields = valueFuncs.reduce((i, funcName) => {
               i[funcName] = {
                 type: actualFieldType,
               };
               return i;
             }, {} as ObjMap<GraphQLInputFieldConfig>);
-            innerFields = config.arrayValues.reduce((i, funcName) => {
+            innerFields = arrayValues.reduce((i, funcName) => {
               i[funcName] = {
                 type: new GraphQLList(actualFieldType),
               };
