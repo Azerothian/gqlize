@@ -82,7 +82,12 @@ export function matchWhere(obj: any, where: any): boolean {
 
 // ---- index-only candidate resolution ----
 
-type Resolved = { set: Set<string> | "ALL"; residual: any };
+/**
+ * `residual` is a **list** of independent clauses, all of which must hold (AND).
+ * It must not be collapsed into a single object: two AND-ed branches can constrain
+ * the same non-indexed field, and merging them would silently drop all but the last.
+ */
+type Resolved = { set: Set<string> | "ALL"; residual: any[] };
 
 function scalarOf(cond: any): { eq?: any; in?: any[]; hasOther: boolean } {
   if (cond === null || typeof cond !== "object") {
@@ -138,10 +143,10 @@ function intersect(sets: Set<string>[]): Set<string> {
 /** Resolve a where tree to a candidate id-set using ONLY indexes (never a scan). */
 async function resolveWhere(ex: Executor, keys: Keys, model: ValkeyModel, where: any, now: number): Promise<Resolved> {
   if (!where || Object.keys(where).length === 0) {
-    return { set: "ALL", residual: {} };
+    return { set: "ALL", residual: [] };
   }
   const conjuncts: Set<string>[] = [];
-  const residual: any = {};
+  const residual: any[] = [];
   let hadIndexable = false;
 
   for (const key of Object.keys(where)) {
@@ -150,7 +155,7 @@ async function resolveWhere(ex: Executor, keys: Keys, model: ValkeyModel, where:
       for (const sub of where[key] || []) {
         const r = await resolveWhere(ex, keys, model, sub, now);
         if (r.set !== "ALL") { conjuncts.push(r.set); hadIndexable = true; }
-        Object.assign(residual, r.residual);
+        residual.push(...r.residual);
       }
       continue;
     }
@@ -158,7 +163,7 @@ async function resolveWhere(ex: Executor, keys: Keys, model: ValkeyModel, where:
       const branches: Set<string>[] = [];
       for (const sub of where[key] || []) {
         const r = await resolveWhere(ex, keys, model, sub, now);
-        if (r.set === "ALL" || Object.keys(r.residual).length) {
+        if (r.set === "ALL" || r.residual.length) {
           throw new Error("Valkey adapter: every branch of an `or` must be fully index-resolvable");
         }
         branches.push(r.set);
@@ -170,7 +175,7 @@ async function resolveWhere(ex: Executor, keys: Keys, model: ValkeyModel, where:
       continue;
     }
     if (lk === "not") {
-      residual[key] = where[key];
+      residual.push({ [key]: where[key] });
       continue;
     }
     // Field condition.
@@ -178,7 +183,7 @@ async function resolveWhere(ex: Executor, keys: Keys, model: ValkeyModel, where:
     if (model.isSearchable(key) && eq !== undefined) {
       conjuncts.push(await equalitySet(ex, keys, model, key, eq, now));
       hadIndexable = true;
-      if (hasOther) residual[key] = where[key];
+      if (hasOther) residual.push({ [key]: where[key] });
     } else if (model.isSearchable(key) && inv) {
       const union = new Set<string>();
       for (const v of inv) {
@@ -186,9 +191,9 @@ async function resolveWhere(ex: Executor, keys: Keys, model: ValkeyModel, where:
       }
       conjuncts.push(union);
       hadIndexable = true;
-      if (hasOther) residual[key] = where[key];
+      if (hasOther) residual.push({ [key]: where[key] });
     } else {
-      residual[key] = where[key]; // non-indexed field / range operator → refine in memory
+      residual.push({ [key]: where[key] }); // non-indexed field / range operator → refine in memory
     }
   }
 
@@ -215,11 +220,10 @@ export async function executeQuery(ex: Executor, keys: Keys, model: ValkeyModel,
 
   const raw = await ex.mgetObj(ids.map((id) => keys.obj(model.name, id)));
   const out: any[] = [];
-  const hasResidual = Object.keys(resolved.residual).length > 0;
   for (let i = 0; i < ids.length; i++) {
     if (raw[i] == null) continue; // expired / missing
     const obj = deserialize(model.fields, raw[i]);
-    if (!hasResidual || matchWhere(obj, resolved.residual)) {
+    if (resolved.residual.every((clause) => matchWhere(obj, clause))) {
       out.push(obj);
     }
   }
