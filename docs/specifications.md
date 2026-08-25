@@ -595,9 +595,10 @@ its concrete object type.
 ## 7. Permissions
 
 Permissions are configured via `options.permission` (type `GqlizeOptions.permission` in
-`packages/utilize/src/types/index.ts`) and consulted throughout
-`packages/gqlize/src/graphql/*`. Each callback returns a boolean; returning falsy omits the
-corresponding schema element.
+`packages/utilize/src/types/index.ts`). All but one are **build-time** callbacks, consulted
+throughout `packages/gqlize/src/graphql/*`: each returns a boolean, and returning falsy omits the
+corresponding schema element. `scope` is the exception on both counts — it returns a filter rather
+than a decision, and it is consulted per request rather than per schema.
 
 | Callback | Gates |
 | --- | --- |
@@ -611,6 +612,7 @@ corresponding schema element.
 | `queryInstanceMethods` | Exposed instance-method query fields — and, with them, the `orderBy` enum values and `where` fields those methods contribute (sortability and filterability each leak a denied field's value). |
 | `mutationInstanceMethods` | Exposed instance-method transforms, i.e. the fields of a mutation's `apply` argument. |
 | `queryExtension` / `mutationExtension` (fieldName, options) | `options.extend.*` fields. The first argument is the extend field key, not a model name. |
+| `scope(defName, operation, options, context)` | **Resolution-time.** Which *rows* an operation may read or write — see below. |
 
 A shared `options.permission.options` value is threaded into every callback.
 
@@ -618,6 +620,39 @@ This table is the whole set. `PERMISSION_KEYS` in `packages/utilize/src/gate.ts`
 machine-readable copy, and `createSchemaObjects` warns when a bag carries a key outside it —
 worth flagging because an absent predicate means *allow*, so an unread key fails open. There
 is no `subscription` callback while subscriptions remain unimplemented (§13).
+
+### Build-time and resolution-time keys
+
+`PERMISSION_KEYS` is the union of two disjoint lists in the same file:
+`BUILD_TIME_PERMISSION_KEYS`, which is every row above bar the last plus the shared `options`
+value, and `RESOLUTION_TIME_PERMISSION_KEYS`, which is `["scope"]`. The split is structural rather
+than conventional: a test walks `packages/gqlize/src/graphql/*` and fails if anything there reads a
+resolution-time key. That is what makes `scope`'s `async` signature safe — a predicate that may
+return a `Promise` is unusable from a synchronous schema build, so the boundary has to hold.
+
+`scope` also inverts two of the rules the table above states. Its return value is
+`undefined | false | PortableWhere | {where, set, native}`, in which `undefined` is "no opinion"
+(**no** restriction) and `false` is a deny — so it must never pass through `isAllowed`, whose `!!`
+would coerce a returned filter to `true` and drop the restriction entirely. And `defaultDeny` does
+not reach it in the role-based helper: an absent `scope` means unscoped, because the key postdates
+every deployment that does not set one.
+
+Enforcement is deliberately layered (issue #40 decision 8). The engine merges the resolved filter at
+its read and write chokepoints in `packages/ormize/src/manager.ts`; on sequelize a second copy is
+imposed by model hooks in `packages/ormize/src/scope-hooks.ts`, which sit below the paths the engine
+cannot see; a post-write re-check refuses a write that would move a row out of scope; and an
+instance-level `beforeQuery` refuses a raw statement bound to a scoped model that did not come
+through the scope-aware path. Surfaces holding the model directly — class methods, instance methods,
+`options.extend` fields, raw-SQL class methods — have no filter to merge into, so
+`packages/ormize/src/scope-audit.ts` refuses to build one that has not declared itself
+`scopeAware` or `unscoped` (a raw statement declares itself by reserving a `:scope…` parameter).
+`{native: …}` is merged in the adapter's own vocabulary instead of the portable one and is
+adapter-locking by construction.
+
+A write the scope denies outright reports nothing by default, indistinguishably from a write that
+matched no row; `GqlizeOptions.onScopeMiss: "throw"` trades that for a loud refusal, at the cost of
+confirming the scoped-out row exists. See `docs/guide.md` §8 for the configuration surface, including
+the residual inference channels a row filter cannot close.
 
 ### Role-based helper
 
@@ -627,6 +662,15 @@ is no `subscription` callback while subscriptions remain unimplemented (§13).
 into the `permission` object above — so consumers can declare permissions per role rather
 than writing every callback by hand. It emits only callbacks from the table above; a rules
 key nothing reads is warned about rather than silently compiled into a dead predicate.
+
+`scope` has its own compiler in that file rather than going through `decideKey`, for the two
+reasons the split above describes: its leaves are values (`{own: "ownerId"}`) rather than
+`allow`/`deny`, which `decideKey` would read as "no opinion", and its second level is an
+*operation* rather than a field name. It supports `own` / `tenant` / `group` / `none` leaves, `any`
+and `all` combinators, and a `read` / `write` split with per-operation override; the principal is
+read from the request context by a `principal` option defaulting to
+`context.user` / `context.principal` / `context.req.user`. A reader that finds nothing is a deny, as
+is a `group` leaf whose principal belongs to no groups.
 
 Two rules keys feed more than one callback: `extensions` is accepted as a synonym for both
 `queryExtension` and `mutationExtension`, and `mutationCreateInput` / `mutationUpdateInput`

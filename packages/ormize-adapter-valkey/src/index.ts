@@ -557,6 +557,16 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     processFilterArgument(where, whereOperators, options);
 
   /** Merge an equality (or, for arrays, membership) filter into an existing `where`. */
+  andFilterStatements = (a: AdapterWhere | undefined, b: AdapterWhere | undefined) => {
+    if (!a || Object.keys(a).length === 0) {
+      return b;
+    }
+    if (!b || Object.keys(b).length === 0) {
+      return a;
+    }
+    return { and: [a, b] };
+  };
+
   mergeFilterStatement = (fieldName: string, value: unknown, match = true, originalWhere?: AdapterWhere) => {
     const op = Array.isArray(value) ? (match ? "in" : "notIn") : (match ? "eq" : "ne");
     const filter = { [fieldName]: { [op]: value } };

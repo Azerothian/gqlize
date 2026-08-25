@@ -8,8 +8,9 @@
 
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, OrmAdapter,
-  RequestContext, Selection,
+  PortableWhere, RequestContext, Selection,
 } from "@azerothian/utilize/types/index";
+import type { ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
 
 /**
  * An adapter row seen through its dynamically-named members: the relationship
@@ -29,8 +30,17 @@ export type ResolveOptions = AdapterQueryOptions & {
   getGraphQLArgs: () => { context: RequestContext; info: unknown; source: AdapterRow };
 };
 
-/** A caller-supplied filter, before relay global ids have been translated out of it. */
-export type MutationFilter = AdapterWhere;
+/**
+ * A caller-supplied filter, before relay global ids have been translated out of
+ * it — and before `processFilterArgument` has translated it into the backend's
+ * vocabulary.
+ *
+ * This was aliased to `AdapterWhere`, which is the adapter-*native* shape and so
+ * the exact opposite of what a caller's filter is. Nothing depended on the
+ * distinction until `permission.scope`, which returns a filter that must be
+ * merged while it is still portable.
+ */
+export type MutationFilter = PortableWhere;
 
 /** A caller-supplied field bag for a create or an update. */
 export type MutationInput = { [field: string]: unknown };
@@ -83,6 +93,25 @@ export type MutationInputTree = { [name: string]: unknown };
 export interface AdapterRoutingHost {
   getModelAdapter(modelName: string): OrmAdapter;
   optionsForAdapter<T extends AdapterQueryOptions | undefined>(fromDefName: string, toDefName: string, options: T): Promise<T>;
+  /** `permission.scope` for one model and operation, memoised for the request. */
+  resolveScope(defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope>;
+  /** Throw or stay quiet when a scope denies a write outright, per `onScopeMiss`. */
+  scopeMiss(defName: string, operation: ScopeOperation): void;
+  /**
+   * A model's scope for one operation, translated into *its own* adapter's
+   * vocabulary and ANDed onto `where`. `false` when the scope denies outright:
+   * there is no adapter-native "match nothing" to hand back, so the caller
+   * short-circuits instead.
+   *
+   * The cross-adapter accessors reach past `resolveFindAll` by design — they run
+   * one query on each of two datastores — so they need the filter already in the
+   * shape the adapter they are about to call expects, which only the manager can
+   * build (it owns the definitions and the `whereOperators` derived from them).
+   */
+  scopedWhere(
+    defName: string, operation: ScopeOperation, context: RequestContext,
+    where: AdapterWhere | undefined, options: AdapterQueryOptions | undefined,
+  ): Promise<AdapterWhere | undefined | false>;
 }
 
 /** {@link AdapterRoutingHost} plus what the relationship-mutation verbs re-enter. */
@@ -90,8 +119,17 @@ export interface MutationHost extends AdapterRoutingHost {
   getAssociations(defName: string): { [relName: string]: Association };
   getDefinition(defName: string): Definition;
   getGlobalKeys(defName: string): string[];
-  processInputs(defName: string, input: MutationInputTree, args: unknown, context: RequestContext, info: unknown, model?: AdapterRow): Promise<MutationInput>;
+  processInputs(defName: string, input: MutationInputTree, args: unknown, context: RequestContext, info: unknown, model?: AdapterRow, operation?: ScopeOperation): Promise<MutationInput>;
   processCreate(defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
   processDelete(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
   processRelationshipMutation(defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, selection?: Selection): Promise<AdapterRow>;
+  /**
+   * Assert rows a write has already produced still satisfy the model's scope,
+   * throwing if any of them does not. A no-op when nothing is imposed.
+   *
+   * The relationship verbs need this because `add`/`set` move a row by
+   * re-pointing a foreign key: there is no field write for a scope's `set` to
+   * hold in place, and no filter left to merge into once the accessor has run.
+   */
+  assertRowsInScope(defName: string, operation: ScopeOperation, context: RequestContext, rows: AdapterRow[], options: AdapterQueryOptions | undefined): Promise<void>;
 }
