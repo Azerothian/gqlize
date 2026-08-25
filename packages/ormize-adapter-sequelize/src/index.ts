@@ -60,6 +60,14 @@ type OrmizeColumnOptions = ModelAttributeColumnOptions & {
   ignoreGlobalKey?: boolean;
   /** Opts a primary/foreign key back into client-writable mutation input. */
   writable?: boolean;
+  /**
+   * GraphQL args for the field and a resolver hung off it by the author. Typed
+   * off the shared meta rather than restated, so the two cannot drift.
+   */
+  args?: DefinitionFieldMeta["args"];
+  resolve?: DefinitionFieldMeta["resolve"];
+  /** The GraphQL field description; `comment` is the Sequelize-native spelling. */
+  description?: string;
 };
 
 /**
@@ -373,7 +381,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           type: attr.type,
           primaryKey: attr.primaryKey === true,
           allowNull,
-          description: attr.comment,
+          // `comment` is the Sequelize spelling and the one that reaches the
+          // database; `description` is what `DefinitionField` documents, so it
+          // is honoured too and wins. Same precedence as the valkey adapter.
+          description: attr.description ?? attr.comment,
           defaultValue: attr.defaultValue,
           foreignKey,
           foreignTarget,
@@ -382,6 +393,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           // Opt-in that lets a pk/fk be set from client input (default: excluded
           // to prevent mass-assignment — see isStructurallyWritable).
           writable: attr.writable === true,
+          // `args`/`resolve` are authored on the field and are meaningless to
+          // Sequelize, which carries unknown attribute keys through `define`
+          // onto `rawAttributes` untouched (the same escape hatch the two flags
+          // above ride on). Read back explicitly rather than spreading
+          // `rawAttributes`: Sequelize also hangs a circular `Model`
+          // back-reference, internals like `_modelAttribute`, and a `unique`
+          // normalised to a shape `DefinitionFieldMeta.unique` does not
+          // describe — and `getFields` memoises, so all of it would be retained
+          // per field forever. See `passes authored args/resolve through` in
+          // `__tests__/define-model.test.ts` for the canary on the passthrough.
+          args: attr.args,
+          resolve: attr.resolve,
         };
         return fields;
       }, {} as { [key: string]: DefinitionFieldMeta });

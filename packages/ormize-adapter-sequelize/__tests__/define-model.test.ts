@@ -68,3 +68,70 @@ describe("definition typesystem", () => {
     expect(found && found.name).toEqual("alpha");
   });
 });
+
+describe("getFields - authored field metadata", () => {
+  // `args`/`resolve` are authored on a field for gqlize's benefit and mean
+  // nothing to Sequelize. `getFields` reads them back off `rawAttributes`,
+  // which relies on Sequelize carrying unknown attribute keys through `define`
+  // untouched — undocumented behaviour, so this is the canary on it. If it ever
+  // regresses, `createModel` also stashes the authored definition on the model
+  // (`model.definition`), which `getFields` could read instead.
+  it("passes authored args/resolve through rawAttributes", async () => {
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const resolve = (source: { name: string }) => source.name;
+    const args = { casing: { type: "Casing" } };
+    const db = new Ormize().registerAdapter(adapter).define({
+      name: "Doc",
+      define: {
+        name: { type: Sequelize.STRING, allowNull: false },
+        body: { type: Sequelize.STRING, allowNull: true, args, resolve },
+      },
+    });
+    await db.initialise();
+
+    const fields = adapter.getFields("Doc");
+    expect(fields.body.args).toEqual(args);
+    expect(fields.body.resolve).toBe(resolve);
+    // A field authoring neither keeps both absent, so the snapshot fingerprint
+    // of every model that predates this stays byte-identical.
+    expect(fields.name.args).toBeUndefined();
+    expect(fields.name.resolve).toBeUndefined();
+  });
+
+  it("accepts either spelling of the field description", async () => {
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const db = new Ormize().registerAdapter(adapter).define({
+      name: "Described",
+      define: {
+        described: { type: Sequelize.STRING, description: "from description" },
+        commented: { type: Sequelize.STRING, comment: "from comment" },
+        // `description` is what `DefinitionField` documents, so it wins.
+        both: { type: Sequelize.STRING, description: "wins", comment: "loses" },
+        plain: { type: Sequelize.STRING },
+      },
+    });
+    await db.initialise();
+
+    const fields = adapter.getFields("Described");
+    expect(fields.described.description).toEqual("from description");
+    expect(fields.commented.description).toEqual("from comment");
+    expect(fields.both.description).toEqual("wins");
+    expect(fields.plain.description).toBeUndefined();
+  });
+
+  it("does not leak Sequelize's own attribute internals", async () => {
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const db = new Ormize().registerAdapter(adapter).define({
+      name: "Plain",
+      define: { name: { type: Sequelize.STRING, allowNull: false } },
+    });
+    await db.initialise();
+
+    // Explicit keys, not a spread of `rawAttributes`: a spread would retain a
+    // circular `Model` back-reference on every field of a memoised map.
+    const field = adapter.getFields("Plain").name as Record<string, unknown>;
+    expect(field.Model).toBeUndefined();
+    expect(field._modelAttribute).toBeUndefined();
+    expect(field.fieldName).toBeUndefined();
+  });
+});
