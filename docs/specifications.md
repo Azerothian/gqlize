@@ -641,15 +641,30 @@ gqlize has two distinct hook systems.
 
 ### 1. Sequelize-style lifecycle hooks
 
-The manager recognizes a full list of Sequelize lifecycle hook names (`hookList` in
-`packages/ormize/src/manager.ts`): `beforeValidate`/`afterValidate`, `validationFailed`,
-`beforeCreate`/`afterCreate`, `beforeUpdate`/`afterUpdate`, `beforeDestroy`/`afterDestroy`,
-`beforeSave`/`afterSave`, `beforeFind`/`afterFind`, `beforeCount`, `beforeBulk*`,
-`beforeConnect`/`afterConnect`, `beforeSync`/`afterSync`, `beforeQuery`/`afterQuery`, and
-more. Hooks may be registered globally (`options.globalHooks`) or per-definition
+The manager recognizes Sequelize's lifecycle hook names, split across two lists in
+`packages/ormize/src/manager.ts` by where the hook actually fires.
+
+**Model hooks** (`hookList`) are registered on the model: `beforeValidate`/`afterValidate`,
+`validationFailed`, `beforeCreate`/`afterCreate`, `beforeUpdate`/`afterUpdate`,
+`beforeDestroy`/`afterDestroy`, `beforeSave`/`afterSave`, `beforeFind`/`afterFind`,
+`beforeCount`, `beforeBulk*`, `beforeAssociate`/`afterAssociate`, `beforeSync`/`afterSync`,
+and more. They may be registered globally (`options.globalHooks`) or per-definition
 (`def.hooks` / `def.options.hooks`). `createHook` composes per-definition hooks followed by
 global hooks into a `waterfall` pipeline, so each hook receives the previous hook's return
 value. A hook may be a single function or an array of functions.
+
+**Sequelize-instance hooks** (`sequelizeHookList`) fire off the Sequelize object rather than
+any model: `beforeDefine`/`afterDefine`, `beforeInit`/`afterInit`,
+`beforeConnect`/`afterConnect`, `beforeBulkSync`/`afterBulkSync`, and
+`beforeQuery`/`afterQuery`. These are **global only** — there is no model to scope them to, so
+there is no per-definition form, and a `def.hooks.beforeQuery` is refused with a warning rather
+than registered somewhere it would never run. Register them with `options.globalHooks` or
+`db.addHook(name, fn)`; ormize installs them on the connection once per adapter during
+`initialise()` (`OrmAdapter.installInstanceHooks`). Unlike model hooks they are handed
+Sequelize's own arguments unchanged and are **not** waterfalled — Sequelize discards what a
+hook returns, so an instance hook works by mutating the `options` object it is given. Note that
+`beforeQuery` runs before the statement is handed to the driver, so `query.sql` is not
+populated yet: it can inspect `options` and throw, but it cannot rewrite the SQL.
 
 ### 2. gqlize-level `before` / `after`
 

@@ -51,21 +51,40 @@ const hookList = [
   "beforeFindAfterOptions",
   "afterFind",
   "beforeCount",
+  "beforeAssociate",
+  "afterAssociate",
+  "beforeSync",
+  "afterSync",
+];
+
+/**
+ * Sequelize-*instance* hooks. `runHooks` concatenates a model's hooks with the
+ * Sequelize instance's, so hooks propagate Model → Sequelize and never the
+ * reverse (sequelize/lib/hooks.js). Six of these are flagged `noModel`, and the
+ * other four are fired off the instance — either way `sequelize.define` accepts
+ * them without complaint and files them where nothing will ever call them.
+ *
+ * They are therefore global-only: there is no model to scope them to, so a
+ * per-definition `def.hooks.beforeQuery` is refused with a warning rather than
+ * silently registered. Unlike the model hooks above they are handed Sequelize's
+ * own arguments unchanged instead of the `(defName, value, ...args)` shape, and
+ * what they return is discarded — Sequelize discards it too, so these hooks
+ * work by mutating the options object they are given.
+ */
+export const sequelizeHookList = [
   "beforeDefine",
   "afterDefine",
   "beforeInit",
   "afterInit",
-  "beforeAssociate",
-  "afterAssociate",
   "beforeConnect",
   "afterConnect",
-  "beforeSync",
-  "afterSync",
   "beforeBulkSync",
   "afterBulkSync",
   "beforeQuery",
   "afterQuery",
 ];
+
+const sequelizeHookSet = new Set(sequelizeHookList);
 
 // gqlize-level hooks that Sequelize has no notion of — they are composed into the
 // per-definition hook map (so `runHook` can fire them) but are NOT registered on
@@ -128,6 +147,8 @@ export default class Ormize<
   /** Join models a cross-adapter `belongsToMany` needs and nobody registered; created in `initialise()`. */
   private _joinModels: {[name: string]: {source: string, target: string, foreignKey: string, otherKey: string, sourceKey: string, targetKey: string}} = {};
   relationships: {[defName: string]: {[relName: string]: WiredRelationship}};
+  /** Adapters whose instance-level hooks are already installed; see `installInstanceHooks`. */
+  private _instanceHookedAdapters = new Set<string>();
   /** Vestigial: initialised empty and never written. */
   globalKeys: {[name: string]: unknown};
   hooks: {[defName: string]: HookMap};
@@ -145,7 +166,7 @@ export default class Ormize<
     this.globalKeys = {};
     this.hooks = {};
     this.hookmap = {};
-    this.globalHooks = hookList.reduce((o, hookName) => {
+    this.globalHooks = [...hookList, ...sequelizeHookList].reduce((o, hookName) => {
       o[hookName] = (options.globalHooks || {})[hookName] || [];
       return o;
     }, {} as {[hookName: string]: HookFunction[] | HookFunction});
@@ -302,6 +323,8 @@ export default class Ormize<
     this.defsAdapters[def.name] = datasource
     
 
+    this.warnDefinitionInstanceHooks(def);
+
     // Native Sequelize hooks are registered on the model; gqlize-only hooks
     // (e.g. afterCount) are composed for `runHook` but withheld from the adapter.
     const nativeHooks = hookList.reduce((o, hookName) => {
@@ -314,6 +337,48 @@ export default class Ormize<
     }, { ...nativeHooks });
 
     (this.models as Record<string, any>)[def.name] = await adapter.createModel(def, nativeHooks);
+  }
+
+  /**
+   * A definition cannot own a Sequelize-instance hook: it fires off the Sequelize
+   * instance, which has no idea which model the caller had in mind. Before #45 the
+   * name was accepted and filed on the model, where nothing would ever call it —
+   * an audit hook that looked live and had never run. Say so instead.
+   */
+  private warnDefinitionInstanceHooks(def: Definition) {
+    const authored = (def.hooks || def.options?.hooks) || {};
+    const names = Object.keys(authored).filter((name) => sequelizeHookSet.has(name));
+    if (names.length > 0) {
+      console.warn( // eslint-disable-line no-console
+        `Definition '${def.name}' declares Sequelize-instance hook(s): ${names.join(", ")}. ` +
+        `These fire off the Sequelize instance, not a model, so they cannot be scoped to one ` +
+        `definition and are ignored here. Register them globally instead — ` +
+        `GqlizeOptions.globalHooks, or ormize.addHook(name, fn).`,
+      );
+    }
+  }
+
+  /**
+   * The global-only counterpart to {@link createHook}, for the hooks that fire off
+   * the Sequelize instance. Two deliberate differences: the registered hooks are
+   * handed Sequelize's own arguments unchanged (there is no definition name to put
+   * in front of them), and nothing is waterfalled — `runHooks` discards what a hook
+   * returns, so threading return values would only let a hook that returns nothing
+   * blank out the options object the next one is meant to mutate.
+   *
+   * Like `createHook`, this reads `globalHooks` at call time, so an `addHook` after
+   * `initialise()` still takes effect.
+   */
+  private createInstanceHook(hookName: string): HookFunction {
+    return async(...args: unknown[]) => {
+      const registered = this.globalHooks[hookName];
+      const hooks = Array.isArray(registered) ? registered : registered ? [registered] : [];
+      for (const hook of hooks) {
+        // Sequelize's own arguments, forwarded as-is; `HookFunction` names the
+        // first one only because every model hook has a value to waterfall.
+        await (hook as (...hookArgs: unknown[]) => unknown)(...args);
+      }
+    };
   }
 
   createHook(hookName: string, def: Definition): HookFunction {
@@ -810,8 +875,26 @@ export default class Ormize<
     this.validateCrossAdapterKeys();
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
+      this.installInstanceHooks(adapterName, adapter);
       return adapter.initialise();
     }));
+  }
+
+  /**
+   * Register the composed Sequelize-instance hooks on an adapter's underlying
+   * connection. Once per adapter: `initialise()` is callable more than once and
+   * `sequelize.addHook` appends, so without the guard every extra call would fire
+   * an audit hook another time per query.
+   */
+  private installInstanceHooks(adapterName: string, adapter: OrmAdapter) {
+    if (!adapter.installInstanceHooks || this._instanceHookedAdapters.has(adapterName)) {
+      return;
+    }
+    this._instanceHookedAdapters.add(adapterName);
+    adapter.installInstanceHooks(sequelizeHookList.reduce((o, hookName) => {
+      o[hookName] = this.createInstanceHook(hookName);
+      return o;
+    }, {} as HookMap));
   }
   reset = async(options?: AdapterQueryOptions) => {
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
