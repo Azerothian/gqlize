@@ -502,3 +502,118 @@ describe("ormize - row-level scope, nested relationship mutations", () => {
     expect((mine as OwnedRow).ownerId).toEqual(1);
   });
 });
+
+/** The eager plan gqlize would build for `folders { docs { … } }`. */
+const eagerDocs = () => ({ include: [{ docs: { target: "Doc", associationType: "hasMany" } }] });
+
+describe("ormize - row-level scope, relationship reads (F4)", () => {
+  it("scopes an eagerly-included relationship", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(1)) });
+    await seedFolder(db, true);
+    const { models } = await db.resolveFindAll("Folder", null, eagerDocs(), ctx(1));
+    // Loaded by the *parent's* query, so the relationship's own resolver never
+    // sees a filter — the include descriptor is the only place to put one.
+    const docs = (models[0] as { docs: NamedRow[] }).docs;
+    expect(docs.map((d) => d.name)).toEqual(["mine"]);
+  });
+
+  it("keeps a parent none of whose children are in scope", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(99)) });
+    await seedFolder(db, true);
+    const { models } = await db.resolveFindAll("Folder", null, eagerDocs(), ctx(1));
+    // Sequelize reads a `where` on an include as "INNER JOIN" unless told
+    // otherwise, so an injected scope would quietly delete the parent row too.
+    expect(models).toHaveLength(1);
+    expect((models[0] as { docs: NamedRow[] }).docs).toEqual([]);
+  });
+
+  it("scopes an include nested below another include", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(1)) });
+    await seedFolder(db, true);
+    // `docs { folder { docs } }` — the innermost level is two joins from the
+    // root, and a plan walked only one level deep hands back the whole folder.
+    const { models } = await db.resolveFindAll("Doc", null, {
+      include: [{
+        folder: {
+          target: "Folder",
+          associationType: "belongsTo",
+          include: [{ docs: { target: "Doc", associationType: "hasMany" } }],
+        },
+      }],
+    }, ctx(1));
+    const inner = (models[0] as { folder: { docs: NamedRow[] } }).folder.docs;
+    expect(inner.map((d) => d.name)).toEqual(["mine"]);
+  });
+
+  it("drops the eager include when the target denies reads outright", async () => {
+    const db = await buildRelated({ scope: scopeDoc(() => false) });
+    await seedFolder(db, true);
+    const { models } = await db.resolveFindAll("Folder", null, eagerDocs(), ctx(1));
+    expect(models).toHaveLength(1);
+    // Not loaded at all: the relationship falls back to its own resolver, which
+    // answers a denied scope with an empty page.
+    expect((models[0] as { docs?: NamedRow[] }).docs).toBeUndefined();
+  });
+
+  it("scopes a collection reached through its accessor, count included", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(1)) });
+    const folder = await seedFolder(db, true);
+    const row = await db.models.Folder.findOne({ where: { id: folder.id } });
+    const { total, models } = await db.resolveManyRelationship(
+      "Doc", db.getAssociations("Folder").docs, row, {}, ctx(1),
+    );
+    expect((models as NamedRow[]).map((d) => d.name)).toEqual(["mine"]);
+    // The count runs off the same args, so a scope applied only to the fetch
+    // would leave `total` reporting the row the caller cannot see.
+    expect(total).toEqual(1);
+  });
+
+  it("returns an empty page for a collection whose target denies reads", async () => {
+    const db = await buildRelated({ scope: scopeDoc(() => false) });
+    const folder = await seedFolder(db, true);
+    const row = await db.models.Folder.findOne({ where: { id: folder.id } });
+    const { total, models } = await db.resolveManyRelationship(
+      "Doc", db.getAssociations("Folder").docs, row, {}, ctx(1),
+    );
+    expect(models).toEqual([]);
+    expect(total).toEqual(0);
+  });
+
+  it("scopes a singular relationship reached through its accessor", async () => {
+    const db = await buildRelated({
+      scope: (defName) => (defName === "Folder" ? { where: { title: { eq: "elsewhere" } } } : undefined),
+    });
+    await seedFolder(db, true);
+    const doc = await db.models.Doc.findOne({ where: { name: "mine" } });
+    // A singular relationship never reads `args.where` — the accessor is handed
+    // the options bag and nothing else — so this is a second, separate seam.
+    const folder = await db.resolveSingleRelationship(
+      "Folder", db.getAssociations("Doc").folder, doc, {}, ctx(1),
+    );
+    expect(folder).toBeFalsy();
+  });
+
+  it("still returns a singular relationship the scope allows", async () => {
+    const db = await buildRelated({
+      scope: (defName) => (defName === "Folder" ? { where: { title: { eq: "f" } } } : undefined),
+    });
+    await seedFolder(db, true);
+    const doc = await db.models.Doc.findOne({ where: { name: "mine" } });
+    const folder = await db.resolveSingleRelationship(
+      "Folder", db.getAssociations("Doc").folder, doc, {}, ctx(1),
+    );
+    expect(folder).toBeTruthy();
+  });
+
+  it("returns nothing for a singular relationship whose target denies reads", async () => {
+    const db = await buildRelated({
+      scope: (defName) => (defName === "Folder" ? false : undefined),
+    });
+    await seedFolder(db, true);
+    const doc = await db.models.Doc.findOne({ where: { name: "mine" } });
+    const folder = await db.resolveSingleRelationship(
+      "Folder", db.getAssociations("Doc").folder, doc, {}, ctx(1),
+    );
+    expect(folder).toBeNull();
+  });
+});

@@ -13,7 +13,7 @@ import {
   mergeScopeWhere, resolveScope,
   type Permission, type PortableWhere, type ResolvedScope, type ScopeOperation,
 } from "@azerothian/utilize/gate";
-import type { RequestContext, ScopeMissBehaviour } from "@azerothian/utilize/types/index";
+import type { IncludeMap, RequestContext, ScopeMissBehaviour } from "@azerothian/utilize/types/index";
 
 // `ScopeMissBehaviour` is declared in `@azerothian/utilize` because
 // `GqlizeOptions` names it and utilize cannot import the engine. Re-exported
@@ -191,6 +191,59 @@ export function applyScopeWhere(
     return userWhere;
   }
   return mergeScopeWhere(userWhere, resolved.where);
+}
+
+/**
+ * Fold each model's read scope into the eager-include plan.
+ *
+ * A relationship selected alongside its parent is loaded by the *parent's*
+ * query, so the per-relationship resolver never sees it — `resolveManyRelationship`
+ * finds the rows already on the instance and hands them straight back. The only
+ * place a scope can reach them is the include descriptor, while its `where` is
+ * still in the caller's vocabulary.
+ *
+ * Returns a new plan rather than mutating: the caller's descriptors are built
+ * once per request from the selection set and are not this function's to own.
+ */
+export async function scopeIncludePlan(
+  include: IncludeMap[] | undefined,
+  readScopeFor: (defName: string) => Promise<ResolvedScope>,
+): Promise<IncludeMap[] | undefined> {
+  if (!include || include.length === 0) {
+    return include;
+  }
+  const out: IncludeMap[] = [];
+  for (const level of include) {
+    const mapped: IncludeMap = {};
+    for (const relName of Object.keys(level)) {
+      const inc = level[relName];
+      const resolved = await readScopeFor(inc.target);
+      if (resolved === false) {
+        // Denied outright, and an include has no portable way to say "no rows".
+        // Dropping it is not a hole: it stops the *eager* load, which hands the
+        // relationship back to `resolveManyRelationship` /
+        // `resolveSingleRelationship`, and those answer a denied scope with an
+        // empty page and a `null`.
+        continue;
+      }
+      const scoped: IncludeMap[string] = Object.assign({}, inc);
+      scoped.include = await scopeIncludePlan(inc.include, readScopeFor);
+      if (resolved?.where) {
+        scoped.where = mergeScopeWhere(inc.where, resolved.where);
+        if (inc.required === undefined) {
+          // Decision 6, and not merely a preference: an adapter that infers
+          // requiredness from the presence of a `where` — Sequelize does — would
+          // read the injected filter as "INNER JOIN" and drop every parent whose
+          // children are all out of scope. A scope on a child must never become
+          // a filter on the parent.
+          scoped.required = false;
+        }
+      }
+      mapped[relName] = scoped;
+    }
+    out.push(mapped);
+  }
+  return out;
 }
 
 /**

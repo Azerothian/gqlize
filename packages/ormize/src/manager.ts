@@ -7,7 +7,7 @@ import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
-import { ScopeDeniedError, applyScopeWhere, inheritScopeMemo, scopeFor, scopeMiss } from "./scope";
+import { ScopeDeniedError, applyScopeWhere, inheritScopeMemo, scopeFor, scopeIncludePlan, scopeMiss } from "./scope";
 import type { ScopeMissBehaviour } from "./scope";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
@@ -1023,12 +1023,24 @@ export default class Ormize<
   }
   resolveManyRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) => {
     if (association.crossAdapter) {
+      // Routed through `resolveFindAll`, which scopes the target itself.
       return this.resolveCrossAdapterRelationship(defName, association, source, args, context, selection);
+    }
+    // F4. `defName` is the *target* model here, and this is the branch that runs
+    // when the relationship was not eager-loaded: the accessor query and the
+    // `total` count both derive from `args.where`, so merging here covers both.
+    // The eager branch is covered upstream, in the include plan.
+    const rowScope = await this.resolveRowScope(defName, "read", context);
+    if (rowScope === false) {
+      return { total: 0, models: [] };
     }
     const options = createResolveContext(context, selection, source);
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
     const a = args;
+    if (rowScope?.where) {
+      a.where = applyScopeWhere(a.where as PortableWhere | undefined, rowScope);
+    }
     this.expandComputedOrder(defName, a, {context, info: selection?.raw});
     const offset = cursorOffset(args);
     // Count-only: the nested connection selects `total` but not `edges`/rows — the
@@ -1056,8 +1068,23 @@ export default class Ormize<
       const {models} = await this.resolveCrossAdapterRelationship(defName, association, source, {...args, first: 1}, context, single);
       return models[0] || null;
     }
+    const rowScope = await this.resolveRowScope(defName, "read", context);
+    if (rowScope === false) {
+      return null;
+    }
     const adapter = this.getModelAdapter(defName);
     const options = createResolveContext(context, selection, source);
+    if (rowScope?.where) {
+      // A singular relationship never reads `args.where` — the accessor is called
+      // with the options bag alone — so the scope goes there, already translated
+      // into the backend's vocabulary. The eager branch ignores the bag entirely
+      // and is covered upstream by the include plan.
+      options.where = await adapter.processFilterArgument(
+        applyScopeWhere(options.where as PortableWhere | undefined, rowScope),
+        whereOperatorsFor(this.getDefinition(defName)),
+        options,
+      );
+    }
     // afterFind for JOIN-eager single relations is fired by resolveFindAll's post-pass.
     return adapter.resolveSingleRelationship(defName, association, source, {args, selection, context, options});
   }
@@ -1115,6 +1142,10 @@ export default class Ormize<
     if (selection?.include && !a.include) {
       a.include = selection.include;
     }
+    // F4. An eagerly-loaded relationship is fetched by *this* query, so its own
+    // resolver never gets a filter in edgeways — the include plan is the only
+    // place its model's scope can be applied.
+    a.include = await scopeIncludePlan(a.include as IncludeMap[] | undefined, (targetName) => this.resolveRowScope(targetName, "read", context));
     this.expandComputedOrder(defName, a, {context, info: selection?.raw});
     // Row-level scope, merged while the filter is still in the caller's
     // vocabulary. That is also what gives the count the same filter, since
