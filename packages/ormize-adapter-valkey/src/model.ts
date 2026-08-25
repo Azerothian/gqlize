@@ -1,5 +1,5 @@
 import { DataTypeDescriptor, DataTypes } from "@azerothian/utilize/types/data-type";
-import type { Definition, Relationship } from "@azerothian/utilize/types/index";
+import type { Definition, DefinitionFieldMeta, Relationship } from "@azerothian/utilize/types/index";
 import { resolveAttributeTypes } from "./data-type-mapper";
 
 /**
@@ -19,19 +19,18 @@ export type ValkeyRelationship = Relationship & {
  */
 type IndexOption = { fields?: string[]; unique?: boolean };
 
-export interface FieldMeta {
+/**
+ * This adapter's view of a field. Extends the shared {@link DefinitionFieldMeta}
+ * so the two keys cannot drift apart again (see issue #20 — `args`/`resolve`
+ * were dropped here), but re-narrows the two members this package depends on
+ * being stronger than the cross-adapter contract can promise: `name` is always
+ * populated by the constructor, and `type` is the resolved
+ * {@link DataTypeDescriptor} that serialisation and the GraphQL mapper switch
+ * on, not the `unknown` type token an author may write.
+ */
+export interface FieldMeta extends Omit<DefinitionFieldMeta, "type" | "name"> {
   name: string;
   type: DataTypeDescriptor;
-  primaryKey?: boolean;
-  foreignKey?: boolean;
-  foreignTarget?: string;
-  unique?: boolean;
-  index?: boolean;
-  allowNull?: boolean;
-  autoPopulated?: boolean;
-  writable?: boolean;
-  defaultValue?: any;
-  ignoreGlobalKey?: boolean;
 }
 
 /**
@@ -78,6 +77,15 @@ export class ValkeyModel {
         allowNull: src.primaryKey === true ? false : src.allowNull !== false,
         defaultValue: src.defaultValue,
         ignoreGlobalKey: src.ignoreGlobalKey,
+        // `comment` is the sequelize spelling — that adapter maps `attr.comment`
+        // onto `description` — so honour both and prefer the one
+        // `DefinitionField` documents.
+        description: src.description ?? src.comment,
+        // Authored GraphQL args and field resolver, consumed by gqlize's
+        // `createBasicFields`. Dropping them here made both keys inert on this
+        // adapter (issue #20).
+        args: src.args,
+        resolve: src.resolve,
       };
     }
 

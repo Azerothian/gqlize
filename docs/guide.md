@@ -11,6 +11,8 @@ Every example below is drawn from the behaviour exercised in the test suite
 1. [Installation](#1-installation)
 2. [Quick start](#2-quick-start)
 3. [Defining models](#3-defining-models)
+   - [Field arguments & field resolvers](#field-arguments--field-resolvers)
+   - [Typed models (TypeScript, opt-in)](#typed-models-typescript-opt-in)
 4. [Serving the schema](#4-serving-the-schema)
 5. [Pre-generated schema artifacts](#5-pre-generated-schema-artifacts)
 6. [Querying](#6-querying)
@@ -154,6 +156,8 @@ Definition keys you'll commonly use:
 
 - **`define`** — a Sequelize attribute map; supports `validate`, `defaultValue`, `values` (enum),
   `allowNull`, `primaryKey`, etc. Primary and foreign keys are exposed as Relay **global IDs**.
+  A field may also carry `description`, `args` and `resolve`
+  (see [below](#field-arguments--field-resolvers)).
 - **`relationships`** — `{ type, model, name, options }`, `type` ∈ `belongsTo | hasOne | hasMany
   | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`as`/`through`.
 - **`override`** — expose a column as a different GraphQL type with `input`/`output` transforms
@@ -168,6 +172,57 @@ Definition keys you'll commonly use:
 > **Junction models.** A `through` model that only carries FK columns (+ your extra columns) has
 > no relationships of its own; exclude it from the schema with a permission gate so it isn't
 > exposed: `createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`.
+
+### Field arguments & field resolvers
+
+A field in `define` can take GraphQL arguments and compute its own value. Both keys are optional
+and independent — `args` alone gives the field arguments its default property resolver ignores;
+`resolve` alone replaces how the field is read:
+
+```ts
+const Casing = new GraphQLEnumType({
+  name: "Casing",
+  values: { UPPER: { value: "UPPER" }, LOWER: { value: "LOWER" } },
+});
+
+db.addDefinition({
+  name: "Post",
+  define: {
+    title: { type: Sequelize.STRING, allowNull: false },
+    body: {
+      type: Sequelize.STRING,
+      allowNull: true,
+      description: "The post body, optionally re-cased.",
+      // Passed to GraphQL verbatim — the value is a standard field-args map.
+      args: { casing: { type: Casing } },
+      // Standard GraphQL signature: (source, args, context, info)
+      resolve: (source, args) =>
+        args.casing === "UPPER" ? source.body.toUpperCase() : source.body.toLowerCase(),
+    },
+  },
+});
+```
+
+…which prints as `body(casing: Casing): String`, and is queried like any other field:
+
+```graphql
+query { models { Post { edges { node { title body(casing: UPPER) } } } } }
+```
+
+Notes:
+
+- `type` still declares the **column**; `resolve` only changes how it is read. To expose a column
+  as a *different* GraphQL type, use `override`
+  ([§10](#10-custom-scalars--json-columns)) instead.
+- `description` sets the field's GraphQL description; on the Sequelize adapter the native `comment`
+  spelling (which also reaches the database) works too, and `description` wins if both are given.
+  The definition-level `comments.fields` map wins over either.
+- Argument types are user-authored, so they cannot be serialized into a
+  [pre-generated artifact](#5-pre-generated-schema-artifacts) — they are re-derived from the live
+  definition at load, exactly like `whereOperatorTypes`. Keep the definition module importable at
+  runtime and the artifact round-trips, custom enum internal values included.
+- Adding or removing either key changes the artifact's `models` fingerprint, so `gqlize check`
+  will report the artifact stale and it needs a rebuild.
 
 ### Typed models (TypeScript, opt-in)
 
@@ -1088,6 +1143,12 @@ a Valkey adapter participates in cross-adapter transactions with true rollback.
 and belongsToMany via a join model (a normal indexed record, so `through` columns are supported).
 Nested relationship-mutation input (`{tags: {create/add/set/remove/...}}`) works the same as on the
 Sequelize adapter — the shared `__tests__/relations.test.ts` suite runs against both backends.
+
+**Field metadata.** `description`, `args` and `resolve` on a `define` field behave the same here as
+on the Sequelize adapter (see [Field arguments & field resolvers](#field-arguments--field-resolvers)),
+`comment` included. All three used to be dropped by this adapter — so if you already author
+`description`/`comment` on a Valkey-backed model, its GraphQL fields now gain those descriptions and
+the artifact's `models` fingerprint changes; rebuild the artifact.
 
 **Sequelize-style model API.** In addition to the manager pipeline (`orm.processCreate`/
 `resolveFindAll`), the direct model/instance API works too, so a Valkey-backed model is used the same

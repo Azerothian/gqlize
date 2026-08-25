@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/globals";
-import { graphql, GraphQLEnumType, GraphQLInputObjectType, GraphQLString } from "graphql";
+import { graphql, GraphQLEnumType, GraphQLInputObjectType, GraphQLString, type GraphQLObjectType } from "graphql";
 import { createSchema } from "@azerothian/gqlize";
 import { Ormize } from "@azerothian/ormize";
 import type { Definition } from "@azerothian/utilize/types/index";
@@ -119,6 +119,49 @@ describe("valkey adapter — gqlize GraphQL", () => {
     });
     expect(Object.keys((locked.getType("GQLTQueryItemWhere") as GraphQLInputObjectType).getFields())).not.toContain("label");
     expect((locked.getType("ItemOrderBy") as GraphQLEnumType).getValues().map((v) => v.name)).not.toContain("labelASC");
+  });
+
+  it("carries a define field's args/resolve/description into the schema", async () => {
+    // gqlize#20 — `ValkeyModel` rebuilds its field map from `def.define`, and
+    // used to drop all three, which made them inert on this adapter.
+    const orm = new Ormize();
+    orm.registerAdapter(new ValkeyAdapter({ prefix: "gqlargs" }, client), "valkey");
+    await orm.addDefinition({
+      name: "Doc",
+      define: {
+        id: { type: DataTypes.UUID, primaryKey: true },
+        title: { type: DataTypes.String, description: "the title" },
+        body: {
+          type: DataTypes.String,
+          args: { suffix: { type: GraphQLString } },
+          resolve: (source: { body: string }, args: { suffix?: string }) =>
+            `${source.body}${args.suffix || ""}`,
+        },
+      },
+      options: {},
+    });
+    await orm.initialise();
+    await orm.sync();
+    const schema = await createSchema(orm);
+
+    const fields = (schema.getType("Doc") as GraphQLObjectType).getFields();
+    expect(fields.title.description).toEqual("the title");
+    expect(fields.body.args.map((a) => a.name)).toEqual(["suffix"]);
+    expect(fields.body.args[0].type).toBe(GraphQLString);
+    // `title` authors neither, so it keeps graphql's default property resolver.
+    expect(fields.title.args).toEqual([]);
+    expect(fields.title.resolve).toBeUndefined();
+
+    await orm.processCreate("Doc", null, { input: { title: "t", body: "abc" } }, {}, undefined);
+    const r = await graphql({
+      schema,
+      source: `query { models { Doc { edges { node { title body(suffix: "!") } } } } }`,
+    });
+    expect(r.errors).toBeUndefined();
+    const data = r.data as unknown as {
+      models: { Doc: { edges: { node: { body: string } }[] } };
+    };
+    expect(data.models.Doc.edges[0].node.body).toBe("abc!");
   });
 });
 
