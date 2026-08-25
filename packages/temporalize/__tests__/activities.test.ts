@@ -165,6 +165,49 @@ describe("generated activities", () => {
         ErrorType.Validation
       );
     });
+
+    it("commits what a `mutations`-target transform assigns to `this`", async () => {
+      // `relabel` returns nothing; everything it does is a write to `this`.
+      // Calling it and serialising the return value — which is what an activity
+      // used to do for every instance method — dropped that write entirely.
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
+      await acts["Item.instanceMethods.relabel"]({ context: ctx, id: item.id, args: { to: "omega" } });
+      const after = (await acts["Item.findByPk"]({ context: ctx, id: item.id })) as ItemRow;
+      expect(after.label).toBe("omega");
+    });
+
+    it("answers a transform with the persisted row, not the method's return", async () => {
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
+      const result = (await acts["Item.instanceMethods.relabel"]({ context: ctx, id: item.id })) as ItemRow;
+      // `id` addresses one row, so the activity answers with that row — the same
+      // shape `findByPk` returns, not the list `processUpdate` hands back.
+      expect(Array.isArray(result)).toBe(false);
+      expect(result.label).toBe("alpha!");
+    });
+
+    it("runs a transform with no params when `args` is omitted", async () => {
+      // Scheduling the activity is itself the ask. gqlize's "named but not asked
+      // for" reading of a falsy value exists only because its `apply` input lists
+      // every exposed transform at once; an activity names exactly one.
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
+      await acts["Item.instanceMethods.relabel"]({ context: ctx, id: item.id });
+      const after = (await acts["Item.findByPk"]({ context: ctx, id: item.id })) as ItemRow;
+      expect(after.label).toBe("alpha!");
+    });
+
+    it("still fails non-retryably when a transform addresses a missing row", async () => {
+      await expectFailure(
+        acts["Item.instanceMethods.relabel"]({ context: ctx, id: 999 }),
+        ErrorType.NotFound
+      );
+    });
+
+    it("requires an id for a transform too", async () => {
+      await expectFailure(
+        acts["Item.instanceMethods.relabel"]({ context: ctx }),
+        ErrorType.Validation
+      );
+    });
   });
 
   describe("guards", () => {
@@ -209,6 +252,24 @@ describe("generated activities", () => {
       await expectFailure(ro["Item.classMethods.labelsUpper"]({ context: ctx }), ErrorType.Forbidden);
       // Reads still work.
       await expect(ro["Task.count"]({ context: ctx })).resolves.toBe(0);
+    });
+
+    it("readOnly refuses an instance-method transform but not an instance-method read", async () => {
+      // The nestize mirror of this lives in that package's `instance-methods`
+      // suite. `assertWritable` used to run for *every* instance-method activity;
+      // it now runs on the transform branch alone, so a `.query`-target method
+      // — and one declared under neither target — is a read like any other.
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
+      const ro = createActivities(orm, { readOnly: true });
+      await expect(ro["Item.instanceMethods.describe"]({ context: ctx, id: item.id }))
+        .resolves.toBe("alpha:");
+      await expectFailure(
+        ro["Item.instanceMethods.relabel"]({ context: ctx, id: item.id }),
+        ErrorType.Forbidden,
+      );
+      // And the refusal was a refusal: the row is untouched.
+      const after = (await acts["Item.findByPk"]({ context: ctx, id: item.id })) as ItemRow;
+      expect(after.label).toBe("alpha");
     });
   });
 });

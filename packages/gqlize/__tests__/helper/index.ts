@@ -73,7 +73,7 @@ export async function createInstance(extraDefinitions: Definition[] = []) {
 export function validateResult(result: {errors?: readonly unknown[] | null}) {
   const errors = result.errors || [];
   if (errors.length > 0) {
-    console.log("Graphql Error", errors); //eslint-disable-line
+    console.log("Graphql Error", errors);
     throw errors[0] as Error;
   }
 }

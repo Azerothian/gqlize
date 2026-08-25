@@ -111,13 +111,23 @@ with `and`/`or`/`not`). Lists page with `limit`/`offset`.
 runs relationship mutations against them from `input`. It is gated as an update.
 
 `Task.instanceMethods.<name>` covers the *implementations* under `options.instanceMethods` — one
-namespace shared by both `expose` targets — and is gated on `permission.queryInstanceMethods`
-whether the definition declared the method under `expose.instanceMethods.query` or `.mutations`.
-A method written as a gqlize pre-commit transform therefore has an activity here, under the query
-gate rather than `permission.mutationInstanceMethods`, and the activity is not a persist path: it
-loads the row by primary key, calls the method and returns the plain result, so writes the method
-makes to `this` are not committed the way gqlize's `apply` argument commits them. Gate transforms
-explicitly, or leave `expose.instanceMethods` off.
+namespace shared by both `expose` targets — so every declared method has an activity. Which
+`expose` target named it decides how the activity behaves:
+
+| Declared under | Gate | Behaviour | Result |
+| --- | --- | --- | --- |
+| `expose.instanceMethods.mutations` | `permission.mutationInstanceMethods`, **and** `readOnly` plus the model's `mutationUpdate` gate | run as a pre-commit transform through `processUpdate` with an empty input and an `apply` bag — the same path gqlize's `apply` argument takes, so it gets the persist, the recording proxy and scope enforcement | the persisted row |
+| `expose.instanceMethods.query`, or neither target | `permission.queryInstanceMethods` | load the row by primary key and call the method | whatever the method returned |
+
+Both shapes require `id`. A transform's writes to `this` are committed, and
+`args` is its params — omitting `args` means "run it with no params", because
+scheduling the activity is itself the ask. (gqlize's `apply` input reads a falsy
+value as "named but not asked for" only because it lists every exposed transform
+at once.)
+
+`expose.instanceMethods` defaults to **on** here, unlike nestize, where it is off
+until you opt in. A definition with no `expose` block at all has every instance
+method under the query gate, which is the pre-7.0 behaviour unchanged.
 
 ## Queue naming
 
@@ -186,10 +196,10 @@ try {
 | `models`            | all       | Allow-list of models to generate for.                           |
 | `resolvePermission` | —         | Derives the permission gate from the per-call context.          |
 | `validate`          | `true`    | Validate `input` against the ormize-zod4 schemas.               |
-| `readOnly`          | `false`   | Refuse every mutating activity.                                 |
+| `readOnly`          | `false`   | Refuse every mutating activity. An instance method is mutating only when declared under `expose.instanceMethods.mutations`; `.query`-target and undeclared ones are reads and still run. |
 | `transactional`     | `true`    | Wrap each mutating activity in `orm.transaction()`.             |
 | `includeRelations`  | `true`    | Include relationship keys in activity results.                  |
-| `expose`            | both on   | `{ classMethods?, instanceMethods? }`. `instanceMethods` covers both `expose` targets under the query gate — see [Activities](#activities). |
+| `expose`            | both on   | `{ classMethods?, instanceMethods? }`. `instanceMethods` covers both `expose` targets, each under its own gate — see [Activities](#activities). |
 
 `createWorkers` adds `connection`, `namespace`, `workflowsPath`,
 `workflowBundle`, `onlyQueues` and `workerOptions`. `createTemporalizeClient`

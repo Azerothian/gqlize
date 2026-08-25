@@ -9,11 +9,16 @@ packages:
 overrides:
   graphql: "17.0.2"
   unicorn-magic: "0.4.0"
-  # Three transitive DoS advisories; the `pkg@major` keys are selectors, not
-  # versions - they scope the override to that major only.
-  "brace-expansion@1": "1.1.17"
+  # Transitive DoS advisories; the `pkg@major` keys are selectors, not versions -
+  # they scope the override to that major only. Each advisory covers several
+  # majors, so there is one line per major the lockfile actually resolves:
+  # GHSA-mh99-v99m-4gvg and GHSA-rgw5-rvv9-x895 for brace-expansion,
+  # GHSA-5p4m-2wfm-xmqj for js-yaml. `brace-expansion@5` resolves to 5.0.9,
+  # which is already above both ranges, so it needs no entry.
+  "brace-expansion@1": "1.1.18"
   "brace-expansion@2": "2.1.4"
   "js-yaml@3": "3.15.1"
+  "js-yaml@4": "4.3.1"
 
 patchedDependencies:
   "graphql@17.0.2": patches/graphql@17.0.2.patch

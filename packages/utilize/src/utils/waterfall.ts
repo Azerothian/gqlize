@@ -2,46 +2,38 @@
  * Run `func` over `arr` one element at a time, threading each call's result into
  * the next as `prevVal` and resolving to the last one.
  *
- * The signature is `any` on purpose, and it is worth saying why rather than
- * leaving it to look like an oversight. A generic form —
- * `waterfall<TValue, TResult>(arr: TValue[], func: (val: TValue, prevVal:
- * TResult) => TResult | Promise<TResult>, start?: TResult): Promise<TResult>` —
- * type-checks here but changes inference at the call sites that already exist,
- * in both directions:
+ * `TItem` is the element type; `TAcc` is whatever the step returns, which is
+ * also what the whole call resolves to. Neither usually needs writing out — both
+ * infer from the arguments.
  *
- *  - `TResult` is inferred from the accumulator parameter the caller *declared*,
- *    so it becomes the function's return type. `createClassMethodFields` annotates
- *    that parameter as a partial field map and returns the finished fields, so the
- *    result stops having `resolve` on it.
- *  - `TValue` is inferred from the array argument. Where that argument is `any`
- *    (`replaceDefWhereOperators`) the element lands as `unknown` and can no longer
- *    index anything; where it is a real array of definitions
- *    (the sequelize adapter's relationship setup) the element gains the
- *    definition's optional `name`, which then fails a `string` parameter.
+ * Most callers use this purely as "do these in sequence" and pass a one-argument
+ * step and no seed. That still works: a one-argument function is assignable to
+ * the two-argument parameter, `TAcc` lands on `void`, and the result is a
+ * `Promise<void>` nobody has to look at.
  *
- * All three are in other packages. Typing this properly means fixing those call
- * sites too — a cross-package change, not a local one.
+ * `arr` accepts a bare value as well as an array and wraps it, because several
+ * callers hand through a value-or-list they have not normalised.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see the docblock above: `arr`, the step function and the seed are the caller's, and a generic signature breaks three existing call sites in other packages.
-export default function waterfall(arr: any [] = [], func = ((val: any, prevVal: any): any => {}), start?: any) {
-  if (!Array.isArray(arr)) {
-    arr = [arr];
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the accumulator is whatever the caller's `func` returns; the enclosing signature is `any` for the reason above, and this is the same value.
-  return arr.reduce(function(promise: Promise<any>, val: any) {
-    return promise.then(function(prevVal) {
-      return func(val, prevVal);
-    });
-  }, Promise.resolve(start));
+export default function waterfall<TItem, TAcc>(
+  arr: TItem[] | TItem = [],
+  func: (val: TItem, prevVal: TAcc) => TAcc | Promise<TAcc> = ((_val, prevVal) => prevVal),
+  start?: TAcc,
+): Promise<TAcc> {
+  const items = Array.isArray(arr) ? arr : [arr];
+  return items.reduce(
+    (promise: Promise<TAcc>, val: TItem) => promise.then((prevVal) => func(val, prevVal)),
+    // `undefined` is the seed when the caller gives none, which is what `TAcc`
+    // infers to for the no-accumulator callers.
+    Promise.resolve(start as TAcc),
+  );
 }
 
-/** The synchronous {@link waterfall}: same threading, no promises. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as {@link waterfall} above — the sync form shares its callers and its constraints.
-export function waterfallSync(arr: any[] = [], func = ((val: any, prevVal: any): any => {}), start?: any) {
-  if (!Array.isArray(arr)) {
-    arr = [arr];
-  }
-  return arr.reduce(function(prevVal, val) {
-    return func(val, prevVal);
-  }, start);
+/** The synchronous {@link waterfall}: same threading, same inference, no promises. */
+export function waterfallSync<TItem, TAcc>(
+  arr: TItem[] | TItem = [],
+  func: (val: TItem, prevVal: TAcc) => TAcc = ((_val, prevVal) => prevVal),
+  start?: TAcc,
+): TAcc {
+  const items = Array.isArray(arr) ? arr : [arr];
+  return items.reduce((prevVal, val) => func(val, prevVal), start as TAcc);
 }

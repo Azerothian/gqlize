@@ -31,8 +31,22 @@ const ItemDef: Definition = {
     },
   },
   instanceMethods: {
+    // Declared under neither `expose` target: it keeps the read gate and the
+    // call-and-return shape activities have always had for instance methods.
     describe(args) {
       return `${this.label}:${args?.suffix ?? ""}`;
+    },
+    /** Declared under `expose.instanceMethods.mutations`: a pre-commit transform. */
+    relabel(params) {
+      this.label = params?.to ?? `${this.label}!`;
+    },
+  },
+  // Only `relabel` is declared. Both `expose` targets resolve to the one
+  // `instanceMethods` namespace above, so the target a name appears under is the
+  // only thing that says whether the activity reads or writes.
+  expose: {
+    instanceMethods: {
+      mutations: { relabel: {} },
     },
   },
 };

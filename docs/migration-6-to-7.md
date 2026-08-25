@@ -21,6 +21,7 @@ cleanly — that section is where working code breaks.
    - [Mutations run in a transaction](#mutations-run-in-a-transaction)
    - [`createListObject` takes a data-source descriptor, not a resolver](#createlistobject-takes-a-data-source-descriptor-not-a-resolver)
    - [Role-based permissions now gate `extend` fields and mutation inputs](#role-based-permissions-now-gate-extend-fields-and-mutation-inputs)
+   - [Instance-method transforms are gated as writes everywhere](#instance-method-transforms-are-gated-as-writes-everywhere)
    - [Unknown `permission` keys are a type error, and warn at build time](#unknown-permission-keys-are-a-type-error-and-warn-at-build-time)
    - [The adapter contract is typed, and `setBuildPermission` is part of it](#the-adapter-contract-is-typed-and-setbuildpermission-is-part-of-it)
    - [Adapter list and relationship methods take a request object](#adapter-list-and-relationship-methods-take-a-request-object)
@@ -318,6 +319,55 @@ specific key is never overridden by an `"allow"` on the fallback.
 > model name), or grant the field for reading and let the input fallback pick it up. A rules key
 > outside the accepted set — `subscription`, or a typo — is now reported on `console.warn` instead of
 > being compiled into a predicate nobody calls.
+
+### Instance-method transforms are gated as writes everywhere
+
+Same failure class as the section above — an absent predicate means *allow* — in the one place
+7.0's own `expose.instanceMethods` split created it.
+
+A definition declares instance methods once, under `options.instanceMethods`. `expose` then names
+them under one of two targets: `.query` makes a method a read-only output field, `.mutations` makes
+it a **pre-commit transform** that gqlize surfaces as the `apply` mutation argument and runs inside
+the mutation's transaction, with writes to `this` folded back into the values being persisted. The
+two targets are name-disjoint, so the target a name appears under is what says whether it reads or
+writes.
+
+Three surfaces read that namespace, and none of them read the target:
+
+- `createRoleBasedPermissions` compiled no `mutationInstanceMethods` callback at all, even though
+  gqlize consumes one and `PERMISSION_KEYS` listed it. Under `defaultDeny: true` a role-based bag
+  denied models, fields and mutations as advertised and left every `apply` transform reachable.
+- nestize's `POST /:resource/:id/_actions/:method` gated every method on
+  `permission.queryInstanceMethods`, then called it and serialized the return value — so a
+  transform ran under the *read* gate and its writes to `this` were dropped.
+- temporalize's `<Model>.instanceMethods.<name>` activity did the same, inside a transaction that
+  therefore committed nothing.
+
+7.x compiles `mutationInstanceMethods`, and both projections pick the gate from the `expose` target:
+
+| Declared under | Gate | Behaviour | Response / result |
+| --- | --- | --- | --- |
+| `expose.instanceMethods.mutations` | `mutationInstanceMethods`, **and** the model's `mutationUpdate` gate (plus `readOnly`) | run through `processUpdate` with an empty input and an `apply` bag — the same path gqlize's `apply` takes, so it gets the transaction, the recording proxy and scope enforcement | the persisted row |
+| `expose.instanceMethods.query`, or neither target | `queryInstanceMethods` | load the row by primary key and call the method | whatever the method returned |
+
+Enumeration is unchanged: it is still driven by `options.instanceMethods`, so a definition with no
+`expose` block at all keeps every method, every gate and every response exactly as they were in 6.x.
+Only names present under `.mutations` change lane.
+
+Two smaller alignments come with it. `mutationInstanceMethods` naming which transforms a role may
+run never implied the role may write at all, so a transform now also passes the model's
+`mutationUpdate` gate, as every other write route already did. And in **both** projections
+`readOnly` no longer refuses a `.query`-target instance method — nor one declared under neither
+target — because those are reads. Only a transform is a write, and only a transform is refused.
+
+> **Watch for:** three changes, in the order they will bite. (1) A `.mutations`-target method now
+> needs `permission.mutationInstanceMethods`; a role bag that granted only `queryInstanceMethods`
+> loses access, and under `defaultDeny` a bag that granted neither loses the `apply` argument from
+> the schema entirely — add `mutationInstanceMethods: { Task: { appendSuffix: "allow" } }`.
+> (2) The REST response body and the activity result **change shape** for transforms: previously the
+> method's return value, now the persisted row, matching every other write route in those packages.
+> (3) Transform writes now commit. Anything that depended on them being dropped was depending on the
+> bug.
 
 ### Unknown `permission` keys are a type error, and warn at build time
 

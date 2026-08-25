@@ -14,6 +14,7 @@ import {
   isRelationshipAllowed,
 } from "@azerothian/utilize";
 import * as guards from "@azerothian/utilize/guards";
+import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import type { AdapterWhere, Association, Fail, GuardFailure } from "@azerothian/utilize";
 import type { MutationInputTree, Ormize } from "@azerothian/ormize";
 import { NestizeSchemaRegistry } from "./schema-registry";
@@ -102,6 +103,17 @@ export class NestizeService {
     guards.assertOrderAllowed(this.permission, name, orderBy, FAIL);
   }
 
+  /**
+   * `id` is `unknown` at this boundary — it comes straight off the route param —
+   * so stringify only the shapes that produce a useful message and fall back to
+   * `typeof` rather than risk "[object Object]" in a 404.
+   */
+  private idLabel(id: unknown): string {
+    return typeof id === "string" || typeof id === "number" || typeof id === "bigint"
+      ? String(id)
+      : `<${typeof id}>`;
+  }
+
   private pkName(name: string): string {
     const adapter = this.orm.getModelAdapter(name);
     const keys = adapter.getPrimaryKeyNameForModel(name);
@@ -130,20 +142,28 @@ export class NestizeService {
     return guards.present(v, schema && new Set(Object.keys(schema.shape)));
   }
 
+  /**
+   * {@link present}, for a route that addresses exactly one row.
+   *
+   * The engine's write paths always answer with a list, but `POST /task`,
+   * `GET /task/:id` and `POST /task/:id/_actions/:method` each name a single
+   * resource, so the REST response is that resource rather than a one-element
+   * array. A result that is not a single row is handed back untouched — a bulk
+   * update genuinely is a list, and silently unwrapping a longer one would hide
+   * how many rows it touched.
+   */
+  private presentOne(name: string, v: unknown): unknown {
+    const plain = this.present(name, v);
+    return Array.isArray(plain) && plain.length === 1 ? plain[0] : plain;
+  }
+
   /** Load the raw model instance for a pk (needed for relationship accessors). */
   private async loadInstance(name: string, id: unknown, req: RestRequest): Promise<PlainRow> {
     const pk = this.pkName(name);
     const args = { where: { [pk]: { eq: this.coerceId(id) } }, first: 1 };
     const { models } = await this.orm.resolveFindAll(name, null, args, { req });
     if (!models || models.length === 0) {
-      // `id` is `unknown` at this boundary (it comes straight off the route
-      // param); stringify only the shapes that produce a useful message and
-      // fall back to `typeof` rather than risk "[object Object]".
-      const idLabel =
-        typeof id === "string" || typeof id === "number" || typeof id === "bigint"
-          ? String(id)
-          : `<${typeof id}>`;
-      throw new NotFoundException(`${name} '${idLabel}' not found`);
+      throw new NotFoundException(`${name} '${this.idLabel(id)}' not found`);
     }
     // An adapter row is opaque by contract, so the engine hands it back as
     // `unknown`. Callers here read a relationship accessor or method off it by
@@ -197,8 +217,7 @@ export class NestizeService {
     const results = await this.orm.processCreate(name, null, { input }, { req });
     // `processCreate` always returns a list; a single-row create is unwrapped so
     // the REST response is the resource itself rather than a one-element array.
-    const plain = this.present(name, results);
-    return Array.isArray(plain) && plain.length === 1 ? plain[0] : plain;
+    return this.presentOne(name, results);
   }
 
   async update(resource: string, query: RestQuery, body: PlainRow, req: RestRequest): Promise<unknown> {
@@ -328,14 +347,66 @@ export class NestizeService {
   }
 
   async callInstanceMethod(resource: string, id: unknown, method: string, args: unknown, req: RestRequest): Promise<unknown> {
-    this.assertWritable();
     const name = this.mustResolve(resource);
     if (!this.options.expose?.instanceMethods) {
       throw new NotFoundException(`Instance methods not exposed for ${name}`);
     }
-    const gate = this.permission?.queryInstanceMethods;
+    // The two `expose.instanceMethods` targets share one implementation
+    // namespace, so which target declared a method is the only thing that says
+    // whether it reads or writes.
+    //
+    // A name under both targets is a definition error, and gqlize refuses to
+    // build a schema containing one — but `assertNoExposedMethodCollisions` runs
+    // from `create-model-type.ts` alone, so a nestize-only consumer never reaches
+    // it. Here the mutation lane simply wins, deterministically: the stricter of
+    // the two gates, which is the right way for an unrefused ambiguity to land.
+    //
+    // A method declared under neither target — the common case, since `expose`
+    // is optional — keeps the read-only treatment it has always had here.
+    const isTransform = !!mutationInstanceMethods(this.orm.getDefinition(name))[method];
+    const gate = isTransform ? this.permission?.mutationInstanceMethods : this.permission?.queryInstanceMethods;
     if (!isAllowed(gate, name, method, this.permission?.options)) {
       throw new ForbiddenException(`Method '${method}' not allowed for ${name}`);
+    }
+    if (isTransform) {
+      this.assertWritable();
+      // A transform is a write, so it answers to the same model-level update
+      // gate every other write route here checks. `mutationInstanceMethods`
+      // says which transforms a role may run; it does not say the role may
+      // write at all.
+      if (!isMutationAllowed(this.permission, name, "update")) {
+        throw new ForbiddenException(`Update not allowed for ${name}`);
+      }
+      // A transform reshapes a row on its way to a write. Calling it and
+      // serialising what it returned — which is what this route used to do —
+      // drops everything it assigned to `this`. Routing it through the same
+      // `processUpdate`/`apply` path gqlize's `apply` argument takes brings the
+      // transaction, the proxy that records those writes, and the scope
+      // enforcement with it, rather than reimplementing any of that here.
+      //
+      // The request itself is the ask, so an absent or empty body means "run it
+      // with no params". gqlize's "named but not asked for" reading of a falsy
+      // value only exists because its `apply` input lists every exposed
+      // transform at once; a REST call names exactly one.
+      const params = args === undefined || args === null || args === false ? true : args;
+      const results = await this.orm.processUpdate(
+        name,
+        null,
+        {
+          input: {},
+          where: { [this.pkName(name)]: { eq: this.coerceId(id) } },
+          limit: 1,
+          apply: { [method]: params },
+        },
+        { req },
+      );
+      if (!Array.isArray(results) || results.length === 0) {
+        throw new NotFoundException(`${name} '${this.idLabel(id)}' not found`);
+      }
+      // `:id` names one row, so the response is that row — the same shape
+      // `show` and `create` answer with, and the reason the id-addressed routes
+      // share `presentOne`.
+      return this.presentOne(name, results);
     }
     const row = await this.loadInstance(name, id, req);
     const instanceMethod = row[method];

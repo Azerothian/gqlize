@@ -53,7 +53,7 @@ function parseArgs(argv: string[]): Args {
       case "--fields": out.fields = Number(value); i++; break;
       case "--artifact": out.artifact = value; i++; break;
       case "--help":
-        console.log( //eslint-disable-line no-console
+        console.log(
           "usage: bench-artifact [--models N] [--topology chain|wide] [--fields N]\n" +
           "                      [--artifact <path>]  write it on the first run, load it cold on the next",
         );
@@ -83,7 +83,7 @@ const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const log = (line: string) => console.log(line); //eslint-disable-line no-console
+  const log = (line: string) => console.log(line);
 
   const db = new Ormize();
   db.registerAdapter(new SequelizeAdapter({}, {dialect: "sqlite", logging: false}), "sqlite");
@@ -153,6 +153,6 @@ async function main() {
 }
 
 main().then(() => process.exit(0), (err) => {
-  console.error(err); //eslint-disable-line no-console
+  console.error(err);
   process.exit(1);
 });

@@ -370,7 +370,7 @@ describe("relay", () => {
     const queryData = resultData<NodeResult>(queryResult);
     expect(queryData.node?.id).toEqual(modelId);
     expect(queryData.node?.name).toEqual("test");
-    return expect(queryData.node?.__typename).toEqual("Task"); //eslint-disable-line
+    return expect(queryData.node?.__typename).toEqual("Task");
   });
   it("node id - redundant convert to global id", async() => {
     try {

@@ -15,7 +15,7 @@ import {SNAPSHOT_FORMAT_VERSION} from "../../src/graphql/snapshot/ir";
 // it, in this file and in the natively-imported config, is checked against
 // the actual shape `createInstance()` returns rather than reaching for `any`.
 declare global {
-  // eslint-disable-next-line no-var -- a `let`/`const` cannot be declared on `globalThis`
+  // `var` rather than `let`/`const`: only `var` declares a property on `globalThis`.
   var __GQLIZE_CLI_TEST_ORM__: Awaited<ReturnType<typeof createInstance>> | undefined;
 }
 

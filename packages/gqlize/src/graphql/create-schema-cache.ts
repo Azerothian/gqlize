@@ -1,6 +1,5 @@
 import { SchemaCache } from '../types';
 export default function createSchemaCache() {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- ts7 needs it
   return {
     types: {},
     typeFields: {},
@@ -14,5 +13,5 @@ export default function createSchemaCache() {
     basicFields: {},
     complexFields: {},
     relatedFields: {},
-  } as SchemaCache;
+  } as SchemaCache; // the assertion is load-bearing under ts7, which does not infer it
 }

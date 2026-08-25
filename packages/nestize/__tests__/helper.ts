@@ -25,7 +25,36 @@ const TaskDef: Definition = {
     // directly on create/update (e.g. POST /task { name, itemId }).
     itemId: { type: DataTypes.INTEGER, allowNull: true, writable: true },
   },
-  options: { timestamps: false },
+  options: {
+    timestamps: false,
+    // Both `expose.instanceMethods` targets resolve to this one namespace — that
+    // is the whole reason the `_actions` route has to look at `expose` to tell a
+    // read from a write.
+    instanceMethods: {
+      /** Declared under `expose.instanceMethods.query`: reads, returns, writes nothing. */
+      describe(this: { name: string }) {
+        return `task:${this.name}`;
+      },
+      /** Declared under `expose.instanceMethods.mutations`: a pre-commit transform. */
+      appendSuffix(this: { name: string }, params?: { suffix?: string }) {
+        this.name = `${this.name}${params?.suffix ?? "!"}`;
+      },
+      /** A transform that returns values to merge rather than assigning to `this`. */
+      rename(_params?: { to?: string }) {
+        return { name: "renamed" };
+      },
+      /** Declared under neither target — reachable, and still read-only. */
+      undeclared(this: { name: string }) {
+        return `undeclared:${this.name}`;
+      },
+    },
+  },
+  expose: {
+    instanceMethods: {
+      query: { describe: { type: DataTypes.STRING } },
+      mutations: { appendSuffix: {}, rename: {} },
+    },
+  },
   relationships: [
     { type: "belongsTo", model: "Item", name: "item", options: { foreignKey: "itemId" } },
   ],
