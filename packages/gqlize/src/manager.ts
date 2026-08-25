@@ -1,5 +1,7 @@
-import {fromGlobalId} from "graphql-relay";
 import replaceIdDeep from "./utils/replace-id-deep";
+import { defaultIdCodec } from "./codecs/id";
+import { defaultCursorCodec } from "./codecs/cursor";
+import { globalKeyTargets } from "@azerothian/utilize/utils/global-keys";
 import { GraphQLResolveInfo } from "graphql";
 import type { FieldNode } from "graphql";
 import logger from "@azerothian/utilize/utils/logger";
@@ -8,7 +10,7 @@ import { methodOptionHooks, methodProjection, queryInstanceMethods, type MethodS
 import { getArgumentValues, type GraphQLObjectType } from "graphql";
 import type { Ormize } from "@azerothian/ormize";
 import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
-import { AdapterRow, Association, DeclaredIncludeMap, FindAllArgs, GqlizeAdapter, IncludeMap, IORBase, NativeDataType, Permission, RequestContext, Selection } from './types';
+import { AdapterRow, Association, DeclaredIncludeMap, FindAllArgs, GlobalKeyTargets, GqlizeAdapter, GqlizeOptions, IncludeMap, IORBase, NativeDataType, Permission, RequestContext, Selection } from './types';
 
 /**
  * The engine this binding wraps.
@@ -41,8 +43,33 @@ type AnyOrmize = Ormize<any, IORBase>;
  */
 export default class GqlizeBinding {
   orm: AnyOrmize;
-  constructor(orm: AnyOrmize) {
+  /**
+   * The options the schema was built with. Only the two codecs are read here —
+   * every other option is a builder concern — but they have to be, because this
+   * class is where a request's ids and cursors are translated on the way to the
+   * engine, and it is constructed once per schema rather than per request.
+   */
+  options: GqlizeOptions;
+  constructor(orm: AnyOrmize, options: GqlizeOptions = {}) {
     this.orm = orm;
+    this.options = options;
+  }
+  /** `options.id`, or the base64 `Type:id` default. */
+  get idCodec() { return this.options.id || defaultIdCodec; }
+  /** `options.cursor`, or the base64 `[connection, index]` default. */
+  get cursorCodec() { return this.options.cursor || defaultCursorCodec; }
+  /**
+   * What each of a model's global keys points at. Swallows a missing definition
+   * for the same reason the decode path tolerates one: an untyped decode is the
+   * behaviour this always had, and losing a cross-type check is not worth failing
+   * a request over.
+   */
+  private globalKeyTargetsFor(defName: string): GlobalKeyTargets | undefined {
+    try {
+      return globalKeyTargets(this.getFields(defName), defName);
+    } catch {
+      return undefined;
+    }
   }
   get models() { return this.orm.models; }
   getDefinition: AnyOrmize["getDefinition"] = (...a) => this.orm.getDefinition(...a);
@@ -232,22 +259,48 @@ export default class GqlizeBinding {
       : this.withCrossAdapterJoinKeys(defName, declared.fields?.length
         ? [...new Set([...(selectedNames || []), ...declared.fields])]
         : selectedNames);
+    const idTargets = this.globalKeyTargetsFor(defName);
     const selection: Selection = {
       raw: info,
       variableValues: info?.variableValues,
       fields,
       countOnly: wantsCountOnly(info),
-      translateFilter: (w, keys) => replaceIdDeep(w, keys, info?.variableValues),
-      translateId: (v) => fromGlobalId(v as string).id,
+      // `targets` comes from the engine, which knows which model's keys it is
+      // handing over — a relationship sub-mutation translates its *target's*
+      // filter through this same closure, so baking `defName` in here would type
+      // the wrong model's keys.
+      translateFilter: (w, keys, targets) => replaceIdDeep(w, keys, info?.variableValues, {
+        codec: this.idCodec,
+        targets,
+      }),
+      /**
+       * Guarded, unlike the `fromGlobalId(v).id` this replaces. That call does not
+       * fail on input that is not a global id — it turns a raw `"42"` into `""` —
+       * so a client passing a raw primary key in a mutation input had it silently
+       * written away. A codec that does not recognise a value says so, and the
+       * value is left exactly as it arrived.
+       */
+      translateId: (v, fieldName) => {
+        if (typeof v !== "string" && typeof v !== "number") {
+          return v;
+        }
+        const decoded = this.idCodec.decode({
+          value: `${v}`,
+          type: fieldName ? idTargets?.[fieldName] : undefined,
+          defName,
+          fieldName,
+        });
+        return decoded ? decoded.id : v;
+      },
     };
     if (a && info && Array.isArray(info.fieldNodes)) {
       const definition = this.getDefinition(defName);
       if (definition.options?.autoInclude !== false) {
         const adapter = this.getModelAdapter(defName);
         try {
-          let astInclude = buildIncludeFromSelection(this, defName, info.fieldNodes[0], info);
+          let astInclude = buildIncludeFromSelection(this, defName, info.fieldNodes[0], info, undefined, this.cursorCodec);
           if (astInclude) {
-            astInclude = adapter.replaceIdInInclude(astInclude, defName, info.variableValues);
+            astInclude = adapter.replaceIdInInclude(astInclude, defName, info.variableValues, {codec: this.idCodec});
           }
           // `include` is one of the open keys on the args bag — see {@link FindAllArgs}.
           const explicit = a.include as IncludeMap[] | undefined;
@@ -290,7 +343,7 @@ export default class GqlizeBinding {
     const adapter = this.getModelAdapter(defName);
     // Relay-translate the (top-level) list args before the engine; the engine's
     // internal filter translations use `selection.translateFilter`.
-    const a = await adapter.replaceIdInArgs(args, defName, info?.variableValues);
+    const a = await adapter.replaceIdInArgs(args, defName, info?.variableValues, {codec: this.idCodec});
     return this.orm.resolveManyRelationship(defName, association, source, a, context, this.buildSelection(defName, info));
   }
   resolveSingleRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, info?: GraphQLResolveInfo) => {
@@ -298,7 +351,7 @@ export default class GqlizeBinding {
   }
   resolveFindAll = async(defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, info: GraphQLResolveInfo) => {
     const adapter = this.getModelAdapter(defName);
-    const a = await adapter.replaceIdInArgs(args, defName, info?.variableValues);
+    const a = await adapter.replaceIdInArgs(args, defName, info?.variableValues, {codec: this.idCodec});
     const selection = this.buildSelection(defName, info, a);
     return this.orm.resolveFindAll(defName, source, a, context, selection);
   }

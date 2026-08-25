@@ -7,8 +7,8 @@
 // from.
 
 import type {
-  AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, OrmAdapter,
-  PortableWhere, RequestContext, Selection,
+  AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, GlobalKeyTargets,
+  OrmAdapter, PortableWhere, RequestContext, Selection,
 } from "@azerothian/utilize/types/index";
 import type { ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
 
@@ -119,6 +119,7 @@ export interface MutationHost extends AdapterRoutingHost {
   getAssociations(defName: string): { [relName: string]: Association };
   getDefinition(defName: string): Definition;
   getGlobalKeys(defName: string): string[];
+  getGlobalKeyTargets(defName: string): GlobalKeyTargets;
   processInputs(defName: string, input: MutationInputTree, args: unknown, context: RequestContext, info: unknown, model?: AdapterRow, operation?: ScopeOperation): Promise<MutationInput>;
   processCreate(defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
   processDelete(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;

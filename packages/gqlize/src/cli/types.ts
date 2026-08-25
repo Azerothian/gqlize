@@ -18,6 +18,14 @@ export interface GqlizeProfile {
    * cannot be hashed). Defaults to the profile's own name.
    */
   permissionProfile?: string;
+  /**
+   * The same stand-in for `options.id` / `options.cursor`. Unlike
+   * `permissionProfile` these do **not** default to the profile name: two
+   * profiles that differ only in permissions share one id format, and naming
+   * them apart would report drift where there is none.
+   */
+  idProfile?: string;
+  cursorProfile?: string;
   /** artifact path; defaults to the top-level `out` with the profile name folded in */
   out?: string;
   /** optional SDL sidecar for codegen / CI diffs */

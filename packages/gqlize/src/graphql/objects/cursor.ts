@@ -24,31 +24,45 @@ SOFTWARE.
 */
 
 import { GraphQLError } from "graphql";
-import { unbase64, base64 } from "../utils/base64";
+import { defaultCursorCodec } from "../../codecs/cursor";
+import type { CursorCodec } from "../../types";
 
-export function fromCursor(cursor: string) {
-  // Cursors are client-supplied — decode defensively. A malformed `after`/
-  // `before` value must surface as a clean GraphQLError, not an uncaught
-  // JSON.parse SyntaxError leaking parser internals to the caller.
-  let decoded: any;
-  try {
-    decoded = JSON.parse(unbase64(cursor));
-  } catch {
+/**
+ * The connection-cursor seam.
+ *
+ * The base64 `[connection, index]` format that used to be inlined here is now
+ * `relayCursorCodec()` in `codecs/cursor.ts` — still the default, byte for byte.
+ * What is left is the pair of helpers that adapt a codec to the two callers:
+ * one wants a `GraphQLError` on bad input, the other wants a `null` it can plan
+ * around.
+ */
+
+/**
+ * Decode a client-supplied cursor, or fail the request.
+ *
+ * A malformed `after`/`before` must surface as a clean `GraphQLError` rather than
+ * paging from offset 0 as if nothing had happened — silently serving page one to
+ * a client that asked for page nine is worse than an error.
+ */
+export function fromCursor(cursor: string, codec: CursorCodec = defaultCursorCodec, connection?: string) {
+  const decoded = tryFromCursor(cursor, codec, connection);
+  if (!decoded) {
     throw new GraphQLError("Invalid cursor");
   }
-  if (!Array.isArray(decoded)) {
-    throw new GraphQLError("Invalid cursor");
-  }
-  const [id, index] = decoded;
-  const idx = parseInt(index, 10);
-  if (typeof id !== "string" || Number.isNaN(idx)) {
-    throw new GraphQLError("Invalid cursor");
-  }
-  return {
-    id,
-    index: idx,
-  };
+  return decoded;
 }
-export function toCursor(id: string, index: number) {
-  return base64(JSON.stringify([id, index]));
+
+/** As {@link fromCursor}, but `null` instead of a throw. */
+export function tryFromCursor(cursor: string, codec: CursorCodec = defaultCursorCodec, connection?: string) {
+  try {
+    return codec.decode({value: cursor, connection});
+  } catch {
+    // A codec is not supposed to throw, but a third-party one might; a bad
+    // cursor is a bad cursor either way.
+    return null;
+  }
+}
+
+export function toCursor(connection: string, index: number, codec: CursorCodec = defaultCursorCodec) {
+  return codec.encode({connection, index});
 }

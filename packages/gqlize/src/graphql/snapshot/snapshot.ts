@@ -48,6 +48,9 @@ export interface SnapshotOptions {
   scalars?: Record<string, GraphQLScalarType>;
   /** opaque id folded into the fingerprint; `options.permission` cannot be hashed */
   permissionProfile?: string;
+  /** the same, for `options.id` / `options.cursor` — codecs are closures too */
+  idProfile?: string;
+  cursorProfile?: string;
   /**
    * The ormize instance to fingerprint. Normally unnecessary — a schema from
    * `createSchema` remembers the instance and options it was built from. Supply
@@ -123,6 +126,8 @@ function fingerprintOf(schema: GraphQLSchema, opts: SnapshotOptions) {
   return {
     fingerprint: fingerprintDefinitions(orm, {
       permissionProfile: opts.permissionProfile,
+      idProfile: opts.idProfile,
+      cursorProfile: opts.cursorProfile,
       options: getBuild(schema)?.options,
     }),
   };

@@ -10,6 +10,8 @@ export interface ResolvedProfile {
   name?: string;
   options: GqlizeOptions;
   permissionProfile?: string;
+  idProfile?: string;
+  cursorProfile?: string;
   out: string;
   sdl?: string;
   pretty: boolean;
@@ -68,6 +70,8 @@ function build(resolved: ResolvedConfig, args: ParsedArgs, name?: string): Resol
     options: profile.options || config.options || {},
     permissionProfile:
       args.permissionProfile ?? profile.permissionProfile ?? config.permissionProfile ?? name,
+    idProfile: profile.idProfile ?? config.idProfile,
+    cursorProfile: profile.cursorProfile ?? config.cursorProfile,
     out: args.gzip && !out.endsWith(".gz") ? `${out}.gz` : out,
     sdl,
     pretty: args.pretty ?? profile.pretty ?? config.pretty ?? false,

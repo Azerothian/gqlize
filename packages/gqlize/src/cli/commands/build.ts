@@ -36,6 +36,8 @@ async function buildOne(
     pretty: profile.pretty,
     scalars: resolved.config.scalars,
     permissionProfile: profile.permissionProfile,
+    idProfile: profile.idProfile,
+    cursorProfile: profile.cursorProfile,
     options: profile.options,
   });
 

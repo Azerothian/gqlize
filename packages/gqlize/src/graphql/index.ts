@@ -198,11 +198,19 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   const classMethodMutations = await waterfall(Object.keys(definitions),
     createClassMethods(instance, definitions, options, schemaCache, "mutations"), schemaCache.classMethodMutations);
 
-  let queryRootFields: any = {
+  // `node(id:)` has nothing but the id to work from, so it can only exist when
+  // the id codec puts the type *inside* the id. A codec that does not (`rawIdCodec`,
+  // or any custom one declaring `carriesType: false`) cannot answer it, so the
+  // field is omitted rather than left in the schema to fail at request time.
+  const carriesType = options.id ? options.id.carriesType !== false : true;
+  if (!carriesType) {
+    log.warn("gqlize: the configured id codec sets `carriesType: false`, so a global id cannot be resolved back to a type - the root `node(id:)` field has been omitted from the schema.");
+  }
+  let queryRootFields: any = carriesType ? {
     // The relay node field closes over a live id-fetcher that re-checks
     // permissions per request; it is always rebuilt, never serialized.
     node: bindField(nodeField, {kind: "nodeField"}, bindingContext),
-  };
+  } : {};
   let mutationRootFields: any = {};
   if (Object.keys(queryLists).length > 0) {
     queryRootFields.models = bindField({

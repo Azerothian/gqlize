@@ -1,49 +1,32 @@
-import { fromGlobalId } from "graphql-relay";
 import { OKind, objVisit } from "@vostro/object-visit";
+import { defaultIdCodec } from "../codecs/id";
+import type { IdTranslation } from "../types";
 
 /**
- * Rewrite Relay global ids into raw ids inside a `where` tree.
+ * Rewrite opaque ids into raw ids inside a `where` tree.
  *
  * This is the single implementation shared by every adapter: the GraphQL layer
- * hands adapters a filter whose id-typed values are still opaque global ids, and
- * each adapter needs them decoded before the filter reaches the datastore.
- * Keeping one copy is not just tidiness — the guard below was fixed twice and
- * missed once, which is exactly the failure a shared module prevents.
+ * hands adapters a filter whose id-typed values are still opaque, and each
+ * adapter needs them decoded before the filter reaches the datastore. Keeping one
+ * copy is not just tidiness — the "is this actually one of our ids" guard was
+ * fixed twice and missed once, which is exactly the failure a shared module
+ * prevents. It now lives inside the codec, where it belongs: only the codec knows
+ * what its own format looks like.
  */
-
-/** Cheap pre-filter: anything that is not base64-shaped cannot be a global id. */
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-
-/**
- * Decode a value as a Relay global id, but ONLY when it actually is one.
- *
- * `fromGlobalId` base64-decodes and splits `Type:id`, and it does not fail on
- * input that merely decodes to bytes. Testing the base64 *charset* alone is
- * therefore not enough: a legitimate ID-typed filter value like "ABCD1234" or
- * "deadbeef" is valid base64, so it was silently decoded into binary garbage and
- * the filter matched nothing — no error, no log, just missing rows. A genuine
- * global id yields a non-empty type AND id; anything else is left untouched.
- */
-function tryDecodeGlobalId(node: string): string | null {
-  try {
-    const { type, id } = fromGlobalId(node);
-    if (type && id) {
-      return id;
-    }
-  } catch {
-    // not a decodable global id — fall through
-  }
-  return null;
-}
 
 /**
  * @param obj            the where tree, or a function producing one from `variableValues`
- * @param globalKeys     field names whose values are global ids (primary/foreign keys)
+ * @param globalKeys     field names whose values are opaque ids (primary/foreign keys)
  * @param variableValues GraphQL variables. Opaque here — this function never reads
  *                       them, it only forwards them to a function-valued `obj`, and
  *                       typing them concretely would pin the signature to one of the
  *                       several shapes callers hold (`GraphQLResolveInfo`'s readonly
  *                       record, an adapter's plain object).
+ * @param translation    the id codec and its key targets. A trailing parameter
+ *                       rather than a replacement for `variableValues`, so an
+ *                       out-of-tree adapter that never learned about it keeps
+ *                       working — on the default codec, which is the correct
+ *                       fallback and the only one it could have been using.
  *
  * Generic in the tree type so it satisfies `Selection["translateFilter"]`: only leaf
  * string values change, so the shape the caller passed in is the shape it gets back.
@@ -55,22 +38,29 @@ export default function replaceIdDeep<W>(
   obj: W,
   globalKeys: string[],
   variableValues?: unknown,
+  translation?: IdTranslation,
 ): W {
   if (obj instanceof Function) {
     obj = obj(variableValues) as W;
   }
-  // A single flag rather than a stack: `globalKeys` hold scalars and operator
-  // wrappers, never another global key, so the regions cannot nest.
-  let tagged = false;
+  const codec = translation?.codec || defaultIdCodec;
+  const targets = translation?.targets;
+  const defName = translation?.defName;
+  // The key that opened the current region rather than a bare flag: the leaf
+  // being decoded sits under an operator wrapper or an array index, so the field
+  // name — and with it the type the id is supposed to name — is only knowable
+  // from the boundary. `globalKeys` hold scalars and operator wrappers, never
+  // another global key, so the regions cannot nest and one slot is enough.
+  let tagged: string | null = null;
   const enter = (node: unknown, key: string | number | undefined) => {
-    if (key !== undefined && !tagged && globalKeys.indexOf(`${key}`) > -1) {
-      tagged = true;
+    if (key !== undefined && tagged === null && globalKeys.indexOf(`${key}`) > -1) {
+      tagged = `${key}`;
     }
     return node;
   };
   const leave = (node: unknown, key: string | number | undefined) => {
-    if (tagged && globalKeys.indexOf(`${key}`) > -1) {
-      tagged = false;
+    if (tagged !== null && globalKeys.indexOf(`${key}`) > -1) {
+      tagged = null;
     }
     return node;
   };
@@ -80,10 +70,16 @@ export default function replaceIdDeep<W>(
     [OKind.FIELD]: {
       enter(node: unknown, key: string | number | undefined) {
         enter(node, key);
-        if (tagged && typeof node === "string" && BASE64.test(node)) {
-          const decoded = tryDecodeGlobalId(node);
-          if (decoded !== null) {
-            return decoded;
+        if (tagged !== null && typeof node === "string") {
+          const fieldName = tagged;
+          const decoded = codec.decode({
+            value: node,
+            type: targets?.[fieldName],
+            defName,
+            fieldName,
+          });
+          if (decoded) {
+            return decoded.id;
           }
         }
         return node;

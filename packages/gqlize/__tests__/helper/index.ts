@@ -75,3 +75,15 @@ export function validateResult(result: any) {
     throw result.errors[0];
   }
 }
+
+/**
+ * A graphql result read as the shape the query asked for.
+ *
+ * `ExecutionResult["data"]` is an index of `unknown`, so every assertion on a
+ * selected field would otherwise need a cast of its own. Naming the shape once
+ * per test says what the query returns and keeps the assertions readable.
+ * Call {@link validateResult} first — this does not check `errors`.
+ */
+export function resultData<T>(result: {data?: unknown}): T {
+  return result.data as T;
+}

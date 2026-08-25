@@ -25,6 +25,10 @@ export interface Fingerprint {
   models: string;
   /** opaque, caller-supplied; the only handle we have on `options.permission` */
   permissionProfile: string | null;
+  /** opaque, caller-supplied; the only handle we have on `options.id` */
+  idProfile: string | null;
+  /** opaque, caller-supplied; the only handle we have on `options.cursor` */
+  cursorProfile: string | null;
   /** which permission predicates are present, and whether subscriptions are on */
   optionsShape: string;
 }
@@ -37,6 +41,16 @@ export interface FingerprintOptions {
    * closes the gap by rebuilding live and diffing the sorted SDL.
    */
   permissionProfile?: string;
+  /**
+   * Opaque id naming the configured {@link IdCodec} / {@link CursorCodec}. Codecs
+   * are closures like `permission` is, so the same stand-in applies — but with a
+   * sharper failure mode: an artifact built with a codec and loaded without one
+   * still *resolves*, silently minting ids and cursors in the wrong format. The
+   * `optionsShape` bucket catches the presence/absence half on its own; these
+   * profiles are what catches one codec swapped for another.
+   */
+  idProfile?: string;
+  cursorProfile?: string;
   /** the same options object handed to `createSchema` */
   options?: GqlizeOptions;
 }
@@ -58,6 +72,8 @@ export function fingerprintDefinitions(orm: Ormize<any, IORBase> | GqlizeBinding
     adapters: hash(adapterProjection(instance)),
     models: hash(modelProjection(instance)),
     permissionProfile: opts.permissionProfile ?? null,
+    idProfile: opts.idProfile ?? null,
+    cursorProfile: opts.cursorProfile ?? null,
     optionsShape: hash(optionsProjection(opts.options)),
   };
 }
@@ -90,7 +106,10 @@ export function describeDrift(
   artifact?: Fingerprint | null,
   live?: Fingerprint | null,
 ): string {
-  const readable = new Set(["formatVersion", "gqlizeVersion", "graphqlVersion", "permissionProfile"]);
+  const readable = new Set([
+    "formatVersion", "gqlizeVersion", "graphqlVersion",
+    "permissionProfile", "idProfile", "cursorProfile",
+  ]);
   return drift.map((key) => {
     if (!readable.has(key) || !artifact || !live) {
       return key;
@@ -258,8 +277,20 @@ function optionsProjection(options?: GqlizeOptions) {
   // because permissions were applied at build time — and hashing its key set
   // made every such load report drift. `permissionProfile` is the deliberate
   // handle on permission changes; `gqlize check --strict` is the real gate.
+  //
+  // The codecs are the one exception to "closures are not hashable, so they are
+  // excluded": *whether* one is configured is a property of the artifact, not of
+  // the loading process. An artifact built with `options.id` and loaded without
+  // it does not fail — it quietly hands clients ids in a different format than
+  // the ones it accepts, which is precisely the drift `gqlize check` exists to
+  // catch. `carriesType` is included because it decides whether `node(id:)` is
+  // in the schema at all. Which *particular* codec is a matter for `idProfile` /
+  // `cursorProfile`.
   return {
     subscriptions: Boolean(options?.subscriptions),
+    id: Boolean(options?.id),
+    idCarriesType: options?.id ? options.id.carriesType !== false : true,
+    cursor: Boolean(options?.cursor),
   };
 }
 

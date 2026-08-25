@@ -249,6 +249,7 @@ will not load.
 | --- | --- |
 | `scalars` | Custom scalars by name. Coercion is code, so these are named in the artifact and re-supplied at load — pass the same map to both ends. |
 | `permissionProfile` | Opaque id folded into the fingerprint. `options.permission` is closures and cannot be hashed, so this is the handle on "which permission set built this". |
+| `idProfile` / `cursorProfile` | The same, for `options.id` and `options.cursor` — codecs are closures too. Unlike `permissionProfile` these do not default to anything: two permission profiles legitimately share one ID format. |
 | `orm` | The instance to fingerprint. Normally unnecessary — a schema from `createSchema` remembers the instance it was built from. Pass one when the schema came from elsewhere, or `false` to skip the fingerprint entirely (the artifact then loads with no staleness check, and says so). |
 
 `snapshotSchema` is **fail loud**: anything it cannot describe throws at build time with the schema
@@ -333,6 +334,7 @@ console.log(artifact.formatVersion, artifact.types.length, artifact.fingerprint)
 | everything `createSchema` takes | `permission`, `subscriptions`, `extend`, `root`, … — passed exactly as at build |
 | `scalars` | The same map `snapshotSchema` got. Omitting one throws naming the scalar, rather than failing at request time on coercion. |
 | `permissionProfile` | Compared against the artifact's — see [Staleness](#staleness) |
+| `idProfile` / `cursorProfile` | The same, for the ID and cursor codecs — see [Staleness](#staleness) |
 | `onMismatch` | `"throw"` (default), `"warn"`, `"rebuild"` — see [Staleness](#staleness) |
 | `checkStaleness` | `false` skips the fingerprint walk — a deliberate trade, see [Staleness](#staleness) |
 | `extendFactory` | Late-bound `extend` / `root`, called once every type exists |
@@ -420,7 +422,15 @@ included. `--no-strict` drops to the fingerprint-only comparison.
 
 `permissionProfile` is compared only when the load names one: staying silent about it is not a
 claim that it changed, so the artifact's value is carried forward and a warning notes that
-permission drift went unchecked. Naming a different profile still throws.
+permission drift went unchecked. Naming a different profile still throws. `idProfile` and
+`cursorProfile` behave identically.
+
+`options.id` and `options.cursor` are closures for the same reason and are not hashed either, but
+their failure is sharper than a permission mismatch: an artifact built with codecs and served
+without them resolves perfectly well, in the wrong format — clients get relay IDs where the schema
+expects prefixed ones. So the fingerprint does record *whether* each was configured (and whether
+the ID codec carries a type), which catches that case without any profile being named; the profiles
+are what catch one codec swapped for another of the same shape.
 
 The fingerprint is deliberately dialect-invariant: building against SQLite in CI and serving
 Postgres in production is a normal setup, and the dialect does not affect schema shape.

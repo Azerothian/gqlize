@@ -16,6 +16,9 @@ export interface BuildArtifactOptions {
   pretty?: boolean;
   scalars?: Record<string, GraphQLScalarType>;
   permissionProfile?: string;
+  /** Opaque ids for the configured id / cursor codecs, folded into the fingerprint. */
+  idProfile?: string;
+  cursorProfile?: string;
   /** Passed through to `createSchema(orm, options)`. */
   options?: GqlizeOptions;
 }
@@ -43,6 +46,8 @@ export async function buildArtifact(
   const artifact = snapshotSchema(schema, {
     scalars: opts.scalars,
     permissionProfile: opts.permissionProfile,
+    idProfile: opts.idProfile,
+    cursorProfile: opts.cursorProfile,
   });
 
   const json = JSON.stringify(artifact, null, opts.pretty ? 2 : undefined);

@@ -352,6 +352,10 @@ export async function applyRelationshipMutations(
     const targetName = association.target;
     const targetAdapter = host.getModelAdapter(targetName);
     const targetGlobalKeys = host.getGlobalKeys(targetName);
+    // The filter runs against the *target*, so it is the target's keys that get
+    // typed — using the parent's map would let a global id for the wrong type
+    // through the very check `targets` exists to make.
+    const targetIdTargets = host.getGlobalKeyTargets(targetName);
     const targetDef = host.getDefinition(targetName);
     if (!input[key]) {
       return;
@@ -376,9 +380,10 @@ export async function applyRelationshipMutations(
       isBtm: association.associationType === "belongsToMany",
       where: async(filter) => targetAdapter.processFilterArgument(
         // Merged *after* `translateFilter`, as the root chokepoints do:
-        // `translateFilter` decodes relay global ids out of a **caller's**
-        // filter, and a scope resolved on the server already holds raw ones.
-        mergeScopeWhere(translateFilter(filter as AdapterWhere, targetGlobalKeys), scopeWhere),
+        // `translateFilter` decodes a **caller's** opaque ids out of the filter,
+        // and a scope resolved on the server already holds raw ones — running it
+        // through a codec is how a custom format would corrupt them.
+        mergeScopeWhere(translateFilter(filter as AdapterWhere, targetGlobalKeys, targetIdTargets), scopeWhere),
         whereOperatorsFor(targetDef),
         targetOptions,
       ),

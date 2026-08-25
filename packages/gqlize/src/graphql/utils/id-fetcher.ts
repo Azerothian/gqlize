@@ -24,10 +24,8 @@ SOFTWARE.
 */
 
 // https://github.com/mickhansen/graphql-sequelize/blob/master/src/relay.js
-import {
-  fromGlobalId,
-} from "graphql-relay";
 import { isModelAllowed } from "@azerothian/utilize";
+import { defaultIdCodec } from "../../codecs/id";
 import { processAfter } from "./after";
 import Events from "../../events";
 
@@ -53,7 +51,15 @@ export default function idFetcher(
     if (globalId === null || globalId === undefined) {
       return null;
     }
-    const {type} = fromGlobalId(globalId);
+    // `node(id:)` has nothing but the id to go on, so the type has to come back
+    // out of it. A codec that cannot carry one (`carriesType: false`) never
+    // reaches here - the field is omitted from the schema at build time.
+    const codec = options?.id || defaultIdCodec;
+    const decoded = codec.decode({value: globalId});
+    if (!decoded) {
+      return null;
+    }
+    const {type} = decoded;
 
     // Preserve any custom node resolver registered via the type mapper.
     const nodeType = nodeTypeMapper.item(type);

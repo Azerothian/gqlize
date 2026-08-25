@@ -64,6 +64,8 @@ async function checkOne(
     artifact.fingerprint,
     fingerprintDefinitions(orm, {
       permissionProfile: profile.permissionProfile,
+      idProfile: profile.idProfile,
+      cursorProfile: profile.cursorProfile,
       options: profile.options,
     }),
   );
@@ -82,6 +84,8 @@ async function checkOne(
       ...profile.options,
       scalars: resolved.config.scalars,
       permissionProfile: profile.permissionProfile,
+      idProfile: profile.idProfile,
+      cursorProfile: profile.cursorProfile,
     }),
   ));
   if (live !== rebuilt) {
