@@ -2,15 +2,28 @@ import { GraphQLError } from "graphql";
 import { fromCursor, toCursor } from "../objects/cursor";
 import { processAfter } from "../utils/after";
 import Events from "../../events";
+import { defaultCursorCodec } from "../../codecs/cursor";
+import type { CursorCodec } from "../../types";
 import type { BindingContext, DataSourceDescriptor, FieldBinding } from "./types";
 
-export function processDefaultArgs(args: { before: string; after: string }) {
+/**
+ * Turn the opaque `after`/`before` arguments into `{connection, index}` before
+ * they reach the engine, which pages off `.index` alone.
+ *
+ * `connection` was called `id` here, which is the confusion this seam exists to
+ * remove: a cursor names a *connection*, not a row.
+ */
+export function processDefaultArgs(
+  args: { before: string; after: string },
+  codec: CursorCodec = defaultCursorCodec,
+  connection?: string,
+) {
   const newArgs: any = {};
   if (args.before) {
-    newArgs.before = fromCursor(args.before);
+    newArgs.before = fromCursor(args.before, codec, connection);
   }
   if (args.after) {
-    newArgs.after = fromCursor(args.after);
+    newArgs.after = fromCursor(args.after, codec, connection);
   }
   return {
     ...args,
@@ -67,6 +80,7 @@ export function buildConnectionResolver(
 ) {
   const { instance } = ctx;
   const name = binding.connectionName;
+  const codec = ctx.options.cursor || defaultCursorCodec;
   const definition = instance.getDefinition(binding.targetDefName);
   const resolveData = buildDataSource(binding.data, ctx);
 
@@ -76,19 +90,24 @@ export function buildConnectionResolver(
     context: any,
     info: any,
   ) {
-    const a = processDefaultArgs(args);
-    let cursor: { index: any; id?: any } | null = null;
+    const a = processDefaultArgs(args, codec, name);
+    let cursor: { index: number; connection: string } | null = null;
     if (args.after || args.before) {
-      cursor = fromCursor(args.after || args.before);
+      cursor = fromCursor(args.after || args.before, codec, name);
       // Bind the cursor to this connection: cursors are minted as
-      // toCursor(name, idx), so a cursor whose id is a different connection's
-      // name was reused across connections and its index is meaningless here.
-      if (cursor && cursor.id !== name) {
+      // toCursor(name, idx), so a cursor naming a different connection was
+      // reused across connections and its index is meaningless here. A codec
+      // strict enough to reject it itself has already raised `Invalid cursor`
+      // above; this catches the ones that merely round-trip the name.
+      if (cursor && cursor.connection !== name) {
         throw new GraphQLError(`Cursor does not belong to the ${name} connection`);
       }
     }
     const { total, models } = await resolveData(source, a, context, info);
-    const edges = await Promise.all(
+    // Carry each edge's absolute position alongside it. The page flags below need
+    // it, and re-decoding the cursor just minted to get it back would make every
+    // codec pay for a round trip it has no other reason to support.
+    const positioned = await Promise.all(
       models.map(async (row: any, idx: number) => {
         const node = await processAfter(row, a, context, info, definition, Events.OUTPUT);
         if (!node) {
@@ -103,12 +122,17 @@ export function buildConnectionResolver(
         } else {
           startIndex = 0;
         }
+        const index = idx + startIndex;
         return {
-          cursor: toCursor(name, idx + startIndex),
-          node,
+          index,
+          edge: {
+            cursor: toCursor(name, index, codec),
+            node,
+          },
         };
       }),
-    ).then((edges: any) => edges.filter((e: any) => e !== undefined && e !== null));
+    ).then((rows: any) => rows.filter((e: any) => e !== undefined && e !== null));
+    const edges = positioned.map((p: any) => p.edge);
 
     let startCursor, endCursor;
     if (edges.length > 0) {
@@ -117,15 +141,15 @@ export function buildConnectionResolver(
     }
     let hasNextPage = false;
     let hasPreviousPage = false;
-    if (edges.length > 0) {
-      // Derive page flags from the returned window's absolute position (edge
-      // cursors encode `position` = index-in-result-set). This is direction-
-      // agnostic and exact: there is a previous page iff the window does not
-      // start at 0, and a next page iff it does not reach the last row. The
-      // previous count-and-cursor arithmetic mis-handled windows starting
-      // between 1 and `count`, and the forward/backward flag swap was unsound.
-      const windowStart = fromCursor(edges[0].cursor).index;
-      const windowEnd = fromCursor(edges[edges.length - 1].cursor).index;
+    if (positioned.length > 0) {
+      // Derive page flags from the returned window's absolute position (an edge's
+      // `index` is its position in the result set). This is direction-agnostic
+      // and exact: there is a previous page iff the window does not start at 0,
+      // and a next page iff it does not reach the last row. The previous
+      // count-and-cursor arithmetic mis-handled windows starting between 1 and
+      // `count`, and the forward/backward flag swap was unsound.
+      const windowStart = positioned[0].index;
+      const windowEnd = positioned[positioned.length - 1].index;
       hasPreviousPage = windowStart > 0;
       hasNextPage = windowEnd < total - 1;
     }

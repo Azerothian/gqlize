@@ -579,18 +579,50 @@ List and relationship fields use a **custom connection shape** built by
 ```
 
 with cursor args `after`, `first`, `before`, `last`, `orderBy`, merged with the adapter's
-default list args (`where` filter + `include`). Cursors are base64-encoded, index-based
-(`graphql/objects/cursor.ts`, `graphql/utils/base64.ts`). This differs from stock
-`graphql-relay` connections in that each connection carries a `total` count — backed on
-supported dialects by an inline `COUNT(*) OVER()` (`hasInlineCountFeature` /
-`getInlineCount`) to avoid a second query.
+default list args (`where` filter + `include`). Cursors are index-based and carry the name of
+the connection that minted them, so a cursor is rejected by any other connection, whose index
+would mean something else entirely. This differs from stock `graphql-relay` connections in that
+each connection carries a `total` count — backed on supported dialects by an inline
+`COUNT(*) OVER()` (`hasInlineCountFeature` / `getInlineCount`) to avoid a second query.
 
-Primary-key and foreign-key fields are exposed as Relay **global IDs** via `graphql-relay`
-(`fromGlobalId` / `toGlobalId`). Global IDs are transparently translated back to raw IDs
-across both queries and mutations by `replaceIdDeep`
-(`packages/ormize-adapter-sequelize/src/utils/replace-id-deep.ts` and the manager's
-`replace-id-deep` util). A shared node interface and type mapper resolve a global ID back to
-its concrete object type.
+Primary-key and foreign-key fields are exposed as **global IDs**, carrying the type alongside
+the raw key. Global IDs are translated back to raw IDs across both queries and mutations by
+`replaceIdDeep` (`packages/gqlize/src/utils/replace-id-deep.ts`, re-exported to both adapters),
+which decodes a key **against the type that key points at** — a model's own name for a primary
+key, the relationship's `foreignTarget` for a foreign key (`globalKeyTargets`,
+`packages/utilize/src/utils/global-keys.ts`). A global ID minted for another type does not
+decode, and the undecoded value then matches nothing rather than filtering on the raw key
+underneath it. A shared node interface and type mapper resolve a global ID back to its concrete
+object type.
+
+### Codecs
+
+Neither format is fixed. Both are supplied by a codec on `GqlizeOptions`, and both defaults are
+byte-for-byte what earlier versions emitted:
+
+- `options.id` — an `IdCodec` (`packages/gqlize/src/codecs/id.ts`), defaulting to
+  `relayIdCodec()`: `graphql-relay`'s base64 `Type:id`. Also shipped are `prefixIdCodec` and
+  `rawIdCodec`.
+- `options.cursor` — a `CursorCodec` (`packages/gqlize/src/codecs/cursor.ts`), defaulting to
+  `relayCursorCodec()`: base64 `["Connection", index]`. Also shipped are `plainCursorCodec`,
+  `signedCursorCodec` (HMAC over the index) and `fallbackCursorCodec(next, ...previous)`, which
+  mints in the first format and reads any of them — the rolling-deploy path.
+
+The interfaces are declared in `packages/utilize/src/types/index.ts`, which stays graphql-free;
+the implementations live in gqlize because `relayIdCodec` delegates to `graphql-relay`. `decode`
+returns `null` for a value the codec does not recognise and never throws: one caller turns that
+`null` into `GraphQLError("Invalid cursor")` and another — the nested-relation offset planner —
+plans no offset, and a codec should not have to know which one it is inside.
+
+An `IdCodec` declaring `carriesType: false` cannot recover a type from an ID, so the root
+`node(id:)` field is omitted from the schema at build time with a warning rather than left in it
+to return `null` for every lookup.
+
+Codecs are closures and cannot be hashed, so the snapshot fingerprint records whether each was
+configured (`optionsShape`) plus an optional opaque `idProfile` / `cursorProfile` — the same
+arrangement as `permissionProfile`, and for the same reason: an artifact built with codecs and
+served without them resolves perfectly well, in the wrong format. See §5 and
+`graphql/snapshot/fingerprint.ts`.
 
 ---
 

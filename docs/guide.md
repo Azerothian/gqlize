@@ -23,6 +23,7 @@ Every example below is drawn from the behaviour exercised in the test suite
    - [Relationships & eager loading](#relationships--eager-loading)
    - [Count-only (`total`)](#count-only-total)
    - [Global IDs & `node`](#global-ids--node)
+   - [Custom ID & cursor formats](#custom-id--cursor-formats)
    - [Class & instance methods](#class--instance-methods)
      - [The declarative keys](#the-declarative-keys)
 7. [Mutations](#7-mutations)
@@ -357,6 +358,13 @@ One caveat to know up front: the fingerprint **cannot see permission changes**, 
 `gqlize check` is for — by default it rebuilds the schema live and diffs the sorted SDL, which
 catches permission drift and everything else. Run it in CI.
 
+The same is true of `options.id` and `options.cursor`, with a sharper failure: an artifact built
+with codecs and loaded without them still *resolves* — it just hands clients a different ID and
+cursor format than the one it accepts back. The fingerprint records whether each was configured,
+so that case is caught; to also catch one codec swapped for another of the same shape, name them
+with `idProfile` / `cursorProfile` at build and at load, the way `permissionProfile` names a
+permission set.
+
 See the [`@azerothian/gqlize` README](../packages/gqlize/README.md#pre-generated-schema-artifacts)
 for permission profiles, custom scalars, `extendFactory`, and the full programmatic API
 (`snapshotSchema`, `materializeSchema`, `fingerprintDefinitions`), and
@@ -439,8 +447,11 @@ Post(orderBy: createdAtDESC) { edges { node { title } } }
 
 ### Pagination (cursors)
 
-Cursor arguments: `first`, `after`, `last`, `before`. Cursors are opaque base64 strings you copy
-from `edges[].cursor` (or `pageInfo.startCursor`/`endCursor`):
+Cursor arguments: `first`, `after`, `last`, `before`. Cursors are opaque strings you copy from
+`edges[].cursor` (or `pageInfo.startCursor`/`endCursor`) — by default a base64 blob carrying the
+connection's name and the row's index, though the format is
+[yours to choose](#custom-id--cursor-formats). Whatever the format, a cursor minted by one
+connection is rejected by another, and a malformed one raises `Invalid cursor`:
 
 ```graphql
 # page 1
@@ -514,7 +525,8 @@ query { models { Comment { total } } }                                       # t
 
 ### Global IDs & `node`
 
-Primary/foreign keys are Relay global IDs. Fetch any object by its global ID via `node`:
+Primary/foreign keys are Relay global IDs — by default the base64 of `Type:id`. Fetch any object
+by its global ID via `node`:
 
 ```graphql
 query ($id: ID!) {
@@ -525,6 +537,78 @@ query ($id: ID!) {
   }
 }
 ```
+
+The type half is checked, not just carried. A global ID minted for `Post` handed to a field that
+expects a `Task` key is left undecoded rather than silently filtering on the raw number underneath
+it, so it matches nothing instead of matching an unrelated row. `node(id:)` is the one place a
+global ID may name any type — there the ID *is* the type declaration.
+
+A value that is not a global ID at all — a raw `"42"` typed into a filter or a mutation input —
+is passed through untouched, so it still means the key it looks like.
+
+### Custom ID & cursor formats
+
+Both formats above are defaults, not fixtures. `options.id` and `options.cursor` take a codec, and
+everything gqlize mints and reads goes through it — the `id` field, every foreign key, filters,
+mutation inputs, `node(id:)`, and `edges[].cursor`:
+
+```ts
+import { createSchema, prefixIdCodec, plainCursorCodec } from "@azerothian/gqlize";
+
+const schema = await createSchema(db, {
+  id: prefixIdCodec({ prefixes: { Post: "PST", Author: "AUT" }, pad: 6 }),
+  cursor: plainCursorCodec(),
+});
+// Post row 1 is now "PST000001" rather than "UG9zdDox"
+```
+
+Shipped codecs:
+
+| Codec | Format | Notes |
+| --- | --- | --- |
+| `relayIdCodec()` | base64 `Type:id` | the default |
+| `prefixIdCodec({ prefixes, pad })` | `PST000001` | readable and sortable; every exposed model needs a prefix |
+| `rawIdCodec()` | the key itself | see the `node` caveat below |
+| `relayCursorCodec()` | base64 `["Connection", index]` | the default |
+| `plainCursorCodec()` | `Connection:index` | readable |
+| `signedCursorCodec({ secret })` | `Connection:index.<hmac>` | rejects a cursor whose index was edited |
+| `fallbackCursorCodec(next, ...previous)` | mints `next`, reads any | for rolling deploys |
+
+Two things to know before you swap one in:
+
+- **`rawIdCodec` drops `node(id:)`.** A raw key cannot say what type it belongs to, so the root
+  `node` field is omitted from the schema at build time (with a warning) rather than left in it to
+  return `null` for every lookup. Any codec you write yourself can declare the same by setting
+  `carriesType: false`.
+- **Changing a format is a breaking change for clients.** IDs and cursors clients have already
+  stored stop resolving. `fallbackCursorCodec` exists for exactly this: deploy it reading both
+  formats and minting only the new one, then drop the old codec once the old cursors have aged out.
+
+Writing your own is two functions. `encode` mints, `decode` returns `null` for anything that is not
+one of yours — that `null` is what leaves a raw key in a filter alone:
+
+```ts
+import type { IdCodec } from "@azerothian/gqlize";
+
+const hexIdCodec: IdCodec = {
+  carriesType: true,
+  encode: ({ type, id }) => Buffer.from(`${type}:${id}`).toString("hex"),
+  decode: ({ value, type }) => {
+    if (!/^(?:[0-9a-f]{2})+$/.test(value)) { return null; }
+    const [name, ...rest] = Buffer.from(value, "hex").toString("utf8").split(":");
+    const id = rest.join(":");
+    if (!name || !id) { return null; }
+    // The check that stops a Post ID from filtering a Task foreign key. `type`
+    // is the type the field points at; `node(id:)` passes none, because there
+    // the ID is what names the type.
+    if (type && name !== type) { return null; }
+    return { type: name, id };
+  },
+};
+```
+
+`decode` should never throw — return `null` and let the caller decide whether that is an error or
+just a value it does not own.
 
 ### Class & instance methods
 

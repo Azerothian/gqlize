@@ -70,6 +70,9 @@ export interface MaterializeOptions {
   scalars?: Record<string, GraphQLScalarType>;
   /** opaque id folded into the fingerprint; `options.permission` cannot be hashed */
   permissionProfile?: string;
+  /** the same, for `options.id` / `options.cursor` — codecs are closures too */
+  idProfile?: string;
+  cursorProfile?: string;
   /**
    * What to do when the artifact does not match the live definitions.
    *
@@ -158,7 +161,7 @@ export async function materializeSchema(
       return rebuilt;
     }
   }
-  const instance = new GqlizeBinding(orm);
+  const instance = new GqlizeBinding(orm, options);
   const {extend = {}, root} = options;
   const ledger = snapshot.ledger;
   const registry = createScalarRegistry(options.scalars);
@@ -492,25 +495,33 @@ function checkFingerprint(
     );
     return undefined;
   }
-  // The loading process builds its own options object, and `permissionProfile`
-  // is an opaque label rather than something derivable from it — a caller who
-  // does not name one is not claiming the profile changed. Carrying the
-  // artifact's value forward keeps that from reading as staleness on every
-  // load; naming a *different* one still reports drift.
-  const profileUnchecked =
-    options.permissionProfile === undefined && snapshot.fingerprint.permissionProfile != null;
+  // The loading process builds its own options object, and a profile is an
+  // opaque label rather than something derivable from it — a caller who does not
+  // name one is not claiming the profile changed. Carrying the artifact's value
+  // forward keeps that from reading as staleness on every load; naming a
+  // *different* one still reports drift.
+  //
+  // The id and cursor profiles behave identically, and the presence/absence of
+  // the codecs themselves is caught by `optionsShape` regardless — so an
+  // artifact built with codecs and loaded without them is drift even when no
+  // profile was ever named.
+  const carried = (key: "permissionProfile" | "idProfile" | "cursorProfile") =>
+    options[key] ?? snapshot.fingerprint![key] ?? undefined;
+  const unchecked = (["permissionProfile", "idProfile", "cursorProfile"] as const)
+    .filter((key) => options[key] === undefined && snapshot.fingerprint![key] != null);
   const live = fingerprintDefinitions(orm, {
-    permissionProfile: options.permissionProfile ?? snapshot.fingerprint.permissionProfile ?? undefined,
+    permissionProfile: carried("permissionProfile"),
+    idProfile: carried("idProfile"),
+    cursorProfile: carried("cursorProfile"),
     options,
   });
   const drift = compareFingerprints(snapshot.fingerprint, live);
   if (drift.length === 0) {
-    if (profileUnchecked) {
+    for (const key of unchecked) {
       log.warn(
-        `gqlize: the artifact was built with permissionProfile ` +
-          `"${snapshot.fingerprint.permissionProfile}" and none was supplied at load — permission ` +
-          "drift is not being checked. Pass `permissionProfile` to check it, or `gqlize check " +
-          "--strict` to diff the schema itself.",
+        `gqlize: the artifact was built with ${key} ` +
+          `"${snapshot.fingerprint[key]}" and none was supplied at load — that drift is not being ` +
+          `checked. Pass \`${key}\` to check it, or \`gqlize check --strict\` to diff the schema itself.`,
       );
     }
     return undefined;
@@ -534,7 +545,7 @@ function checkFingerprint(
 }
 
 function buildLiveSchema(orm: Ormize<any, IORBase>, options: GqlizeOptions & MaterializeOptions) {
-  return buildSchema(new GqlizeBinding(orm), options);
+  return buildSchema(new GqlizeBinding(orm, options), options);
 }
 
 /**

@@ -1,26 +1,38 @@
-import { toGlobalId } from "graphql-relay";
 import type { GraphQLFieldResolver, GraphQLResolveInfo } from "graphql";
 import type GQLManager from "../../manager";
-import type { AdapterRow, RequestContext } from "../../types";
+import type { AdapterRow, IdCodec, RequestContext } from "../../types";
+import { defaultIdCodec } from "../../codecs/id";
 import type { BindingContext, FieldBinding } from "./types";
 
 /**
- * The relay global-id resolver, extracted so both `utils/global-id-field` (the
- * live builder path) and the artifact materializer produce the same function.
+ * The opaque-id resolver, extracted so both `utils/global-id-field` (the live
+ * builder path) and the artifact materializer produce the same function.
+ *
+ * This is the *only* encoder: every id a client ever sees is minted here, which
+ * is what makes `options.id` a single switch rather than a format that has to be
+ * kept in agreement across the codebase.
  */
 export function globalIdResolver(
   typeName: string | undefined,
   idFetcher: ((row: AdapterRow, context: RequestContext, info: GraphQLResolveInfo) => unknown) | undefined,
   isNullable: boolean | undefined,
+  codec: IdCodec = defaultIdCodec,
+  defName = "",
+  fieldName = "",
 ): GraphQLFieldResolver<AdapterRow, RequestContext> {
   return (obj, args, context, info) => {
     const id = idFetcher ? idFetcher(obj, context, info) : (obj as {id?: unknown})?.id;
     if (!id && id !== 0 && isNullable) {
       return undefined;
     } else {
-      // `toGlobalId` stringifies whatever it is handed; the value is a primary or
-      // foreign key, so it is a string or a number in every backend here.
-      return toGlobalId(typeName || info.parentType.name, id as string);
+      // The value is a primary or foreign key, so it is a string or a number in
+      // every backend here; codecs stringify whatever they are handed.
+      return codec.encode({
+        type: typeName || info.parentType.name,
+        id: id as string | number,
+        defName: defName || info.parentType.name,
+        fieldName: fieldName || info.fieldName,
+      });
     }
   };
 }
@@ -37,6 +49,9 @@ export function buildGlobalIdResolver(
     binding.typeName,
     globalIdBindValue(binding.defName, binding.fieldName, ctx.instance),
     binding.nullable,
+    ctx.options.id || defaultIdCodec,
+    binding.defName,
+    binding.fieldName,
   );
 }
 

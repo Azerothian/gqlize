@@ -1,5 +1,5 @@
 import { GraphQLFieldConfigArgumentMap, GraphQLInputType, GraphQLOutputType } from "graphql";
-import { OrmAdapter, Definition, NativeDataType, Permission, Selection } from "./index";
+import { OrmAdapter, Definition, IdTranslation, NativeDataType, Permission, Selection } from "./index";
 
 /**
  * The GraphQL-facing adapter contract. Extends the GraphQL-free {@link OrmAdapter}
@@ -27,17 +27,24 @@ export interface GqlizeAdapter extends OrmAdapter {
   getOrderByGraphQLType(defName: string, permission?: Permission): GraphQLInputType | undefined;
   getFilterGraphQLType(defName: string, definition: Definition, permission?: Permission): GraphQLInputType;
   /**
-   * Relay global ids arrive opaque; both hooks rewrite them to their underlying
-   * values in place before the args reach the backend.
+   * Ids arrive opaque; both hooks rewrite them to their underlying values in
+   * place before the args reach the backend.
    *
-   * `variableValues` is optional because a global id may have arrived as a
-   * literal in the query document rather than through a variable, and because a
-   * caller driving a resolver outside a GraphQL request has no variables at all.
-   * Both shipped adapters hand it straight to `replaceIdDeep`, which treats an
-   * absent bag as "no variables to look through".
+   * `variableValues` is optional because an id may have arrived as a literal in
+   * the query document rather than through a variable, and because a caller
+   * driving a resolver outside a GraphQL request has no variables at all. Both
+   * shipped adapters hand it straight to `replaceIdDeep`, which treats an absent
+   * bag as "no variables to look through".
+   *
+   * `translation` carries `options.id`. It is a trailing parameter rather than a
+   * replacement for `variableValues` so that an out-of-tree adapter that never
+   * learned about it keeps working: it ignores the argument and decodes with the
+   * default base64 `Type:id` codec, which is the only format it could have been
+   * built against anyway. An adapter that wants to honour a custom codec passes
+   * this straight through to `replaceIdDeep`.
    */
-  replaceIdInArgs(args: {[name: string]: any}, defName: string, variableValues?: {[name: string]: any}): {[name: string]: any} | Promise<{[name: string]: any}>;
-  replaceIdInInclude(include: Selection["include"], defName: string, variableValues?: {[name: string]: any}): Selection["include"];
+  replaceIdInArgs(args: {[name: string]: any}, defName: string, variableValues?: {[name: string]: any}, translation?: IdTranslation): {[name: string]: any} | Promise<{[name: string]: any}>;
+  replaceIdInInclude(include: Selection["include"], defName: string, variableValues?: {[name: string]: any}, translation?: IdTranslation): Selection["include"];
   /**
    * Optional: capture the permission bag for the duration of a schema build.
    * The filter/order/include type builders above fall back to it when no

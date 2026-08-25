@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothian/utilize/exposed-methods";
 import pluralize from "pluralize";
 import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
-import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
+import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
 import {capitalize, lowercase} from "@azerothian/utilize/utils/word";
 import type {
   AdapterListOptions, AdapterListRequest, AdapterQueryOptions, AdapterRelationshipRequest,
-  AdapterRow, AdapterWhere, Association, Definition, HookMap, Model,
+  AdapterRow, AdapterWhere, Association, Definition, HookMap, IdTranslation, Model,
   OrmAdapter, Permission, Relationship, Selection, WhereOperators,
 } from "@azerothian/utilize/types/index";
 import { Keys } from "./keys";
@@ -164,11 +164,32 @@ export default class ValkeyAdapter implements GqlizeAdapter {
 
   // ---- relay global-id rewriting (gqlize passes global ids for id/fk fields) ----
   getGlobalKeys = (defName: string): string[] => globalKeysFromFields(this.model(defName).fields);
-  replaceIdInWhere = (where: AdapterWhere | undefined, defName: string) => replaceIdDeep(where, this.getGlobalKeys(defName));
+  /**
+   * `targets` is re-derived for `defName` rather than taken from the caller, so
+   * a global id is only ever accepted for the type the field actually points at.
+   */
+  private idTranslation(defName: string, translation?: IdTranslation): IdTranslation {
+    return {
+      ...translation,
+      defName,
+      targets: globalKeyTargets(this.model(defName).fields, defName),
+    };
+  }
+  replaceIdInWhere = (
+    where: AdapterWhere | undefined,
+    defName: string,
+    variableValues?: {[name: string]: unknown},
+    translation?: IdTranslation
+  ) => replaceIdDeep(where, this.getGlobalKeys(defName), variableValues, this.idTranslation(defName, translation));
   replaceIdInInclude = (include: Selection["include"], _defName: string) => include;
-  replaceIdInArgs = async (args: { [name: string]: any }, defName: string) => {
+  replaceIdInArgs = async (
+    args: { [name: string]: any },
+    defName: string,
+    variableValues?: {[name: string]: unknown},
+    translation?: IdTranslation
+  ) => {
     if (args?.where) {
-      return { ...args, where: this.replaceIdInWhere(args.where, defName) };
+      return { ...args, where: this.replaceIdInWhere(args.where, defName, variableValues, translation) };
     }
     return args;
   };

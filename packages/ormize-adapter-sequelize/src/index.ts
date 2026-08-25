@@ -145,7 +145,7 @@ import {
   SQL_ARRAY_FUNCS,
   SQL_ARRAY_VALUES,
 } from "@azerothian/graphql-types/operators";
-import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
+import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 
 import {
   GraphQLBoolean,
@@ -178,6 +178,7 @@ import {
   type RequestContext,
   type Relationship,
   type Selection,
+  type IdTranslation,
   type WhereOperators,
 } from '@azerothian/utilize/types/index';
 import type { GqlizeAdapter } from '@azerothian/gqlize/types/gqlize-adapter';
@@ -932,14 +933,33 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     return ["where", "include"];
   }
   getGlobalKeys = (defName: string) => globalKeysFromFields(this.getFields(defName));
-  replaceIdInWhere = (where: AdapterWhere | undefined, defName: string, variableValues?: {[name: string]: any}) => {
+  /**
+   * Each hop re-derives `targets` for the model it is about to decode against,
+   * rather than carrying the caller's down: a nested relation's `where` filters
+   * the *target's* keys, and typing them with the parent's map is how a
+   * cross-type id would slip through the check it exists to make.
+   */
+  private idTranslation(defName: string, translation?: IdTranslation): IdTranslation {
+    return {
+      ...translation,
+      defName,
+      targets: globalKeyTargets(this.getFields(defName), defName),
+    };
+  }
+  replaceIdInWhere = (
+    where: AdapterWhere | undefined,
+    defName: string,
+    variableValues?: {[name: string]: any},
+    translation?: IdTranslation
+  ) => {
     const globalKeys = this.getGlobalKeys(defName);
-    return replaceIdDeep(where, globalKeys, variableValues);
+    return replaceIdDeep(where, globalKeys, variableValues, this.idTranslation(defName, translation));
   };
   replaceIdInInclude = (
     arrIncludeVar: Selection["include"],
     defName: string,
-    variableValues?: {[name: string]: any}
+    variableValues?: {[name: string]: any},
+    translation?: IdTranslation
   ) => {
     return (arrIncludeVar || []).map(
       (iv) => {
@@ -951,14 +971,16 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             o[relName].where = this.replaceIdInWhere(
               where,
               rel.target,
-              variableValues
+              variableValues,
+              translation
             );
           }
           if (include) {
             o[relName].include = this.replaceIdInInclude(
               include,
               rel.target,
-              variableValues
+              variableValues,
+              translation
             );
           }
           return o;
@@ -969,14 +991,15 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   replaceIdInArgs = (
     args: { [name: string]: any },
     defName: string,
-    variableValues?: {[name: string]: any}
+    variableValues?: {[name: string]: any},
+    translation?: IdTranslation
   ) => {
     const { where, include, ...rest } = args;
     if (include) {
-      rest.include = this.replaceIdInInclude(include, defName, variableValues);
+      rest.include = this.replaceIdInInclude(include, defName, variableValues, translation);
     }
     if (where) {
-      rest.where = this.replaceIdInWhere(where, defName, variableValues);
+      rest.where = this.replaceIdInWhere(where, defName, variableValues, translation);
     }
     return rest;
   };

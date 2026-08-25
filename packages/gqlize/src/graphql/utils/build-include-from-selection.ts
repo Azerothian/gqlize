@@ -1,8 +1,9 @@
 import { getArgumentValues, GraphQLResolveInfo, GraphQLObjectType, GraphQLFieldMap, Kind } from "graphql";
 import type { FieldNode, SelectionSetNode } from "graphql";
 import GQLManager from "../../manager";
-import { fromCursor } from "../objects/cursor";
-import type { AdapterWhere, Association, GqlizeAdapter, IncludeDescriptor, IncludeMap, OrderEntry } from "../../types";
+import { tryFromCursor } from "../objects/cursor";
+import { defaultCursorCodec } from "../../codecs/cursor";
+import type { AdapterWhere, Association, CursorCodec, GqlizeAdapter, IncludeDescriptor, IncludeMap, OrderEntry } from "../../types";
 // The per-parent eager-load backstop. The same clamp the adapters apply to a
 // root query, applied again at the GraphQL layer: a nested `first`/`last` is
 // written straight onto the include descriptor and never passes back through
@@ -201,7 +202,8 @@ export function buildIncludeMapFromSelection(
   defName: string,
   selectionSet: SelectionSetNode | undefined,
   gqlType: GraphQLObjectType | undefined,
-  info: GraphQLResolveInfo
+  info: GraphQLResolveInfo,
+  cursorCodec: CursorCodec = defaultCursorCodec
 ): IncludeMap {
   const plan: IncludeMap = {};
   if (!selectionSet || !Array.isArray(selectionSet.selections)) {
@@ -253,7 +255,7 @@ export function buildIncludeMapFromSelection(
     }
     const childType = info.schema.getType(association.target) as GraphQLObjectType | undefined;
     const childSelectionSet = getChildSelectionSet(sel.selectionSet, collection, info);
-    const nested = buildIncludeMapFromSelection(instance, association.target, childSelectionSet, childType, info);
+    const nested = buildIncludeMapFromSelection(instance, association.target, childSelectionSet, childType, info, cursorCodec);
 
     const descriptor: IncludeDescriptor = {
       target: association.target,
@@ -285,9 +287,9 @@ export function buildIncludeMapFromSelection(
         descriptor.limit = DEFAULT_PAGE_SIZE;
       }
       if (fieldArgs.after) {
-        descriptor.offset = decodeCursorIndex(fieldArgs.after) + 1;
+        descriptor.offset = decodeCursorIndex(fieldArgs.after, cursorCodec) + 1;
       } else if (fieldArgs.before) {
-        let offset = decodeCursorIndex(fieldArgs.before) + 1;
+        let offset = decodeCursorIndex(fieldArgs.before, cursorCodec) + 1;
         if (descriptor.limit != null) {
           offset -= descriptor.limit;
         }
@@ -306,19 +308,28 @@ export function buildIncludeMapFromSelection(
   return plan;
 }
 
-function decodeCursorIndex(cursor: unknown): number {
-  try {
-    if (typeof cursor === "string") {
-      return fromCursor(cursor).index;
-    }
-    // A cursor arrives either opaque (base64) or already decoded by an adapter's
-    // relay arg handling, which leaves the `{index}` object behind.
-    const decoded = cursor as {index?: unknown} | null | undefined;
-    if (decoded && typeof decoded.index === "number") {
-      return decoded.index;
-    }
-  } catch (e) {
-    // ignore malformed cursors
+/**
+ * The absolute row index a nested connection's `after`/`before` names, or `-1`
+ * when there is not one to be had.
+ *
+ * No `connection` is passed to the codec: this runs while planning the *parent's*
+ * query, before the nested connection's own resolver has named itself, so there
+ * is nothing to check ownership against. The connection check still happens —
+ * `buildConnectionResolver` does it with the name in hand — and a codec that
+ * would have rejected the cursor there rejects it here too on its own terms
+ * (a bad signature is a bad signature), which is why this only ever plans an
+ * offset for a cursor the resolver will also accept.
+ */
+function decodeCursorIndex(cursor: unknown, codec: CursorCodec = defaultCursorCodec): number {
+  if (typeof cursor === "string") {
+    const decoded = tryFromCursor(cursor, codec);
+    return decoded ? decoded.index : -1;
+  }
+  // A cursor arrives either opaque or already decoded by an adapter's relay arg
+  // handling, which leaves the `{index}` object behind.
+  const decoded = cursor as {index?: unknown} | null | undefined;
+  if (decoded && typeof decoded.index === "number") {
+    return decoded.index;
   }
   return -1;
 }
@@ -334,11 +345,12 @@ export default function buildIncludeFromSelection(
   defName: string,
   fieldNode: FieldNode | undefined,
   info: GraphQLResolveInfo,
-  explicitInclude?: unknown
+  explicitInclude?: unknown,
+  cursorCodec: CursorCodec = defaultCursorCodec
 ): IncludeMap[] | undefined {
   const gqlType = info.schema.getType(defName) as GraphQLObjectType | undefined;
   const nodeSelectionSet = getChildSelectionSet(fieldNode && fieldNode.selectionSet, true, info);
-  let map = buildIncludeMapFromSelection(instance, defName, nodeSelectionSet, gqlType, info);
+  let map = buildIncludeMapFromSelection(instance, defName, nodeSelectionSet, gqlType, info, cursorCodec);
   if (explicitInclude) {
     map = mergeIncludeMaps(map, normaliseExplicitInclude(explicitInclude));
   }

@@ -30,6 +30,8 @@ export default async function print(
       ...profile.options,
       scalars: resolved.config.scalars,
       permissionProfile: profile.permissionProfile,
+      idProfile: profile.idProfile,
+      cursorProfile: profile.cursorProfile,
     })
     : await createSchema(orm, profile.options);
 

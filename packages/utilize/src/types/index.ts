@@ -327,9 +327,21 @@ export type Selection = {
    * Generic so an absent filter stays absent: a relationship sub-mutation may
    * carry no `where` at all, and translating one is not what supplies it.
    */
-  translateFilter?: <W extends AdapterWhere | undefined>(where: W, globalKeys: string[]) => W;
-  /** default identity; gqlize passes v => fromGlobalId(v).id */
-  translateId?: (value: unknown) => unknown;
+  /**
+   * `targets` names the type each global key points at (see
+   * {@link GlobalKeyTargets}), so the decoder can reject an id minted for another
+   * model instead of filtering on its raw pk. Optional: a caller that does not
+   * know the targets gets the untyped decode this always did.
+   */
+  translateFilter?: <W extends AdapterWhere | undefined>(where: W, globalKeys: string[], targets?: GlobalKeyTargets) => W;
+  /**
+   * default identity; gqlize passes the configured id codec's decode, falling
+   * back to the value untouched when it is not one of that codec's ids.
+   *
+   * `fieldName` is the global key the value arrived on, which is what lets the
+   * codec check the id against that key's declared target type.
+   */
+  translateId?: (value: unknown, fieldName?: string) => unknown;
   /**
    * Query-shaping hooks contributed by the `input` of each selected exposed
    * method. Run after `processListArgsToOptions` **and after
@@ -401,6 +413,100 @@ export type OrderEntry = [column: string, direction: string];
  */
 export type ScopeMissBehaviour = "empty" | "throw";
 
+/**
+ * The type a global key points at, keyed by field name: a primary key targets
+ * its own model, a foreign key targets whatever the relationship points at.
+ *
+ * This is the half {@link globalKeysFromFields} throws away. Without it a decoder
+ * has a value and no idea what it is *supposed* to be, so a `Task` id handed to a
+ * `Post`-typed foreign key decodes happily and filters on the wrong row.
+ */
+export type GlobalKeyTargets = {[fieldName: string]: string};
+
+/**
+ * How a row's primary/foreign key becomes the opaque id a client sees, and back.
+ *
+ * Every id gqlize hands out crosses this seam exactly once in each direction, so
+ * a codec is the whole vocabulary: swap it and `node(id:)`, `where` filters,
+ * mutation inputs and auto-include all speak the new format together. The
+ * default (`relayIdCodec`) is base64 `Type:id`, which is what 7.x and every
+ * earlier version emitted.
+ */
+export type IdCodec = {
+  /** row value -> the opaque id the client sees. */
+  encode(ctx: {type: string; id: string | number; defName: string; fieldName: string}): string;
+  /**
+   * opaque id -> raw value, or `null` when `value` is not one of this codec's
+   * ids — callers leave it untouched rather than corrupting it.
+   *
+   * That `null` is load-bearing in both directions. A raw primary key typed into
+   * a global-key filter or mutation input must survive unchanged (`fromGlobalId`
+   * turns `"42"` into `""` without complaining, which is how a raw pk used to be
+   * silently written away), and a codec that only recognises its own format is
+   * what lets `fallbackCursorCodec`-style layering work for ids too.
+   *
+   * `type` is the expected target type when the caller knows it (pk: the model;
+   * fk: `foreignTarget`); a codec may use it to reject a cross-type id.
+   */
+  decode(ctx: {value: string; type?: string; defName?: string; fieldName?: string}):
+    {type: string; id: string} | null;
+  /**
+   * False when an id does not carry its type. `node(id:)` cannot work without it
+   * — it has nothing but the id to decide which model to fetch — so `createSchema`
+   * warns once and omits the `node` field rather than shipping one that returns
+   * null for everything.
+   *
+   * Absent means true: a codec that says nothing is assumed to round-trip the
+   * type, which is what every shipped codec but `rawIdCodec` does.
+   */
+  carriesType?: boolean;
+};
+
+/**
+ * How a connection's edge position becomes the opaque cursor a client sees.
+ *
+ * A cursor is not an id: it carries a **connection name and an absolute row
+ * index**, not a primary key. `index` must round-trip as an exact integer — it is
+ * consumed as arithmetic when deriving `OFFSET`, `hasNextPage` and
+ * `hasPreviousPage` — and `connection` must survive too, because a cursor minted
+ * by one connection has a meaningless index in another and is rejected on that
+ * basis.
+ */
+export type CursorCodec = {
+  encode(ctx: {connection: string; index: number}): string;
+  /**
+   * `null` for anything this codec did not mint; the caller raises
+   * `Invalid cursor`. Codecs never throw and never import `graphql`: one caller
+   * turns a failure into a `GraphQLError` and another (the nested-relation
+   * offset planner) swallows it, and neither wants the codec to know which.
+   *
+   * `connection` is the connection asking, when there is one. It is absent where
+   * the caller cannot name it — the eager-load planner reads a nested
+   * connection's `after`/`before` before that connection's resolver runs — so a
+   * codec that checks ownership must only do so when it is given something to
+   * check against.
+   */
+  decode(ctx: {value: string; connection?: string}): {connection: string; index: number} | null;
+};
+
+/**
+ * What a caller hands the shared id decoder: the codec, and what it knows about
+ * the keys being decoded.
+ *
+ * Travels as a trailing parameter on the adapter contract's `replaceIdIn*` hooks
+ * rather than replacing the `variableValues` argument beside it, so an
+ * out-of-tree adapter that ignores it keeps working — on the default codec,
+ * which is the only format it could have been built against.
+ */
+export type IdTranslation = {
+  /** default: the base64 `Type:id` relay codec */
+  codec?: IdCodec;
+  /** what each global key points at, so a cross-type id can be rejected */
+  targets?: GlobalKeyTargets;
+  /** the model the keys belong to; passed to the codec as context only */
+  defName?: string;
+};
+
 export type GqlizeOptions = {
   /** Hooks applied to every model, keyed by hook name — see {@link HookMap}. */
   globalHooks?: HookMap
@@ -418,6 +524,21 @@ export type GqlizeOptions = {
    * row. `"throw"` trades that for a loud refusal.
    */
   onScopeMiss?: ScopeMissBehaviour,
+  /**
+   * How primary/foreign keys are rendered as opaque ids and read back.
+   * Default: `relayIdCodec()` — base64 `Type:id`, byte-identical to what every
+   * previous version emitted.
+   */
+  id?: IdCodec,
+  /**
+   * How connection cursors are minted and read back.
+   * Default: `relayCursorCodec()` — base64 `[connectionName, index]`.
+   *
+   * Unlike an id, a cursor is *in-flight* state: clients mid-pagination across a
+   * rolling deploy still hold the old format. Change this through
+   * `fallbackCursorCodec(next, previous)` rather than in one step.
+   */
+  cursor?: CursorCodec,
   extend?: any,
   root?: any,
   subscriptions?: any

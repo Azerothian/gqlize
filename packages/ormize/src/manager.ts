@@ -1,6 +1,6 @@
 import Cache from "./utils/cache";
 import pluralize from "pluralize";
-import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
+import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
 import {lowercase} from "@azerothian/utilize/utils/word";
 import waterfall from "@azerothian/utilize/utils/waterfall";
@@ -15,7 +15,7 @@ import type { ScopeHook } from "./scope-hooks";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, NativeDataType,
-  RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs, OrderEntry } from '@azerothian/utilize/types/index';
+  RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs, OrderEntry, GlobalKeyTargets } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { InstanceRow, MutationApply, MutationFilter, MutationHost, MutationInput,
   MutationInputTree, ResolveOptions } from "./types/engine";
@@ -754,6 +754,12 @@ export default class Ormize<
     return this.defs[defName];
   }
   getGlobalKeys = (defName: string) => globalKeysFromFields(this.getFields(defName));
+  /**
+   * The type each global key points at, so an id codec can reject a global id
+   * minted for some other type. Paired with {@link getGlobalKeys}: same fields,
+   * same order of derivation, one keyed by name instead of listed.
+   */
+  getGlobalKeyTargets = (defName: string) => globalKeyTargets(this.getFields(defName), defName);
   getFields = (defName: string) => {
     const adapter = this.getModelAdapter(defName);
     //TODO: add cross adapter fields
@@ -1112,6 +1118,7 @@ export default class Ormize<
     getAssociations: (defName) => this.getAssociations(defName),
     getDefinition: (defName) => this.getDefinition(defName),
     getGlobalKeys: (defName) => this.getGlobalKeys(defName),
+    getGlobalKeyTargets: (defName) => this.getGlobalKeyTargets(defName),
     processInputs: (defName, input, args, context, info, model, operation) => this.processInputs(defName, input, args, context, info, model, operation),
     processCreate: (defName, source, args, context, selection) => this.processCreate(defName, source, args, context, selection),
     processDelete: (defName, source, args, context, selection) => this.processDelete(defName, source, args, context, selection),
@@ -1650,6 +1657,7 @@ export default class Ormize<
       adapter: OrmAdapter;
       definition: Definition;
       globalKeys: string[];
+      idTargets: GlobalKeyTargets;
       translateFilter: NonNullable<Selection["translateFilter"]>;
     }) => Promise<T>,
   ): Promise<T> => {
@@ -1658,6 +1666,7 @@ export default class Ormize<
       adapter: this.getModelAdapter(defName),
       definition: this.getDefinition(defName),
       globalKeys: this.getGlobalKeys(defName),
+      idTargets: this.getGlobalKeyTargets(defName),
       translateFilter: selection?.translateFilter || (<W,>(w: W) => w),
     }));
   }
@@ -1746,7 +1755,7 @@ export default class Ormize<
   }
 
   processCreate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
+    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
       const processCreate = adapter.getCreateFunction(defName);
       if (await this.resolveRowScope(defName, "create", context) === false) {
         // No row may be created at all. `processInputs` still forces whatever
@@ -1756,7 +1765,7 @@ export default class Ormize<
         return [];
       }
       const i = await this.processInputs(defName, args.input, args, context, selection?.raw);
-      let input = translateFilter(i, globalKeys);
+      let input = translateFilter(i, globalKeys, idTargets);
       if (definition.before) {
         input = await definition.before({
           params: input, args, context, info: selection?.raw,
@@ -1782,7 +1791,7 @@ export default class Ormize<
   }
 
   processUpdate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
+    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
       const translateId = selection?.translateId || ((v: unknown) => v);
       const processUpdate = adapter.getUpdateFunction(defName, whereOperatorsFor(definition));
       let i: MutationInput = Object.keys(args.input).reduce((o, k) => {
@@ -1796,7 +1805,7 @@ export default class Ormize<
           if (v === null || v === undefined) {
             o[k] = null;
           } else {
-            o[k] = translateId(v);
+            o[k] = translateId(v, k);
           }
         } else {
           o[k] = args.input[k];
@@ -1805,9 +1814,9 @@ export default class Ormize<
       }, {} as MutationInput);
       // A read scope alone is a false sense of security: the caller cannot see
       // the row but can still name its id here. Merged after `translateFilter`,
-      // which rewrites relay global ids in the *caller's* filter — the scope's
-      // values are already raw and must not be put through it.
-      const scoped = await this.scopedWriteWhere(defName, "update", context, translateFilter(args.where, globalKeys));
+      // which decodes the *caller's* opaque ids — the scope's values are already
+      // raw, and a codec handed one would corrupt whatever it half recognised.
+      const scoped = await this.scopedWriteWhere(defName, "update", context, translateFilter(args.where, globalKeys, idTargets));
       if (scoped === false) {
         scopeMiss(defName, "update", this.onScopeMiss);
         return [];
@@ -1846,13 +1855,13 @@ export default class Ormize<
     // WITHOUT modifying the elements themselves (no field write / lifecycle change);
     // scalar fields in `input` are ignored. Returns the found rows so the caller can
     // select fields back.
-    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
+    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
       const options = createResolveContext(context, selection, source, {limit: args.limit});
       // `select` writes no field, so it is easy to mistake for a read. It runs
       // relationship sub-mutations against every row its filter matches, which
       // makes it an update in everything but name — a layer that scoped only
       // update and delete leaves this one open.
-      const scoped = await this.scopedWriteWhere(defName, "update", context, translateFilter(args.where, globalKeys));
+      const scoped = await this.scopedWriteWhere(defName, "update", context, translateFilter(args.where, globalKeys, idTargets));
       if (scoped === false) {
         scopeMiss(defName, "update", this.onScopeMiss);
         return [];
@@ -1866,9 +1875,9 @@ export default class Ormize<
     });
   }
   processDelete = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
+    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
       const processDelete = adapter.getDeleteFunction(defName, whereOperatorsFor(definition));
-      const scoped = await this.scopedWriteWhere(defName, "delete", context, translateFilter(args, globalKeys));
+      const scoped = await this.scopedWriteWhere(defName, "delete", context, translateFilter(args, globalKeys, idTargets));
       if (scoped === false) {
         scopeMiss(defName, "delete", this.onScopeMiss);
         return [];
