@@ -37,6 +37,26 @@ export class ScopeDeniedError extends Error {
 }
 
 /**
+ * Raised when a write left a row outside the scope that let it be written.
+ *
+ * Distinct from {@link ScopeDeniedError}: that one refuses a write *before* it
+ * happens, and can therefore be answered quietly with an empty result. This one
+ * is raised after the row was written, so there is nothing quiet left to
+ * report — see {@link ScopeMissBehaviour} for why the two are not the same
+ * decision.
+ */
+export class ScopeEscapeError extends Error {
+  readonly defName: string;
+  readonly operation: ScopeOperation;
+  constructor(defName: string, operation: ScopeOperation) {
+    super(`Not permitted: this '${operation}' would leave a '${defName}' row outside the scope this principal may reach.`);
+    this.name = "ScopeEscapeError";
+    this.defName = defName;
+    this.operation = operation;
+  }
+}
+
+/**
  * A request's resolved scopes, keyed by `(principal, model, operation)`.
  *
  * A nested selection (`projects { tasks { … } }`) resolves the child's scope

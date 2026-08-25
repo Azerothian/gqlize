@@ -123,4 +123,13 @@ export interface MutationHost extends AdapterRoutingHost {
   processCreate(defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
   processDelete(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
   processRelationshipMutation(defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, selection?: Selection): Promise<AdapterRow>;
+  /**
+   * Assert rows a write has already produced still satisfy the model's scope,
+   * throwing if any of them does not. A no-op when nothing is imposed.
+   *
+   * The relationship verbs need this because `add`/`set` move a row by
+   * re-pointing a foreign key: there is no field write for a scope's `set` to
+   * hold in place, and no filter left to merge into once the accessor has run.
+   */
+  assertRowsInScope(defName: string, operation: ScopeOperation, context: RequestContext, rows: AdapterRow[], options: AdapterQueryOptions | undefined): Promise<void>;
 }

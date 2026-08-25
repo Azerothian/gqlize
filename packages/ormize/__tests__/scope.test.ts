@@ -4,7 +4,7 @@ import { describe, it, expect, jest } from "@jest/globals";
 import Sequelize from "sequelize";
 import Events from "../src/events";
 import type { Permission, ScopePredicate } from "@azerothian/utilize/gate";
-import { ScopeDeniedError } from "../src/scope";
+import { ScopeDeniedError, ScopeEscapeError } from "../src/scope";
 
 // One flat model. `ownerId` is an ordinary column rather than a relationship's
 // foreign key, so it survives `isStructurallyWritable` — which is what lets the
@@ -812,5 +812,162 @@ describe("ormize - row-level scope, cross-adapter proxies (F5)", () => {
     const { vault, tag } = await seedCross(db);
     await vault.addTag(tag, ctx(1));
     expect(await vault.getTags(ctx(1))).toEqual([]);
+  });
+});
+
+describe("ormize - row-level scope, the read half of a root write", () => {
+  // A deployment that scopes only reads is the common starting point: "these are
+  // your rows" is one sentence, and the write scopes are usually the same
+  // sentence again. Reaching a row is a read whatever happens to it next, so the
+  // read scope has to bound the write filters too.
+  const readable = (id: number): ScopePredicate =>
+    (_defName, operation) => (operation === "read" ? { where: { ownerId: { eq: id } } } : undefined);
+
+  it("narrows a root update by the read scope alone", async () => {
+    const db = await buildOrm({ scope: readable(1) });
+    await seed(db);
+    await db.processUpdate("Doc", null, { input: { name: "renamed" }, where: {} }, ctx(1));
+    const names = (await db.models.Doc.findAll({})) as NamedRow[];
+    expect(names.map((r) => r.name).sort()).toEqual(["renamed", "renamed", "theirs"]);
+  });
+
+  it("narrows a root delete by the read scope alone", async () => {
+    const db = await buildOrm({ scope: readable(1) });
+    await seed(db);
+    await db.processDelete("Doc", null, {}, ctx(1));
+    const names = (await db.models.Doc.findAll({})) as NamedRow[];
+    expect(names.map((r) => r.name)).toEqual(["theirs"]);
+  });
+
+  it("narrows a root select by the read scope alone", async () => {
+    const db = await buildOrm({ scope: readable(1) });
+    await seed(db);
+    const results = await db.processSelect("Doc", null, { input: {}, where: {} }, ctx(1));
+    expect(results).toHaveLength(2);
+  });
+
+  it("refuses a root write outright when reads are denied", async () => {
+    const db = await buildOrm({ scope: (_d, operation) => (operation === "read" ? false : undefined) });
+    await seed(db);
+    // A deny has no filter to narrow with, so the write is skipped rather than
+    // falling through to the update scope — which imposes nothing here, and
+    // would run against every row in the table.
+    expect(await db.processUpdate("Doc", null, { input: { name: "x" }, where: {} }, ctx(1))).toEqual([]);
+    expect(await db.models.Doc.count({ where: { name: "x" } })).toEqual(0);
+  });
+});
+
+describe("ormize - row-level scope, writes that move a row out (F6)", () => {
+  // A `where` and no `set` is the ordinary shape of a scope: it says which rows
+  // are yours, not what a new one has to contain. Nothing in `processInputs` can
+  // hold a row inside a scope shaped like that, so the only way to know the
+  // write did not carry it out is to look afterwards.
+  const owned = (id: number): ScopePredicate => () => ({ where: { ownerId: { eq: id } } });
+
+  // "Your docs are the ones in *this* folder" — a scope over the very key the
+  // link verbs re-point. The folder cannot exist before the orm does, so the
+  // predicate reads it out of a holder rather than closing over a value.
+  const scopeDocsToFolder = () => {
+    const home: { id?: unknown } = {};
+    return { home, scope: scopeDoc(() => ({ where: { folderId: { eq: home.id } } })) };
+  };
+
+  it("refuses an update that carries the row out of the scope", async () => {
+    const db = await buildOrm({ scope: owned(1) });
+    await seed(db);
+    const mine = await db.models.Doc.findOne({ where: { name: "mine-1" } });
+    await expect(
+      db.processUpdate("Doc", null, { input: { ownerId: 2 }, where: { id: { eq: mine.id } } }, ctx(1)),
+    ).rejects.toBeInstanceOf(ScopeEscapeError);
+    // `mutationEntry` runs the whole mutation in a transaction, so the refusal
+    // takes the write with it rather than leaving it half applied.
+    await mine.reload();
+    expect(mine.ownerId).toEqual(1);
+  });
+
+  it("throws whatever onScopeMiss says, because the row was already written", async () => {
+    const db = await buildOrm({ scope: owned(1), onScopeMiss: "empty" });
+    await seed(db);
+    const mine = await db.models.Doc.findOne({ where: { name: "mine-1" } });
+    // The quiet path exists so a refused write is indistinguishable from one
+    // that matched no rows. That equivalence is gone once the write happened.
+    await expect(
+      db.processUpdate("Doc", null, { input: { ownerId: 2 }, where: { id: { eq: mine.id } } }, ctx(1)),
+    ).rejects.toBeInstanceOf(ScopeEscapeError);
+  });
+
+  it("leaves an update that stays inside the scope alone", async () => {
+    const db = await buildOrm({ scope: owned(1) });
+    await seed(db);
+    const mine = await db.models.Doc.findOne({ where: { name: "mine-1" } });
+    const results = await db.processUpdate(
+      "Doc", null, { input: { name: "renamed" }, where: { id: { eq: mine.id } } }, ctx(1),
+    );
+    expect(results).toHaveLength(1);
+    await mine.reload();
+    expect(mine.name).toEqual("renamed");
+  });
+
+  it("refuses a create that lands outside the scope", async () => {
+    const db = await buildOrm({ scope: owned(1) });
+    await expect(
+      db.processCreate("Doc", null, { input: { name: "fresh", ownerId: 2 } }, ctx(1)),
+    ).rejects.toBeInstanceOf(ScopeEscapeError);
+    expect(await db.models.Doc.count()).toEqual(0);
+  });
+
+  it("creates a row that lands inside the scope", async () => {
+    const db = await buildOrm({ scope: owned(1) });
+    const [row] = await db.processCreate(
+      "Doc", null, { input: { name: "fresh", ownerId: 1 } }, ctx(1),
+    ) as OwnedRow[];
+    expect(row.ownerId).toEqual(1);
+  });
+
+  it("refuses a nested `add` that re-points the target's foreign key out of the scope", async () => {
+    const { home, scope } = scopeDocsToFolder();
+    const db = await buildRelated({ scope });
+    const f1 = await seedFolder(db, true);
+    const f2 = await db.models.Folder.create({ title: "f2" });
+    home.id = f1.id;
+    // `add` writes no column the caller named — it re-points a foreign key — so
+    // a scope's `set` has nothing to hold in place and the verb's own filter has
+    // already done its job by the time the row moves.
+    await expect(db.processUpdate("Folder", null, {
+      input: { docs: { add: [{}] } },
+      where: { id: { eq: f2.id } },
+    }, ctx(1))).rejects.toBeInstanceOf(ScopeEscapeError);
+    expect(await docsIn(db, f2)).toEqual([]);
+  });
+
+  it("refuses a nested collection `set` that re-points a foreign key out of the scope", async () => {
+    const { home, scope } = scopeDocsToFolder();
+    const db = await buildRelated({ scope });
+    const f1 = await seedFolder(db, true);
+    const f2 = await db.models.Folder.create({ title: "f2" });
+    home.id = f1.id;
+    // `set` is `add`'s other half — same accessor, same moved key — and lives in
+    // its own branch of its own verb, so it gets its own row here.
+    await expect(db.processUpdate("Folder", null, {
+      input: { docs: { set: [{}] } },
+      where: { id: { eq: f2.id } },
+    }, ctx(1))).rejects.toBeInstanceOf(ScopeEscapeError);
+    expect(await docsIn(db, f2)).toEqual([]);
+  });
+
+  it("refuses a nested `set` that re-points the source row's own foreign key", async () => {
+    const { home, scope } = scopeDocsToFolder();
+    const db = await buildRelated({ scope });
+    const f1 = await seedFolder(db, true);
+    const f2 = await db.models.Folder.create({ title: "f2" });
+    home.id = f1.id;
+    // A `belongsTo` `set` writes the key on the *source*, so that is the end the
+    // check has to look at. Reached through `select`, which applies the verb
+    // without a root post-write check of its own to catch it first.
+    await expect(db.processSelect("Doc", null, {
+      input: { folder: { set: { id: { eq: f2.id } } } },
+      where: { name: { eq: "mine" } },
+    }, ctx(1))).rejects.toBeInstanceOf(ScopeEscapeError);
+    expect(await docsIn(db, f1)).toEqual(["mine", "theirs"]);
   });
 });

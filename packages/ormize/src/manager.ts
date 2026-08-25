@@ -7,7 +7,7 @@ import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
-import { ScopeDeniedError, applyScopeWhere, inheritScopeMemo, scopeFor, scopeIncludePlan, scopeMiss } from "./scope";
+import { ScopeDeniedError, ScopeEscapeError, applyScopeWhere, inheritScopeMemo, scopeFor, scopeIncludePlan, scopeMiss } from "./scope";
 import type { ScopeMissBehaviour } from "./scope";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
@@ -16,7 +16,7 @@ import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDesc
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { InstanceRow, MutationApply, MutationFilter, MutationHost, MutationInput,
   MutationInputTree, ResolveOptions } from "./types/engine";
-import { addProxyAccessor, btmGetter, createProxyFunction, joinScope, requestFrom, writeAccessors } from "./cross-adapter";
+import { addProxyAccessor, btmGetter, createProxyFunction, filterMerger, joinScope, requestFrom, writeAccessors } from "./cross-adapter";
 import { applyRelationshipMutations } from "./relationship-mutations";
 import Events from "./events";
 import OrmizeTransaction from "./transaction";
@@ -267,6 +267,90 @@ export default class Ormize<
       );
     }
     return adapter.andFilterStatements(where, native);
+  }
+  /**
+   * The portable filter a root write runs under: the caller's, ANDed with the
+   * model's **read** scope as well as the operation's own. `false` when either
+   * half denies outright.
+   *
+   * Reaching a row is a read whatever happens to it next. The nested verbs
+   * (`applyRelationshipMutations`) and the cross-adapter instance checks
+   * (`writable`) have both required the read half since they were written;
+   * without this the root verbs would be the one path left where naming a row
+   * you are not allowed to *see* is enough to write it.
+   */
+  private scopedWriteWhere = async(
+    defName: string, operation: ScopeOperation, context: RequestContext,
+    userWhere: PortableWhere | undefined,
+  ): Promise<PortableWhere | undefined | false> => {
+    const own = await this.resolveRowScope(defName, operation, context);
+    if (own === false) {
+      return false;
+    }
+    const read = await this.resolveRowScope(defName, "read", context);
+    if (read === false) {
+      return false;
+    }
+    return applyScopeWhere(applyScopeWhere(userWhere, read), own);
+  }
+  /**
+   * F6. Assert every row a write just produced still satisfies the scope.
+   *
+   * A scope's `set` forces the fields it *names*; nothing forces the fields it
+   * *filters on*. An update naming a writable column — or an `add`/`set` verb
+   * re-pointing a foreign key, which writes no column the caller named at all —
+   * can carry a row from inside the principal's slice to outside it. By then
+   * there is no filter left to merge into, so the rows are read back and the
+   * scope asked again.
+   *
+   * Always throws, whatever `onScopeMiss` says. The quiet path exists so that a
+   * refused write is indistinguishable from one that matched no rows, and that
+   * equivalence is gone here: the row *was* written. Inside `orm.transaction()`
+   * the throw rolls it back; outside one, the caller is at least told plainly
+   * that it did not.
+   */
+  private assertRowsInScope = async(
+    defName: string, operation: ScopeOperation, context: RequestContext,
+    rows: AdapterRow[], options: AdapterQueryOptions | undefined,
+  ): Promise<void> => {
+    if (rows.length === 0) {
+      return;
+    }
+    // The pair the write ran under, asked again. An update reached an existing
+    // row, and reaching one is a read, so it answers to both halves. A create
+    // reached nothing — and a principal allowed to add rows to a model it may
+    // not read back is a legitimate arrangement that asking the read scope here
+    // would quietly ban.
+    let where = operation === "create"
+      ? undefined
+      : await this.scopeNativeWhere(defName, "read", context, undefined, options);
+    if (where !== false) {
+      where = await this.scopeNativeWhere(defName, operation, context, where, options);
+    }
+    if (where === false) {
+      // Not reachable from today's call sites — every one of them refuses an
+      // outright deny before writing anything — but it is the other half of
+      // what `scopeNativeWhere` returns, and once a row has been written
+      // "no row can satisfy this" has exactly one honest answer.
+      throw new ScopeEscapeError(defName, operation);
+    }
+    if (where === undefined) {
+      // Neither half imposes a filter, so every row satisfies it by
+      // construction — and reading them back would cost an extra query per
+      // mutation on every unscoped deployment in exchange for no answer.
+      return;
+    }
+    const adapter = this.getModelAdapter(defName);
+    const [pk] = adapter.getPrimaryKeyNameForModel(defName);
+    const ids = rows.map((r) => adapter.getValueFromInstance(r, pk));
+    const found = await adapter.findAll(defName, {
+      ...(options?.transaction !== undefined ? {transaction: options.transaction} : {}),
+      where: filterMerger(this.host, defName)(pk, ids, true, where),
+      limit: ids.length,
+    });
+    if (found.length < ids.length) {
+      throw new ScopeEscapeError(defName, operation);
+    }
   }
   addHook = (hookName: string, hook: HookFunction) => {
     (this.globalHooks[hookName] as HookFunction[]).push(hook);
@@ -944,6 +1028,7 @@ export default class Ormize<
     resolveScope: (defName, operation, context) => this.resolveRowScope(defName, operation, context),
     scopeMiss: (defName, operation) => scopeMiss(defName, operation, this.onScopeMiss),
     scopedWhere: (defName, operation, context, where, options) => this.scopeNativeWhere(defName, operation, context, where, options),
+    assertRowsInScope: (defName, operation, context, rows, options) => this.assertRowsInScope(defName, operation, context, rows, options),
   };
   /**
    * @deprecated Kept for the published surface; prefer the free
@@ -1561,6 +1646,11 @@ export default class Ormize<
         let result = await processCreate(input, createResolveContext(context, selection, source));
         if (result !== undefined && result !== null) {
           result = await this.processRelationshipMutation(defName, result, args.input, context, selection);
+          // F6. `processInputs` forced whatever the create scope's `set` names,
+          // but `definition.before`, `override.input` and the nested `add`/`set`
+          // verbs all run after it — the last of those re-points a foreign key
+          // nobody named. Cheaper to look than to reason about the ordering.
+          await this.assertRowsInScope(defName, "create", context, [result], createResolveContext(context, selection, source));
           return [result];
         }
       }
@@ -1594,8 +1684,8 @@ export default class Ormize<
       // the row but can still name its id here. Merged after `translateFilter`,
       // which rewrites relay global ids in the *caller's* filter — the scope's
       // values are already raw and must not be put through it.
-      const rowScope = await this.resolveRowScope(defName, "update", context);
-      if (rowScope === false) {
+      const scoped = await this.scopedWriteWhere(defName, "update", context, translateFilter(args.where, globalKeys));
+      if (scoped === false) {
         scopeMiss(defName, "update", this.onScopeMiss);
         return [];
       }
@@ -1603,7 +1693,7 @@ export default class Ormize<
       // non-optional filter, and an absent `args.where` already reached it as
       // `undefined` before this line existed. Substituting `{}` would be a
       // behaviour change on a delete-shaped path, which is not this commit.
-      const where = applyScopeWhere(translateFilter(args.where, globalKeys), rowScope) as MutationFilter;
+      const where = scoped as MutationFilter;
       if (definition.before) {
         // Unlike the query hook, this one is handed the *input* and returns it;
         // `where` is already built and out of its reach, so there is nothing to
@@ -1621,6 +1711,10 @@ export default class Ormize<
       await waterfall(results, async(r: AdapterRow) => {
         await this.processRelationshipMutation(defName, r, args.input, context, selection);
       });
+      // F6. The filter above decided which rows may be written; this decides
+      // whether the write left them where it found them. A scope filtering on a
+      // column the caller may also write is the ordinary case, not a corner one.
+      await this.assertRowsInScope(defName, "update", context, results, createResolveContext(context, selection, source));
       return results;
     });
   }
@@ -1635,16 +1729,12 @@ export default class Ormize<
       // relationship sub-mutations against every row its filter matches, which
       // makes it an update in everything but name — a layer that scoped only
       // update and delete leaves this one open.
-      const rowScope = await this.resolveRowScope(defName, "update", context);
-      if (rowScope === false) {
+      const scoped = await this.scopedWriteWhere(defName, "update", context, translateFilter(args.where, globalKeys));
+      if (scoped === false) {
         scopeMiss(defName, "update", this.onScopeMiss);
         return [];
       }
-      const where = await adapter.processFilterArgument(
-        applyScopeWhere(translateFilter(args.where, globalKeys), rowScope),
-        whereOperatorsFor(definition),
-        options,
-      );
+      const where = await adapter.processFilterArgument(scoped, whereOperatorsFor(definition), options);
       const results = await adapter.findAll(defName, Object.assign({where, limit: args.limit}, options));
       await waterfall(results, async(r: AdapterRow) => {
         await this.processRelationshipMutation(defName, r, args.input, context, selection);
@@ -1655,12 +1745,12 @@ export default class Ormize<
   processDelete = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
       const processDelete = adapter.getDeleteFunction(defName, whereOperatorsFor(definition));
-      const rowScope = await this.resolveRowScope(defName, "delete", context);
-      if (rowScope === false) {
+      const scoped = await this.scopedWriteWhere(defName, "delete", context, translateFilter(args, globalKeys));
+      if (scoped === false) {
         scopeMiss(defName, "delete", this.onScopeMiss);
         return [];
       }
-      const where = applyScopeWhere(translateFilter(args, globalKeys), rowScope) as MutationFilter;
+      const where = scoped as MutationFilter;
       const before = (model: AdapterRow) => {
         if (!definition.before) {
           return model;

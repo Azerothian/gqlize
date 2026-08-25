@@ -173,6 +173,30 @@ const applyRemove = async(s: MutationScope, value: true | MutationFilter[]) => {
   });
 };
 
+/**
+ * F6. Assert the row an `add`/`set` just moved is still inside its own scope.
+ *
+ * These two verbs move a row by re-pointing a foreign key rather than by writing
+ * a field the caller named, so there is nothing for a scope's `set` to hold in
+ * place and nothing left to merge a filter into once the accessor has run.
+ *
+ * Which end moved is decided by where the key lives, not by which verb was
+ * named: a `hasMany`/`hasOne` accessor writes the **target's** foreign key, a
+ * `belongsTo` one writes the **source's**, and a `belongsToMany` writes neither
+ * — it makes a join row, which {@link applyRelationshipMutations} already scopes
+ * as a create on the through model.
+ */
+async function assertLinkInScope(s: MutationScope, targets: AdapterRow[]) {
+  if (s.isBtm) {
+    return;
+  }
+  if (s.association.associationType === "belongsTo") {
+    await s.host.assertRowsInScope(s.association.source, "update", s.context, [s.source], s.defaultOptions);
+    return;
+  }
+  await s.host.assertRowsInScope(s.targetName, "update", s.targetContext, targets, s.targetOptions);
+}
+
 /** Attach existing records that a filter selects. */
 const applyAdd = async(s: MutationScope, entries: (MutationFilter | LinkEntry)[]) => {
   await waterfall(entries, async(arg: MutationFilter | LinkEntry) => {
@@ -183,6 +207,7 @@ const applyAdd = async(s: MutationScope, entries: (MutationFilter | LinkEntry)[]
     const results = await findByFilter(s, s.isBtm ? entry.where : (arg));
     if (results.length > 0) {
       await s.row[s.association.accessors.addMultiple](results, withThrough(s, through));
+      await assertLinkInScope(s, results);
     }
   });
 };
@@ -193,6 +218,7 @@ const applySet = async(s: MutationScope, value: MutationFilter | (MutationFilter
     // belongsTo/hasOne: associate one existing record found by filter.
     const found = await s.targetAdapter.findAll(s.targetName, Object.assign({where: await s.where(value as MutationFilter), limit: 1}, s.targetOptions));
     await s.row[s.association.accessors.set](found[0] || null, s.defaultOptions);
+    await assertLinkInScope(s, found[0] ? [found[0]] : []);
     return;
   }
   // Collections: replace the entire set with all matching existing records.
@@ -206,6 +232,7 @@ const applySet = async(s: MutationScope, value: MutationFilter | (MutationFilter
     all.push(...await findByFilter(s, s.isBtm ? entry.where : (arg)));
   });
   await s.row[s.association.accessors.set](all, withThrough(s, through));
+  await assertLinkInScope(s, all);
 };
 
 /** Restore soft-deleted (paranoid) related records scoped to this relationship. */
