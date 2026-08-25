@@ -9,7 +9,7 @@ import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
 import { ScopeDeniedError, ScopeEscapeError, applyScopeWhere, inheritScopeMemo, markSystemQuery, scopeFor, scopeIncludePlan, scopeMiss } from "./scope";
 import type { ScopeMissBehaviour } from "./scope";
-import { buildScopeHooks } from "./scope-hooks";
+import { buildScopeHooks, buildScopeInstanceHooks } from "./scope-hooks";
 import { auditDefinitionScopeSurfaces, reportScopeSurfaces } from "./scope-audit";
 import type { ScopeHook } from "./scope-hooks";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
@@ -175,6 +175,12 @@ export default class Ormize<
    * than of the order a deployment happened to call `addHook` in.
    */
   private scopeHooks: {[hookName: string]: ScopeHook};
+  /**
+   * The same arrangement one layer up, on the hooks that fire off the Sequelize
+   * *instance* rather than a model — §12's runtime twin. Held apart from
+   * `globalHooks` for the same reason `scopeHooks` is.
+   */
+  private scopeInstanceHooks: {[hookName: string]: (...args: unknown[]) => unknown};
   /** Vestigial: initialised empty and never written. */
   globalKeys: {[name: string]: unknown};
   hooks: {[defName: string]: HookMap};
@@ -205,6 +211,7 @@ export default class Ormize<
     // already exist. Field initialisers have all run by here, so `this.host`
     // is the same object the cross-adapter and mutation modules were handed.
     this.scopeHooks = buildScopeHooks(this.host);
+    this.scopeInstanceHooks = buildScopeInstanceHooks((name) => Boolean(this.defs[name]));
   }
   /**
    * Supply (or replace) the permission bag after construction.
@@ -600,6 +607,12 @@ export default class Ormize<
         // Sequelize's own arguments, forwarded as-is; `HookFunction` names the
         // first one only because every model hook has a value to waterfall.
         await (hook as (...hookArgs: unknown[]) => unknown)(...args);
+      }
+      // Structurally last, and outside `globalHooks`, exactly as in `createHook`:
+      // a backstop a deployment could register something after would not be one.
+      const enforce = this.scopeInstanceHooks[hookName];
+      if (enforce && typeof this.permission?.scope === "function") {
+        await enforce(...args);
       }
     };
   }

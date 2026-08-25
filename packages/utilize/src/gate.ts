@@ -559,6 +559,38 @@ export function mergeScopeWhere(
 }
 
 /**
+ * Marks a query's options bag as having passed the layer that decides about
+ * row-level scope.
+ *
+ * Not a claim that a scope *was* imposed — a hook that stood aside because there
+ * is no request, or because the query is ormize asking about the scope itself,
+ * marks the bag too. The claim is narrower and is the one the backstop needs:
+ * something that knows about scopes has already looked at this query.
+ *
+ * A `Symbol`, because the alternative is a string key and options bags are built
+ * from caller-supplied objects. Deliberately **enumerable**, unlike the other
+ * markers in this codebase: sequelize rebuilds the bag by spreading it on the way
+ * from a model method to the driver, and a non-enumerable property does not
+ * survive a spread. Symbols are still absent from `Object.keys` and `JSON`, so
+ * enumerable costs nothing here.
+ */
+const SCOPE_SEEN = Symbol.for("gqlize.scopeSeen");
+
+/** Mark an options bag as having passed a scope layer. See {@link SCOPE_SEEN}. */
+export function markScopeSeen<T>(options: T): T {
+  if (options && typeof options === "object") {
+    (options as { [SCOPE_SEEN]?: boolean })[SCOPE_SEEN] = true;
+  }
+  return options;
+}
+
+/** Whether an options bag carries {@link SCOPE_SEEN}. */
+export function isScopeSeen(options: unknown): boolean {
+  return Boolean(options) && typeof options === "object"
+    && (options as { [SCOPE_SEEN]?: boolean })[SCOPE_SEEN] === true;
+}
+
+/**
  * A named parameter reserved for the resolved scope, as it appears in raw SQL.
  *
  * `:scopeOwnerId` binds whatever the scope constrains `ownerId` to. The prefix

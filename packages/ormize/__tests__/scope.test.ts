@@ -1414,3 +1414,72 @@ describe("ormize - row-level scope through a raw SQL class method (\u00a712)", (
     await expect(call(db)).rejects.toThrow(ScopeConfigurationError);
   });
 });
+
+describe("ormize - row-level scope, the instance-level backstop (\u00a712)", () => {
+  // `beforeQuery` fires once per statement, after the SQL is built \u2014 so it
+  // refuses rather than rewrites. What it catches is the one thing the model
+  // hooks cannot see: a statement that reached the driver bound to a model
+  // without passing any of them, which in practice is a hand-written
+  // `sequelize.query(sql, {model})`.
+  const sequelizeOf = (db: Orm) =>
+    (db.adapters.sqlite as unknown as { sequelize: {
+      query(sql: string, options?: unknown): Promise<unknown>;
+    } }).sequelize;
+
+  it("refuses a hand-written query bound to a scoped model", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    // The documented escape hatch, and a complete bypass: no `where` to narrow,
+    // no hook in the path, and the rows come back mapped onto the model as
+    // though the orm had produced them.
+    await expect(sequelizeOf(db).query("SELECT * FROM docs", {
+      model: db.models.Doc, mapToModel: true,
+    })).rejects.toBeInstanceOf(ScopeDeniedError);
+  });
+
+  it("lets the same query through when it is bound to no model", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    // Which tables an arbitrary string touches is not a question available at
+    // this layer, so an unbound statement is not refused. That limit is exactly
+    // why §12 refuses to *build* an unannotated raw-SQL method rather than
+    // leaning on this.
+    expect(await sequelizeOf(db).query("SELECT name FROM docs")).toBeDefined();
+  });
+
+  it("refuses nothing at all when no scope is configured", async () => {
+    const db = await buildOrm();
+    await seed(db);
+    expect(await sequelizeOf(db).query("SELECT * FROM docs", {
+      model: db.models.Doc, mapToModel: true,
+    })).toBeDefined();
+  });
+
+  it("does not refuse the engine's own scoped queries", async () => {
+    // The other 150-odd tests in this file are the real evidence — every one of
+    // them runs with this hook armed — but the marking is subtle enough to be
+    // worth stating once, where a reader looking at the backstop will find it.
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    const { total } = await db.resolveFindAll("Doc", null, {}, ctx(1));
+    expect(total).toEqual(2);
+    expect(await db.processCreate("Doc", null, { input: { name: "fresh", ownerId: 1 } }, ctx(1))).toHaveLength(1);
+  });
+
+  it("cannot be displaced by a beforeQuery a deployment registers", async () => {
+    const seen: unknown[] = [];
+    const db = await buildOrm({ scope: ownedBy(1) });
+    // Global hooks run first and this one returns a value, which for an instance
+    // hook is discarded. Neither it nor its ordering can stop what follows: the
+    // enforcement is not in `globalHooks` at all.
+    db.addHook("beforeQuery", ((options: unknown) => {
+      seen.push(options);
+      return undefined;
+    }) as never);
+    await seed(db);
+    await expect(sequelizeOf(db).query("SELECT * FROM docs", {
+      model: db.models.Doc, mapToModel: true,
+    })).rejects.toBeInstanceOf(ScopeDeniedError);
+    expect(seen.length).toBeGreaterThan(0);
+  });
+});

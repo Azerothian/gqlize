@@ -20,7 +20,7 @@
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, RequestContext,
 } from "@azerothian/utilize/types/index";
-import type { ScopeOperation } from "@azerothian/utilize/gate";
+import { isScopeSeen, markScopeSeen, type ScopeOperation } from "@azerothian/utilize/gate";
 import { filterMerger, writable } from "./cross-adapter";
 import { ScopeDeniedError, isSystemQuery, resolvingScope } from "./scope";
 import type { AdapterRoutingHost } from "./types/engine";
@@ -174,6 +174,11 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
   for (const hookName of Object.keys(QUERY_HOOKS)) {
     const operation = QUERY_HOOKS[hookName];
     hooks[hookName] = async(defName: string, options: AdapterQueryOptions) => {
+      // Before the stand-aside, and that is the whole contract: the mark says a
+      // scope layer looked at this query, not that it narrowed it. A query that
+      // legitimately runs unscoped has been looked at too, and refusing it later
+      // would turn every exemption into an outage.
+      markScopeSeen(options);
       const request = enforceFor(options);
       if (!request || !options) {
         return options;
@@ -203,6 +208,7 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
    * covers every include that reached the query some other way.
    */
   hooks.beforeFindAfterExpandIncludeAll = async(_defName: string, options: AdapterQueryOptions) => {
+    markScopeSeen(options);
     const request = enforceFor(options);
     const include = (options as { include?: NativeInclude[] } | undefined)?.include;
     if (!request || !Array.isArray(include)) {
@@ -215,6 +221,7 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
   for (const hookName of Object.keys(INSTANCE_HOOKS)) {
     const operation = INSTANCE_HOOKS[hookName];
     hooks[hookName] = async(defName: string, row: AdapterRow, options: AdapterQueryOptions) => {
+      markScopeSeen(options);
       const request = enforceFor(options);
       if (!request || !row) {
         return row;
@@ -231,6 +238,7 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
   }
 
   const create = async(defName: string, rows: AdapterRow[], options: AdapterQueryOptions) => {
+    markScopeSeen(options);
     const request = enforceFor(options);
     if (!request) {
       return;
@@ -261,6 +269,49 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
   };
 
   return hooks;
+}
+
+/**
+ * The Sequelize-*instance* enforcement map (§12's runtime twin).
+ *
+ * `beforeQuery` fires once per statement, after the SQL is fully built — which
+ * is why it refuses rather than rewrites. By then there is nothing left to
+ * narrow: the text is text, and the only honest options are let it run or do
+ * not.
+ *
+ * What it catches is the gap `beforeFind` cannot: a statement that reached the
+ * driver bound to a model without passing any of the model hooks above. In
+ * practice that is `sequelize.query(sql, {model, mapToModel})` written by hand —
+ * the documented escape hatch, and the one thing a row-level scope has no other
+ * way to see. Its build-time twin (`scope-audit.ts`) covers the declared form;
+ * this covers the undeclared one.
+ *
+ * It cannot see a raw statement that names no model, because nothing can: which
+ * tables an arbitrary SQL string touches is not a question available at this
+ * layer. That is a limit of the surface, and the reason §12 refuses to *build*
+ * an unannotated raw-SQL method rather than relying on this.
+ *
+ * Registered outside `globalHooks`, like the model-hook map above, so no
+ * registration order can displace it.
+ */
+export function buildScopeInstanceHooks(
+  isDefinition: (name: string) => boolean,
+): {[hookName: string]: (...args: unknown[]) => unknown} {
+  return {
+    beforeQuery: (options: unknown) => {
+      if (isScopeSeen(options) || resolvingScope() || isSystemQuery(options)) {
+        return;
+      }
+      const bag = options as { model?: { name?: string } } | undefined;
+      const defName = bag?.model?.name;
+      if (!defName || !isDefinition(defName)) {
+        // No model, or one this orm does not own. DDL, a `describeTable`, a
+        // migration — nothing a row-level scope has an opinion about.
+        return;
+      }
+      throw new ScopeDeniedError(defName, "read");
+    },
+  };
 }
 
 /**
