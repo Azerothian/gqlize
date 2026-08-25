@@ -5,6 +5,12 @@ import type { Permission } from "../gate";
 // Re-exported so `./types/index` is a complete type barrel: `GqlizeOptions`
 // names `Permission`, and the packages that build on these types import both.
 export type { Permission, PermissionContext } from "../gate";
+// `scope`'s vocabulary. `PortableWhere` is declared in `../gate` rather than
+// here so the gate stays importable on its own, but it belongs to this module's
+// surface: it is the caller-side counterpart of `AdapterWhere` below.
+export type {
+  PortableWhere, ScopeOperation, ScopeResult, ScopePredicate, ResolvedScope,
+} from "../gate";
 
 /**
  * An adapter-native transaction token — a Sequelize `Transaction`, a Valkey

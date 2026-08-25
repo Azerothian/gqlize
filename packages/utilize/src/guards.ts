@@ -61,6 +61,18 @@ export function assertScopedMutation(where: unknown, optIn: boolean | undefined,
  * Without this a caller could filter on a permission-denied field (e.g. a
  * password hash) and use the returned row count as a boolean oracle to read its
  * value, even though the field never appears in a response.
+ *
+ * **Invariant: this runs on caller input only, before any `permission.scope`
+ * has been merged in.** A scope is entitled to filter on a field the caller may
+ * not see — `{ownerId: {eq: me}}` on a model whose `field` gate denies
+ * `ownerId` is the *normal* case, not an edge one — because the engine wrote it
+ * and the caller cannot influence it. Validating the merged filter would reject
+ * exactly the scopes worth writing; validating only the caller's half is what
+ * keeps the oracle closed without doing so.
+ *
+ * The ordering that makes this true lives in `@azerothian/ormize`, which does
+ * not import this file, so nothing here can enforce it. It is pinned by a
+ * regression test instead.
  */
 export function assertFilterAllowed(
   permission: Permission | undefined, name: string, where: unknown, fail: Fail,

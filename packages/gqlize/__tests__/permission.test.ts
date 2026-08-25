@@ -2,7 +2,7 @@ import {createInstance} from "./helper";
 import {createSchema} from "../src";
 import { GraphQLObjectType } from 'graphql';
 import {describe, it, expect, jest} from "@jest/globals";
-import {PERMISSION_KEYS} from "@azerothian/utilize";
+import {BUILD_TIME_PERMISSION_KEYS, PERMISSION_KEYS, RESOLUTION_TIME_PERMISSION_KEYS} from "@azerothian/utilize";
 
 describe("permissions", () => {
   it("model", async() => {
@@ -285,11 +285,17 @@ describe("permissions", () => {
     return expect(fieldTypeInputFields.options2).toBeUndefined();
   });
 
-  it("invokes every permission predicate", async() => {
+  it("invokes every build-time permission predicate, and no resolution-time one", async() => {
     // The regression guard for "the permission model never runs": a predicate
     // that is never consulted is not a no-op, it is an ALLOW, so a key with no
-    // call site silently widens the schema. Driven off PERMISSION_KEYS so a new
-    // key added to the bag has to come with a call site or fail here.
+    // call site silently widens the schema. Driven off BUILD_TIME_PERMISSION_KEYS
+    // so a new key added to the bag has to come with a call site or fail here.
+    //
+    // The second half is the structural form of the rule that lets `scope` be
+    // async: a schema builder cannot await, so a resolution-time predicate
+    // called from here would resolve to a pending promise — which coerces to
+    // `true`, i.e. to an unrestricted query. Asserting it is never called at
+    // build time is what keeps that from being a comment.
     const {GraphQLString} = await import("graphql");
     const permission: any = {options: {role: "test"}};
     PERMISSION_KEYS.forEach((key) => {
@@ -307,8 +313,13 @@ describe("permissions", () => {
       permission,
     });
 
-    const uncalled = PERMISSION_KEYS.filter((key) => key !== "options" && permission[key].mock.calls.length === 0);
+    const uncalled = BUILD_TIME_PERMISSION_KEYS
+      .filter((key) => key !== "options" && permission[key].mock.calls.length === 0);
     expect(uncalled).toEqual([]);
+
+    const calledAtBuildTime = RESOLUTION_TIME_PERMISSION_KEYS
+      .filter((key) => permission[key].mock.calls.length > 0);
+    expect(calledAtBuildTime).toEqual([]);
   });
 
   it("threads permission.options into every predicate", async() => {

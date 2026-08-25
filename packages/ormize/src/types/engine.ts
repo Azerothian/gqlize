@@ -7,8 +7,8 @@
 // from.
 
 import type {
-  AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, OrmAdapter,
-  RequestContext, Selection,
+  AdapterQueryOptions, AdapterRow, Association, Definition, OrmAdapter,
+  PortableWhere, RequestContext, Selection,
 } from "@azerothian/utilize/types/index";
 
 /**
@@ -29,8 +29,17 @@ export type ResolveOptions = AdapterQueryOptions & {
   getGraphQLArgs: () => { context: RequestContext; info: unknown; source: AdapterRow };
 };
 
-/** A caller-supplied filter, before relay global ids have been translated out of it. */
-export type MutationFilter = AdapterWhere;
+/**
+ * A caller-supplied filter, before relay global ids have been translated out of
+ * it — and before `processFilterArgument` has translated it into the backend's
+ * vocabulary.
+ *
+ * This was aliased to `AdapterWhere`, which is the adapter-*native* shape and so
+ * the exact opposite of what a caller's filter is. Nothing depended on the
+ * distinction until `permission.scope`, which returns a filter that must be
+ * merged while it is still portable.
+ */
+export type MutationFilter = PortableWhere;
 
 /** A caller-supplied field bag for a create or an update. */
 export type MutationInput = { [field: string]: unknown };

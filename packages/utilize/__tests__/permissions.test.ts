@@ -66,15 +66,23 @@ describe("utilize - createRoleBasedPermissions", () => {
       "queryExtension",
       "queryInstanceMethods",
       "relationship",
+      "scope",
     ]);
 
     const unread = ROLE_BASED_GATES.filter((gate) => !(PERMISSION_KEYS as readonly string[]).includes(gate));
     expect(unread).toEqual([]);
   });
 
-  it("defaultDeny emits every gate; the retired keys are gone", () => {
+  it("defaultDeny emits every boolean gate, but never a scope", () => {
     const permission = createRoleBasedPermissions("anything", {});
-    expect(Object.keys(permission).sort()).toEqual(ROLE_BASED_GATES.slice().sort());
+    // `scope` is the one gate `defaultDeny` does not reach, and deliberately:
+    // an absent scope means *unscoped*, which is what every deployment
+    // predating the key already relies on. Denying every row by default would
+    // make adding a rules tree a breaking change, and `model`/`query` are the
+    // keys that exist to refuse the surface outright.
+    expect(Object.keys(permission).sort())
+      .toEqual(ROLE_BASED_GATES.filter((gate) => gate !== "scope").slice().sort());
+    expect(permission.scope).toBeUndefined();
     // Read through a widened view: the retired keys are not on `Permission` any
     // more, which is itself the point — but the runtime bag still has to be free
     // of them, since an unread predicate is treated as ALLOW.
