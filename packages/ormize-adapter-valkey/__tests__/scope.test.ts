@@ -5,6 +5,7 @@ import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { ScopePredicate } from "@azerothian/utilize/gate";
 import { scopeAware, unscoped } from "@azerothian/utilize/gate";
 import ValkeyAdapter from "../src";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { makeClient, flush, shutdown } from "./helper/redis";
 
 // Row-level scope on an adapter with **no enforcement layer of its own**.
@@ -212,5 +213,53 @@ describe("valkey - row-level scope, the surfaces the engine cannot reach (\u00a7
 
   it("still takes the claim that the method applies the scope itself", async () => {
     await expect(buildWithMethods({ tally: scopeAware(() => 1) })).resolves.toBeDefined();
+  });
+});
+
+describe("valkey - row-level scope, the extend surface (\u00a712)", () => {
+  // `options.extend.query` is a gqlize surface, but the audit behind it is an
+  // ormize method \u2014 decision 2 keeps the schema builder from reading a
+  // resolution-time key, so it hands over the field map and is told whether the
+  // build may proceed. Which makes this the layer the rule is testable at, and
+  // the only one where a backend with no hook layer can be put underneath it.
+  async function buildOrm() {
+    const orm = new Ormize({ permission: { scope: ownedBy("u1") } });
+    orm.registerAdapter(new ValkeyAdapter({ prefix: "scope" }, client), "valkey");
+    await orm.addDefinition(DocDef);
+    await orm.initialise();
+    return orm;
+  }
+
+  it("refuses an unannotated extend field", async () => {
+    const orm = await buildOrm();
+    expect(() => orm.auditExtendSurfaces("query", { recentDocs: { resolve: () => 1 } }))
+      .toThrow(/query\.recentDocs \(extend field\)/);
+  });
+
+  it("takes the written admission here too", async () => {
+    const orm = await buildOrm();
+    expect(() => orm.auditExtendSurfaces("query", { health: unscoped({ resolve: () => 1 }) }))
+      .not.toThrow();
+  });
+
+  it("refuses even when a backend that does enforce is also registered", async () => {
+    // The rule is *every* adapter, not the ones with scoped models. An extend
+    // field holds the orm and can read anything on it, so a deployment mixing an
+    // adapter with a hook layer and one without has a surface that reaches a
+    // model with nothing underneath it \u2014 and a warning there would be a warning
+    // about the wrong half.
+    const orm = await buildOrm();
+    orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+    expect(() => orm.auditExtendSurfaces("query", { recentDocs: { resolve: () => 1 } }))
+      .toThrow(/query\.recentDocs \(extend field\)/);
+  });
+
+  it("says nothing when no row-level scope is configured", async () => {
+    const orm = new Ormize();
+    orm.registerAdapter(new ValkeyAdapter({ prefix: "scope" }, client), "valkey");
+    await orm.addDefinition(DocDef);
+    await orm.initialise();
+    expect(() => orm.auditExtendSurfaces("query", { recentDocs: { resolve: () => 1 } }))
+      .not.toThrow();
   });
 });

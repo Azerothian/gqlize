@@ -10,7 +10,7 @@ import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@
 import { ScopeDeniedError, ScopeEscapeError, applyScopeWhere, inheritScopeMemo, markSystemQuery, scopeFor, scopeIncludePlan, scopeMiss } from "./scope";
 import type { ScopeMissBehaviour } from "./scope";
 import { buildScopeHooks, buildScopeInstanceHooks } from "./scope-hooks";
-import { auditDefinitionScopeSurfaces, reportScopeSurfaces } from "./scope-audit";
+import { auditDefinitionScopeSurfaces, auditExtendFields, reportScopeSurfaces } from "./scope-audit";
 import type { ScopeHook } from "./scope-hooks";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
@@ -247,7 +247,33 @@ export default class Ormize<
         all.concat(auditDefinitionScopeSurfaces(defName, this.defs[defName])),
       [],
     );
-    reportScopeSurfaces(findings, (defName) => this.adapters[this.defsAdapters[defName]]);
+    reportScopeSurfaces(
+      findings,
+      (finding) => this.adapters[this.defsAdapters[finding.defName]]?.enforcesRowScope === true,
+    );
+  }
+  /**
+   * §12 for `options.extend.query` / `.mutation`, called by the schema builder.
+   *
+   * It lives here rather than in gqlize because of decision 2: `scope` is a
+   * resolution-time key, and nothing under gqlize—s schema builder may read
+   * one. So gqlize hands over the field map and is told whether the build may
+   * proceed, without ever learning why.
+   *
+   * Every registered adapter has to enforce for this to be a warning, not just
+   * the ones with scoped models. An extend field holds the orm and can read any
+   * model on it, so "is there a runtime backstop under this surface" only has a
+   * reassuring answer when it has one everywhere— and a deployment that
+   * mixes sequelize with valkey has a surface reaching a model with none.
+   */
+  auditExtendSurfaces = (target: "query" | "mutation", extendFields: {[name: string]: unknown} | undefined) => {
+    if (typeof this.permission?.scope !== "function") {
+      return;
+    }
+    const names = Object.keys(this.adapters);
+    const everyAdapterEnforces = names.length > 0
+      && names.every((name) => this.adapters[name]?.enforcesRowScope === true);
+    reportScopeSurfaces(auditExtendFields(target, extendFields), () => everyAdapterEnforces);
   }
   /**
    * Resolve `permission.scope` for one model and operation.

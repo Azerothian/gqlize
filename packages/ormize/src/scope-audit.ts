@@ -22,7 +22,7 @@
 // line, so the cheap answer is not the silent one.
 
 import { scopeDispositionOf, scopeParametersIn } from "@azerothian/utilize/gate";
-import type { Definition, OrmAdapter } from "@azerothian/utilize/types/index";
+import type { Definition } from "@azerothian/utilize/types/index";
 
 export type ScopeSurfaceKind = "classMethod" | "instanceMethod" | "sqlClassMethod" | "extendField";
 
@@ -124,6 +124,31 @@ export function auditDefinitionScopeSurfaces(defName: string, def: Definition): 
   return findings;
 }
 
+/**
+ * Audit `options.extend.query` / `.mutation`.
+ *
+ * The odd one out, in the one way that matters to the report below: the other
+ * three surfaces hang off a definition, so the backend underneath them is known
+ * and decisions 7 and 9 can be applied per model. An extend field hangs off the
+ * schema and holds the whole orm, so the models it touches are not a question a
+ * build can ask. `defName` therefore carries the root it was merged into —
+ * `query.recentDocs (extend field)` is what a reviewer needs to find it — and
+ * {@link reportScopeSurfaces} is told about the backends separately.
+ *
+ * Only the value is inspected, never called: a resolver is userland code and a
+ * build that ran it to find out what it does would be a build with side effects.
+ */
+export function auditExtendFields(
+  target: "query" | "mutation",
+  extendFields: {[name: string]: unknown} | undefined,
+): ScopeSurfaceFinding[] {
+  const fields = extendFields || {};
+  return Object.keys(fields).reduce((findings: ScopeSurfaceFinding[], name) => {
+    const finding = auditEntry(target, "extendField", name, fields[name]);
+    return finding ? findings.concat(finding) : findings;
+  }, []);
+}
+
 function describe(finding: ScopeSurfaceFinding): string {
   const where = `${finding.defName}.${finding.name} (${SURFACE_LABEL[finding.kind]})`;
   switch (finding.problem) {
@@ -148,14 +173,22 @@ function describe(finding: ScopeSurfaceFinding): string {
  * only enforcement it has ever had — so the same method is a hole, and holes
  * throw. The other two problems are contradictions rather than depth judgements
  * and throw on every backend.
+ *
+ * `enforced` is asked per finding rather than resolved from `defName` here,
+ * because an extend field has no definition to resolve it from and the caller is
+ * the only layer that knows which adapters are in play. Keeping the question at
+ * the caller is what saves a pseudo-`defName` from having to be plausible as a
+ * model name.
  */
-export function reportScopeSurfaces(findings: ScopeSurfaceFinding[], adapterFor: (defName: string) => OrmAdapter | undefined): void {
+export function reportScopeSurfaces(
+  findings: ScopeSurfaceFinding[],
+  enforced: (finding: ScopeSurfaceFinding) => boolean,
+): void {
   const fatal: string[] = [];
   const warnings: string[] = [];
   for (const finding of findings) {
-    const enforced = adapterFor(finding.defName)?.enforcesRowScope === true;
     const message = describe(finding);
-    if (finding.problem !== "unannotated" || !enforced) {
+    if (finding.problem !== "unannotated" || !enforced(finding)) {
       fatal.push(message);
     } else {
       warnings.push(message);

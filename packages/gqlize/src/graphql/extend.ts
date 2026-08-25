@@ -24,6 +24,12 @@ export async function applyExtendFields(
   if (!extendFields) {
     return fields;
   }
+  // §12, before a single field is bound. An extend field is arbitrary userland
+  // code holding the orm, so a row-level scope cannot reach it and the build has
+  // to make the deployment say so. The question is asked of ormize rather than
+  // answered here: `scope` is a resolution-time permission key, and the schema
+  // builder reading one is the thing decision 2 exists to prevent.
+  ctx.instance.auditExtendSurfaces(target, extendFields);
   const gate = target === "query"
     ? options.permission?.queryExtension
     : options.permission?.mutationExtension;
