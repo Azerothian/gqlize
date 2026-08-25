@@ -142,6 +142,21 @@ export class NestizeService {
     return guards.present(v, schema && new Set(Object.keys(schema.shape)));
   }
 
+  /**
+   * {@link present}, for a route that addresses exactly one row.
+   *
+   * The engine's write paths always answer with a list, but `POST /task`,
+   * `GET /task/:id` and `POST /task/:id/_actions/:method` each name a single
+   * resource, so the REST response is that resource rather than a one-element
+   * array. A result that is not a single row is handed back untouched — a bulk
+   * update genuinely is a list, and silently unwrapping a longer one would hide
+   * how many rows it touched.
+   */
+  private presentOne(name: string, v: unknown): unknown {
+    const plain = this.present(name, v);
+    return Array.isArray(plain) && plain.length === 1 ? plain[0] : plain;
+  }
+
   /** Load the raw model instance for a pk (needed for relationship accessors). */
   private async loadInstance(name: string, id: unknown, req: RestRequest): Promise<PlainRow> {
     const pk = this.pkName(name);
@@ -202,8 +217,7 @@ export class NestizeService {
     const results = await this.orm.processCreate(name, null, { input }, { req });
     // `processCreate` always returns a list; a single-row create is unwrapped so
     // the REST response is the resource itself rather than a one-element array.
-    const plain = this.present(name, results);
-    return Array.isArray(plain) && plain.length === 1 ? plain[0] : plain;
+    return this.presentOne(name, results);
   }
 
   async update(resource: string, query: RestQuery, body: PlainRow, req: RestRequest): Promise<unknown> {
@@ -339,10 +353,16 @@ export class NestizeService {
     }
     // The two `expose.instanceMethods` targets share one implementation
     // namespace, so which target declared a method is the only thing that says
-    // whether it reads or writes. `assertNoExposedMethodCollisions` guarantees
-    // the two sets are name-disjoint, so this is unambiguous. A method declared
-    // under neither target — the common case, since `expose` is optional — keeps
-    // the read-only treatment it has always had here.
+    // whether it reads or writes.
+    //
+    // A name under both targets is a definition error, and gqlize refuses to
+    // build a schema containing one — but `assertNoExposedMethodCollisions` runs
+    // from `create-model-type.ts` alone, so a nestize-only consumer never reaches
+    // it. Here the mutation lane simply wins, deterministically: the stricter of
+    // the two gates, which is the right way for an unrefused ambiguity to land.
+    //
+    // A method declared under neither target — the common case, since `expose`
+    // is optional — keeps the read-only treatment it has always had here.
     const isTransform = !!mutationInstanceMethods(this.orm.getDefinition(name))[method];
     const gate = isTransform ? this.permission?.mutationInstanceMethods : this.permission?.queryInstanceMethods;
     if (!isAllowed(gate, name, method, this.permission?.options)) {
@@ -383,7 +403,10 @@ export class NestizeService {
       if (!Array.isArray(results) || results.length === 0) {
         throw new NotFoundException(`${name} '${this.idLabel(id)}' not found`);
       }
-      return this.present(name, results);
+      // `:id` names one row, so the response is that row — the same shape
+      // `show` and `create` answer with, and the reason the id-addressed routes
+      // share `presentOne`.
+      return this.presentOne(name, results);
     }
     const row = await this.loadInstance(name, id, req);
     const instanceMethod = row[method];

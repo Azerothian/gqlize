@@ -14,14 +14,20 @@ import { buildOrm } from "./helper";
  * pre-commit transform was reachable under the read gate and its writes to
  * `this` were dropped on the floor. These cover the split.
  */
-async function boot(options: NestizeOptions): Promise<{ app: INestApplication<Server>; http: Server }> {
-  const orm = await buildOrm();
+async function boot(
+  options: NestizeOptions,
+  existing?: Awaited<ReturnType<typeof buildOrm>>,
+): Promise<{ app: INestApplication<Server>; http: Server; orm: Awaited<ReturnType<typeof buildOrm>> }> {
+  // `existing` is what lets a `readOnly` app be tested at all: the seeding
+  // `POST /task` would itself be refused under `readOnly`, so the rows have to
+  // arrive through a writable app pointed at the same orm.
+  const orm = existing ?? await buildOrm();
   const moduleRef = await Test.createTestingModule({
     imports: [NestizeModule.forRoot(orm, { expose: { instanceMethods: true }, ...options })],
   }).compile();
   const app = moduleRef.createNestApplication();
   await app.init();
-  return { app, http: app.getHttpServer() };
+  return { app, http: app.getHttpServer(), orm };
 }
 
 async function makeTask(http: Server, name: string): Promise<number> {
@@ -75,8 +81,10 @@ describe("nestize - instance methods (`_actions`)", () => {
   it("a transform responds with the persisted row, not the method's return", async () => {
     const id = await makeTask(http, "epsilon");
     const res = await request(http).post(`/task/${id}/_actions/appendSuffix`).send({ suffix: "!" });
-    const row = Array.isArray(res.body) ? res.body[0] : res.body;
-    expect(row.name).toBe("epsilon!");
+    // `:id` addresses one row, so the response is that row — the shape `show`
+    // and `create` answer with, not the list `processUpdate` returns.
+    expect(Array.isArray(res.body)).toBe(false);
+    expect(res.body.name).toBe("epsilon!");
   });
 
   it("is 404 for an unknown id and for an unknown method", async () => {
@@ -178,16 +186,40 @@ describe("nestize - instance-method transforms honour the model write gate", () 
 });
 
 describe("nestize - readOnly", () => {
+  let writable: INestApplication<Server>;
   let app: INestApplication<Server>;
   let http: Server;
+  let id: number;
 
-  beforeAll(async () => { ({ app, http } = await boot({ readOnly: false })); });
-  afterAll(async () => { await app.close(); });
+  // Two apps over one orm: the writable one seeds, the read-only one is what is
+  // under test. Seeding through the read-only app is impossible by definition,
+  // which is why the earlier shape of this block could not exercise it.
+  beforeAll(async () => {
+    const seeded = await boot({});
+    writable = seeded.app;
+    id = await makeTask(seeded.http, "mu");
+    ({ app, http } = await boot({ readOnly: true }, seeded.orm));
+  });
+  afterAll(async () => { await app.close(); await writable.close(); });
 
-  it("a read-only instance is set up separately, so a plain read is not refused here", async () => {
+  it("a query-target method is not refused: it is a read", async () => {
     // `assertWritable` now runs only on the transform branch — a query-target
-    // method is a read and was being refused under `readOnly` for no reason.
-    const id = await makeTask(http, "mu");
-    expect((await request(http).post(`/task/${id}/_actions/describe`).send({})).status).toBe(201);
+    // method was being refused under `readOnly` for no reason.
+    const res = await request(http).post(`/task/${id}/_actions/describe`).send({});
+    expect(res.status).toBe(201);
+    expect(res.text).toBe("task:mu");
+  });
+
+  it("a method under neither target is a read too", async () => {
+    const res = await request(http).post(`/task/${id}/_actions/undeclared`).send({});
+    expect(res.status).toBe(201);
+  });
+
+  it("a transform is still refused, with the 405 `read-only` maps to", async () => {
+    // `FAIL` maps the shared guard's "read-only" kind onto METHOD_NOT_ALLOWED,
+    // so this is the same status every other write route answers with here.
+    const res = await request(http).post(`/task/${id}/_actions/appendSuffix`).send({});
+    expect(res.status).toBe(405);
+    expect((await request(http).get(`/task/${id}`)).body.name).toBe("mu");
   });
 });

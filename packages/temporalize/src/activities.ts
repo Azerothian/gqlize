@@ -264,10 +264,17 @@ export function createActivities(
       // Activities are enumerated from the *implementation* map, which is one
       // namespace shared by both `expose.instanceMethods` targets. Which target
       // declared a method is the only thing that says whether it reads or
-      // writes, and `assertNoExposedMethodCollisions` guarantees the two sets
-      // are name-disjoint, so this lookup is unambiguous. A method declared
-      // under neither — the common case, since `expose` is optional — keeps the
-      // read-only treatment it has always had.
+      // writes.
+      //
+      // A name under both targets is a definition error, and gqlize refuses to
+      // build a schema containing one — but `assertNoExposedMethodCollisions`
+      // runs from `create-model-type.ts` alone, so a temporalize-only consumer
+      // never reaches it. Here the mutation lane simply wins, deterministically:
+      // the stricter of the two gates, which is the right way for an unrefused
+      // ambiguity to land.
+      //
+      // A method declared under neither — the common case, since `expose` is
+      // optional — keeps the read-only treatment it has always had.
       const transforms = mutationInstanceMethods(definition);
       for (const method of methodNames(definition, "instanceMethods")) {
         const isTransform = !!transforms[method];
@@ -307,7 +314,10 @@ export function createActivities(
               if (!rows || rows.length === 0) {
                 fail(ErrorType.NotFound, `temporalize: ${name} '${req.id}' not found`);
               }
-              return present(call.schemas, name, rows);
+              // `req.id` names one row, so the activity answers with that row —
+              // the same shape `findByPk` returns, rather than the list
+              // `processUpdate` hands back.
+              return present(call.schemas, name, rows[0]);
             }
             const row = await loadInstance(name, call, req.id);
             // The loaded row is an adapter instance, so its methods are not

@@ -87,7 +87,7 @@ Nothing is reachable over REST until you opt in.
 | `permission`       | —       | Permission object (`createRoleBasedPermissions`) gating models/fields/relationships/mutations. |
 | `pathPrefix`       | —       | Prefix applied to every route (e.g. `api`).                |
 | `includeRelations` | `true`  | Expose nested relationship routes.                         |
-| `readOnly`         | `false` | Only allow reads; writes return `405`.                     |
+| `readOnly`         | `false` | Only allow reads; writes return `405`. An `_actions` instance method counts as a write only when declared under `expose.instanceMethods.mutations`. |
 | `expose`           | —       | `{ classMethods?, instanceMethods? }` — expose `_actions` routes. Off by default. |
 
 ## License

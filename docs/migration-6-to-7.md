@@ -356,8 +356,9 @@ Only names present under `.mutations` change lane.
 
 Two smaller alignments come with it. `mutationInstanceMethods` naming which transforms a role may
 run never implied the role may write at all, so a transform now also passes the model's
-`mutationUpdate` gate, as every other write route already did. And nestize's `readOnly` no longer
-refuses a `.query`-target method, which is a read.
+`mutationUpdate` gate, as every other write route already did. And in **both** projections
+`readOnly` no longer refuses a `.query`-target instance method — nor one declared under neither
+target — because those are reads. Only a transform is a write, and only a transform is refused.
 
 > **Watch for:** three changes, in the order they will bite. (1) A `.mutations`-target method now
 > needs `permission.mutationInstanceMethods`; a role bag that granted only `queryInstanceMethods`

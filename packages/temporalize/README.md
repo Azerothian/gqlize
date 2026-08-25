@@ -196,7 +196,7 @@ try {
 | `models`            | all       | Allow-list of models to generate for.                           |
 | `resolvePermission` | —         | Derives the permission gate from the per-call context.          |
 | `validate`          | `true`    | Validate `input` against the ormize-zod4 schemas.               |
-| `readOnly`          | `false`   | Refuse every mutating activity.                                 |
+| `readOnly`          | `false`   | Refuse every mutating activity. An instance method is mutating only when declared under `expose.instanceMethods.mutations`; `.query`-target and undeclared ones are reads and still run. |
 | `transactional`     | `true`    | Wrap each mutating activity in `orm.transaction()`.             |
 | `includeRelations`  | `true`    | Include relationship keys in activity results.                  |
 | `expose`            | both on   | `{ classMethods?, instanceMethods? }`. `instanceMethods` covers both `expose` targets, each under its own gate — see [Activities](#activities). |

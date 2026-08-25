@@ -178,8 +178,11 @@ describe("generated activities", () => {
 
     it("answers a transform with the persisted row, not the method's return", async () => {
       const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
-      const result = (await acts["Item.instanceMethods.relabel"]({ context: ctx, id: item.id })) as ItemRow[];
-      expect(Array.isArray(result) ? result[0].label : (result as ItemRow).label).toBe("alpha!");
+      const result = (await acts["Item.instanceMethods.relabel"]({ context: ctx, id: item.id })) as ItemRow;
+      // `id` addresses one row, so the activity answers with that row — the same
+      // shape `findByPk` returns, not the list `processUpdate` hands back.
+      expect(Array.isArray(result)).toBe(false);
+      expect(result.label).toBe("alpha!");
     });
 
     it("runs a transform with no params when `args` is omitted", async () => {
@@ -249,6 +252,24 @@ describe("generated activities", () => {
       await expectFailure(ro["Item.classMethods.labelsUpper"]({ context: ctx }), ErrorType.Forbidden);
       // Reads still work.
       await expect(ro["Task.count"]({ context: ctx })).resolves.toBe(0);
+    });
+
+    it("readOnly refuses an instance-method transform but not an instance-method read", async () => {
+      // The nestize mirror of this lives in that package's `instance-methods`
+      // suite. `assertWritable` used to run for *every* instance-method activity;
+      // it now runs on the transform branch alone, so a `.query`-target method
+      // — and one declared under neither target — is a read like any other.
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
+      const ro = createActivities(orm, { readOnly: true });
+      await expect(ro["Item.instanceMethods.describe"]({ context: ctx, id: item.id }))
+        .resolves.toBe("alpha:");
+      await expectFailure(
+        ro["Item.instanceMethods.relabel"]({ context: ctx, id: item.id }),
+        ErrorType.Forbidden,
+      );
+      // And the refusal was a refusal: the row is untouched.
+      const after = (await acts["Item.findByPk"]({ context: ctx, id: item.id })) as ItemRow;
+      expect(after.label).toBe("alpha");
     });
   });
 });
