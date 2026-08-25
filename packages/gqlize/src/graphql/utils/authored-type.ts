@@ -1,3 +1,6 @@
+import type { GraphQLInputFieldConfig, ThunkObjMap } from "graphql";
+
+import type { GqlFieldConfig } from "../../types";
 import {
   GraphQLObjectType,
   GraphQLInputObjectType,
@@ -21,8 +24,16 @@ import {
 export type AuthoredTypeSlot = {
   /** Present on a built type and required on a config — the builders read it either way. */
   name: string;
-  /** Only a config carries this; a built type exposes `getFields()` instead. */
-  fields?: any;
+  /**
+   * Only a config carries this; a built type exposes `getFields()` instead.
+   *
+   * Output and input configs are both authored into these slots and graphql's
+   * two field-map shapes do not overlap, so the union is what an author may
+   * legally write. Each reader hands it to the constructor matching the slot it
+   * came out of — `override.type` builds an object type, `override.inputType`
+   * an input object — and narrows to that arm there.
+   */
+  fields?: ThunkObjMap<GqlFieldConfig> | ThunkObjMap<GraphQLInputFieldConfig>;
 };
 
 /**

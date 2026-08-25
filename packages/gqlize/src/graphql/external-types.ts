@@ -1,17 +1,22 @@
 import {
-  GraphQLEnumType,
-  GraphQLInputObjectType,
   GraphQLObjectType,
-  GraphQLScalarType,
   getNamedType,
+  type GraphQLInputFieldConfig,
   type GraphQLNamedType,
+  type GraphQLObjectTypeConfig,
+  type GraphQLType,
+  type ThunkObjMap,
 } from "graphql";
 
 import { capitalize } from "@azerothian/utilize/utils/word";
 import type GQLManager from "../manager";
-import type { SchemaCache } from "../types";
+import type { AdapterRow, Definition, RequestContext, SchemaCache } from "../types";
+import { isBuiltInputType, isBuiltOutputType, type AuthoredTypeSlot } from "./utils/authored-type";
 import createGQLInputObject from "./create-gql-input-object";
 import type { ExternalTypeRef } from "./snapshot/ledger";
+
+/** One entry of `definition.override`, as the definition author wrote it. */
+type AuthoredOverride = NonNullable<Definition["override"]>[string];
 
 /**
  * Re-derives a user-authored type from the live ormize definitions.
@@ -32,7 +37,7 @@ export function resolveExternalType(
   schemaCache: SchemaCache,
 ): GraphQLNamedType {
   const type = build(expectedName, ref, instance, schemaCache);
-  const named = (type ? getNamedType(type) : undefined) as unknown as GraphQLNamedType | undefined;
+  const named = (type ? getNamedType(type as GraphQLType) : undefined) as GraphQLNamedType | undefined;
   if (!named) {
     throw new Error(
       `gqlize: external type "${expectedName}" (${describeRef(ref)}) resolved to nothing on the ` +
@@ -53,7 +58,7 @@ function build(
   ref: ExternalTypeRef,
   instance: GQLManager,
   schemaCache: SchemaCache,
-): any {
+): unknown {
   const definition = instance.getDefinition(ref.defName);
   if (!definition) {
     throw new Error(
@@ -62,7 +67,7 @@ function build(
     );
   }
   if (ref.via === "definitionWhereOperator") {
-    const type = (definition as any).whereOperatorTypes?.[ref.operator];
+    const type = definition.whereOperatorTypes?.[ref.operator];
     if (!type) {
       throw new Error(
         `gqlize: external type "${expectedName}" needs ` +
@@ -73,7 +78,7 @@ function build(
     return type;
   }
   if (ref.via === "definitionField") {
-    const field: any = (instance.getFields(ref.defName) as any)?.[ref.fieldName];
+    const field = instance.getFields(ref.defName)?.[ref.fieldName];
     const arg = field?.args?.[ref.argName];
     if (!arg) {
       throw new Error(
@@ -123,27 +128,23 @@ function build(
 }
 
 /** mirrors `create-basic-fields.ts` — the override output-type branch */
-function overrideOutputType(override: any) {
-  if (
-    !(override.type instanceof GraphQLObjectType) &&
-    !(override.type instanceof GraphQLScalarType) &&
-    !(override.type instanceof GraphQLEnumType)
-  ) {
-    return new GraphQLObjectType(override.type);
+function overrideOutputType(override: AuthoredOverride) {
+  if (!isBuiltOutputType(override.type)) {
+    return new GraphQLObjectType(override.type as GraphQLObjectTypeConfig<AdapterRow, RequestContext>);
   }
   return override.type;
 }
 
 /** mirrors `create-mutation-input.ts` — the override input-type branch, naming included */
 function overrideInputType(
-  override: any,
+  override: AuthoredOverride,
   ref: Extract<ExternalTypeRef, {via: "definitionOverride"}>,
-  definition: any,
+  definition: Definition,
   instance: GQLManager,
   schemaCache: SchemaCache,
 ) {
   const {fieldName, forceOptional} = ref;
-  const type = override.inputType || override.type;
+  const type = (override.inputType || override.type) as AuthoredTypeSlot;
   let name = type.name;
   if (!override.inputType) {
     name = `${type.name}${capitalize(fieldName)}Input`;
@@ -151,14 +152,10 @@ function overrideInputType(
   if (forceOptional) {
     name = `${capitalize(type.name)}Optional${capitalize(fieldName)}`;
   }
-  if (
-    !(override.type instanceof GraphQLInputObjectType) &&
-    !(override.type instanceof GraphQLScalarType) &&
-    !(override.type instanceof GraphQLEnumType)
-  ) {
+  if (!isBuiltInputType(override.type)) {
     const field = instance.getFields(ref.defName)?.[fieldName];
     const comment = (definition.comments?.fields || {})[fieldName] || field?.description;
-    return createGQLInputObject(name, type.fields, schemaCache, comment);
+    return createGQLInputObject(name, type.fields as ThunkObjMap<GraphQLInputFieldConfig>, schemaCache, comment);
   }
   return type;
 }

@@ -8,9 +8,10 @@ import {
   DataTypes,
   isOrmizeDataType,
 } from "@azerothian/utilize/types/data-type";
+import type { DefinitionField, DefinitionFields, NativeDataType } from "@azerothian/utilize/types/index";
 
 /** Normalize an authored field type (token or JS constructor) to a descriptor. */
-export function toDescriptor(t: any): DataTypeDescriptor {
+export function toDescriptor(t: unknown): DataTypeDescriptor {
   if (isOrmizeDataType(t)) {
     return t;
   }
@@ -35,20 +36,24 @@ export function toDescriptor(t: any): DataTypeDescriptor {
 }
 
 /** Read path: classify a stored native type — already a descriptor for Valkey. */
-export function mapDataType(nativeType: any): DataTypeDescriptor {
+export function mapDataType(nativeType: NativeDataType): DataTypeDescriptor {
   return toDescriptor(nativeType);
 }
 
 /** Write path: the descriptor is the native type. */
-export function toNativeType(descriptor: DataTypeDescriptor): any {
+export function toNativeType(descriptor: DataTypeDescriptor): NativeDataType {
   return descriptor;
 }
 
 /** Normalize a whole `define` block's field types to descriptors. */
-export function resolveAttributeTypes(define: { [k: string]: any }): { [k: string]: any } {
-  const out: { [k: string]: any } = {};
+export function resolveAttributeTypes(define: DefinitionFields): { [k: string]: DefinitionField & { type: DataTypeDescriptor } } {
+  const out: { [k: string]: DefinitionField & { type: DataTypeDescriptor } } = {};
   for (const key of Object.keys(define || {})) {
     const field = define[key];
+    // `DefinitionFields` is the declared shape, but a `define` block also admits
+    // shorthand entries that are bare type tokens (`field: String`) rather than
+    // field-descriptor objects — so `field` here is only field-shaped once this
+    // check confirms it.
     if (field && typeof field === "object" && !isOrmizeDataType(field)) {
       out[key] = { ...field, type: toDescriptor(field.type) };
     } else {

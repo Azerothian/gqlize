@@ -33,7 +33,7 @@ export function findNodeInterfaceName(schema: GraphQLSchema): string | undefined
   const query = schema.getQueryType();
   if (query) {
     for (const field of Object.values(query.getFields())) {
-      if (readBinding(field as any)?.kind === "nodeField") {
+      if (readBinding(field)?.kind === "nodeField") {
         return getNamedType(field.type).name;
       }
     }
@@ -97,7 +97,7 @@ export function collectSnapshotTypes(
         visit(iface, queue);
       }
       for (const field of Object.values(type.getFields())) {
-        if (readBinding(field as any)?.kind === "extend") {
+        if (readBinding(field)?.kind === "extend") {
           continue;
         }
         visit(field.type, queue);

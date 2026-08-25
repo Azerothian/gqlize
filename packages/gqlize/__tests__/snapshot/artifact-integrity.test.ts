@@ -1,4 +1,4 @@
-import {GraphQLString, isObjectType} from "graphql";
+import {GraphQLSchema, GraphQLString, isObjectType} from "graphql";
 import Sequelize from "sequelize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import {Ormize} from "@azerothian/ormize";
@@ -6,7 +6,9 @@ import {describe, it, expect} from "@jest/globals";
 
 import {createSchema} from "../../src";
 import {materializeSchema, snapshotSchema} from "../../src/snapshot";
-import type {ObjectTypeIR, ScalarTypeIR, SchemaSnapshot} from "../../src/graphql/snapshot/ir";
+import type {ScalarTypeIR, SchemaSnapshot} from "../../src/graphql/snapshot/ir";
+import type {Definition, GqlizeOptions, ModelTypeHatch, SchemaHatch} from "../../src/types";
+import type {MaterializeOptions} from "../../src/graphql/snapshot/materialize";
 
 /**
  * The materializer's inconsistency guards.
@@ -21,7 +23,7 @@ import type {ObjectTypeIR, ScalarTypeIR, SchemaSnapshot} from "../../src/graphql
  * Each test takes a real artifact and breaks exactly one thing in it.
  */
 
-function defs(): any[] {
+function defs(): Definition[] {
   return [
     {
       name: "Parent",
@@ -42,7 +44,7 @@ function defs(): any[] {
   ];
 }
 
-async function orm(extra: any[] = []) {
+async function orm(extra: Definition[] = []) {
   const db = new Ormize();
   db.registerAdapter(new SequelizeAdapter({}, {dialect: "sqlite", logging: false}), "db");
   for (const def of [...defs(), ...extra]) {
@@ -53,28 +55,34 @@ async function orm(extra: any[] = []) {
 }
 
 /** A real artifact, through JSON exactly as it would sit on disk. */
-async function artifact(options?: any): Promise<SchemaSnapshot> {
+async function artifact(options?: GqlizeOptions): Promise<SchemaSnapshot> {
   return JSON.parse(JSON.stringify(snapshotSchema(await createSchema(await orm(), options))));
 }
 
 /** Build an artifact, break one thing in it, and try to load it. */
-async function loadBroken(breakIt: (snapshot: any) => void, options?: any) {
+async function loadBroken(breakIt: (snapshot: SchemaSnapshot) => void, options?: GqlizeOptions & MaterializeOptions) {
   const snapshot = await artifact(options);
   breakIt(snapshot);
   return materializeSchema(snapshot, await orm(), options);
 }
 
 /** Make a type reachable from the query root, so its lazy thunks actually run. */
-function referenceFromQuery(snapshot: any, typeName: string) {
-  const query = snapshot.types.find((t: any) => t.name === snapshot.query) as ObjectTypeIR;
+function referenceFromQuery(snapshot: SchemaSnapshot, typeName: string) {
+  const query = snapshot.types.find((t) => t.name === snapshot.query);
+  if (!query || query.kind !== "object") {
+    throw new Error(`Expected snapshot to have an object type named "${snapshot.query}" for its query root`);
+  }
   query.fields.push({name: "ghost", type: typeName});
 }
 
 describe("a broken artifact refuses to boot", () => {
   it("rejects a scalar whose registry key no longer exists", async() => {
     await expect(loadBroken((snapshot) => {
-      const scalar = snapshot.types.find((t: any) => t.kind === "scalar") as ScalarTypeIR;
+      const scalar = snapshot.types.find((t): t is ScalarTypeIR => t.kind === "scalar");
       expect(scalar).toBeDefined();
+      if (!scalar) {
+        throw new Error("Expected the snapshot to contain a scalar type");
+      }
       scalar.registryKey = "no-such-scalar";
     })).rejects.toThrow(/no-such-scalar|scalar/i);
   });
@@ -90,7 +98,10 @@ describe("a broken artifact refuses to boot", () => {
     // `new GraphQLSchema` would complain too, but its message names neither the
     // referring type nor the artifact it came out of.
     await expect(loadBroken((snapshot) => {
-      const enumType = snapshot.types.find((t: any) => t.kind === "enum");
+      const enumType = snapshot.types.find((t) => t.kind === "enum");
+      if (!enumType) {
+        throw new Error("Expected the snapshot to contain an enum type");
+      }
       snapshot.types.push({kind: "union", name: "Ghost", types: [enumType.name]});
       referenceFromQuery(snapshot, "Ghost");
     })).rejects.toThrow(/lists "\w+" as a member, but it is not an object type/);
@@ -98,7 +109,10 @@ describe("a broken artifact refuses to boot", () => {
 
   it("rejects an implemented interface that is not an interface type", async() => {
     await expect(loadBroken((snapshot) => {
-      const child = snapshot.types.find((t: any) => t.name === "Child") as ObjectTypeIR;
+      const child = snapshot.types.find((t) => t.name === "Child");
+      if (!child || child.kind !== "object") {
+        throw new Error('Expected the snapshot to contain an object type named "Child"');
+      }
       child.interfaces = ["Parent"];
     })).rejects.toThrow('gqlize: Child implements "Parent", but it is not an interface type');
   });
@@ -139,17 +153,25 @@ describe("a model no root field reaches", () => {
     const loner = [{name: "Loner", define: {name: {type: Sequelize.STRING}}, relationships: []}];
     const options = {permission: {query: (defName: string) => defName !== "Loner"}};
 
-    const snapshot = JSON.parse(JSON.stringify(
+    const snapshot: SchemaSnapshot = JSON.parse(JSON.stringify(
       snapshotSchema(await createSchema(await orm(loner), options)),
     ));
     expect(snapshot.ledger.modelTypes).toEqual(expect.arrayContaining(["Loner", "Loner[]"]));
-    expect(snapshot.types.some((t: any) => t.name === "Loner")).toBe(true);
+    expect(snapshot.types.some((t) => t.name === "Loner")).toBe(true);
 
-    const schema: any = await materializeSchema(snapshot as SchemaSnapshot, await orm(loner), options);
-    expect(schema.$sql2gql.types.Loner).toBeDefined();
+    const schema = await materializeSchema(snapshot, await orm(loner), options);
+    const hatch = (schema as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql;
+    expect(hatch?.types.Loner).toBeDefined();
     // Nothing reaches it: `models` is the only route to a model's list field.
-    expect(Object.keys(schema.getQueryType().getFields().models.type.getFields()))
-      .toEqual(["Parent", "Child"]);
+    const queryType = schema.getQueryType();
+    if (!queryType) {
+      throw new Error("Expected the materialized schema to have a query type");
+    }
+    const modelsField = queryType.getFields().models;
+    if (!("getFields" in modelsField.type)) {
+      throw new Error("Expected `models` field's type to expose getFields()");
+    }
+    expect(Object.keys(modelsField.type.getFields())).toEqual(["Parent", "Child"]);
   });
 });
 
@@ -158,7 +180,13 @@ describe("a materialized model type keeps its escape hatch", () => {
     const schema = await materializeSchema(await artifact(), await orm());
     const child = schema.getType("Child");
     expect(isObjectType(child)).toBe(true);
-    const hatch = (child as any).$sql2gql;
+    if (!isObjectType(child)) {
+      throw new Error('Expected "Child" to be a GraphQLObjectType');
+    }
+    const hatch = (child as typeof child & {$sql2gql?: ModelTypeHatch}).$sql2gql;
+    if (!hatch) {
+      throw new Error('Expected "Child" to carry its $sql2gql escape hatch');
+    }
     // The live builder stores the memoised partition thunks it happened to
     // build from; here the same partition is recovered from the binding kinds.
     expect(Object.keys(hatch.basicFields())).toEqual(expect.arrayContaining(["id", "name"]));

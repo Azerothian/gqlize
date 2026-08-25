@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it } from "@jest/globals";
+import type { Ormize } from "@azerothian/ormize";
+import type { ActivityMap } from "../src/types";
 import { createActivities } from "../src/activities";
 import { ErrorType } from "../src/workflow-types";
 import { buildOrm, ctx, expectFailure, seenContexts } from "./helper";
+import type { TestContext } from "./helper";
 
 describe("context propagation", () => {
-  let orm: any;
-  let acts: any;
+  let orm: Ormize;
+  let acts: ActivityMap;
 
   beforeEach(async () => {
     orm = await buildOrm();
@@ -32,12 +35,12 @@ describe("context propagation", () => {
   });
 
   it("installs the caller context as ormize's ambient context", async () => {
-    let ambient: any;
+    let ambient: unknown;
     await acts["Task.create"]({
       context: ctx,
       input: { name: "alpha" },
     });
-    await orm.runWithContext(ctx, async () => {
+    orm.runWithContext(ctx, () => {
       ambient = orm.getContext();
     });
     expect(ambient).toBe(ctx);
@@ -55,7 +58,9 @@ describe("context propagation", () => {
     const a = { userId: "a", role: "admin" };
     const b = { userId: "b", role: "admin" };
     await Promise.all([acts["Item.findAll"]({ context: a }), acts["Item.findAll"]({ context: b })]);
-    const users = seenContexts.map((c) => c && c.userId).filter(Boolean);
+    const users = seenContexts
+      .map((c) => (typeof c === "object" && c !== null && "userId" in c ? (c as TestContext).userId : undefined))
+      .filter(Boolean);
     expect(users).toContain("a");
     expect(users).toContain("b");
   });

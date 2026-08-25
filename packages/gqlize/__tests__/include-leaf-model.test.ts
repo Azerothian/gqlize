@@ -2,9 +2,11 @@ import {graphql} from "graphql";
 import Sequelize from "sequelize";
 import { Ormize as Database } from "@azerothian/ormize";
 import {createSchema} from "../src";
-import {validateResult} from "./helper";
+import {resultData, validateResult} from "./helper";
 import {createAdapterForDialect, registerTeardown} from "./helper/dialect";
 import {describe, it, expect} from "@jest/globals";
+
+type RootLeafResult = {models: {Root: {edges: {node: {title: string; leaf: {name: string}}}[]}}};
 
 describe("include type for leaf relationship targets", () => {
   it("builds a schema (and queries) when a relation target has no relationships", async () => {
@@ -29,11 +31,11 @@ describe("include type for leaf relationship targets", () => {
     const leaf = await Leaf.create({name: "leaf1"});
     await Root.create({title: "root1", leafId: leaf.get("id")});
 
-    const result = (await graphql({
+    const result = await graphql({
       schema,
       source: `query { models { Root { edges { node { title leaf { name } } } } } }`,
-    })) as any;
+    });
     validateResult(result);
-    expect(result.data.models.Root.edges[0].node.leaf.name).toEqual("leaf1");
+    expect(resultData<RootLeafResult>(result).models.Root.edges[0].node.leaf.name).toEqual("leaf1");
   });
 });

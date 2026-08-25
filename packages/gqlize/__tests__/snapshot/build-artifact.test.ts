@@ -25,7 +25,7 @@ describe("buildArtifact", () => {
   afterAll(() => rmSync(dir, {recursive: true, force: true}));
 
   it("writes a JSON artifact matching snapshotSchema's output", async() => {
-    const instance: any = await createInstance();
+    const instance = await createInstance();
     const out = join(dir, "schema.json");
 
     const result = await buildArtifact(instance, {out});
@@ -41,7 +41,7 @@ describe("buildArtifact", () => {
   });
 
   it("gzips the artifact when `out` ends in .gz", async() => {
-    const instance: any = await createInstance();
+    const instance = await createInstance();
     const out = join(dir, "schema.json.gz");
 
     const result = await buildArtifact(instance, {out});
@@ -57,7 +57,7 @@ describe("buildArtifact", () => {
   });
 
   it("writes an SDL sidecar when `sdl` is given", async() => {
-    const instance: any = await createInstance();
+    const instance = await createInstance();
     const out = join(dir, "schema-with-sdl.json");
     const sdl = join(dir, "schema-with-sdl.graphql");
 

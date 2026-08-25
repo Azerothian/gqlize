@@ -3,9 +3,18 @@ import Sequelize from "sequelize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 // import ItemDef from "./models/item";
 import TaskDef from "./helper/models/task";
-import { Definition, OrmAdapter } from "../src/types";
+import { Definition, OrmAdapter, Model } from "../src/types";
 // import TaskItemDef from "./models/task-item";
 import {test,expect} from "@jest/globals";
+
+// `Model` (from utilize) types an adapter's model handle as an indexable
+// object, but doesn't claim it's constructible, and types `prototype` as a
+// bare `object` since not every adapter's model has one. Both are true here:
+// these tests instantiate a class-based adapter's model (Sequelize's
+// `ModelStatic`) directly and reach named methods off its prototype.
+type ModelClass = Omit<Model, "prototype"> & {
+  prototype: Record<string, unknown>;
+} & (new (...args: unknown[]) => Record<string, unknown>);
 
 
 test("manager - registerAdapter", () => {
@@ -128,7 +137,7 @@ test("manager - processRelationship - hasMany - multi adapter", async() => {
   await db.addDefinition(parentDef, "sqlite");
   await db.addDefinition(childDef, "sqlite2");
   await db.processRelationship(parentDef, db.getModelAdapter("Parent"), parentDef.relationships[0]);
-  const ParentModel = db.getModel("Parent") as any;
+  const ParentModel = db.getModel("Parent") as ModelClass;
   expect(db.relationships.Parent).toBeDefined();
   expect(db.relationships.Parent.children).toBeDefined();
   expect(db.relationships.Parent.children.internal).toEqual(false);
@@ -246,7 +255,7 @@ test("manager - processRelationship - belongsTo - multi adapter", async() => {
   await db.processRelationship(parentDef, db.getModelAdapter("Parent"), parentDef.relationships[0]);
   await db.processRelationship(childDef, db.getModelAdapter("Child"), childDef.relationships[0]);
 
-  const ChildModel = db.getModel("Child") as any;
+  const ChildModel = db.getModel("Child") as ModelClass;
   expect(db.relationships.Child).toBeDefined();
   expect(db.relationships.Child.parent).toBeDefined();
   expect(db.relationships.Child.parent.internal).toEqual(false);

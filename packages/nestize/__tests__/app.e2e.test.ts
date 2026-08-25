@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
+import type { Server } from "http";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
@@ -7,10 +8,13 @@ import { NestizeModule } from "../src";
 import type { Ormize } from "@azerothian/ormize";
 import { buildOrm } from "./helper";
 
+/** A single task row, as returned by the REST API. */
+type TaskRow = { name: string };
+
 describe("nestize - REST e2e", () => {
-  let app: INestApplication;
+  let app: INestApplication<Server>;
   let orm: Ormize;
-  let http: any;
+  let http: Server;
 
   beforeAll(async () => {
     orm = await buildOrm();
@@ -76,7 +80,7 @@ describe("nestize - REST e2e", () => {
     const res = await request(http).get(`/item/${itemId}/tasks`);
     expect(res.status).toBe(200);
     expect(res.body.total).toBeGreaterThan(0);
-    expect(res.body.rows.some((t: any) => t.name === "child")).toBe(true);
+    expect((res.body.rows as TaskRow[]).some((t) => t.name === "child")).toBe(true);
   });
 
   it("DELETE /task?filter removes matching rows", async () => {
@@ -91,8 +95,8 @@ describe("nestize - REST e2e", () => {
 });
 
 describe("nestize - permission denied", () => {
-  let app: INestApplication;
-  let http: any;
+  let app: INestApplication<Server>;
+  let http: Server;
 
   beforeAll(async () => {
     const orm = await buildOrm();

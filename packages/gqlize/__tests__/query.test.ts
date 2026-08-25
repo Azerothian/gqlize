@@ -1,10 +1,54 @@
-import {graphql} from "graphql";
-import {createInstance, validateResult} from "./helper";
+import {graphql, GraphQLSchema} from "graphql";
+import {createInstance, resultData, validateResult} from "./helper";
 import {createSchema} from "../src";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 
 import {describe, it, expect} from "@jest/globals";
 import {toGlobalId} from "graphql-relay";
+
+type Edge<T> = {node: T; cursor?: string};
+type Connection<T> = {edges: Edge<T>[]};
+
+type TaskRow = {id: string; name: string};
+type TaskModelsResult = {models: {Task: Connection<TaskRow>}};
+
+type TaskWithOptionsRow = {id: string; name: string; options: {hidden?: string}};
+type TaskWithOptionsResult = {models: {Task: Connection<TaskWithOptionsRow>}};
+
+type TaskWithItemsRow = {id: string; name: string; items: Connection<{id: string; name?: string}>};
+type TaskWithItemsResult = {models: {Task: Connection<TaskWithItemsRow>}};
+
+type TaskWithInstanceMethodRow = {id: string; name: string; testInstanceMethod: {name: string}[]};
+type TaskInstanceMethodResult = {models: {Task: Connection<TaskWithInstanceMethodRow>}};
+
+type ClassMethodHiddenResult = {classMethods: {Task: {getHiddenData: {hidden: string}}}};
+type ClassMethodReverseArrayResult = {classMethods: {Task: {reverseNameArray: {name: string}[]}}};
+
+type EnumValuesResult = {__type: {enumValues: {name: string}[]}};
+
+type ItemRow = {
+  id: string;
+  name: string;
+  parentId?: string | null;
+  children: Connection<{id: string; name: string}>;
+  parent?: {id: string; name: string} | null;
+};
+type ItemModelsResult = {models: {Item: Connection<ItemRow>}};
+
+type ParentMutationResult = {models: {Parent: {id: string; name: string; children: Connection<{parentId: string | null}>}[]}};
+
+type ChildRow = {name: string; parent: {id: string; name: string} | null};
+type ChildModelsResult = {models: {Child: Connection<ChildRow>}};
+
+type TaskItemRow = {id: string; name: string};
+type TaskItemModelsResult = {models: {TaskItem: Connection<TaskItemRow>}};
+
+async function run<T = unknown>(schema: GraphQLSchema, source: string, rootValue?: unknown): Promise<T> {
+  const result = await graphql({schema, source, rootValue});
+  validateResult(result);
+  return resultData<T>(result);
+}
+
 describe("queries", () => {
   it("basic", async() => {
     const instance = await createInstance();
@@ -21,9 +65,8 @@ describe("queries", () => {
       }),
     ]);
     const schema = await createSchema(instance);
-    const result = await graphql({schema, source: "query { models { Task { edges { node { id, name } } } } }"}) as any;
-    validateResult(result);
-    return expect(result.data.models.Task.edges).toHaveLength(3);
+    const {models} = await run<TaskModelsResult>(schema, "query { models { Task { edges { node { id, name } } } } }");
+    return expect(models.Task.edges).toHaveLength(3);
   });
   it("classMethod", async() => {
     const instance = await createInstance();
@@ -38,9 +81,8 @@ describe("queries", () => {
         }
       }
     }`;
-    const result = await graphql({schema, source:query}) as any;
-    validateResult(result);
-    return expect(result.data.classMethods.Task.getHiddenData.hidden).toEqual("Hi");
+    const {classMethods} = await run<ClassMethodHiddenResult>(schema, query);
+    return expect(classMethods.Task.getHiddenData.hidden).toEqual("Hi");
   });
   it("classMethod - list", async() => {
     const instance = await createInstance();
@@ -55,9 +97,8 @@ describe("queries", () => {
         }
       }
     }`;
-    const result = await graphql({schema, source:query}) as any;
-    validateResult(result);
-    return expect(result.data.classMethods.Task.reverseNameArray[0].name).toEqual("reverseName4");
+    const {classMethods} = await run<ClassMethodReverseArrayResult>(schema, query);
+    return expect(classMethods.Task.reverseNameArray[0].name).toEqual("reverseName4");
   });
   it("override", async() => {
     const instance = await createInstance();
@@ -67,10 +108,8 @@ describe("queries", () => {
       name: "item1",
       options: JSON.stringify({"hidden": "invisibot"}),
     });
-    const result = await graphql({schema, source:"query { models { Task { edges { node { id, name, options {hidden} } } } } }"}) as any;
-    validateResult(result);
-    // console.log("result", result.data.models.Task[0]);
-    return expect(result.data.models.Task.edges[0].node.options.hidden).toEqual("invisibot");
+    const {models} = await run<TaskWithOptionsResult>(schema, "query { models { Task { edges { node { id, name, options {hidden} } } } } }");
+    return expect(models.Task.edges[0].node.options.hidden).toEqual("invisibot");
   });
   it("filter hooks", async() => {
     const instance = await createInstance();
@@ -83,7 +122,7 @@ describe("queries", () => {
       taskId: model.get("id"),
     });
     const schema = await createSchema(instance);
-    const result = await graphql({schema, source:`query {
+    const {models} = await run<TaskWithItemsResult>(schema, `query {
       models { 
         Task { 
           edges { 
@@ -101,10 +140,9 @@ describe("queries", () => {
           } 
         } 
       }
-    }`, rootValue:{filterName: "filterMe"}}) as any;
+    }`, {filterName: "filterMe"});
 
-    validateResult(result);
-    return expect(result.data.models.Task.edges[0].node.items.edges).toHaveLength(0);
+    return expect(models.Task.edges[0].node.items.edges).toHaveLength(0);
   });
   it("instance method", async() => {
     const instance = await createInstance();
@@ -121,7 +159,7 @@ describe("queries", () => {
       }),
     ]);
     const schema = await createSchema(instance);
-    const result = await graphql({schema, source:`{
+    const {models} = await run<TaskInstanceMethodResult>(schema, `{
       models {
         Task {
           edges {
@@ -136,12 +174,11 @@ describe("queries", () => {
         }
       }
     }
-    `}) as any;
-    validateResult(result);
-    expect(result.data.models.Task.edges[0].node.testInstanceMethod[0].name).toEqual("item11");
-    expect(result.data.models.Task.edges[1].node.testInstanceMethod[0].name).toEqual("item21");
-    expect(result.data.models.Task.edges[2].node.testInstanceMethod[0].name).toEqual("item31");
-    return expect(result.data.models.Task.edges).toHaveLength(3);
+    `);
+    expect(models.Task.edges[0].node.testInstanceMethod[0].name).toEqual("item11");
+    expect(models.Task.edges[1].node.testInstanceMethod[0].name).toEqual("item21");
+    expect(models.Task.edges[2].node.testInstanceMethod[0].name).toEqual("item31");
+    return expect(models.Task.edges).toHaveLength(3);
   });
   it("orderBy asc", async() => {
     const instance = await createInstance();
@@ -164,11 +201,10 @@ describe("queries", () => {
       }),
     ]);
     const schema = await createSchema(instance);
-    const result = await graphql({schema, source:"query { models { Task { edges { node { id, name, items(orderBy: idASC) {edges {node{id, name}}} } } } } }"}) as any;
-    validateResult(result);
-    expect(result.data.models.Task.edges[0].node.name).toEqual("task1");
-    expect(result.data.models.Task.edges[0].node.items.edges).toHaveLength(3);
-    return expect(result.data.models.Task.edges[0].node.items.edges[0].node.name).toEqual("taskitem1");
+    const {models} = await run<TaskWithItemsResult>(schema, "query { models { Task { edges { node { id, name, items(orderBy: idASC) {edges {node{id, name}}} } } } } }");
+    expect(models.Task.edges[0].node.name).toEqual("task1");
+    expect(models.Task.edges[0].node.items.edges).toHaveLength(3);
+    return expect(models.Task.edges[0].node.items.edges[0].node.name).toEqual("taskitem1");
   });
   it("orderBy desc", async() => {
     const instance = await createInstance();
@@ -191,20 +227,18 @@ describe("queries", () => {
       }),
     ]);
     const schema = await createSchema(instance);
-    const result = await graphql({schema, source:"query { models { Task { edges { node { id, name, items(orderBy: idDESC) {edges {node{id, name}}} } } } } }"}) as any;
-    validateResult(result);
-    expect(result.data.models.Task.edges[0].node.name).toEqual("task1");
-    expect(result.data.models.Task.edges[0].node.items.edges).toHaveLength(3);
-    return expect(result.data.models.Task.edges[0].node.items.edges[0].node.name).toEqual("taskitem3");
+    const {models} = await run<TaskWithItemsResult>(schema, "query { models { Task { edges { node { id, name, items(orderBy: idDESC) {edges {node{id, name}}} } } } } }");
+    expect(models.Task.edges[0].node.name).toEqual("task1");
+    expect(models.Task.edges[0].node.items.edges).toHaveLength(3);
+    return expect(models.Task.edges[0].node.items.edges[0].node.name).toEqual("taskitem3");
   });
   it("orderBy values", async() => {
     const instance = await createInstance();
     // const {TaskItem} = instance.models;
     // const fields = TaskItem.$sqlgql.define;
     const schema = await createSchema(instance);
-    const result = await graphql({schema, source:"query {__type(name:\"TaskItemOrderBy\") { enumValues {name} }}"}) as any;
-    validateResult(result);
-    const enumValues = result.data.__type.enumValues.map((x: any) => x.name);// eslint-disable-line
+    const {__type} = await run<EnumValuesResult>(schema, "query {__type(name:\"TaskItemOrderBy\") { enumValues {name} }}");
+    const enumValues = __type.enumValues.map((x) => x.name);
     // const fields = instance.getFields();
     // Object.keys(fields).map((field) => {
     //   expect(enumValues).toContain(`${field}ASC`);
@@ -231,10 +265,9 @@ describe("queries", () => {
         }
       }
     }`;
-    const itemResult = await graphql({schema, source:mutation}) as any;
-    validateResult(itemResult);
+    await run(schema, mutation);
 
-    const queryResult = await graphql({schema, source:`query {
+    const {models} = await run<ItemModelsResult>(schema, `query {
       models {
         Item {
           edges {
@@ -245,9 +278,8 @@ describe("queries", () => {
           }
         }
       }
-    }`}) as any;
-    validateResult(queryResult);
-    expect(queryResult.data.models.Item.edges).toHaveLength(1);
+    }`);
+    expect(models.Item.edges).toHaveLength(1);
   });
   it("test relationships - hasMany", async() => {
     const instance = await createInstance();
@@ -267,10 +299,9 @@ describe("queries", () => {
         }
       }
     }`;
-    const itemResult = await graphql({schema, source:mutation}) as any;
-    validateResult(itemResult);
+    await run(schema, mutation);
 
-    const queryResult = await graphql({schema, source:`query {
+    const {models} = await run<ItemModelsResult>(schema, `query {
       models {
         Item(where: {
           name: {eq:"item1"}
@@ -296,11 +327,10 @@ describe("queries", () => {
           }
         }
       }
-    }`}) as any;
-    validateResult(queryResult);
-    expect(queryResult.data.models.Item.edges).toHaveLength(1);
-    expect(queryResult.data.models.Item.edges[0].node.parent).not.toBeNull();
-    expect(queryResult.data.models.Item.edges[0].node.children.edges).toHaveLength(1);
+    }`);
+    expect(models.Item.edges).toHaveLength(1);
+    expect(models.Item.edges[0].node.parent).not.toBeNull();
+    expect(models.Item.edges[0].node.children.edges).toHaveLength(1);
   });
 
   it("test relationships - hasMany - inner where", async() => {
@@ -321,10 +351,9 @@ describe("queries", () => {
         }
       }
     }`;
-    const itemResult = await graphql({schema, source:mutation}) as any;
-    validateResult(itemResult);
+    await run(schema, mutation);
 
-    const queryResult = await graphql({schema, source:`query {
+    const {models} = await run<ItemModelsResult>(schema, `query {
       models {
         Item(where: {
           name: {eq:"item"}
@@ -346,13 +375,12 @@ describe("queries", () => {
           }
         }
       }
-    }`}) as any;
-    validateResult(queryResult);
-    expect(queryResult.data.models.Item.edges).toHaveLength(1);
-    expect(queryResult.data.models.Item.edges[0].node).not.toBeNull();
-    expect(queryResult.data.models.Item.edges[0].node.name).toBe("item");
-    expect(queryResult.data.models.Item.edges[0].node.children.edges).toHaveLength(1);
-    expect(queryResult.data.models.Item.edges[0].node.children.edges[0].node.name).toBe("item2");
+    }`);
+    expect(models.Item.edges).toHaveLength(1);
+    expect(models.Item.edges[0].node).not.toBeNull();
+    expect(models.Item.edges[0].node.name).toBe("item");
+    expect(models.Item.edges[0].node.children.edges).toHaveLength(1);
+    expect(models.Item.edges[0].node.children.edges[0].node.name).toBe("item2");
 
   });
 
@@ -375,10 +403,9 @@ describe("queries", () => {
         }
       }
     }`;
-    const itemResult = await graphql({schema, source:mutation}) as  any;
-    validateResult(itemResult);
+    await run(schema, mutation);
 
-    const queryResult = await graphql({schema, source:`query {
+    const {models} = await run<ItemModelsResult>(schema, `query {
       models {
         Item(where: {
           name: {eq:"item"}
@@ -404,10 +431,9 @@ describe("queries", () => {
           }
         }
       }
-    }`}) as any;
-    validateResult(queryResult);
-    expect(queryResult.data.models.Item.edges).toHaveLength(1);
-    expect(queryResult.data.models.Item.edges[0].node.parent).not.toBeNull();
+    }`);
+    expect(models.Item.edges).toHaveLength(1);
+    expect(models.Item.edges[0].node.parent).not.toBeNull();
 
   });
 });
@@ -432,7 +458,7 @@ it("include operator - not required", async() => {
     name: "task2",
   });
   const schema = await createSchema(instance);
-  const result = await graphql({schema, source:`query {
+  const {models} = await run<TaskWithItemsResult>(schema, `query {
     models { 
       Task(include: {
         items: {
@@ -454,12 +480,11 @@ it("include operator - not required", async() => {
         } 
       } 
     }
-  }`}) as any;
+  }`);
 
-  validateResult(result);
-  expect(result.data.models.Task.edges).toHaveLength(2);
-  expect(result.data.models.Task.edges[0].node.name).toEqual("task1");
-  expect(result.data.models.Task.edges[0].node.items.edges).toHaveLength(2);
+  expect(models.Task.edges).toHaveLength(2);
+  expect(models.Task.edges[0].node.name).toEqual("task1");
+  expect(models.Task.edges[0].node.items.edges).toHaveLength(2);
 });
 
 
@@ -482,7 +507,7 @@ it("include operator - relationship filter", async() => {
     name: "task2",
   });
   const schema = await createSchema(instance);
-  const result = await graphql({schema, source:`query {
+  const {models} = await run<TaskWithItemsResult>(schema, `query {
     models { 
       Task(include: {
         items: {
@@ -510,13 +535,12 @@ it("include operator - relationship filter", async() => {
         } 
       } 
     }
-  }`}) as any;
+  }`);
 
-  validateResult(result);
-  expect(result.data.models.Task.edges).toHaveLength(1);
-  expect(result.data.models.Task.edges[0].node.name).toEqual("task1");
-  expect(result.data.models.Task.edges[0].node.items.edges).toHaveLength(1);
-  expect(result.data.models.Task.edges[0].node.items.edges[0].node.name).toEqual("taskitem2");
+  expect(models.Task.edges).toHaveLength(1);
+  expect(models.Task.edges[0].node.name).toEqual("task1");
+  expect(models.Task.edges[0].node.items.edges).toHaveLength(1);
+  expect(models.Task.edges[0].node.items.edges[0].node.name).toEqual("taskitem2");
 });
 
 it("include operator - required", async() => {
@@ -538,7 +562,7 @@ it("include operator - required", async() => {
     name: "task2",
   });
   const schema = await createSchema(instance);
-  const result = await graphql({schema, source:`query {
+  const {models} = await run<TaskWithItemsResult>(schema, `query {
     models { 
       Task(include: {
         items: {
@@ -560,12 +584,11 @@ it("include operator - required", async() => {
         } 
       } 
     }
-  }`}) as any;
+  }`);
 
-  validateResult(result);
-  expect(result.data.models.Task.edges).toHaveLength(1);
-  expect(result.data.models.Task.edges[0].node.name).toEqual("task1");
-  expect(result.data.models.Task.edges[0].node.items.edges).toHaveLength(2);
+  expect(models.Task.edges).toHaveLength(1);
+  expect(models.Task.edges[0].node.name).toEqual("task1");
+  expect(models.Task.edges[0].node.items.edges).toHaveLength(2);
 });
 
 it("include operator - where primarykey converted correctly", async() => {
@@ -587,7 +610,7 @@ it("include operator - where primarykey converted correctly", async() => {
     name: "task2",
   });
   const schema = await createSchema(instance);
-  const result = await graphql({schema, source:`query {
+  const {models} = await run<TaskWithItemsResult>(schema, `query {
     models { 
       Task(include: {
         items: {
@@ -614,12 +637,11 @@ it("include operator - where primarykey converted correctly", async() => {
         } 
       } 
     }
-  }`}) as any;
+  }`);
 
-  validateResult(result);
-  expect(result.data.models.Task.edges).toHaveLength(1);
-  expect(result.data.models.Task.edges[0].node.name).toEqual("task1");
-  expect(result.data.models.Task.edges[0].node.items.edges).toHaveLength(1);
+  expect(models.Task.edges).toHaveLength(1);
+  expect(models.Task.edges[0].node.name).toEqual("task1");
+  expect(models.Task.edges[0].node.items.edges).toHaveLength(1);
 });
 
 
@@ -637,7 +659,7 @@ it("where operators - not chained", async() => {
     name: "task2",
   });
   const schema = await createSchema(instance);
-  const result = await graphql({schema, source:`query {
+  const {models} = await run<TaskWithItemsResult>(schema, `query {
     models { 
       Task(where: {hasNoItems: true}) { 
         edges { 
@@ -655,12 +677,11 @@ it("where operators - not chained", async() => {
         } 
       } 
     }
-  }`}) as any;
+  }`);
 
-  validateResult(result);
-  expect(result.data.models.Task.edges).toHaveLength(1);
-  expect(result.data.models.Task.edges[0].node.name).toEqual("task2");
-  expect(result.data.models.Task.edges[0].node.items.edges).toHaveLength(0);
+  expect(models.Task.edges).toHaveLength(1);
+  expect(models.Task.edges[0].node.name).toEqual("task2");
+  expect(models.Task.edges[0].node.items.edges).toHaveLength(0);
 });
 
 
@@ -678,7 +699,7 @@ it("where operators - chained", async() => {
     name: "task2",
   });
   const schema = await createSchema(instance);
-  const result = await graphql({schema, source:`query {
+  const {models} = await run<TaskWithItemsResult>(schema, `query {
     models { 
       Task(where: {chainTest: true}) { 
         edges { 
@@ -696,12 +717,11 @@ it("where operators - chained", async() => {
         } 
       } 
     }
-  }`}) as any;
+  }`);
 
-  validateResult(result);
-  expect(result.data.models.Task.edges).toHaveLength(1);
-  expect(result.data.models.Task.edges[0].node.name).toEqual("task2");
-  expect(result.data.models.Task.edges[0].node.items.edges).toHaveLength(0);
+  expect(models.Task.edges).toHaveLength(1);
+  expect(models.Task.edges[0].node.name).toEqual("task2");
+  expect(models.Task.edges[0].node.items.edges).toHaveLength(0);
 });
 it("paging asc", async() => {
   const instance = await createInstance();
@@ -721,7 +741,7 @@ it("paging asc", async() => {
   }], (item) => TaskItem.create(item));
 
   const schema = await createSchema(instance);
-  const result = await graphql({schema, source:`query {
+  const {models} = await run<TaskItemModelsResult>(schema, `query {
   models {
     TaskItem {
       edges {
@@ -733,10 +753,9 @@ it("paging asc", async() => {
       }
     }
   }
-}`}) as any;
-  validateResult(result);
-  const firstItem = result.data.models.TaskItem.edges[0];
-  const target = result.data.models.TaskItem.edges[1];
+}`);
+  const firstItem = models.TaskItem.edges[0];
+  const target = models.TaskItem.edges[1];
   expect(firstItem.node.name).toEqual("taskitem1");
   expect(target.node.name).toEqual("taskitem2");
   const queryResult = await graphql({schema, source:`query {
@@ -751,8 +770,9 @@ it("paging asc", async() => {
       }
     }
   }
-}`}) as any;
-  const pageTarget = queryResult.data.models.TaskItem.edges[0];
+}`});
+  const pageResult = resultData<TaskItemModelsResult>(queryResult);
+  const pageTarget = pageResult.models.TaskItem.edges[0];
   expect(pageTarget.node.name).toEqual("taskitem2");
 });
 
@@ -785,8 +805,9 @@ it("Child to Parent", async() => {
       }
     }
   }`;
-  const res = await graphql({schema, source:mutation}) as any;
-  expect(res.data.models.Parent).toHaveLength(1);
+  const mutationResult = await graphql({schema, source:mutation});
+  const mutationData = resultData<ParentMutationResult>(mutationResult);
+  expect(mutationData.models.Parent).toHaveLength(1);
 
   const query = `
     query {
@@ -806,6 +827,7 @@ it("Child to Parent", async() => {
     }
   `;
 
-  const queryResult = await graphql({schema, source:query}) as any;
-  expect(queryResult.data.models.Child.edges[0].node.parent).not.toBeNull();
+  const queryResult = await graphql({schema, source:query});
+  const queryData = resultData<ChildModelsResult>(queryResult);
+  expect(queryData.models.Child.edges[0].node.parent).not.toBeNull();
 });

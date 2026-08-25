@@ -4,6 +4,7 @@ import {
   Kind,
   parseType,
   type GraphQLNamedType,
+  type GraphQLNullableType,
   type GraphQLType,
   type TypeNode,
 } from "graphql";
@@ -35,10 +36,10 @@ export function decodeTypeRef(
   let node: TypeNode;
   try {
     node = parseType(ref);
-  } catch (err: any) {
+  } catch (err) {
     throw new Error(
       `gqlize: could not parse type reference ${JSON.stringify(ref)}` +
-        `${coordinate ? ` at ${coordinate}` : ""}: ${err.message}`,
+        `${coordinate ? ` at ${coordinate}` : ""}: ${err instanceof Error ? err.message : String(err)}`,
       {cause: err},
     );
   }
@@ -53,7 +54,7 @@ function fromTypeNode(
 ): GraphQLType {
   switch (node.kind) {
     case Kind.NON_NULL_TYPE:
-      return new GraphQLNonNull(fromTypeNode(node.type, lookup, ref, coordinate) as any);
+      return new GraphQLNonNull(fromTypeNode(node.type, lookup, ref, coordinate) as GraphQLNullableType);
     case Kind.LIST_TYPE:
       return new GraphQLList(fromTypeNode(node.type, lookup, ref, coordinate));
     case Kind.NAMED_TYPE: {

@@ -1,14 +1,50 @@
-import {graphql} from "graphql";
-import {createInstance, validateResult} from "./helper";
+import {graphql, GraphQLSchema} from "graphql";
+import {createInstance, resultData, validateResult} from "./helper";
 import {createSchema} from "../src";
 import {describe, it, expect} from "@jest/globals";
+import {Ormize as Database} from "@azerothian/ormize";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 
 // NOTE: the test TaskItem model validates `name` as alphanumeric, 8-50 chars.
 
-function captureQueries(instance: any) {
+type Edge<T> = {node: T};
+type Connection<T> = {edges: Edge<T>[]; total?: number};
+
+type TaskWithItemsRow = {name: string; items: Connection<{name: string}>};
+type TaskModelsResult = {models: {Task: Connection<TaskWithItemsRow>}};
+
+type TaskWithBtmItemsRow = {name: string; btmItems: Connection<{name: string}>};
+type TaskBtmModelsResult = {models: {Task: Connection<TaskWithBtmItemsRow>}};
+
+type ItemChildRow = {name: string; children: Connection<{name: string}>};
+type ItemGrandchildRow = {name: string; children: Connection<ItemChildRow>};
+type ItemModelsResult = {models: {Item: Connection<ItemGrandchildRow>}};
+
+type TaskNameRow = {name: string};
+type TaskNamesResult = {models: {Task: Connection<TaskNameRow>}};
+
+type TaskWithItemRow = {name: string; item: {name: string}};
+type TaskWithItemResult = {models: {Task: Connection<TaskWithItemRow>}};
+
+async function run<T>(schema: GraphQLSchema, source: string, rootValue?: unknown): Promise<T> {
+  const result = await graphql({schema, source, rootValue});
+  validateResult(result);
+  return resultData<T>(result);
+}
+
+// `sequelize`'s public types never declare `.options` on `Sequelize` even
+// though it is set in its constructor and read throughout the library — it is
+// simply absent from the `.d.ts`, not fenced off. `unknown` names the exact
+// shape this test depends on rather than opening the door to anything else.
+type SequelizeWithLogging = {options: {logging: (sql: string) => void}};
+
+function captureQueries(instance: Database) {
   const queries: string[] = [];
   const adapter = instance.getModelAdapter("Task");
-  adapter.sequelize.options.logging = (sql: string) => queries.push(sql);
+  if (!(adapter instanceof SequelizeAdapter)) {
+    throw new Error("Expected the Task adapter to be a SequelizeAdapter");
+  }
+  (adapter.sequelize as unknown as SequelizeWithLogging).options.logging = (sql) => queries.push(sql);
   return {
     queries,
     selects: () => queries.filter((q) => /SELECT/i.test(q)),
@@ -31,17 +67,14 @@ describe("eager resolution (root-level include from selection)", () => {
 
     const schema = await createSchema(instance);
     const cap = captureQueries(instance);
-    const result = (await graphql({
-      schema,
-      source: `query { models { Task { edges { node { name items { edges { node { name } } } } } } } }`,
-    })) as any;
-    validateResult(result);
+    const {models} = await run<TaskModelsResult>(schema,
+      `query { models { Task { edges { node { name items { edges { node { name } } } } } } } }`);
 
-    const edges = result.data.models.Task.edges;
+    const edges = models.Task.edges;
     expect(edges).toHaveLength(5);
     const byName: Record<string, string[]> = {};
     for (const e of edges) {
-      byName[e.node.name] = e.node.items.edges.map((x: any) => x.node.name).sort();
+      byName[e.node.name] = e.node.items.edges.map((x) => x.node.name).sort();
     }
     expect(byName.task1).toEqual(["taskitemaa1", "taskitembb1"]);
     expect(byName.task2).toEqual(["taskitemaa2"]);
@@ -59,15 +92,12 @@ describe("eager resolution (root-level include from selection)", () => {
     await TaskItem.create({name: "taskitemdrop", taskId: task.get("id")});
 
     const schema = await createSchema(instance);
-    const result = (await graphql({
-      schema,
-      source: `query { models { Task { edges { node { name
+    const {models} = await run<TaskModelsResult>(schema,
+      `query { models { Task { edges { node { name
         items(where: { name: { eq: "taskitemkeep" } }) { edges { node { name } } }
-      } } } } }`,
-    })) as any;
-    validateResult(result);
+      } } } } }`);
 
-    const items = result.data.models.Task.edges[0].node.items.edges;
+    const items = models.Task.edges[0].node.items.edges;
     expect(items).toHaveLength(1);
     expect(items[0].node.name).toEqual("taskitemkeep");
   });
@@ -81,15 +111,12 @@ describe("eager resolution (root-level include from selection)", () => {
     await TaskItem.create({name: "taskitemccc", taskId: task.get("id")});
 
     const schema = await createSchema(instance);
-    const result = (await graphql({
-      schema,
-      source: `query { models { Task { edges { node { name
+    const {models} = await run<TaskModelsResult>(schema,
+      `query { models { Task { edges { node { name
         items(first: 2) { total edges { node { name } } }
-      } } } } }`,
-    })) as any;
-    validateResult(result);
+      } } } } }`);
 
-    const items = result.data.models.Task.edges[0].node.items;
+    const items = models.Task.edges[0].node.items;
     expect(items.edges).toHaveLength(2); // limited per parent
     expect(items.total).toEqual(3); // true total via count
   });
@@ -105,17 +132,14 @@ describe("eager resolution (root-level include from selection)", () => {
     const schema = await createSchema(instance);
     // parent include filters parents (required + where) AND the nested selection is present;
     // both must apply — the include is not clobbered by the auto-generated selection include.
-    const result = (await graphql({
-      schema,
-      source: `query { models {
+    const {models} = await run<TaskModelsResult>(schema,
+      `query { models {
         Task(include: { items: { required: true, where: { name: { eq: "taskitem2" } } } }) {
           edges { node { name items { edges { node { name } } } } }
         }
-      } }`,
-    })) as any;
-    validateResult(result);
+      } }`);
 
-    const edges = result.data.models.Task.edges;
+    const edges = models.Task.edges;
     expect(edges).toHaveLength(1); // required include filtered to task1 only
     expect(edges[0].node.name).toEqual("task1");
     expect(edges[0].node.items.edges).toHaveLength(1);
@@ -130,15 +154,12 @@ describe("eager resolution (root-level include from selection)", () => {
     await task.addBtmItem(item);
 
     const schema = await createSchema(instance);
-    const result = (await graphql({
-      schema,
-      source: `query { models { Task { edges { node { name
+    const {models} = await run<TaskBtmModelsResult>(schema,
+      `query { models { Task { edges { node { name
         btmItems { edges { node { name } } }
-      } } } } }`,
-    })) as any;
-    validateResult(result);
+      } } } } }`);
 
-    const btm = result.data.models.Task.edges[0].node.btmItems.edges;
+    const btm = models.Task.edges[0].node.btmItems.edges;
     expect(btm).toHaveLength(1);
     expect(btm[0].node.name).toEqual("itemone");
   });
@@ -155,22 +176,19 @@ describe("eager resolution (root-level include from selection)", () => {
 
     const schema = await createSchema(instance);
     const cap = captureQueries(instance);
-    const result = (await graphql({
-      schema,
-      source: `query {
+    const {models} = await run<TaskModelsResult>(schema,
+      `query {
         models { Task { edges { node { ...TaskFields } } } }
       }
       fragment TaskFields on Task {
         name
         items(where: { name: { eq: "taskitemaa1" } }) { edges { node { name } } }
-      }`,
-    })) as any;
-    validateResult(result);
+      }`);
 
-    const edges = result.data.models.Task.edges;
+    const edges = models.Task.edges;
     expect(edges).toHaveLength(5);
     // items came through the fragment AND the nested where was honored
-    const withItems = edges.filter((e: any) => e.node.items.edges.length > 0);
+    const withItems = edges.filter((e) => e.node.items.edges.length > 0);
     expect(withItems).toHaveLength(1);
     expect(withItems[0].node.items.edges[0].node.name).toEqual("taskitemaa1");
     // still batched (fragment folded into a single separate query, not N+1)
@@ -185,18 +203,15 @@ describe("eager resolution (root-level include from selection)", () => {
     await TaskItem.create({name: "taskitemdrop", taskId: task.get("id")});
 
     const schema = await createSchema(instance);
-    const result = (await graphql({
-      schema,
-      source: `query { models { Task { edges { node {
+    const {models} = await run<TaskModelsResult>(schema,
+      `query { models { Task { edges { node {
         ... on Task {
           name
           items(where: { name: { eq: "taskitemkeep" } }) { edges { node { name } } }
         }
-      } } } } }`,
-    })) as any;
-    validateResult(result);
+      } } } } }`);
 
-    const items = result.data.models.Task.edges[0].node.items.edges;
+    const items = models.Task.edges[0].node.items.edges;
     expect(items).toHaveLength(1);
     expect(items[0].node.name).toEqual("taskitemkeep");
   });
@@ -212,9 +227,8 @@ describe("eager resolution (root-level include from selection)", () => {
 
     const schema = await createSchema(instance);
     const cap = captureQueries(instance);
-    const result = (await graphql({
-      schema,
-      source: `query { models {
+    const {models} = await run<ItemModelsResult>(schema,
+      `query { models {
         Item(where: { name: { eq: "root1" } }) {
           edges { node { name
             children(where: { name: { eq: "childkeep" } }) {
@@ -226,11 +240,9 @@ describe("eager resolution (root-level include from selection)", () => {
             }
           } }
         }
-      } }`,
-    })) as any;
-    validateResult(result);
+      } }`);
 
-    const rootEdges = result.data.models.Item.edges;
+    const rootEdges = models.Item.edges;
     expect(rootEdges).toHaveLength(1);
     const rootNode = rootEdges[0].node;
     expect(rootNode.name).toEqual("root1");
@@ -259,9 +271,8 @@ describe("eager resolution (root-level include from selection)", () => {
     await Item.create({name: "granddrop", parentId: childKeep.get("id")});
 
     const schema = await createSchema(instance);
-    const result = (await graphql({
-      schema,
-      source: `query { models {
+    const {models} = await run<ItemModelsResult>(schema,
+      `query { models {
         Item(
           where: { name: { eq: "root1" } }
           include: {
@@ -281,11 +292,9 @@ describe("eager resolution (root-level include from selection)", () => {
             }
           } }
         }
-      } }`,
-    })) as any;
-    validateResult(result);
+      } }`);
 
-    const rootEdges = result.data.models.Item.edges;
+    const rootEdges = models.Item.edges;
     expect(rootEdges).toHaveLength(1);
     const rootNode = rootEdges[0].node;
     expect(rootNode.name).toEqual("root1");
@@ -317,24 +326,19 @@ describe("eager resolution (root-level include from selection)", () => {
 
     // JOIN (default, no pagination): folds into the parent query.
     const joinCap = captureQueries(instance);
-    const joinResult = (await graphql({schema, source: selection("")})) as any;
-    validateResult(joinResult);
+    const joinResult = await run<ItemModelsResult>(schema, selection(""));
     const joinSelects = joinCap.selects().length;
 
     // separate:true forced via the include arg — same selection, same data.
     const sepCap = captureQueries(instance);
-    const sepResult = (await graphql({
-      schema,
-      source: selection(", include: { children: { separate: true } }"),
-    })) as any;
-    validateResult(sepResult);
+    const sepResult = await run<ItemModelsResult>(schema, selection(", include: { children: { separate: true } }"));
     const sepSelects = sepCap.selects().length;
 
     // normalise child order (JOIN vs separate may order differently without orderBy)
-    const normalise = (r: any) =>
-      r.data.models.Item.edges.map((e: any) => ({
+    const normalise = (r: ItemModelsResult) =>
+      r.models.Item.edges.map((e) => ({
         name: e.node.name,
-        children: e.node.children.edges.map((c: any) => c.node.name).sort(),
+        children: e.node.children.edges.map((c) => c.node.name).sort(),
       }));
 
     // identical results
@@ -354,19 +358,16 @@ describe("eager resolution (root-level include from selection)", () => {
     await TaskItem.create({name: "taskitemvis", taskId: task.get("id")});
 
     const schema = await createSchema(instance);
-    const result = (await graphql({
-      schema,
-      source: `query { models { Task { edges { node { name
+    const {models} = await run<TaskModelsResult>(schema,
+      `query { models { Task { edges { node { name
         items { edges { node { name } } }
       } } } } }`,
-      rootValue: {filterName: "filterMe"},
-    })) as any;
-    validateResult(result);
+      {filterName: "filterMe"});
 
-    const items = result.data.models.Task.edges[0].node.items.edges;
+    const items = models.Task.edges[0].node.items.edges;
     // TaskItem.beforeFind removes rows named `filterName` — must apply even though
     // items are eager-loaded at the root level.
-    expect(items.map((x: any) => x.node.name)).toEqual(["taskitemvis"]);
+    expect(items.map((x) => x.node.name)).toEqual(["taskitemvis"]);
   });
 
   it("required:true on a collection filters parents (INNER JOIN)", async () => {
@@ -383,17 +384,15 @@ describe("eager resolution (root-level include from selection)", () => {
     } } } } }`;
 
     // Without required: LEFT JOIN — both tasks returned, task2's items empty.
-    const left = (await graphql({schema, source: src("")})) as any;
-    validateResult(left);
-    expect(left.data.models.Task.edges).toHaveLength(2);
+    const left = await run<TaskModelsResult>(schema, src(""));
+    expect(left.models.Task.edges).toHaveLength(2);
 
     // With required: INNER JOIN — only the task with a matching item.
-    const inner = (await graphql({schema, source: src("required: true, ")})) as any;
-    validateResult(inner);
-    expect(inner.data.models.Task.edges).toHaveLength(1);
-    expect(inner.data.models.Task.edges[0].node.name).toEqual("task1");
-    expect(inner.data.models.Task.edges[0].node.items.edges).toHaveLength(1);
-    expect(inner.data.models.Task.edges[0].node.items.edges[0].node.name).toEqual("taskitemkeep");
+    const inner = await run<TaskModelsResult>(schema, src("required: true, "));
+    expect(inner.models.Task.edges).toHaveLength(1);
+    expect(inner.models.Task.edges[0].node.name).toEqual("task1");
+    expect(inner.models.Task.edges[0].node.items.edges).toHaveLength(1);
+    expect(inner.models.Task.edges[0].node.items.edges[0].node.name).toEqual("taskitemkeep");
   });
 
   it("required:true without a where returns only parents that have the relation", async () => {
@@ -404,15 +403,12 @@ describe("eager resolution (root-level include from selection)", () => {
     await TaskItem.create({name: "taskitemone", taskId: t1.get("id")});
     const schema = await createSchema(instance);
 
-    const result = (await graphql({
-      schema,
-      source: `query { models { Task { edges { node { name
+    const {models} = await run<TaskNamesResult>(schema,
+      `query { models { Task { edges { node { name
         items(required: true) { edges { node { name } } }
-      } } } } }`,
-    })) as any;
-    validateResult(result);
-    expect(result.data.models.Task.edges).toHaveLength(1);
-    expect(result.data.models.Task.edges[0].node.name).toEqual("task1");
+      } } } } }`);
+    expect(models.Task.edges).toHaveLength(1);
+    expect(models.Task.edges[0].node.name).toEqual("task1");
   });
 
   it("required:true on a single-valued relation filters parents", async () => {
@@ -423,16 +419,13 @@ describe("eager resolution (root-level include from selection)", () => {
     await Item.create({name: "itemone", taskId: t1.get("id")});
     const schema = await createSchema(instance);
 
-    const result = (await graphql({
-      schema,
-      source: `query { models { Task { edges { node { name
+    const {models} = await run<TaskWithItemResult>(schema,
+      `query { models { Task { edges { node { name
         item(required: true) { name }
-      } } } } }`,
-    })) as any;
-    validateResult(result);
-    expect(result.data.models.Task.edges).toHaveLength(1);
-    expect(result.data.models.Task.edges[0].node.name).toEqual("task1");
-    expect(result.data.models.Task.edges[0].node.item.name).toEqual("itemone");
+      } } } } }`);
+    expect(models.Task.edges).toHaveLength(1);
+    expect(models.Task.edges[0].node.name).toEqual("task1");
+    expect(models.Task.edges[0].node.item.name).toEqual("itemone");
   });
 
   it("field-level required matches an explicit include required", async () => {
@@ -444,23 +437,17 @@ describe("eager resolution (root-level include from selection)", () => {
     await TaskItem.create({name: "taskitemdrop", taskId: t2.get("id")});
     const schema = await createSchema(instance);
 
-    const viaField = (await graphql({
-      schema,
-      source: `query { models { Task { edges { node { name
+    const viaField = await run<TaskModelsResult>(schema,
+      `query { models { Task { edges { node { name
         items(required: true, where: { name: { eq: "taskitemkeep" } }) { edges { node { name } } }
-      } } } } }`,
-    })) as any;
-    const viaInclude = (await graphql({
-      schema,
-      source: `query { models {
+      } } } } }`);
+    const viaInclude = await run<TaskModelsResult>(schema,
+      `query { models {
         Task(include: { items: { required: true, where: { name: { eq: "taskitemkeep" } } } }) {
           edges { node { name items { edges { node { name } } } } }
         }
-      } }`,
-    })) as any;
-    validateResult(viaField);
-    validateResult(viaInclude);
-    const names = (r: any) => r.data.models.Task.edges.map((e: any) => e.node.name);
+      } }`);
+    const names = (r: TaskModelsResult) => r.models.Task.edges.map((e) => e.node.name);
     expect(names(viaField)).toEqual(["task1"]);
     expect(names(viaInclude)).toEqual(["task1"]);
   });

@@ -1,14 +1,21 @@
 import { beforeEach, describe, expect, it } from "@jest/globals";
 import { createRoleBasedPermissions } from "@azerothian/utilize";
+import type { Permission, PermissionContext, RoleRules } from "@azerothian/utilize";
+import type { Ormize } from "@azerothian/ormize";
 import { createActivities } from "../src/activities";
 import { ErrorType } from "../src/workflow-types";
+import type { FindAllResult } from "../src/workflow-types";
+import type { ActivityMap } from "../src/types";
 import { buildOrm, expectFailure } from "./helper";
+
+/** Plain-JSON row shape for the `Item` fixture model, as it leaves an activity. */
+type ItemRow = { id: number; label: string; secret?: string };
 
 /**
  * Role rules exercised below. `defaultDeny: false` keeps everything else open so
  * each test isolates the one denial it cares about.
  */
-const RULES: any = {
+const RULES: RoleRules = {
   admin: { model: "allow", field: "allow", mutation: "allow" },
   reader: { mutation: "deny" },
   redacted: { field: { Item: { secret: "deny" } } },
@@ -23,12 +30,13 @@ function forRole(role: string) {
   return createRoleBasedPermissions(role, RULES, { defaultDeny: false });
 }
 
-const permissions: { [role: string]: any } = {};
-const resolvePermission = (context: any) => (permissions[context.role] = permissions[context.role] || forRole(context.role));
+const permissions: { [role: string]: Permission } = {};
+const resolvePermission = (context: PermissionContext) =>
+  (permissions[context.role] = permissions[context.role] || forRole(context.role));
 
 describe("permission gating", () => {
-  let orm: any;
-  let acts: any;
+  let orm: Ormize;
+  let acts: ActivityMap;
   const as = (role: string) => ({ userId: "u1", role });
 
   beforeEach(async () => {
@@ -80,10 +88,10 @@ describe("permission gating", () => {
   it("strips a denied field from activity results", async () => {
     await acts["Item.create"]({ context: as("admin"), input: { label: "alpha", secret: "s3cret" } });
 
-    const visible = await acts["Item.findAll"]({ context: as("admin") });
+    const visible = (await acts["Item.findAll"]({ context: as("admin") })) as FindAllResult<ItemRow>;
     expect(visible.rows[0].secret).toBe("s3cret");
 
-    const redacted = await acts["Item.findAll"]({ context: as("redacted") });
+    const redacted = (await acts["Item.findAll"]({ context: as("redacted") })) as FindAllResult<ItemRow>;
     expect(redacted.rows[0].label).toBe("alpha");
     expect(redacted.rows[0]).not.toHaveProperty("secret");
   });

@@ -1,10 +1,27 @@
 import { GraphQLError } from "graphql";
+import type { GraphQLResolveInfo } from "graphql";
 import { fromCursor, toCursor } from "../objects/cursor";
 import { processAfter } from "../utils/after";
 import Events from "../../events";
 import { defaultCursorCodec } from "../../codecs/cursor";
 import type { CursorCodec } from "../../types";
+import type { AdapterRelationshipPage, AdapterRow, FindAllArgs, RequestContext } from "../../types";
 import type { BindingContext, DataSourceDescriptor, FieldBinding } from "./types";
+
+/**
+ * A connection field's arguments as GraphQL delivers them: the cursors are still
+ * the opaque strings the client sent, and the rest of the list vocabulary
+ * (`where`, `orderBy`, `first`, ...) is whatever the generated schema declared,
+ * which is why only the two keys this module reads are named.
+ */
+type ConnectionArgs = {
+  after?: string | null;
+  before?: string | null;
+  [arg: string]: unknown;
+};
+
+/** What a cursor decodes to — the connection that minted it, and the row's position in it. */
+type DecodedCursor = {connection: string; index: number};
 
 /**
  * Turn the opaque `after`/`before` arguments into `{connection, index}` before
@@ -14,29 +31,30 @@ import type { BindingContext, DataSourceDescriptor, FieldBinding } from "./types
  * remove: a cursor names a *connection*, not a row.
  */
 export function processDefaultArgs(
-  args: { before: string; after: string },
+  args: ConnectionArgs,
   codec: CursorCodec = defaultCursorCodec,
   connection?: string,
-) {
-  const newArgs: any = {};
+): FindAllArgs {
+  // Copy wholesale, then overwrite the two cursor keys: every other argument is
+  // forwarded to the adapter verbatim, and a key the client sent as an explicit
+  // null has to stay present as one.
+  const out: FindAllArgs = {};
+  Object.assign(out, args);
   if (args.before) {
-    newArgs.before = fromCursor(args.before, codec, connection);
+    out.before = fromCursor(args.before, codec, connection);
   }
   if (args.after) {
-    newArgs.after = fromCursor(args.after, codec, connection);
+    out.after = fromCursor(args.after, codec, connection);
   }
-  return {
-    ...args,
-    ...newArgs,
-  };
+  return out;
 }
 
 type ResolveData = (
-  source: any,
-  args: any,
-  context: any,
-  info: any,
-) => PromiseLike<{ total: any; models: any }>;
+  source: AdapterRow,
+  args: FindAllArgs,
+  context: RequestContext,
+  info: GraphQLResolveInfo,
+) => PromiseLike<AdapterRelationshipPage>;
 
 /**
  * Rebuilds the page-fetching callback a connection used to receive as a closure.
@@ -69,7 +87,7 @@ export function buildDataSource(data: DataSourceDescriptor, ctx: BindingContext)
     }
     default:
       throw new Error(
-        `gqlize: unknown connection data source "${(data as any).source}"`,
+        `gqlize: unknown connection data source "${(data as {source: string}).source}"`,
       );
   }
 }
@@ -85,15 +103,16 @@ export function buildConnectionResolver(
   const resolveData = buildDataSource(binding.data, ctx);
 
   return async function resolve(
-    source: any,
-    args: { after: any; before: any; first: any; last: any },
-    context: any,
-    info: any,
+    source: AdapterRow,
+    args: ConnectionArgs,
+    context: RequestContext,
+    info: GraphQLResolveInfo,
   ) {
     const a = processDefaultArgs(args, codec, name);
-    let cursor: { index: number; connection: string } | null = null;
-    if (args.after || args.before) {
-      cursor = fromCursor(args.after || args.before, codec, name);
+    let cursor: DecodedCursor | null = null;
+    const paged = args.after || args.before;
+    if (paged) {
+      cursor = fromCursor(paged, codec, name);
       // Bind the cursor to this connection: cursors are minted as
       // toCursor(name, idx), so a cursor naming a different connection was
       // reused across connections and its index is meaningless here. A codec
@@ -108,7 +127,7 @@ export function buildConnectionResolver(
     // it, and re-decoding the cursor just minted to get it back would make every
     // codec pay for a round trip it has no other reason to support.
     const positioned = await Promise.all(
-      models.map(async (row: any, idx: number) => {
+      models.map(async (row, idx) => {
         const node = await processAfter(row, a, context, info, definition, Events.OUTPUT);
         if (!node) {
           return undefined;
@@ -131,8 +150,8 @@ export function buildConnectionResolver(
           },
         };
       }),
-    ).then((rows: any) => rows.filter((e: any) => e !== undefined && e !== null));
-    const edges = positioned.map((p: any) => p.edge);
+    ).then((rows) => rows.filter((e) => e !== undefined));
+    const edges = positioned.map((p) => p.edge);
 
     let startCursor, endCursor;
     if (edges.length > 0) {

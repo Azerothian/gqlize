@@ -1,9 +1,11 @@
 import { beforeAll, describe, expect, it } from "@jest/globals";
+import type { Ormize } from "@azerothian/ormize";
 import { buildQueueMap, listModels, resolveQueueName } from "../src/queue";
+import type { QueueNameInput } from "../src/types";
 import { buildOrm } from "./helper";
 
 describe("queue naming", () => {
-  let orm: any;
+  let orm: Ormize;
   beforeAll(async () => {
     orm = await buildOrm();
   });
@@ -31,7 +33,7 @@ describe("queue naming", () => {
   });
 
   it("passes model, datasource and definition to a queueName callback", () => {
-    const seen: any[] = [];
+    const seen: QueueNameInput[] = [];
     resolveQueueName(orm, "Task", { queueName: (i) => (seen.push(i), "q") });
     expect(seen[0].model).toBe("Task");
     expect(seen[0].datasource).toBe("sqlite");

@@ -2,13 +2,17 @@ import {graphql} from "graphql";
 import Sequelize from "sequelize";
 import { Ormize as Database } from "@azerothian/ormize";
 import {createSchema} from "../src";
-import {validateResult} from "./helper";
+import {resultData, validateResult} from "./helper";
 import {createAdapterForDialect, registerTeardown} from "./helper/dialect";
 import {describe, it, expect} from "@jest/globals";
 
 // The PostTag join table carries an extra column but is not exposed in the schema
 // (junctions have FK columns without their own associations).
 const schemaOpts = {permission: {model: (n: string) => n !== "PostTag"}};
+
+type PostAuthorResult = {models: {Post: {id: string; title: string; author: {name: string} | null}[]}};
+type AuthorNameResult = {models: {Author: {id: string; name: string}[]}};
+type PostTitleResult = {models: {Post: {id: string; title: string}[]}};
 
 async function build() {
   const db = new Database();
@@ -58,20 +62,22 @@ describe("relationship mutations", () => {
     const post = await Post.create({title: "post1"});
     const schema = await createSchema(db, schemaOpts);
 
-    const setRes = (await graphql({schema, source: `mutation { models {
+    const setResult = await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { author: { set: { name: { eq: "author1" } } } } }) {
         id title author { name }
       }
-    } }`})) as any;
-    validateResult(setRes);
-    expect(setRes.data.models.Post[0].author.name).toEqual("author1");
+    } }`});
+    validateResult(setResult);
+    const setData = resultData<PostAuthorResult>(setResult);
+    expect(setData.models.Post[0].author?.name).toEqual("author1");
     expect((await Post.findByPk(post.get("id"))).get("authorId")).toEqual(author.get("id"));
 
-    const rmRes = (await graphql({schema, source: `mutation { models {
+    const rmResult = await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { author: { remove: true } } }) { id author { name } }
-    } }`})) as any;
-    validateResult(rmRes);
-    expect(rmRes.data.models.Post[0].author).toBeNull();
+    } }`});
+    validateResult(rmResult);
+    const rmData = resultData<PostAuthorResult>(rmResult);
+    expect(rmData.models.Post[0].author).toBeNull();
     expect((await Post.findByPk(post.get("id"))).get("authorId") ?? null).toBeNull();
   });
 
@@ -88,11 +94,11 @@ describe("relationship mutations", () => {
     } }`});
     expect(await post.countTags()).toEqual(2);
 
-    const rm = (await graphql({schema, source: `mutation { models {
+    const rm = await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { tags: { remove: [{ name: { eq: "tagone" } }] } } }) { id }
-    } }`})) as any;
+    } }`});
     validateResult(rm);
-    const names = (await post.getTags()).map((t: any) => t.get("name")).sort();
+    const names = (await post.getTags()).map((t: {get: (key: string) => string}) => t.get("name")).sort();
     expect(names).toEqual(["tagtwo"]);
   });
 
@@ -106,11 +112,11 @@ describe("relationship mutations", () => {
     await post.addTags([t1, t2]);
     const schema = await createSchema(db, schemaOpts);
 
-    const res = (await graphql({schema, source: `mutation { models {
+    const res = await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { tags: { set: [{ where: { name: { eq: "tagthree" } } }] } } }) { id }
-    } }`})) as any;
+    } }`});
     validateResult(res);
-    const names = (await post.getTags()).map((t: any) => t.get("name"));
+    const names = (await post.getTags()).map((t: {get: (key: string) => string}) => t.get("name"));
     expect(names).toEqual(["tagthree"]);
   });
 
@@ -121,9 +127,9 @@ describe("relationship mutations", () => {
     await Tag.create({name: "tagone"});
     const schema = await createSchema(db, schemaOpts);
 
-    const res = (await graphql({schema, source: `mutation { models {
+    const res = await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { tags: { add: [{ where: { name: { eq: "tagone" } }, through: { sortOrder: 7 } }] } } }) { id }
-    } }`})) as any;
+    } }`});
     validateResult(res);
     const joins = await PostTag.findAll();
     expect(joins).toHaveLength(1);
@@ -138,11 +144,11 @@ describe("relationship mutations", () => {
     await Comment.create({body: "commenttwo", postId: post.get("id")});
     const schema = await createSchema(db, schemaOpts);
 
-    const res = (await graphql({schema, source: `mutation { models {
+    const res = await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { comments: { set: [{ body: { eq: "commenttwo" } }] } } }) { id }
-    } }`})) as any;
+    } }`});
     validateResult(res);
-    const bodies = (await post.getComments()).map((c: any) => c.get("body"));
+    const bodies = (await post.getComments()).map((c: {get: (key: string) => string}) => c.get("body"));
     expect(bodies).toEqual(["commenttwo"]);
   });
 
@@ -155,9 +161,9 @@ describe("relationship mutations", () => {
     expect(await Comment.count()).toEqual(0);
     const schema = await createSchema(db, schemaOpts);
 
-    const res = (await graphql({schema, source: `mutation { models {
+    const res = await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { comments: { restore: [{ body: { eq: "commentone" } }] } } }) { id }
-    } }`})) as any;
+    } }`});
     validateResult(res);
     expect(await Comment.count()).toEqual(1);
   });
@@ -171,19 +177,20 @@ describe("relationship mutations", () => {
     await Tag.create({name: "t1"});
     const schema = await createSchema(db, schemaOpts);
 
-    const res = (await graphql({schema, source: `mutation { models {
+    const res = await graphql({schema, source: `mutation { models {
       Author(select: [{ where: { name: { eq: "author1" } }, input: {
         posts: { select: [{ where: { title: { eq: "keep" } }, input: {
           tags: { add: [{ where: { name: { eq: "t1" } } }] }
         } }] }
       } }]) { id name }
-    } }`})) as any;
+    } }`});
     validateResult(res);
+    const data = resultData<AuthorNameResult>(res);
 
     // top-level select returns the found author, unchanged
-    expect(res.data.models.Author.map((a: any) => a.name)).toEqual(["author1"]);
+    expect(data.models.Author.map((a) => a.name)).toEqual(["author1"]);
     // the selected post got the tag; its own title is unchanged
-    expect((await keep.getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
+    expect((await keep.getTags()).map((t: {get: (key: string) => string}) => t.get("name"))).toEqual(["t1"]);
     expect((await Post.findByPk(keep.get("id"))).get("title")).toEqual("keep");
     // the non-matching sibling post is untouched
     expect(await other.getTags()).toHaveLength(0);
@@ -200,13 +207,13 @@ describe("relationship mutations", () => {
     const schema = await createSchema(db, schemaOpts);
 
     // a1 tries to select a post titled "p2" — but p2 belongs to a2, so it matches nothing.
-    const res = (await graphql({schema, source: `mutation { models {
+    const res = await graphql({schema, source: `mutation { models {
       Author(select: [{ where: { name: { eq: "a1" } }, input: {
         posts: { select: [{ where: { title: { eq: "p2" } }, input: {
           tags: { add: [{ where: { name: { eq: "t1" } } }] }
         } }] }
       } }]) { id }
-    } }`})) as any;
+    } }`});
     validateResult(res);
     expect(await p2.getTags()).toHaveLength(0);
     expect(await p1.getTags()).toHaveLength(0);
@@ -220,19 +227,20 @@ describe("relationship mutations", () => {
     const schema = await createSchema(db, schemaOpts);
 
     // pass BOTH a scalar change (title) and a relationship mutation (tags.add)
-    const res = (await graphql({schema, source: `mutation { models {
+    const res = await graphql({schema, source: `mutation { models {
       Post(select: [{ where: { title: { eq: "original" } }, input: {
         title: "HACKED",
         tags: { add: [{ where: { name: { eq: "t1" } } }] }
       } }]) { id title }
-    } }`})) as any;
+    } }`});
     validateResult(res);
+    const data = resultData<PostTitleResult>(res);
 
     // the relationship mutation ran...
-    expect((await post.getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
+    expect((await post.getTags()).map((t: {get: (key: string) => string}) => t.get("name"))).toEqual(["t1"]);
     // ...but the scalar `title` was ignored — the selected row is NOT modified
     expect((await Post.findByPk(post.get("id"))).get("title")).toEqual("original");
-    expect(res.data.models.Post.map((p: any) => p.title)).toEqual(["original"]);
+    expect(data.models.Post.map((p) => p.title)).toEqual(["original"]);
   });
 
   it("select: singular relationship — selects the related record and runs its relation mutations", async () => {
@@ -244,15 +252,15 @@ describe("relationship mutations", () => {
     const schema = await createSchema(db, schemaOpts);
 
     // Select the comment (top-level), then select its singular `post`, then tag the post.
-    const res = (await graphql({schema, source: `mutation { models {
+    const res = await graphql({schema, source: `mutation { models {
       Comment(select: [{ where: { body: { eq: "c1" } }, input: {
         post: { select: { where: { title: { eq: "post1" } }, input: {
           tags: { add: [{ where: { name: { eq: "t1" } } }] }
         } } }
       } }]) { id }
-    } }`})) as any;
+    } }`});
     validateResult(res);
-    expect((await post.getTags()).map((t: any) => t.get("name"))).toEqual(["t1"]);
+    expect((await post.getTags()).map((t: {get: (key: string) => string}) => t.get("name"))).toEqual(["t1"]);
     expect((await Post.findByPk(post.get("id"))).get("title")).toEqual("post1");
   });
 });

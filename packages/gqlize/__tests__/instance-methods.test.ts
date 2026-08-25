@@ -1,20 +1,36 @@
 import {graphql, GraphQLEnumType, GraphQLInputObjectType, GraphQLObjectType} from "graphql";
 import {describe, it, expect} from "@jest/globals";
 
-import {createInstance, validateResult} from "./helper";
+import {createInstance, resultData, validateResult} from "./helper";
 import {createSchema} from "../src";
 import PersonModel, {PetModel} from "./helper/models/person";
 import type {Definition} from "../src/types/index";
 
 /**
- * `graphql()` types every field value as `unknown`; each assertion below walks
- * the result tree by name, so the results are read through one deliberately
- * loose alias rather than a cast repeated at every call site.
+ * Each test's query shape differs, so rather than one shared loose alias, each
+ * defines the minimal result shape its own query produces and reads it through
+ * {@link resultData} (see `./helper`).
  */
-type QueryResult = {data?: any; errors?: readonly {message: string}[]};
-
-/** One connection edge, as these assertions read it. */
-type Edge = {node: Record<string, any>};
+type TaskInstanceMethodResult = {models: {Task: {edges: {node: {testInstanceMethod: {name: string}[]}}[]}}};
+type PersonFullNameResult = {models: {Person: {edges: {node: {fullName: string}}[]}}};
+type PersonGreetingResult = {models: {Person: {edges: {node: {greeting: string}}[]}}};
+type PersonEverythingResult = {models: {Person: {edges: {node: {everything: string}}[]}}};
+type PersonPetsResult = {models: {Person: {edges: {node: {
+  petNames: string;
+  pets: {edges: {node: {name: string}}[]};
+}}[]}}};
+type PersonLimitedResult = {models: {Person: {total: number; edges: {node: {limited: string}}[]}}};
+type PersonAliasedLimitedResult = {models: {Person: {edges: {node: {a: string; b: string}}[]}}};
+type PersonTotalFullNameResult = {models: {Person: {total: number; edges: {node: {fullName: string}}[]}}};
+type PersonPetsFilterResult = {models: {Person: {edges: {node: {
+  pets: {total: number; edges: {node: {label: string}}[]};
+}}[]}}};
+type PersonSurnameResult = {models: {Person: {total: number; edges: {node: {surname: string}}[]}}};
+type PersonNameLengthResult = {models: {Person: {edges: {node: {nameLength: number}}[]}}};
+type PersonCreateResult = {models: {Person: {firstName: string; secret: string | null}[]}};
+type PersonUpdateResult = {models: {Person: {firstName: string; lastName: string}[]}};
+type PersonSecretResult = {models: {Person: {secret: string}[]}};
+type TaskMutationCheckResult = {models: {Task: {name: string; mutationCheck: string}[]}};
 
 /** The manager the test helper hands back. */
 type Instance = Awaited<ReturnType<typeof createInstance>>;
@@ -62,10 +78,10 @@ describe("exposed instance methods — projection", () => {
     const cap = captureQueries(instance, "Task");
     const result = await graphql({schema, source: `{
       models { Task { edges { node { testInstanceMethod(input: {amount: 1}) { name } } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
 
-    const rows = result.data.models.Task.edges;
+    const rows = resultData<TaskInstanceMethodResult>(result).models.Task.edges;
     expect(rows[0].node.testInstanceMethod[0].name).toBe("item11");
     // and the fix is in the SQL, not in a fallback: `name` is really selected.
     expect(cap.selects()[0]).toMatch(/\bname\b/);
@@ -77,9 +93,9 @@ describe("exposed instance methods — projection", () => {
     const schema = await createSchema(instance);
     const result = await graphql({schema, source: `{
       models { Person(orderBy: firstNameASC) { edges { node { fullName } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
-    expect(result.data.models.Person.edges.map((e: Edge) => e.node.fullName))
+    expect(resultData<PersonFullNameResult>(result).models.Person.edges.map((e) => e.node.fullName))
       .toEqual(["Ada Lovelace", "John Smith", "Zoe Adams"]);
   });
 
@@ -89,10 +105,10 @@ describe("exposed instance methods — projection", () => {
     const schema = await createSchema(instance);
     const result = await graphql({schema, source: `{
       models { Person(where: {firstName: {eq: "Ada"}}) { edges { node { greeting } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
     // `hi Ada` (implementation) -> `HI ADA` (output) -> `HI ADA!` (after)
-    expect(result.data.models.Person.edges[0].node.greeting).toBe("HI ADA!");
+    expect(resultData<PersonGreetingResult>(result).models.Person.edges[0].node.greeting).toBe("HI ADA!");
   });
 
   it("`fields: \"*\"` opts the query out of narrowing", async() => {
@@ -102,9 +118,9 @@ describe("exposed instance methods — projection", () => {
     const cap = captureQueries(instance);
     const result = await graphql({schema, source: `{
       models { Person(where: {firstName: {eq: "Ada"}}) { edges { node { everything } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
-    expect(result.data.models.Person.edges[0].node.everything).toBe("s2");
+    expect(resultData<PersonEverythingResult>(result).models.Person.edges[0].node.everything).toBe("s2");
     // no attribute list at all — `secret` is loaded despite nothing selecting it
     expect(cap.selects()[0]).toMatch(/\bsecret\b/);
   });
@@ -121,13 +137,13 @@ describe("exposed instance methods — projection", () => {
         petNames
         pets { edges { node { name } } }
       } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
 
-    const node = result.data.models.Person.edges[0].node;
+    const node = resultData<PersonPetsResult>(result).models.Person.edges[0].node;
     // the method's include did not clobber the selection-derived one
     expect(node.petNames).toBe("ari,rex");
-    expect(node.pets.edges.map((e: Edge) => e.node.name).sort()).toEqual(["ari", "rex"]);
+    expect(node.pets.edges.map((e) => e.node.name).sort()).toEqual(["ari", "rex"]);
   });
 });
 
@@ -139,16 +155,17 @@ describe("exposed instance methods — input hooks", () => {
     const trace: string[] = [];
     const result = await graphql({schema, contextValue: {trace}, source: `{
       models { Person(where: {firstName: {eq: "Ada"}}) { total edges { node { limited(only: "Zoe") } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
 
     expect(trace).toEqual(["before", "input:limited:Zoe"]);
     // the hook replaced the client's `where` wholesale — and `total` followed it,
     // because the filter was pushed into the query rather than applied after.
-    const edges = result.data.models.Person.edges;
+    const data = resultData<PersonLimitedResult>(result);
+    const edges = data.models.Person.edges;
     expect(edges).toHaveLength(1);
     expect(edges[0].node.limited).toBe("Zoe");
-    expect(result.data.models.Person.total).toBe(1);
+    expect(data.models.Person.total).toBe(1);
   });
 
   it("runs `input` once per selection occurrence, each seeing its own args", async() => {
@@ -161,16 +178,17 @@ describe("exposed instance methods — input hooks", () => {
         a: limited(only: "Ada")
         b: limited(only: "Zoe")
       } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
 
     expect(trace).toEqual(["before", "input:limited:Ada", "input:limited:Zoe"]);
     // both aliases resolve, each with its own args, once per row
-    const node = result.data.models.Person.edges[0].node;
+    const data = resultData<PersonAliasedLimitedResult>(result);
+    const node = data.models.Person.edges[0].node;
     expect(node.a).toBe("Ada");
     expect(node.b).toBe("Zoe");
     // last hook wins the options, so the row set is Zoe's
-    expect(result.data.models.Person.edges).toHaveLength(1);
+    expect(data.models.Person.edges).toHaveLength(1);
   });
 });
 
@@ -181,11 +199,11 @@ describe("exposed instance methods — filtering", () => {
     const schema = await createSchema(instance);
     const result = await graphql({schema, source: `{
       models { Person(where: {fullName: {eq: "Ada Lovelace"}}) { total edges { node { fullName } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
 
-    const conn = result.data.models.Person;
-    expect(conn.edges.map((e: Edge) => e.node.fullName)).toEqual(["Ada Lovelace"]);
+    const conn = resultData<PersonTotalFullNameResult>(result).models.Person;
+    expect(conn.edges.map((e) => e.node.fullName)).toEqual(["Ada Lovelace"]);
     expect(conn.total).toBe(conn.edges.length);
   });
 
@@ -198,11 +216,11 @@ describe("exposed instance methods — filtering", () => {
         {fullName: {eq: "Ada Lovelace"}},
         {fullName: {eq: "Zoe Adams"}}
       ]}, orderBy: firstNameASC) { total edges { node { fullName } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
 
-    const conn = result.data.models.Person;
-    expect(conn.edges.map((e: Edge) => e.node.fullName)).toEqual(["Ada Lovelace", "Zoe Adams"]);
+    const conn = resultData<PersonTotalFullNameResult>(result).models.Person;
+    expect(conn.edges.map((e) => e.node.fullName)).toEqual(["Ada Lovelace", "Zoe Adams"]);
     expect(conn.total).toBe(2);
   });
 
@@ -217,11 +235,11 @@ describe("exposed instance methods — filtering", () => {
       models { Person(where: {firstName: {eq: "John"}}) { edges { node {
         pets(where: {label: {eq: "cat:ari"}}) { total edges { node { label } } }
       } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
 
-    const pets = result.data.models.Person.edges[0].node.pets;
-    expect(pets.edges.map((e: Edge) => e.node.label)).toEqual(["cat:ari"]);
+    const pets = resultData<PersonPetsFilterResult>(result).models.Person.edges[0].node.pets;
+    expect(pets.edges.map((e) => e.node.label)).toEqual(["cat:ari"]);
     expect(pets.total).toBe(1);
   });
 
@@ -231,11 +249,12 @@ describe("exposed instance methods — filtering", () => {
     const schema = await createSchema(instance);
     const result = await graphql({schema, source: `{
       models { Person(where: {surname: {like: "%dam%"}}) { total edges { node { surname } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
 
-    expect(result.data.models.Person.edges.map((e: Edge) => e.node.surname)).toEqual(["Adams"]);
-    expect(result.data.models.Person.total).toBe(1);
+    const data = resultData<PersonSurnameResult>(result);
+    expect(data.models.Person.edges.map((e) => e.node.surname)).toEqual(["Adams"]);
+    expect(data.models.Person.total).toBe(1);
   });
 
   it("offers only the operators a computed filter declared", async() => {
@@ -255,10 +274,10 @@ describe("exposed instance methods — ordering", () => {
     const schema = await createSchema(instance);
     const result = await graphql({schema, source: `{
       models { Person(orderBy: fullNameASC) { edges { node { fullName } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
     // ordered by lastName, then firstName
-    expect(result.data.models.Person.edges.map((e: Edge) => e.node.fullName))
+    expect(resultData<PersonFullNameResult>(result).models.Person.edges.map((e) => e.node.fullName))
       .toEqual(["Zoe Adams", "Ada Lovelace", "John Smith"]);
   });
 
@@ -269,10 +288,10 @@ describe("exposed instance methods — ordering", () => {
     const cap = captureQueries(instance);
     const result = await graphql({schema, source: `{
       models { Person(orderBy: nameLengthASC) { edges { node { nameLength } } } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
 
-    expect(result.data.models.Person.edges.map((e: Edge) => e.node.nameLength)).toEqual([9, 10, 12]);
+    expect(resultData<PersonNameLengthResult>(result).models.Person.edges.map((e) => e.node.nameLength)).toEqual([9, 10, 12]);
     expect(cap.selects()[0]).toMatch(/ORDER BY LENGTH/i);
   });
 
@@ -324,10 +343,11 @@ describe("exposed instance methods — pre-commit transforms", () => {
         create: [{firstName: "Grace", lastName: "Hopper", secret: "s9"}]
         apply: {redact: true}
       ) { firstName secret } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
-    expect(result.data.models.Person[0].firstName).toBe("Grace");
-    expect(result.data.models.Person[0].secret).toBeNull();
+    const data = resultData<PersonCreateResult>(result);
+    expect(data.models.Person[0].firstName).toBe("Grace");
+    expect(data.models.Person[0].secret).toBeNull();
   });
 
   it("runs a transform against the live row on update", async() => {
@@ -339,9 +359,9 @@ describe("exposed instance methods — pre-commit transforms", () => {
         update: [{where: {firstName: {eq: "Ada"}}, input: {lastName: "Byron"}}]
         apply: {rename: {to: "Augusta"}}
       ) { firstName lastName } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
-    expect(result.data.models.Person).toEqual([{firstName: "Augusta", lastName: "Byron"}]);
+    expect(resultData<PersonUpdateResult>(result).models.Person).toEqual([{firstName: "Augusta", lastName: "Byron"}]);
 
     // and it was persisted, not just returned
     const reread = await instance.models.Person.findOne({where: {lastName: "Byron"}});
@@ -357,9 +377,9 @@ describe("exposed instance methods — pre-commit transforms", () => {
         update: [{where: {firstName: {eq: "Ada"}}, input: {}}]
         apply: {rename: {to: "Augusta"}, stamp: true}
       ) { firstName secret } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
-    expect(result.data.models.Person[0].secret).toBe("stamped:Augusta");
+    expect(resultData<PersonSecretResult>(result).models.Person[0].secret).toBe("stamped:Augusta");
   });
 
   it("runs after `definition.before`, so it gets the last word on the values", async() => {
@@ -367,10 +387,10 @@ describe("exposed instance methods — pre-commit transforms", () => {
     const schema = await createSchema(instance);
     const result = await graphql({schema, source: `mutation {
       models { Task(create: [{name: "taskone"}], apply: {markChecked: true}) { name mutationCheck } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
     // `definition.before` sets mutationCheck to "create"; the transform overrides it
-    expect(result.data.models.Task[0].mutationCheck).toBe("applied");
+    expect(resultData<TaskMutationCheckResult>(result).models.Task[0].mutationCheck).toBe("applied");
   });
 
   it("a no-arg transform is a flag — naming it without asking for it does not run it", async() => {
@@ -382,9 +402,9 @@ describe("exposed instance methods — pre-commit transforms", () => {
         update: [{where: {firstName: {eq: "Ada"}}, input: {}}]
         apply: {redact: false}
       ) { secret } }
-    }`}) as QueryResult;
+    }`});
     validateResult(result);
-    expect(result.data.models.Person[0].secret).toBe("s2");
+    expect(resultData<PersonSecretResult>(result).models.Person[0].secret).toBe("s2");
   });
 
   it("a throwing transform rolls the whole mutation back, relationship writes included", async() => {
@@ -399,7 +419,7 @@ describe("exposed instance methods — pre-commit transforms", () => {
         }]
         apply: {boom: true}
       ) { firstName } }
-    }`}) as QueryResult;
+    }`});
 
     expect((result.errors || []).length).toBeGreaterThan(0);
     expect(result.errors![0].message).toMatch(/transform exploded/);

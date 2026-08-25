@@ -1,6 +1,13 @@
 import Sequelize, {Op} from "sequelize";
 import { SequelizeDefinition } from '../../../src/types/index';
-export default {
+
+// A direct annotation (`: SequelizeDefinition`), not an `as` cast, so every
+// hook/method function nested in the literal is contextually typed from the
+// contract's own parameter types (`DefinitionOptions`' `classMethods`/
+// `instanceMethods`/`hooks`, all declared with `any` there — published in
+// `@azerothian/utilize`, out of this package's scope) instead of restating
+// that permissiveness with explicit `any` at every call site here.
+const taskItemModel: SequelizeDefinition = {
   name: "TaskItem",
   define: {
     name: {
@@ -64,23 +71,23 @@ export default {
   options: {
     tableName: "task-items",
     instanceMethods: {
-      testInstanceMethodArray(args: any, {instance}: any) {
+      testInstanceMethodArray(args, {instance}) {
         return instance.models.TaskItem.findAll();
       },
-      testInstanceMethodSingle(args: any, {instance}: any) {
+      testInstanceMethodSingle(args, {instance}) {
         return instance.models.TaskItem.findOne({where: {id: 1}});
       },
     },
     classMethods: {
-      getTaskItemsArray(args: any, {instance}: any) {
+      getTaskItemsArray(args, {instance}) {
         return instance.models.TaskItem.findAll();
       },
-      getTaskItemsSingle(args: any, {instance}: any) {
+      getTaskItemsSingle(args, {instance}) {
         return instance.models.TaskItem.findOne({where: {id: 1}});
       },
     },
     hooks: {
-      beforeFind(options: any = {}) {
+      beforeFind(options = {}) {
         if (options.getGraphQLArgs) {
           const graphqlArgs = options.getGraphQLArgs();
           if (graphqlArgs.info.rootValue) {
@@ -96,13 +103,13 @@ export default {
         }
         return options;
       },
-      beforeCreate(instance: any, options: any, cb: any) {
+      beforeCreate(instance, options, cb) {
         return undefined;
       },
-      beforeUpdate(instance: any, options: any, cb: any) {
+      beforeUpdate(instance, options, cb) {
         return undefined;
       },
-      beforeDestroy(instance: any, options: any, cb: any) {
+      beforeDestroy(instance, options, cb) {
         return undefined;
       },
     },
@@ -110,4 +117,6 @@ export default {
       {unique: true, fields: ["name"]},
     ],
   },
-} as SequelizeDefinition;
+};
+
+export default taskItemModel;

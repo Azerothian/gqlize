@@ -9,7 +9,6 @@ import {
   valueToLiteral,
   type GraphQLArgument,
   type GraphQLEnumType,
-  type GraphQLField,
   type GraphQLInputField,
   type GraphQLInputObjectType,
   type GraphQLInterfaceType,
@@ -57,6 +56,7 @@ export interface SnapshotOptions {
    * it when the schema came from somewhere else, or pass `false` to skip the
    * fingerprint entirely (the artifact then loads without a staleness check).
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- published signature, re-exported from `@azerothian/gqlize/snapshot`. `createSchema` already pins this to `AnyOrmize`; narrowing it here too would change what a 6.0.0 consumer is allowed to pass, so it stays permissive.
   orm?: any | false;
 }
 
@@ -68,7 +68,7 @@ export interface SnapshotOptions {
  * production-only, data-shaped failure; a build-time throw costs nothing.
  */
 export function snapshotSchema(schema: GraphQLSchema, opts: SnapshotOptions = {}): SchemaSnapshot {
-  const buildLedger = (schema.extensions as any)?.[GQLIZE_EXT] as GqlizeBuildLedger | undefined;
+  const buildLedger = schema.extensions?.[GQLIZE_EXT] as GqlizeBuildLedger | undefined;
   if (!buildLedger) {
     throw new Error(
       "gqlize: schema has no build ledger — snapshotSchema only accepts a schema built by " +
@@ -166,7 +166,7 @@ function encodeNamedType(
   if (isScalarType(type)) {
     return encodeScalar(type, registry, ledger);
   }
-  throw new Error(`gqlize: cannot snapshot type "${(type as any).name}" of unknown kind`);
+  throw new Error(`gqlize: cannot snapshot type "${(type as GraphQLNamedType).name}" of unknown kind`);
 }
 
 function encodeObject(type: GraphQLObjectType, modelTypes: Set<string>): ObjectTypeIR {
@@ -275,14 +275,14 @@ function encodeScalar(
 
 function encodeFields(type: GraphQLObjectType | GraphQLInterfaceType): FieldIR[] {
   const out: FieldIR[] = [];
-  for (const field of Object.values(type.getFields()) as GraphQLField<any, any>[]) {
-    const binding = readBinding(field as any);
+  for (const field of Object.values(type.getFields())) {
+    const binding = readBinding(field);
     if (binding?.kind === "extend") {
       // supplied via `options.extend` and re-merged at load — never serialized
       continue;
     }
     const coordinate = `${type.name}.${field.name}`;
-    if ((field.resolve || (field as any).subscribe) && !binding) {
+    if ((field.resolve || (field as {subscribe?: unknown}).subscribe) && !binding) {
       throw new Error(
         `gqlize: ${coordinate} has a resolver but no binding descriptor. Every resolver must be ` +
           "attached through bindField() so the loader can rebuild it; a field serialized without " +
@@ -324,11 +324,13 @@ function encodeDefault(
   const def = iv.default;
   let value: unknown;
   if (def === undefined) {
-    // `defaultValue` is the deprecated v17 spelling, removed in v18
-    if ((iv as any).defaultValue === undefined) {
+    // `defaultValue` is the deprecated v17 spelling, removed in v18 — off the
+    // declared type in both, so it has to be reached through a widening.
+    const deprecated = (iv as {defaultValue?: unknown}).defaultValue;
+    if (deprecated === undefined) {
       return undefined;
     }
-    value = (iv as any).defaultValue;
+    value = deprecated;
   } else if (def.literal !== undefined) {
     return { defaultLiteral: print(def.literal) };
   } else {
@@ -337,9 +339,9 @@ function encodeDefault(
   let literal;
   try {
     literal = valueToLiteral(value, iv.type);
-  } catch (err: any) {
+  } catch (err) {
     throw new Error(
-      `gqlize: default value for ${coordinate} could not be encoded: ${err.message}`,
+      `gqlize: default value for ${coordinate} could not be encoded: ${err instanceof Error ? err.message : String(err)}`,
       {cause: err},
     );
   }
@@ -397,8 +399,12 @@ function describe(value: unknown): string {
     return "function";
   }
   try {
-    return JSON.stringify(value) ?? String(value);
+    // `JSON.stringify` returns `undefined` only for `undefined`, a function and
+    // a symbol; the first two are already handled, so the fallback is a symbol.
+    return JSON.stringify(value) ?? (value as symbol).toString();
   } catch {
-    return String(value);
+    // Circular, or a getter that threw. `String()` on it would say
+    // `[object Object]`, which tells the reader nothing they did not know.
+    return ctor ? `unserializable ${ctor}` : typeof value;
   }
 }

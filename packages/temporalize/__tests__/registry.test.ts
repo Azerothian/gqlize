@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, it } from "@jest/globals";
 import { createRoleBasedPermissions } from "@azerothian/utilize";
+import type { Ormize } from "@azerothian/ormize";
 import { TemporalizeRegistry } from "../src/registry";
 import { buildOrm } from "./helper";
 
 describe("TemporalizeRegistry", () => {
-  let orm: any;
+  let orm: Ormize;
   beforeAll(async () => {
     orm = await buildOrm();
   });

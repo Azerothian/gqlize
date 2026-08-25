@@ -2,7 +2,7 @@ import {mkdtempSync, rmSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {gzipSync} from "node:zlib";
-import {printSchema} from "graphql";
+import {isObjectType, printSchema} from "graphql";
 import Sequelize from "sequelize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import {Ormize} from "@azerothian/ormize";
@@ -10,6 +10,8 @@ import {describe, it, expect, beforeAll, afterAll, jest} from "@jest/globals";
 
 import {createSchema} from "../../src";
 import {loadSchema, materializeSchema, readSnapshot, snapshotSchema} from "../../src/snapshot";
+import type {Definition, GqlizeOptions} from "../../src/types";
+import type {SnapshotOptions} from "../../src/graphql/snapshot/snapshot";
 
 /**
  * The loader's staleness behaviour end to end: build an artifact against one set
@@ -17,7 +19,7 @@ import {loadSchema, materializeSchema, readSnapshot, snapshotSchema} from "../..
  * `onMismatch` mode does what it advertises.
  */
 
-function defs(extra = false): any[] {
+function defs(extra = false): Definition[] {
   return [
     {
       name: "Parent",
@@ -52,7 +54,7 @@ async function orm(extra = false) {
 }
 
 /** artifact from the base definitions, through JSON as it would be on disk */
-async function artifactFor(db: any, opts: any = {}) {
+async function artifactFor(db: Ormize, opts: SnapshotOptions & {options?: GqlizeOptions} = {}) {
   return JSON.parse(JSON.stringify(snapshotSchema(await createSchema(db, opts.options), opts)));
 }
 
@@ -104,13 +106,13 @@ describe("materializeSchema staleness", () => {
 
   it("names the permissionProfile in the message when that is what moved", async() => {
     const artifact = await artifactFor(await orm(), {permissionProfile: "admin"});
-    await expect(materializeSchema(artifact, await orm(), {permissionProfile: "public"} as any))
+    await expect(materializeSchema(artifact, await orm(), {permissionProfile: "public"}))
       .rejects.toThrow(/pass the `permissionProfile` the artifact was built with/);
   });
 
   it("reports the differing values, not just the key", async() => {
     const artifact = await artifactFor(await orm(), {permissionProfile: "admin"});
-    await expect(materializeSchema(artifact, await orm(), {permissionProfile: "public"} as any))
+    await expect(materializeSchema(artifact, await orm(), {permissionProfile: "public"}))
       .rejects.toThrow(/permissionProfile \(artifact "admin", live "public"\)/);
   });
 
@@ -139,7 +141,7 @@ describe("materializeSchema staleness", () => {
     await expect(materializeSchema(artifact, db, {
       permission: {relationship: () => true},
       onMismatch: "throw",
-    } as any)).resolves.toBeDefined();
+    })).resolves.toBeDefined();
   });
 
   it("loads clean with no options at all", async() => {
@@ -158,7 +160,7 @@ describe("materializeSchema staleness", () => {
   it("passes when the loader supplies the matching permissionProfile", async() => {
     const db = await orm();
     const artifact = await artifactFor(db, {permissionProfile: "admin"});
-    await expect(materializeSchema(artifact, db, {permissionProfile: "admin"} as any))
+    await expect(materializeSchema(artifact, db, {permissionProfile: "admin"}))
       .resolves.toBeDefined();
   });
 
@@ -166,8 +168,12 @@ describe("materializeSchema staleness", () => {
     const artifact = await artifactFor(await orm());
     const rebuilt = await materializeSchema(artifact, await orm(true), {onMismatch: "warn"});
     // the artifact's shape, not the live one — `extra` is genuinely absent
-    expect(rebuilt.getType("Child")).toBeDefined();
-    expect((rebuilt.getType("Child") as any).getFields().extra).toBeUndefined();
+    const rebuiltChild = rebuilt.getType("Child");
+    expect(rebuiltChild).toBeDefined();
+    if (!isObjectType(rebuiltChild)) {
+      throw new Error('Expected "Child" to be a GraphQLObjectType');
+    }
+    expect(rebuiltChild.getFields().extra).toBeUndefined();
   });
 
   it("falls back to a live build under `rebuild`", async() => {
@@ -175,7 +181,11 @@ describe("materializeSchema staleness", () => {
     const live = await orm(true);
     const rebuilt = await materializeSchema(artifact, live, {onMismatch: "rebuild"});
     // the *live* shape, so the new field is there
-    expect((rebuilt.getType("Child") as any).getFields().extra).toBeDefined();
+    const rebuiltChild = rebuilt.getType("Child");
+    if (!isObjectType(rebuiltChild)) {
+      throw new Error('Expected "Child" to be a GraphQLObjectType');
+    }
+    expect(rebuiltChild.getFields().extra).toBeDefined();
     expect(printSchema(rebuilt)).toEqual(printSchema(await createSchema(live)));
   });
 
@@ -184,9 +194,9 @@ describe("materializeSchema staleness", () => {
     const artifact = await artifactFor(db);
     await expect(materializeSchema({...artifact, formatVersion: 99}, db))
       .rejects.toThrow(/formatVersion 99 is not supported/);
-    await expect(materializeSchema({...artifact, formatVersion: 99}, db, {onMismatch: "warn"} as any))
+    await expect(materializeSchema({...artifact, formatVersion: 99}, db, {onMismatch: "warn"}))
       .rejects.toThrow(/formatVersion 99 is not supported/);
-    await expect(materializeSchema({...artifact, formatVersion: 99}, db, {onMismatch: "rebuild"} as any))
+    await expect(materializeSchema({...artifact, formatVersion: 99}, db, {onMismatch: "rebuild"}))
       .resolves.toBeDefined();
   });
 
@@ -204,7 +214,11 @@ describe("materializeSchema staleness", () => {
       const rebuilt = await materializeSchema(artifact, changed, {checkStaleness: false});
       // the artifact's shape, exactly as under `warn` — the model moved and the
       // load did not notice, which is the deal being struck
-      expect((rebuilt.getType("Child") as any).getFields().extra).toBeUndefined();
+      const rebuiltChild = rebuilt.getType("Child");
+      if (!isObjectType(rebuiltChild)) {
+        throw new Error('Expected "Child" to be a GraphQLObjectType');
+      }
+      expect(rebuiltChild.getFields().extra).toBeUndefined();
       expect(warn.mock.calls.flat().join(" ")).toMatch(/checkStaleness is false/);
     } finally {
       warn.mockRestore();
@@ -213,7 +227,7 @@ describe("materializeSchema staleness", () => {
 
   it("still checks under `checkStaleness: true`, and by omission", async() => {
     const artifact = await artifactFor(await orm());
-    await expect(materializeSchema(artifact, await orm(true), {checkStaleness: true} as any))
+    await expect(materializeSchema(artifact, await orm(true), {checkStaleness: true}))
       .rejects.toThrow(/stale/i);
     await expect(materializeSchema(artifact, await orm(true))).rejects.toThrow(/stale/i);
   });

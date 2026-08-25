@@ -136,7 +136,14 @@ export class NestizeService {
     const args = { where: { [pk]: { eq: this.coerceId(id) } }, first: 1 };
     const { models } = await this.orm.resolveFindAll(name, null, args, { req });
     if (!models || models.length === 0) {
-      throw new NotFoundException(`${name} '${id}' not found`);
+      // `id` is `unknown` at this boundary (it comes straight off the route
+      // param); stringify only the shapes that produce a useful message and
+      // fall back to `typeof` rather than risk "[object Object]".
+      const idLabel =
+        typeof id === "string" || typeof id === "number" || typeof id === "bigint"
+          ? String(id)
+          : `<${typeof id}>`;
+      throw new NotFoundException(`${name} '${idLabel}' not found`);
     }
     // An adapter row is opaque by contract, so the engine hands it back as
     // `unknown`. Callers here read a relationship accessor or method off it by

@@ -6,6 +6,8 @@ import {
   GraphQLInt,
   GraphQLString,
   GraphQLBoolean,
+  type GraphQLFieldConfigArgumentMap,
+  type GraphQLOutputType,
 } from "graphql";
 
 import {capitalize} from "@azerothian/utilize/utils/word";
@@ -19,7 +21,7 @@ import { DataSourceDescriptor } from "./resolvers/types";
  * closure over it, so the same connection can be rebuilt from a serialized
  * schema. The resolver itself lives in `resolvers/connection.ts`.
  */
-export default function createListObject(instance: GQLManager, schemaCache: SchemaCache, targetDefName: string, targetType: any, data: DataSourceDescriptor, prefix = "", suffix = "", customArgs?: any, comment?: string, options: GqlizeOptions = {}) {
+export default function createListObject(instance: GQLManager, schemaCache: SchemaCache, targetDefName: string, targetType: GraphQLOutputType, data: DataSourceDescriptor, prefix = "", suffix = "", customArgs?: GraphQLFieldConfigArgumentMap, comment?: string, options: GqlizeOptions = {}) {
   const name = `${capitalize(prefix)}${capitalize(targetDefName)}${capitalize(suffix)}`;
   if (schemaCache.lists[name]) {
     return schemaCache.lists[name]; //TODO: figure out why this is getting hit?

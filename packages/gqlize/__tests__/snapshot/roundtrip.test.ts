@@ -1,4 +1,5 @@
 import {
+  GraphQLInterfaceType,
   GraphQLObjectType,
   GraphQLString,
   getNamedType,
@@ -14,7 +15,8 @@ import {describe, it, expect} from "@jest/globals";
 import {createInstance} from "../helper";
 import {createSchema} from "../../src";
 import {materializeSchema, snapshotSchema} from "../../src/snapshot";
-import type {SchemaHatch} from "../../src/types";
+import type {MaterializeOptions} from "../../src/graphql/snapshot/materialize";
+import type {GqlizeOptions, SchemaHatch} from "../../src/types";
 
 /** `$sql2gql` hangs off the schema instance rather than the type system. */
 type BuiltSchema = GraphQLSchema & {$sql2gql?: SchemaHatch};
@@ -53,7 +55,7 @@ function fieldOrder(schema: GraphQLSchema) {
   return out;
 }
 
-async function roundtrip(options: any = {}) {
+async function roundtrip(options: GqlizeOptions & MaterializeOptions = {}) {
   const instance = await createInstance();
   const live = await createSchema(instance, options);
   // through JSON, so this proves the *artifact* works, not the object graph
@@ -138,15 +140,21 @@ describe("snapshot round-trip", () => {
     expect([...refCounts.values()].filter((n) => n > 1).length).toBeGreaterThan(0);
 
     for (const [name, type] of Object.entries(rebuilt.getTypeMap())) {
-      if (name.startsWith("__") || !("getFields" in (type as any))) {
+      if (name.startsWith("__")) {
         continue;
       }
-      for (const field of Object.values<any>((type as any).getFields())) {
+      // Only object/interface types carry fields with `args` — the other
+      // `GraphQLNamedType` members (scalar, enum, union, input object) either
+      // have no fields at all or fields without arguments to walk.
+      if (!(type instanceof GraphQLObjectType) && !(type instanceof GraphQLInterfaceType)) {
+        continue;
+      }
+      for (const field of Object.values(type.getFields())) {
         // `getNamedType` is overloaded on nullable input; annotate so the
         // non-nullable overload is the one selected for an `any` argument.
         const fieldType: GraphQLNamedType = getNamedType(field.type as GraphQLType);
         expect(fieldType).toBe(rebuilt.getType(fieldType.name));
-        for (const arg of field.args || []) {
+        for (const arg of field.args) {
           const argType: GraphQLNamedType = getNamedType(arg.type as GraphQLType);
           expect(argType).toBe(rebuilt.getType(argType.name));
         }
@@ -166,7 +174,7 @@ describe("snapshot round-trip", () => {
 
   it("carries the ledger onto the rebuilt schema", async() => {
     const {rebuilt, artifact} = await roundtrip();
-    expect((rebuilt.extensions as any).gqlize).toEqual(artifact.ledger);
+    expect(rebuilt.extensions.gqlize).toEqual(artifact.ledger);
   });
 
   it("is idempotent — a snapshot of a materialized schema equals the artifact", async() => {

@@ -36,10 +36,10 @@ describe("utilize - gate helpers", () => {
   });
 
   it("isRelationshipAllowed: passes target to the predicate", () => {
-    const seen: any[] = [];
+    const seen: unknown[][] = [];
     const perm = {
       options: { role: "user" },
-      relationship: (...args: any[]) => {
+      relationship: (...args: unknown[]) => {
         seen.push(args);
         return true;
       },
@@ -68,7 +68,7 @@ describe("utilize - gate helpers", () => {
   });
 
   it("unknownPermissionKeys: a valid bag reports nothing", () => {
-    const perm: any = {};
+    const perm: Record<string, () => boolean> = {};
     PERMISSION_KEYS.forEach((key) => {
       perm[key] = () => true;
     });

@@ -8,7 +8,7 @@ function makeAdapter() {
 }
 
 describe("sequelize adapter - mapDataType (native -> abstract)", () => {
-  const adapter: any = makeAdapter();
+  const adapter = makeAdapter();
 
   it("maps scalar Sequelize DataTypes to abstract DataType", () => {
     expect(adapter.mapDataType(DataTypes.STRING).type).toBe(DataType.String);
@@ -34,7 +34,7 @@ describe("sequelize adapter - mapDataType (native -> abstract)", () => {
   it("recurses array element type", () => {
     const d = adapter.mapDataType(DataTypes.ARRAY(DataTypes.STRING));
     expect(d.type).toBe(DataType.Array);
-    expect(d.element.type).toBe(DataType.String);
+    expect(d.element?.type).toBe(DataType.String);
   });
 
   it("classifies unknown/unsupported types as Unknown", () => {
@@ -44,7 +44,7 @@ describe("sequelize adapter - mapDataType (native -> abstract)", () => {
 });
 
 describe("sequelize adapter - toNativeType (abstract -> native) + isOrmizeDataType", () => {
-  const adapter: any = makeAdapter();
+  const adapter = makeAdapter();
 
   it("round-trips abstract token -> native -> abstract", () => {
     const cases = [

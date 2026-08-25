@@ -12,7 +12,7 @@ test("createClassMethodFields - mutations before/after hooks", async() => {
   db.registerAdapter(new SequelizeAdapter({}, {
     dialect: "sqlite",
   }), "sqlite");
-  const itemDef = {
+  const itemDef: Definition = {
     name: "Item",
     define: {},
     relationships: [],
@@ -21,13 +21,16 @@ test("createClassMethodFields - mutations before/after hooks", async() => {
         mutations: {
           testClassMethod: {
             type: GraphQLInt,
-            before(args: any, context: any) {
+            // `ExposedMethod.before`/`.after` are typed `any` in the library — this
+            // test knows exactly what it hands them, so a real (if minimal) shape
+            // beats reaching for `any` here too.
+            before(args: {amount: number}, context: unknown) {
               return {
                 ...args,
                 amount: args.amount + 1,
               };
             },
-            after(result: any, context: any) {
+            after(result: number, context: unknown) {
               return result + 100;
             },
           },
@@ -36,12 +39,12 @@ test("createClassMethodFields - mutations before/after hooks", async() => {
     },
     options: {
       classMethods: {
-        testClassMethod(args: any) {
+        testClassMethod(args) {
           return args.amount;
         },
       },
     },
-  } as Definition;
+  };
   await db.addDefinition(itemDef);
   await db.initialise();
   await db.sync();

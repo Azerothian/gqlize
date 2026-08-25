@@ -1,4 +1,4 @@
-import Sequelize, {Op} from "sequelize";
+import Sequelize, {Op, Model} from "sequelize";
 
 import {
   GraphQLString,
@@ -56,7 +56,7 @@ export default {
       allowNull: true,
     },
   },
-  before(req: any) {
+  before(req) {
     if (req.type === events.MUTATION_CREATE) {
       return Object.assign({}, req.params, {
         mutationCheck: "create",
@@ -69,7 +69,7 @@ export default {
     }
     return req.params;
   },
-  after(req: any) {
+  after(req) {
     return req.result;
   },
   override: {
@@ -81,8 +81,8 @@ export default {
           hidden2: {type: GraphQLString},
         },
       },
-      output(result: any, args: any, context: any, info: any) {
-        return JSON.parse(result.get("options"));
+      output(result: Model) {
+        return JSON.parse(result.get("options") as string);
       },
       input(field, args, context, info, model) {
         if (model) {
@@ -97,10 +97,10 @@ export default {
     },
     options2: {
       type: GraphQLString,
-      output(result: any, args: any, context: any, info: any) {
-        return JSON.parse(result.get("options2"));
+      output(result: Model) {
+        return JSON.parse(result.get("options2") as string);
       },
-      input(field: any, args: any, context: any, info: any, model: any) {
+      input(field, args, context, info, model) {
         return JSON.stringify(field);
       },
     },
@@ -129,14 +129,14 @@ export default {
     },
   }],
   whereOperators: {
-    async hasNoItems(newWhere: any, findOptions: any) {
+    hasNoItems(newWhere, findOptions) {
       return {
         id: {
           [Op.notIn]: Sequelize.literal(`(SELECT DISTINCT("taskId") FROM "task-items")`)
         }
       };
     },
-    async chainTest(newWhere: any, findOptions: any) {
+    chainTest(newWhere, findOptions) {
       return {
         hasNoItems: true
       };

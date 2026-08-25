@@ -7,6 +7,8 @@ import {
   isScalarType,
   isUnionType,
   type GraphQLNamedType,
+  type GraphQLSchemaConfig,
+  type GraphQLType,
 } from "graphql";
 
 /**
@@ -32,7 +34,7 @@ interface Claim {
 }
 
 export function findDuplicateTypes(
-  config: any,
+  config: Partial<GraphQLSchemaConfig> | undefined,
   origins: Map<string, string> = new Map(),
 ): Map<string, DuplicateOccurrence[]> {
   /** name -> distinct instances, in discovery order */
@@ -51,7 +53,7 @@ export function findDuplicateTypes(
     }
     let named: GraphQLNamedType | undefined;
     try {
-      named = getNamedType(value as any) as unknown as GraphQLNamedType | undefined;
+      named = getNamedType(value as GraphQLType);
     } catch {
       return;
     }
@@ -140,7 +142,7 @@ export function findDuplicateTypes(
  */
 export function enrichDuplicateTypeError(
   err: unknown,
-  config: any,
+  config: Partial<GraphQLSchemaConfig> | undefined,
   origins: Map<string, string> = new Map(),
   hint = "",
 ): unknown {

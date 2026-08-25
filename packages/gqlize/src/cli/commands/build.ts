@@ -1,4 +1,5 @@
 import { buildArtifact } from "../../graphql/snapshot/build-artifact";
+import type { AnyOrmize } from "../../types";
 import type { ParsedArgs } from "../args";
 import type { ResolvedConfig } from "../config";
 import { resolveProfiles, type ResolvedProfile } from "../profiles";
@@ -27,7 +28,7 @@ export default async function build(
 async function buildOne(
   resolved: ResolvedConfig,
   profile: ResolvedProfile,
-  orm: any,
+  orm: AnyOrmize,
   out: (line: string) => void,
 ) {
   const result = await buildArtifact(orm, {

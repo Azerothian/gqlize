@@ -2,9 +2,26 @@ import {createInstance} from "./helper";
 import {createSchema} from "../src";
 import { createRoleBasedPermissions as permissionHelper } from "@azerothian/ormize";
 import type { RoleRules } from "@azerothian/utilize";
-import { GraphQLObjectType } from 'graphql';
+import {
+  GraphQLObjectType,
+  type GraphQLArgument,
+  type GraphQLInputObjectType,
+  type GraphQLNonNull,
+  type GraphQLSchema,
+} from 'graphql';
 
 import {describe, it, expect} from "@jest/globals";
+
+/**
+ * The argument list of `Mutation.models.<defName>` — the level every assertion
+ * below reaches for. Typed once here so the tests can name `GraphQLArgument`
+ * rather than casting the whole chain away.
+ */
+function mutationModelArgs(schema: GraphQLSchema, defName: string): readonly GraphQLArgument[] {
+  const models = schema.getMutationType()!.getFields().models.type as GraphQLObjectType;
+  return models.getFields()[defName].args;
+}
+
 describe("permission helper", () => {
 
   it("basic test - no settings - defaults deny", async() => {
@@ -68,7 +85,7 @@ describe("permission helper", () => {
     expect(queryFields.TaskItem).not.toBeDefined();
   });
 
-  it("basic test - allow all on task - defaults deny", async() => {
+  it("basic test - allow all on task - defaults deny", () => {
     const permission = permissionHelper("anyone", {
       "someone": "deny",
       "anyone": {
@@ -137,10 +154,58 @@ describe("permission helper", () => {
 
     const instance = await createInstance();
     const schema = await createSchema(instance, {permission});
-    const {args} = (schema.getMutationType() as any).getFields().models.type.getFields().Task;
-    const create = args.find((a: any) => a.name === "create");
-    const inputFields = create.type.ofType.getFields();
+    const args = mutationModelArgs(schema, "Task");
+    const create = args.find((a) => a.name === "create")!;
+    const inputFields = (create.type as GraphQLNonNull<GraphQLInputObjectType>).ofType.getFields();
     expect(inputFields.name).toBeDefined();
     expect(inputFields.options).not.toBeDefined();
+  });
+
+  it("defaultDeny gates the apply argument's instance-method transforms", async() => {
+    // `apply` transforms are pre-commit write hooks that run inside the
+    // mutation's transaction, so a role that denies everything must not leave
+    // them reachable. They were: `mutationInstanceMethods` was consumed by
+    // gqlize and listed in PERMISSION_KEYS but missing from the helper's gate
+    // maps, and an absent predicate reads as ALLOW.
+    const permission = permissionHelper("anyone", {
+      anyone: {
+        query: {Task: "allow"},
+        model: {Task: "allow"},
+        field: {Task: {name: "allow"}},
+        mutation: {Task: "allow"},
+        mutationCreate: {Task: "allow"},
+      },
+    });
+    expect(permission.mutationInstanceMethods).toBeDefined();
+    expect(permission.mutationInstanceMethods!("Task", "appendSuffix")).toBeFalsy();
+
+    const instance = await createInstance();
+    const schema = await createSchema(instance, {permission});
+    const args = mutationModelArgs(schema, "Task");
+    expect(args.find((a) => a.name === "apply")).not.toBeDefined();
+  });
+
+  it("an explicit mutationInstanceMethods rule restores the transform", async() => {
+    const permission = permissionHelper("anyone", {
+      anyone: {
+        query: {Task: "allow"},
+        model: {Task: "allow"},
+        field: {Task: {name: "allow"}},
+        mutation: {Task: "allow"},
+        mutationCreate: {Task: "allow"},
+        mutationInstanceMethods: {Task: {appendSuffix: "allow"}},
+      },
+    });
+    expect(permission.mutationInstanceMethods!("Task", "appendSuffix")).toBeTruthy();
+    expect(permission.mutationInstanceMethods!("Task", "markChecked")).toBeFalsy();
+
+    const instance = await createInstance();
+    const schema = await createSchema(instance, {permission});
+    const args = mutationModelArgs(schema, "Task");
+    const apply = args.find((a) => a.name === "apply");
+    expect(apply).toBeDefined();
+    const applyFields = (apply!.type as GraphQLInputObjectType).getFields();
+    expect(applyFields.appendSuffix).toBeDefined();
+    expect(applyFields.markChecked).not.toBeDefined();
   });
 });

@@ -255,6 +255,7 @@ export class ValkeyTransaction implements Executor {
     this.commands = [];
     await multi.exec();
   }
+  // eslint-disable-next-line @typescript-eslint/require-await -- must stay async: satisfies the Promise-returning AdapterTransaction.rollback contract used by index.ts's beginTransaction
   async rollback(): Promise<void> {
     // Nothing was written to Redis — just drop the overlay.
     this.objects.clear(); this.strs.clear();

@@ -1,4 +1,4 @@
-import { Keys } from "./keys";
+import { Keys, KeyId } from "./keys";
 import { ValkeyModel } from "./model";
 import { Executor } from "./transaction";
 
@@ -8,7 +8,7 @@ export function ttlToScore(ttlMs: number | null | undefined, now: number): numbe
 }
 
 /** Milliseconds until expiry (-1 = no expiry, -2 = missing) — mirrors PTTL. */
-export function getExpiry(ex: Executor, keys: Keys, model: ValkeyModel, id: any): Promise<number> {
+export function getExpiry(ex: Executor, keys: Keys, model: ValkeyModel, id: KeyId): Promise<number> {
   return ex.pttl(keys.obj(model.name, id));
 }
 
@@ -22,7 +22,7 @@ export async function setExpiry(
   ex: Executor,
   keys: Keys,
   model: ValkeyModel,
-  id: any,
+  id: KeyId,
   ttlMs: number | null,
 ): Promise<void> {
   const now = Date.now();

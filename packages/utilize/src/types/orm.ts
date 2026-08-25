@@ -24,9 +24,11 @@ export interface ITypedDefinition<Name extends string, TInstance, TStatics>
 }
 
 /** Any typed definition, regardless of its concrete instance/statics types. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- wildcards for the two phantom slots: this is the published constraint every composition type below is written against, and it has to admit a definition whose instance/statics are anything at all. `unknown` is not that wildcard — it is a concrete argument the phantom fields would then be read back as.
 export type AnyTypedDef = ITypedDefinition<string, any, any>;
 
 /** The literal model name of a typed definition. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- match-anything wildcards beside the `infer N` this type exists for: only the name slot is being extracted, and the other two must not constrain which definitions match.
 export type ModelNameOf<D> = D extends ITypedDefinition<infer N, any, any>
   ? N
   : never;
@@ -62,11 +64,12 @@ export interface IORBaseRegistry<
 > {}
 
 /** Union of registered adapter base URIs (e.g. `"sequelize"`). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- only the *keys* of the registry are wanted; the four arguments are placeholders that must not restrict which adapter augmentations are counted, whatever those augmentations do with their slots.
 export type IORBase = keyof IORBaseRegistry<any, any, any, any>;
 
 /** Collapse a union to an intersection. */
 export type UnionToIntersection<U> = (
-  U extends any ? (k: U) => void : never
+  U extends unknown ? (k: U) => void : never
 ) extends (k: infer I) => void
   ? I
   : never;

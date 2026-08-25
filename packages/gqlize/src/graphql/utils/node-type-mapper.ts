@@ -25,18 +25,40 @@ SOFTWARE.
 
 // https://github.com/mickhansen/graphql-sequelize/blob/master/src/relay.js
 
+import type { GraphQLResolveInfo, GraphQLType } from "graphql";
+import type { RequestContext } from "../../types";
+
+/**
+ * What `node(id:)` resolves a type name to: the type itself, or its name for the
+ * artifact path that has not built it yet, plus the optional custom fetcher a
+ * caller can register in place of the default global-id lookup.
+ */
+export type NodeTypeEntry = {
+  type: GraphQLType | string;
+  resolve?: (globalId: string, context: RequestContext, info: GraphQLResolveInfo) => unknown;
+};
+
 export default class NodeTypeMapper {
-  map: {[key: string]: any}
+  map: {[key: string]: NodeTypeEntry}
   constructor() {
     this.map = { };
   }
 
-  mapTypes(types: {[key: string]: any}) {
+  /**
+   * `undefined` is in the parameter type because the artifact path's type map
+   * carries it — not because a hole is acceptable. Its callers throw on one
+   * first, and reading `.type` off it here is the documented second line of
+   * defence.
+   */
+  mapTypes(types: {[key: string]: NodeTypeEntry | GraphQLType | undefined}) {
     Object.keys(types).forEach((k) => {
       const v = types[k];
-      this.map[k] = v.type
-        ? v
-        : {type: v};
+      // A bare type is wrapped, an entry that already carries one is kept. The
+      // truthiness test rather than an `in` check is the original behaviour, and
+      // an entry whose `type` is undefined is not one worth keeping.
+      this.map[k] = (v as Partial<NodeTypeEntry>).type
+        ? v as NodeTypeEntry
+        : {type: v as GraphQLType};
     });
   }
 

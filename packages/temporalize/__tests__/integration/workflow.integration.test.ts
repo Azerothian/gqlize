@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, jest } from "@jest/globals";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { createRoleBasedPermissions } from "@azerothian/utilize";
+import type { Permission, PermissionContext, RoleRules } from "@azerothian/utilize";
 import { createActivities } from "../../src/activities";
 import { createTemporalizeClient } from "../../src/client";
 import { buildQueueMap } from "../../src/queue";
@@ -21,9 +22,12 @@ import { buildOrm, ctx } from "../helper";
 // themselves are a single activity each.
 jest.setTimeout(120_000);
 
-const RULES: any = { admin: { model: "allow" }, reader: { mutation: "deny" } };
-const permissions: { [role: string]: any } = {};
-const resolvePermission = (context: any) =>
+/** Plain-JSON row shape for the `Task` fixture model, as it leaves an activity. */
+type TaskRow = { id: number; name: string };
+
+const RULES: RoleRules = { admin: { model: "allow" }, reader: { mutation: "deny" } };
+const permissions: { [role: string]: Permission } = {};
+const resolvePermission = (context: PermissionContext): Permission =>
   (permissions[context.role] =
     permissions[context.role] || createRoleBasedPermissions(context.role, RULES, { defaultDeny: false }));
 
@@ -32,7 +36,7 @@ const options = { queuePrefix: "itest", resolvePermission };
 describe("temporalize through a real Temporal workflow", () => {
   let env: TestWorkflowEnvironment;
   let workers: Worker[] = [];
-  let running: Promise<any>;
+  let running: Promise<void[]>;
   let t: ReturnType<typeof createTemporalizeClient>;
 
   beforeAll(async () => {
@@ -65,17 +69,17 @@ describe("temporalize through a real Temporal workflow", () => {
   });
 
   it("creates and reads back through the generic workflows", async () => {
-    const created: any = await t.model("Task").create({ context: ctx, input: { name: "alpha" } });
+    const created = await t.model<TaskRow>("Task").create({ context: ctx, input: { name: "alpha" } });
     expect(created[0].name).toBe("alpha");
 
-    const list: any = await t.model("Task").findAll({ context: ctx });
+    const list = await t.model<TaskRow>("Task").findAll({ context: ctx });
     expect(list.total).toBe(1);
     expect(list.rows[0].name).toBe("alpha");
   });
 
   it("dispatches a class method by name onto the model's own queue", async () => {
     await t.model("Item").create({ context: ctx, input: { label: "beta" } });
-    const labels: any = await t.model("Item").classMethod("labelsUpper", { context: ctx });
+    const labels = await t.model("Item").classMethod("labelsUpper", { context: ctx });
     expect(labels).toContain("BETA");
   });
 
@@ -83,7 +87,7 @@ describe("temporalize through a real Temporal workflow", () => {
     // The default retry policy has no attempt limit, so a retryable failure
     // would never surface here at all — the workflow would still be retrying
     // when the test timed out. Rejecting is itself the proof of nonRetryable.
-    const error: any = await t
+    const error = await t
       .model("Task")
       .create({ context: { userId: "u2", role: "reader" }, input: { name: "nope" } })
       .then(

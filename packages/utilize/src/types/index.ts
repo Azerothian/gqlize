@@ -37,6 +37,7 @@ export type NativeDataType = unknown;
  * symbol: Sequelize's operators (`Op.and`, `Op.eq`) are symbols, and the
  * combined filter this type describes is largely made of them.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the filter is the backend's own vocabulary — Sequelize `Op` symbols, a Valkey index query — assembled by `processFilterArgument` and handed straight back to the adapter that understands it. Any shape named here would be one backend's.
 export type AdapterWhere = { [key: string | symbol]: any };
 
 /**
@@ -45,6 +46,7 @@ export type AdapterWhere = { [key: string | symbol]: any };
  * adapter understands. Produced by `processListArgsToOptions` and merged along
  * the way, so it stays open by design.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the bag accumulates adapter-specific keys as it is merged along the way and is consumed only by the adapter that put them there; the docblock above is the whole contract.
 export type AdapterQueryOptions = { [key: string]: any };
 
 /**
@@ -59,7 +61,61 @@ export type AdapterQueryOptions = { [key: string]: any };
  * {@link AdapterQueryOptions} bag is, so `unknown` would move the narrowing out
  * to every call site without making anything more certain.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shape belongs to the application (gqlize passes the GraphQL execution context, nestize `{req}`) and ormize forwards it untouched — see the docblock above for why `unknown` would only move the narrowing out to every call site.
 export type RequestContext = any;
+
+/**
+ * A single field's value: a column as the adapter reads or writes it, a
+ * `defaultValue`, or what an exposed method produces for its field.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a column's value is whatever the backend types that column as, and this package is adapter-agnostic by design — it cannot name the union. `unknown` would push a narrowing onto every adapter and definition author that already knows the concrete type.
+export type FieldValue = any;
+
+/** A row's field values, keyed by field name. */
+export type FieldValues = {[field: string]: FieldValue};
+
+/**
+ * The arguments a field was selected with, as they reach a hook. The shape is
+ * whatever that field's own `args` declaration produced.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the bag's shape is fixed by the definition author's own `args`, not by this package, and it is handed straight back to author-written hooks that know their own vocabulary.
+export type FieldArgs = any;
+
+/**
+ * A field's argument *declarations* — the `args` config a definition author
+ * writes, as opposed to the {@link FieldArgs} values that arrive at runtime.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- these are GraphQL argument configs, and this package is graphql-free: naming them would mean importing `GraphQLFieldConfigArgumentMap`, which is exactly what it exists to avoid.
+export type FieldArgsConfig = any;
+
+/**
+ * The caller's raw GraphQL execution info, passed through to definition hooks
+ * untouched. {@link Selection.raw} carries the same value into the engine.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- naming this means importing `GraphQLResolveInfo` into a package that must not depend on graphql; it is only ever read by the GraphQL caller that supplied it.
+export type ExecutionInfo = any;
+
+/**
+ * A row as it reaches a definition-authored hook. Unlike {@link AdapterRow},
+ * which is `unknown` because no *engine* code may assume a shape, a hook is
+ * written by whoever declared the model and reads its own columns off it.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the hook author knows the row type and this package cannot; `unknown` here would turn every `params.model.someColumn` in user code into a compile error.
+export type LoadedRow = any;
+
+/**
+ * A callback a definition supplies for this package to call back into: a field's
+ * `resolve`, an exposed method's `before`/`after`, an `override`'s `output`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- each of these is invoked with a different signature by a different layer (the GraphQL builder, the mutation engine, the adapter), so there is no single function type to give them here.
+export type DefinitionHook = any;
+
+/**
+ * An instance or class method a definition installs onto its model. `this` is
+ * the row (instance methods) or the model handle (class methods).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- `this` is the adapter's own row/model type, which this package cannot name, and the return is whatever the author's method produces.
+export type DefinitionMethod = (this: any, args?: FieldArgs, context?: RequestContext) => any;
 
 /**
  * The list arguments `Ormize.resolveFindAll` accepts.
@@ -95,7 +151,7 @@ export type AdapterRow = unknown;
 export type AdapterRelationshipPage = { total: number; models: AdapterRow[] };
 
 /** `getCreateFunction(defName)` — insert one row. */
-export type AdapterCreateFunction = (input: {[field: string]: any}, options: AdapterQueryOptions) => Promise<AdapterRow>;
+export type AdapterCreateFunction = (input: FieldValues, options: AdapterQueryOptions) => Promise<AdapterRow>;
 
 /**
  * `getUpdateFunction(defName, whereOperators)` — update every row matching
@@ -104,7 +160,7 @@ export type AdapterCreateFunction = (input: {[field: string]: any}, options: Ada
  */
 export type AdapterUpdateFunction = (
   where: AdapterWhere,
-  processInput: (instance: AdapterRow) => Promise<{[field: string]: any}> | {[field: string]: any},
+  processInput: (instance: AdapterRow) => Promise<FieldValues> | FieldValues,
   options: AdapterQueryOptions,
 ) => Promise<AdapterRow[]>;
 
@@ -221,9 +277,10 @@ export interface OrmAdapter {
    * to attach cross-adapter relationship accessors to adapters whose "model" is a
    * plain descriptor rather than a class with a prototype.
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the method being installed is the definition author's own — its parameters and return are whatever they wrote, and the adapter does nothing but attach it to the model.
   addInstanceFunction?(modelName: string, name: string, fn: (...args: any[]) => any): void;
   /** Apply a patch to one already-fetched row. */
-  update(row: AdapterRow, i: {[field: string]: any}, defaultOptions: AdapterQueryOptions): Promise<AdapterRow>;
+  update(row: AdapterRow, i: FieldValues, defaultOptions: AdapterQueryOptions): Promise<AdapterRow>;
   getCreateFunction(defName: string): AdapterCreateFunction;
   getUpdateFunction(defName: string, whereOperators: WhereOperators | undefined): AdapterUpdateFunction;
   getDeleteFunction(defName: string, whereOperators: WhereOperators | undefined): AdapterDeleteFunction;
@@ -267,7 +324,7 @@ export interface OrmAdapter {
  */
 export interface AdapterListRequest {
   /** The GraphQL-style list args — `where`, `orderBy`, `first`/`last`, `include`. */
-  args: {[name: string]: any};
+  args: {[name: string]: FieldArgs};
   /** Row offset, already resolved from a cursor by the caller. */
   offset?: number;
   /** What the caller wants fetched: selected fields, eager includes, count-only. */
@@ -284,6 +341,7 @@ export interface AdapterListRequest {
   /** Scalar field names to fetch, when the caller has already resolved them. */
   selectedFields?: string[];
   /** Hook dispatcher, so options-building can fire `beforeFind` on eager includes. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- this is the hook *dispatcher*: `value` and the trailing arguments differ per hook name (`beforeFind` gets an options bag, `afterCreate` a row), so it is the one place that cannot know which it is forwarding.
   runHook?: (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>;
 }
 
@@ -319,7 +377,7 @@ export type Selection = {
   /** fetch count without rows */
   countOnly?: boolean;
   /** raw arg variables (caller-provided) */
-  variableValues?: {[name: string]: any};
+  variableValues?: {[name: string]: FieldArgs};
   /** opaque passthrough; gqlize stashes the real GraphQLResolveInfo here so hooks still see `info` */
   raw?: unknown;
   /**
@@ -358,7 +416,8 @@ export type Selection = {
  * A query-shaping hook contributed by an exposed method's `input`, bound to the
  * occurrence it came from. Carried on {@link Selection.optionHooks}.
  */
-export type OptionHook = (params: any, context?: any) => any | Promise<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- `params` is the adapter-native options bag the hook reshapes and hands back, and the return is that same bag — the backend's vocabulary, not this package's.
+export type OptionHook = (params: any, context?: RequestContext) => any | Promise<any>;
 
 /**
  * Descriptor for a single relationship that should be eager-loaded as part of
@@ -539,8 +598,14 @@ export type GqlizeOptions = {
    * `fallbackCursorCodec(next, previous)` rather than in one step.
    */
   cursor?: CursorCodec,
+  /** GraphQL field configs merged into the root query/mutation types. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- these are `GraphQLFieldConfigMap` entries, which this graphql-free package cannot name; gqlize holds them and hands them to the schema builder verbatim.
   extend?: any,
+  /** The caller's root-type/root-value config, handed to the GraphQL layer as given. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same reason as `extend`: it is graphql-typed config this package only carries.
   root?: any,
+  /** The caller's subscription config. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- consumed only by the GraphQL layer that understands it; naming it here would mean depending on graphql.
   subscriptions?: any
 }
 
@@ -628,10 +693,10 @@ export type DefinitionFieldMeta = {
   // Opt-in to allow a primary/foreign key to be set from client mutation input.
   // Defaults to false — see `isStructurallyWritable` (mass-assignment guard).
   writable?: boolean;
-  resolve?: any;
-  args?: any;
+  resolve?: DefinitionHook;
+  args?: FieldArgsConfig;
   comment?: string;
-  defaultValue?: any;
+  defaultValue?: FieldValue;
 }
 
 export type DefinitionField = {
@@ -660,10 +725,10 @@ export type DefinitionField = {
    */
   writable?: boolean;
   foreignTarget?: string;
-  resolve?: any;
-  args?: any;
+  resolve?: DefinitionHook;
+  args?: FieldArgsConfig;
   comment?: string;
-  defaultValue?: any;
+  defaultValue?: FieldValue;
   values?: string[];
   validate?: FieldValidators;
 }
@@ -681,6 +746,7 @@ export type FieldValidators = {
 export type DefinitionFields = {
   [name: string]: DefinitionField
 }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- an operator is handed the partially built adapter-native `where`, the adapter's options bag and the client's raw filter value, and returns a backend-shaped fragment. Narrowing the parameters would reject the adapter implementations that legitimately declare their own concrete types for them.
 export type WhereOperator = (whereObject: any, options: any, value: any) => Promise<any> | any
 export type WhereOperators = {
   [name: string]: WhereOperator
@@ -693,13 +759,13 @@ export type WhereOperators = {
  */
 export type ExposedMethodContext = {
   /** The loaded row, for `output`. Absent on the query-building hooks. */
-  source?: any;
+  source?: LoadedRow;
   /** The arguments the field was selected with, after `before`. */
-  args?: any;
+  args?: FieldArgs;
   /** The request context. */
-  context?: any;
+  context?: RequestContext;
   /** The raw GraphQL execution info, when the caller is GraphQL. */
-  info?: any;
+  info?: ExecutionInfo;
   /** The definition the method is declared on. */
   modelDefinition?: Definition;
 };
@@ -754,9 +820,9 @@ export type ExposedMethod = {
    * which are pre-commit transforms rather than fields.
    */
   type?: unknown;
-  args?: any;
-  before?: any;
-  after?: any;
+  args?: FieldArgsConfig;
+  before?: DefinitionHook;
+  after?: DefinitionHook;
   /**
    * Columns this method reads off `this`, unioned into the query's projection.
    * `"*"` opts the query out of attribute narrowing entirely.
@@ -773,6 +839,7 @@ export type ExposedMethod = {
    * receives, and runs *after* it — so a method's `input` sees the final options
    * and gets the last word on them. Return the params to use.
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `params` is the adapter's own options bag, handed in to be reshaped and returned — the same value `definition.before` receives (see {@link OptionHook}).
   input?: (params: any, ctx: ExposedMethodContext) => any;
   /**
    * Produce or format the field's value from the loaded row. Runs after the
@@ -780,7 +847,7 @@ export type ExposedMethod = {
    * none — declaring `output` alone is how a field with no implementation
    * works) and before `after`.
    */
-  output?: (value: any, ctx: ExposedMethodContext) => any;
+  output?: (value: FieldValue, ctx: ExposedMethodContext) => FieldValue;
   /** Contribute `<name>ASC` / `<name>DESC` to the model's `orderBy` enum. */
   orderBy?: ExposedMethodOrderBy;
   /** Contribute a normal nested operator object to the model's `where` input. */
@@ -804,8 +871,8 @@ export type Definition = {
       type?: unknown,
       /** See {@link DefinitionField.type}. */
       inputType?: unknown,
-      input?: (o: any, args: any, context: any, info: any, model: any) => any;
-      output?: any
+      input?: (o: FieldValue, args: FieldArgs, context: RequestContext, info: ExecutionInfo, model: LoadedRow) => FieldValue;
+      output?: DefinitionHook
     }
   }; 
   /** Field names excluded from every generated type. */
@@ -814,9 +881,12 @@ export type Definition = {
   comments?: DefinitionComments;
   relationships?: Relationship[];
   whereOperators?: WhereOperators;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- each value is the GraphQL input type an operator's argument accepts; a graphql-free package cannot name `GraphQLInputType`, and the schema builder that reads this can.
   whereOperatorTypes?: { [x: string]: any };
-  before?: (options: { params: any, model?: any, args: any, context: any, info: any, modelDefinition: Definition, type: Events}) => any;
-  after?: (options: { result: any, args: any, context: any, info: any, modelDefinition: Definition, type: Events}) => any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `params` is the adapter-native options bag the hook may reshape, and the return is whatever it hands back in its place — both are the backend's/author's vocabulary, not this package's.
+  before?: (options: { params: any, model?: LoadedRow, args: FieldArgs, context: RequestContext, info: ExecutionInfo, modelDefinition: Definition, type: Events}) => any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `result` is whatever the operation produced — a row, a list of rows, a count — and the return is whatever the hook substitutes for it.
+  after?: (options: { result: any, args: FieldArgs, context: RequestContext, info: ExecutionInfo, modelDefinition: Definition, type: Events}) => any;
   expose?: {
     classMethods?: {
       query?: ExposedMethods;
@@ -834,10 +904,10 @@ export type Definition = {
     }
   }
   instanceMethods?: {
-    [name: string]: (this: any, args?: any, context?: any) => any;
+    [name: string]: DefinitionMethod;
   }
   classMethods?: {
-    [name: string]: (this: any, args?: any, context?: any) => any;
+    [name: string]: DefinitionMethod;
   }
   hooks?: HookMap;
   options?: DefinitionOptions
@@ -858,10 +928,10 @@ export interface DefinitionOptions {
    */
   autoInclude?: boolean;
   instanceMethods?: {
-    [name: string]: (this: any, args?: any, context?: any) => any;
+    [name: string]: DefinitionMethod;
   }
   classMethods?: {
-    [name: string]: (this: any, args?: any, context?: any) => any;
+    [name: string]: DefinitionMethod;
   }
 }
 
@@ -883,6 +953,7 @@ export type Definitions = {
  * the whole reason it cannot be described more tightly here.
  */
 export type Model = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- adapters install relationship accessors and definition methods onto the model handle at runtime, so its members are not knowable here (see the docblock above); `unknown` would make every `model.someAccessor(...)` in an adapter a compile error.
   [name: string]: any
   /**
    * Present on a class-based adapter's model (Sequelize's `ModelStatic`) and
@@ -902,6 +973,7 @@ export type Model = {
 }
 
 export type HookMap = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- each hook name has its own call signature — `beforeCreate(values, options)`, `afterFind(rows)` — fixed by the adapter that fires it, so a single parameter list would be wrong for most of them.
   [hookName: string]: ((...args: any) => any)[] |((...args: any) => any)
 }
 

@@ -15,8 +15,8 @@ const Obj = new GraphQLObjectType({name: "Obj", fields: {a: {type: GraphQLString
 const Inp = new GraphQLInputObjectType({name: "Inp", fields: {a: {type: GraphQLString}}});
 const Enu = new GraphQLEnumType({name: "Enu", values: {A: {value: "A"}}});
 
-const lookup = (name: string): GraphQLNamedType | undefined =>
-  ({Obj, Inp, Enu, String: GraphQLString} as any)[name];
+const namedTypes: Record<string, GraphQLNamedType> = {Obj, Inp, Enu, String: GraphQLString};
+const lookup = (name: string): GraphQLNamedType | undefined => namedTypes[name];
 
 describe("type-ref", () => {
   it("round-trips every wrapper nesting", () => {
@@ -33,7 +33,7 @@ describe("type-ref", () => {
       GraphQLString,
     ];
     for (const type of cases) {
-      const ref = encodeTypeRef(type as any);
+      const ref = encodeTypeRef(type);
       const decoded = decodeTypeRef(ref, lookup);
       // structural equality via graphql's own printer, and identity at the leaf
       expect(String(decoded)).toEqual(ref);

@@ -6,13 +6,14 @@ import TaskItemModel from "./models/task-item";
 import Item from "./models/item";
 import Sequelize from "sequelize";
 import { createAdapterForDialect, registerTeardown } from "./dialect";
+import type {Definition} from "../../src/types";
 
 /**
  * `extraDefinitions` exists so a test can exercise a definition shape without
  * editing the shared models — `schema-golden.test.ts` pins the SDL these five
  * produce, and any edit to them churns that snapshot for unrelated reasons.
  */
-export async function createInstance(extraDefinitions: any[] = []) {
+export async function createInstance(extraDefinitions: Definition[] = []) {
   const db = new Database();
   const { adapter, name, teardown } = await createAdapterForDialect();
   registerTeardown(teardown);
@@ -69,10 +70,11 @@ export async function createInstance(extraDefinitions: any[] = []) {
 }
 
 
-export function validateResult(result: any) {
-  if ((result.errors || []).length > 0) {
-    console.log("Graphql Error", result.errors); //eslint-disable-line
-    throw result.errors[0];
+export function validateResult(result: {errors?: readonly unknown[] | null}) {
+  const errors = result.errors || [];
+  if (errors.length > 0) {
+    console.log("Graphql Error", errors); //eslint-disable-line
+    throw errors[0] as Error;
   }
 }
 

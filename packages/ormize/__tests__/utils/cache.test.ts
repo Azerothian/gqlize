@@ -58,25 +58,25 @@ test("cache - set - clear timeout", async() => {
 });
 
 
-test("cache - merge", async() => {
+test("cache - merge", () => {
   const cache = new Cache();
   cache.set("field", {"key": "value"});
-  const val = cache.get("field");
+  const val = cache.get<{key: string}>("field")!;
   expect(val).toBeDefined();
   expect(val.key).toBeDefined();
   expect(val.key).toEqual("value");
   cache.merge("field", {"key1": "value1"});
-  const val2 = cache.get("field");
+  const val2 = cache.get<{key: string, key1: string}>("field")!;
   expect(val2).toBeDefined();
   expect(val2.key).toBeDefined();
   expect(val2.key).toEqual("value");
   expect(val2.key1).toBeDefined();
   expect(val2.key1).toEqual("value1");
 });
-test("cache - merge from empty", async() => {
+test("cache - merge from empty", () => {
   const cache = new Cache();
   cache.merge("field", {"key": "value"});
-  const val = cache.get("field");
+  const val = cache.get<{key: string}>("field")!;
   expect(val).toBeDefined();
   expect(val.key).toBeDefined();
   expect(val.key).toEqual("value");

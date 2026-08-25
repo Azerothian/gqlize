@@ -1,4 +1,5 @@
-import { AdapterTransaction } from "@azerothian/utilize/types/index";
+import { AdapterTransaction, AdapterTransactionHandle } from "@azerothian/utilize/types/index";
+import type Ormize from "./manager";
 
 /**
  * Coordinates a unit of work that may span multiple adapters.
@@ -18,14 +19,16 @@ import { AdapterTransaction } from "@azerothian/utilize/types/index";
 export default class OrmizeTransaction {
   private txs = new Map<string, AdapterTransaction>();
 
-  constructor(private manager: any) {}
+  // `Ormize`'s own generics (TModels/TBase) aren't relevant to what this class
+  // needs off it (just `adapters`), so the bare (defaulted) type is enough.
+  constructor(private manager: Ormize) {}
 
   /**
    * The adapter-native transaction handle for `adapterName`, beginning one on
    * first use. Returns `undefined` for adapters that don't support transactions
    * (their operations then run unenrolled, as before).
    */
-  async handleFor(adapterName: string): Promise<any> {
+  async handleFor(adapterName: string): Promise<AdapterTransactionHandle> {
     const existing = this.txs.get(adapterName);
     if (existing) {
       return existing.handle;

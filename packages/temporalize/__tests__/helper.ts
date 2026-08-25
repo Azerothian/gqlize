@@ -1,12 +1,14 @@
 import { expect } from "@jest/globals";
 import { DataTypes } from "sequelize";
 import { Ormize } from "@azerothian/ormize";
+import type { Definition } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { ApplicationFailure } from "@temporalio/common";
 
 /** Contexts seen by `definition.before`, so tests can assert context propagation. */
-export const seenContexts: any[] = [];
+export const seenContexts: unknown[] = [];
 
-const ItemDef: any = {
+const ItemDef: Definition = {
   name: "Item",
   define: {
     label: { type: DataTypes.STRING },
@@ -18,24 +20,24 @@ const ItemDef: any = {
   relationships: [
     { type: "hasMany", model: "Task", name: "tasks", options: { foreignKey: "itemId" } },
   ],
-  before(options: any) {
+  before(options) {
     seenContexts.push(options.context);
     return options.params;
   },
   classMethods: {
-    async labelsUpper(this: any, args: any) {
+    async labelsUpper(args) {
       const rows = await this.findAll({ where: args?.where });
-      return rows.map((r: any) => String(r.label || "").toUpperCase());
+      return rows.map((r: { label?: string }) => String(r.label || "").toUpperCase());
     },
   },
   instanceMethods: {
-    async describe(this: any, args: any) {
+    describe(args) {
       return `${this.label}:${args?.suffix ?? ""}`;
     },
   },
 };
 
-const TaskDef: any = {
+const TaskDef: Definition = {
   name: "Task",
   datasource: "sqlite",
   define: {
@@ -52,9 +54,9 @@ const TaskDef: any = {
 };
 
 /** Fresh, initialised and synced in-memory ormize (Item hasMany Task). */
-export async function buildOrm(): Promise<any> {
+export async function buildOrm(): Promise<Ormize> {
   seenContexts.length = 0;
-  const orm: any = new Ormize();
+  const orm = new Ormize();
   orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
   await orm.addDefinition(ItemDef);
   await orm.addDefinition(TaskDef);
@@ -63,14 +65,20 @@ export async function buildOrm(): Promise<any> {
   return orm;
 }
 
+/** Context shape every test call carries: an identity and a role, plus whatever a test spreads onto it. */
+export type TestContext = { userId: string; role: string; [key: string]: unknown };
+
 /** The context every test call carries: an identity and a role. */
-export const ctx = { userId: "u1", role: "admin" };
+export const ctx: TestContext = { userId: "u1", role: "admin" };
 
 /** Assert a promise rejects with a non-retryable ApplicationFailure of `type`. */
-export async function expectFailure(promise: Promise<any>, type: string): Promise<any> {
+export async function expectFailure(promise: Promise<unknown>, type: string): Promise<ApplicationFailure> {
   try {
     await promise;
-  } catch (e: any) {
+  } catch (e) {
+    if (!(e instanceof ApplicationFailure)) {
+      throw e;
+    }
     expect(e.name).toBe("ApplicationFailure");
     expect(e.nonRetryable).toBe(true);
     expect(e.type).toBe(type);

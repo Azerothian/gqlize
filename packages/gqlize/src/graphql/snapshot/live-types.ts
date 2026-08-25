@@ -9,7 +9,10 @@ import {
   isSpecifiedScalarType,
   isUnionType,
   type GraphQLNamedType,
+  type GraphQLType,
 } from "graphql";
+
+import type { GqlFieldMap } from "../../types";
 
 /** a live (user-authored) type instance and where it entered the schema */
 export interface LiveType {
@@ -58,7 +61,7 @@ export function collectLiveTypes(
  * hands to `createSchema` (`{type, args, resolve}`), not built `GraphQLField`s.
  */
 export function collectLiveTypesFromFields(
-  fields: Record<string, any> | undefined,
+  fields: GqlFieldMap | undefined,
   originPrefix: string,
   out: Map<string, LiveType>,
   opts: CollectOptions = {},
@@ -66,7 +69,7 @@ export function collectLiveTypesFromFields(
   for (const [key, config] of Object.entries(fields || {})) {
     const origin = `${originPrefix}.${key}`;
     walk(config?.type, origin, out, opts);
-    for (const arg of Object.values<any>(config?.args || {})) {
+    for (const arg of Object.values(config?.args ?? {})) {
       walk(arg?.type, origin, out, opts);
     }
   }
@@ -124,7 +127,7 @@ function visit(
   }
   let named: GraphQLNamedType | undefined;
   try {
-    named = getNamedType(value as any) as unknown as GraphQLNamedType | undefined;
+    named = getNamedType(value as GraphQLType);
   } catch {
     // not a GraphQL type instance (a bare config object, a thunk) — nothing to
     // claim: the builder that consumes it records the type it produces.

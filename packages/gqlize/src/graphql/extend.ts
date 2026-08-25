@@ -1,5 +1,5 @@
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import { GqlizeOptions } from "../types";
+import { GqlFieldMap, GqlizeOptions } from "../types";
 import { bindField } from "./resolvers/bind";
 import type { BindingContext } from "./resolvers/types";
 import type { GqlizeBuildLedger } from "./snapshot/ledger";
@@ -14,13 +14,13 @@ import type { GqlizeBuildLedger } from "./snapshot/ledger";
  * merge order and permission behaviour cannot diverge between the two paths.
  */
 export async function applyExtendFields(
-  fields: Record<string, any>,
-  extendFields: Record<string, any> | undefined,
+  fields: GqlFieldMap,
+  extendFields: GqlFieldMap | undefined,
   target: "query" | "mutation",
   options: GqlizeOptions,
   ctx: BindingContext,
   ledger?: GqlizeBuildLedger,
-): Promise<Record<string, any>> {
+): Promise<GqlFieldMap> {
   if (!extendFields) {
     return fields;
   }
@@ -34,9 +34,9 @@ export async function applyExtendFields(
     ? options.permission?.queryExtension
     : options.permission?.mutationExtension;
 
-  return waterfall(Object.keys(extendFields), async(k: string, o: Record<string, any>) => {
+  return waterfall(Object.keys(extendFields), (k: string, o: GqlFieldMap) => {
     if (gate) {
-      const result = await gate(k, options.permission?.options);
+      const result = gate(k, options.permission?.options);
       if (!result) {
         return o;
       }

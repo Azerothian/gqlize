@@ -43,7 +43,9 @@ export interface GqlizeAdapter extends OrmAdapter {
    * built against anyway. An adapter that wants to honour a custom codec passes
    * this straight through to `replaceIdDeep`.
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- GraphQL argument and variable values: arbitrary client JSON on its way into the adapter's `where` builder. `unknown` would force a narrowing into every out-of-tree adapter that implements this interface and into every caller that indexes the returned map, which is a breaking change to the published 6.0.0 adapter contract.
   replaceIdInArgs(args: {[name: string]: any}, defName: string, variableValues?: {[name: string]: any}, translation?: IdTranslation): {[name: string]: any} | Promise<{[name: string]: any}>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the same GraphQL variable-value map as `replaceIdInArgs` above, and part of the same published adapter contract.
   replaceIdInInclude(include: Selection["include"], defName: string, variableValues?: {[name: string]: any}, translation?: IdTranslation): Selection["include"];
   /**
    * Optional: capture the permission bag for the duration of a schema build.

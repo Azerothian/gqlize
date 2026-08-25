@@ -8,7 +8,28 @@ export default new GraphQLScalarType({
   name: "GQLTBigInt",
   description: "BigInt",
   serialize(value) {
-    return `${value}`;
+    // Mirror `parseValue`'s accepted runtime shapes. These stringify to
+    // something meaningful directly, so take them without a round-trip.
+    if (
+      typeof value === "bigint" ||
+      typeof value === "number" ||
+      typeof value === "string" ||
+      typeof value === "boolean"
+    ) {
+      return `${value}`;
+    }
+    // Anything else is only acceptable if it *carries* a big integer. Driver
+    // wrappers do — mysql's `Long`, a `BigNumber`, a `Buffer` of digits all
+    // define `toString`/`valueOf` and round-trip cleanly — so the test is the
+    // same one `parseValue` applies rather than a blanket "not a primitive"
+    // rejection, which would break those callers. A plain object fails it and
+    // would otherwise have serialized as the useless "[object Object]", which
+    // is the failure this scalar exists to avoid.
+    try {
+      return BigInt(value as string).toString();
+    } catch {
+      throw new GraphQLError(`BigInt cannot represent value: ${typeof value}`);
+    }
   },
 
   parseValue(value) {

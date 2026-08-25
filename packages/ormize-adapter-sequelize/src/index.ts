@@ -45,6 +45,7 @@ function staticsOf(model: SequelizeModelClass): Record<string, unknown> {
  * reached off an instance by name, and they exist only once Sequelize has wired
  * the association — so `Model` has no index signature describing them.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- genuinely untyped ORM boundary: values reached off it are read as plain data (`dataValues`), called as Sequelize-generated accessors (`getTasks(...)`), or spread as eager-loaded rows/arrays, and none of those shapes is knowable from a name that only exists once Sequelize wires the association.
 function rowFields(row: SequelizeRow): Record<string, any> {
   return row;
 }
@@ -300,21 +301,28 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       rollback: () => t.rollback(),
     };
   };
+  // `OrmAdapter.addInstanceFunction` declares `fn` with this exact permissive
+  // signature (an arbitrary user-authored function), so narrowing it here would
+  // reject implementations the published contract still promises to accept.
   addInstanceFunction = (
     modelName: string,
     funcName: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches OrmAdapter.addInstanceFunction's published signature
     func: (...args: any[]) => any
   ) => {
     prototypeOf(this.sequelize.models[modelName])[funcName] = func;
   };
 
+  // Mirrors `addInstanceFunction` above (statics instead of the prototype); kept
+  // just as permissive so the two stay interchangeable for callers.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see addInstanceFunction above
   addStaticFunction = (modelName: string, funcName: string, func: (...args: any[]) => any) => {
     staticsOf(this.model(modelName))[funcName] = func;
   };
   getModel = (modelName: string) => {
     return this.sequelize.models[modelName];
   };
-  getModels = (): { [modelName: string]: ModelCtor<Model<any, any>> } => {
+  getModels = (): { [modelName: string]: ModelCtor<Model> } => {
     return this.sequelize.models;
   };
   /** {@link getModel}, seen through the statics this adapter installs — see {@link SequelizeModelClass}. */
@@ -503,13 +511,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   };
   /** Collect a definition's raw create/drop DDL, replayed by {@link initialise}. */
   private registerStartupQueries = (queries: SequelizeDefinition["queries"]) => {
-    Object.keys(queries || {}).forEach((k) => {
-      const q = queries[k];
+    const startupQueries = queries || {};
+    Object.keys(startupQueries).forEach((k) => {
+      const q = startupQueries[k];
       if (q.drop) {
-        this.startup.drop += `${isFunction(q.drop) ? q.drop() : q.drop}\n`;
+        this.startup.drop += `${typeof q.drop === "function" ? q.drop() : q.drop}\n`;
       }
       if (q.create) {
-        this.startup.create += `${isFunction(q.create) ? q.create() : q.create}\n`;
+        this.startup.create += `${typeof q.create === "function" ? q.create() : q.create}\n`;
       }
     });
   };
@@ -605,6 +614,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    *   results are mapped to. Those are usually the same and need not be: a
    *   statement mapped onto nothing at all is still a read of *some* model.
    */
+  // eslint-disable-next-line @typescript-eslint/require-await -- a public method whose published signature returns a Promise; the body builds the closure synchronously, but dropping `async` narrows the return type and is a breaking change for anyone calling it directly
   createSQLFunction = async (query: string, modelName: string | undefined, args: string[], scopeModel?: string) => {
     // Read once, at build: the parameter list is a property of the statement,
     // and re-parsing it per call would be work done on every request to learn
@@ -623,7 +633,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         ),
         type: QueryTypes.SELECT,
       } as {
-        model: ModelCtor<Model<any, any>>;
+        model: ModelCtor<Model>;
         replacements: { [argName: string]: unknown };
         type: QueryTypes;
       };
@@ -674,14 +684,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     let q = "";
     switch (type) {
       case "query":
-        q = query;
+        q = query ?? "";
         break;
       case "sqlfunction":
         if (query) {
           q = query;
         } else {
           q = `SELECT * FROM "${schema}"."${functionName}"(${args
-            .map((s: string) => `:${s}`)
+            .map((s) => `:${s}`)
             .join(",")});`;
         }
     }
@@ -892,6 +902,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return Boolean(INLINE_COUNT_EXPRESSION[this.sequelize.getDialect()]);
   };
+  // eslint-disable-next-line @typescript-eslint/require-await -- OrmAdapter.getInlineCount is declared `Promise<number>`; this reads synchronously but must stay async to satisfy that return type
   getInlineCount = async(values: SequelizeRow[]) => {
     // The count rides along as a `full_count` column on every row of the page
     // (a window function — see `processListArgsToOptions`), so the first row is
@@ -923,7 +934,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     );
   }
   async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): Promise<AdapterWhere> {
-    const w = replaceWhereOperators(where);
+    const w = replaceWhereOperators(where || {});
     if (whereOperators) {
       return replaceDefWhereOperators(w, whereOperators, options);
     }
@@ -946,18 +957,25 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       targets: globalKeyTargets(this.getFields(defName), defName),
     };
   }
+  // Not a contract method (unlike `replaceIdInInclude`/`replaceIdInArgs` below),
+  // so `variableValues` can be narrowed to what it actually is here: forwarded
+  // straight to `replaceIdDeep`, which itself declares it `unknown` — never read.
   replaceIdInWhere = (
     where: AdapterWhere | undefined,
     defName: string,
-    variableValues?: {[name: string]: any},
+    variableValues?: unknown,
     translation?: IdTranslation
   ) => {
     const globalKeys = this.getGlobalKeys(defName);
     return replaceIdDeep(where, globalKeys, variableValues, this.idTranslation(defName, translation));
   };
+  // `GqlizeAdapter.replaceIdInInclude` declares `variableValues` with this exact
+  // permissive shape, so it stays here rather than narrowing to `unknown` the
+  // way the internal `replaceIdInWhere` above does.
   replaceIdInInclude = (
     arrIncludeVar: Selection["include"],
     defName: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches GqlizeAdapter.replaceIdInInclude's published signature
     variableValues?: {[name: string]: any},
     translation?: IdTranslation
   ) => {
@@ -988,9 +1006,13 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       }
     );
   };
+  // `GqlizeAdapter.replaceIdInArgs` declares both `args` and `variableValues`
+  // with this exact permissive shape — kept to match.
   replaceIdInArgs = (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches GqlizeAdapter.replaceIdInArgs's published signature
     args: { [name: string]: any },
     defName: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches GqlizeAdapter.replaceIdInArgs's published signature
     variableValues?: {[name: string]: any},
     translation?: IdTranslation
   ) => {
@@ -1015,8 +1037,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // overload is the only one this can produce.
     return Model.count(options);
   };
+  // `OrmAdapter.update` declares `i` with this exact permissive shape — kept to match.
   update = (
     source: SequelizeRow,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches OrmAdapter.update's published signature
     input: { [field: string]: any },
     options: AdapterQueryOptions
   ): Promise<SequelizeRow> => {
@@ -1089,6 +1113,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // column, and a spread would keep whichever was written second.
     return { [Op.and]: [a, b] };
   }
+  // eslint-disable-next-line @typescript-eslint/require-await -- `OrmAdapter.resolveSingleRelationship` is declared `Promise<AdapterRow>` (utilize/src/types/index.ts:313); the eager-loaded branch returns synchronously, so `async` is what satisfies the contract's return type
   resolveSingleRelationship = async (
     _defName: string,
     relationship: Association,

@@ -8,9 +8,9 @@ import {capitalize, lowercase} from "@azerothian/utilize/utils/word";
 import type {
   AdapterListOptions, AdapterListRequest, AdapterQueryOptions, AdapterRelationshipRequest,
   AdapterRow, AdapterWhere, Association, Definition, HookMap, IdTranslation, Model,
-  OrmAdapter, Permission, Relationship, Selection, WhereOperators,
+  OrderEntry, OrmAdapter, Permission, Relationship, Selection, WhereOperators,
 } from "@azerothian/utilize/types/index";
-import { Keys } from "./keys";
+import { Keys, KeyId } from "./keys";
 import { ValkeyModel } from "./model";
 import { DirectExecutor, Executor, ValkeyTransaction, type ValkeyClient } from "./transaction";
 import { serialize, deserialize } from "./serialize";
@@ -45,6 +45,7 @@ function looksLikeClient(x: unknown): x is ValkeyClient {
  * *caller* may assume a row's shape, but the adapter that produced it knows
  * exactly what it is and re-narrows on the way back in.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a row's actual field types are only known via that model's ValkeyModel.fields at runtime, not at compile time; every consumer of this type is the adapter itself, re-narrowing its own output
 export type ValkeyRow = { [field: string]: any };
 
 /**
@@ -70,6 +71,27 @@ export type ValkeyConnection = string | { [option: string]: unknown };
  */
 export type ValkeyAssociation = Association & { fkA?: string; fkB?: string };
 
+/**
+ * A registered model as the rest of this adapter (and ormize) sees it: the
+ * strongly typed {@link ValkeyModel} plus whatever the ormize {@link Model}
+ * contract expects bolted onto it at runtime — the static CRUD, class/instance
+ * methods `createModel` installs below. `Model`'s open index signature is what
+ * lets those dynamic properties through while every property `ValkeyModel`
+ * itself declares stays fully typed.
+ *
+ * `__instanceMethods` is named explicitly (rather than left to `Model`'s bare
+ * index signature) so `Object.entries` on it infers a real function type below
+ * instead of `unknown` — TS cannot infer a type argument from an `any`-typed
+ * value, which is what `Model`'s index signature alone would give it. The
+ * function type itself matches `OrmAdapter.addInstanceFunction`'s own `fn`
+ * type, for the same reason documented there: no single call shape fits every
+ * instance method a caller might install.
+ */
+type RegisteredModel = ValkeyModel & Model & {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above; matches OrmAdapter.addInstanceFunction's own permissive fn type
+  __instanceMethods?: { [name: string]: (...args: any[]) => any };
+};
+
 /** Sequelize-style accessor name parts for a relation: capitalized name + singular. */
 function relNames(name: string): { nameCap: string; singCap: string } {
   return { nameCap: capitalize(name), singCap: capitalize(pluralize.singular(name)) };
@@ -85,7 +107,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   client: ValkeyClient;
   options: ValkeyAdapterOptions;
   keys: Keys;
-  models: { [name: string]: ValkeyModel } = {};
+  models: { [name: string]: RegisteredModel } = {};
   private ownsClient = false;
 
   constructor(adapterOptions: ValkeyAdapterOptions = {}, clientOrOptions?: ValkeyClient | ValkeyConnection) {
@@ -114,7 +136,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     return { ex, finish: () => ex.flush() };
   }
 
-  model(defName: string): ValkeyModel {
+  model(defName: string): RegisteredModel {
     const m = this.models[defName];
     if (!m) throw new Error(`ValkeyAdapter: unknown model "${defName}"`);
     return m;
@@ -182,7 +204,13 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     translation?: IdTranslation
   ) => replaceIdDeep(where, this.getGlobalKeys(defName), variableValues, this.idTranslation(defName, translation));
   replaceIdInInclude = (include: Selection["include"], _defName: string) => include;
-  replaceIdInArgs = async (
+  /**
+   * `OrmAdapter.replaceIdInArgs` declares `args` as an open bag
+   * (`{[name: string]: any}`) since gqlize passes it straight from resolver
+   * arguments — narrowing it here would fight the interface it implements.
+   */
+  replaceIdInArgs = (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above
     args: { [name: string]: any },
     defName: string,
     variableValues?: {[name: string]: unknown},
@@ -214,24 +242,26 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   };
 
   // ---- model definition ----
+  // eslint-disable-next-line @typescript-eslint/require-await -- must stay async: satisfies the Promise-returning OrmAdapter.createModel contract
   createModel = async (def: Definition, _hooks?: HookMap) => {
     // The model is a `ValkeyModel` plus the statics installed just below and the
     // user's own class methods — dynamic by nature, which is exactly what
     // {@link Model}'s index signature describes. The constructor is also what
     // rejects an unnamed definition, so `name` is a resolved string from here on.
-    const model = new ValkeyModel(def) as ValkeyModel & Model;
+    const model = new ValkeyModel(def) as RegisteredModel;
     const name = model.name;
     this.models[name] = model;
-    const adapter = this;
 
     // Sequelize-style static CRUD on the model object (so `orm.models.X.create(...)` works).
-    model.create = (values: { [field: string]: any }, options?: AdapterQueryOptions) => adapter.getCreateFunction(name)(values, options);
-    model.findAll = (options?: AdapterQueryOptions) => adapter.findAll(name, options || {});
-    model.findOne = async (options?: AdapterQueryOptions) => (await adapter.findAll(name, { ...(options || {}), limit: 1 }))[0] || null;
-    model.findByPk = (id: string | number, options?: AdapterQueryOptions) => adapter.getById(name, id, options);
-    model.count = (options?: AdapterQueryOptions) => adapter.count(name, options || {});
-    model.update = (values: { [field: string]: any }, options?: AdapterQueryOptions) => adapter.getUpdateFunction(name, undefined)(options?.where || {}, () => values, options);
-    model.destroy = (options?: AdapterQueryOptions) => adapter.getDeleteFunction(name, undefined)(options?.where || {}, options);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches AdapterCreateFunction's own permissive `input` bag
+    model.create = (values: { [field: string]: any }, options?: AdapterQueryOptions) => this.getCreateFunction(name)(values, options);
+    model.findAll = (options?: AdapterQueryOptions) => this.findAll(name, options || {});
+    model.findOne = async (options?: AdapterQueryOptions) => (await this.findAll(name, { ...(options || {}), limit: 1 }))[0] || null;
+    model.findByPk = (id: string | number, options?: AdapterQueryOptions) => this.getById(name, id, options);
+    model.count = (options?: AdapterQueryOptions) => this.count(name, options || {});
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches AdapterUpdateFunction's own permissive patch bag
+    model.update = (values: { [field: string]: any }, options?: AdapterQueryOptions) => this.getUpdateFunction(name, undefined)(options?.where || {}, () => values, options);
+    model.destroy = (options?: AdapterQueryOptions) => this.getDeleteFunction(name, undefined)(options?.where || {}, options);
 
     // Wire user-declared class/instance methods (top-level + options.*), matching
     // the Sequelize adapter. Class methods → statics; instance methods → stashed
@@ -252,9 +282,15 @@ export default class ValkeyAdapter implements GqlizeAdapter {
    * this to install the accessors for a cross-adapter relationship, which it has
    * to implement itself because the target lives in another datastore — a Valkey
    * "model" is a plain descriptor, so there is no prototype to hang them on.
+   *
+   * `fn`'s type matches `OrmAdapter.addInstanceFunction`'s own signature — there
+   * is no single call shape that fits every instance method a caller might
+   * install (arities and return shapes vary by name), so the contract itself
+   * keeps it permissive.
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above; matches OrmAdapter.addInstanceFunction exactly
   addInstanceFunction = (modelName: string, name: string, fn: (...args: any[]) => any) => {
-    const model = this.model(modelName) as ValkeyModel & Model;
+    const model = this.model(modelName);
     model.__instanceMethods = { ...(model.__instanceMethods || {}), [name]: fn };
   };
 
@@ -384,8 +420,8 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   toNativeType = toNativeType;
 
   // ---- helpers ----
-  private applyDefaults(model: ValkeyModel, input: any): any {
-    const obj: any = { ...input };
+  private applyDefaults(model: ValkeyModel, input: { [field: string]: unknown }): ValkeyRow {
+    const obj: ValkeyRow = { ...input };
     for (const key of Object.keys(model.fields)) {
       if (key === model.primaryKey) continue; // pk is assigned by the pk strategy
       if (obj[key] === undefined) {
@@ -398,7 +434,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     return obj;
   }
 
-  private async enforceUnique(ex: Executor, model: ValkeyModel, obj: any, id: any): Promise<void> {
+  private async enforceUnique(ex: Executor, model: ValkeyModel, obj: ValkeyRow, id: KeyId): Promise<void> {
     for (const field of model.uniques) {
       if (!(field in obj)) continue;
       const existing = await ex.getStr(this.keys.unique(model.name, field, obj[field]));
@@ -408,7 +444,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     }
   }
 
-  private sortObjects(objs: any[], order?: any[]): any[] {
+  private sortObjects(objs: ValkeyRow[], order?: OrderEntry[]): ValkeyRow[] {
     if (!order || !order.length) return objs;
     return [...objs].sort((a, b) => {
       for (const [field, dir] of order) {
@@ -421,7 +457,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     });
   }
 
-  private async getById(defName: string, id: any, options?: any): Promise<any> {
+  private async getById(defName: string, id: KeyId, options?: AdapterQueryOptions): Promise<ValkeyRow | null> {
     const model = this.model(defName);
     const { ex, finish } = this.execFor(options);
     const raw = await ex.getObj(this.keys.obj(defName, id));
@@ -430,7 +466,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   }
 
   /** Single-object patch (fetch → merge → reindex → write), transaction-aware. */
-  private async persistPatch(modelName: string, id: any, patch: any, options?: any): Promise<any> {
+  private async persistPatch(modelName: string, id: KeyId, patch: { [field: string]: unknown }, options?: AdapterQueryOptions): Promise<ValkeyRow | null> {
     const model = this.model(modelName);
     const { ex, finish } = this.execFor(options);
     const now = Date.now();
@@ -448,7 +484,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     return this.tag(newObj, modelName);
   }
 
-  private tagAll(records: any[], modelName: string): any[] {
+  private tagAll(records: ValkeyRow[], modelName: string): ValkeyRow[] {
     for (const r of records) this.tag(r, modelName);
     return records;
   }
@@ -461,16 +497,23 @@ export default class ValkeyAdapter implements GqlizeAdapter {
    * into serialized output. The relationship names match `getAssociations`'
    * `accessors`, so the manager's processRelationshipMutation uses them too.
    */
-  private tag(record: any, modelName: string): any {
+  private tag(record: ValkeyRow, modelName: string): ValkeyRow {
     if (!record || typeof record !== "object") return record;
     Object.defineProperty(record, "__valkeyModel", { value: modelName, enumerable: false, configurable: true });
-    const adapter = this;
-    const model: any = this.model(modelName);
+    const model = this.model(modelName);
     const pk = model.primaryKey;
-    const arr = (v: any) => (Array.isArray(v) ? v : v == null ? [] : [v]);
-    const tpk = (t: string) => adapter.model(t).primaryKey;
+    const arr = <T,>(v: T | T[] | null | undefined): T[] => (Array.isArray(v) ? v : v == null ? [] : [v]);
+    const tpk = (t: string) => this.model(t).primaryKey;
     const plain = () => ({ ...record });
-    const def = (names: string | string[], fn: any) => {
+    /**
+     * A dynamic instance method attached to a returned record by name — CRUD,
+     * user-declared instance methods, and relationship accessors, each with
+     * its own arity/signature. This mirrors `OrmAdapter.addInstanceFunction`'s
+     * own `fn` type for exactly the same reason: there is no single call
+     * signature that fits `save()`, `getX(options)`, `setX(t, options)`, etc.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above
+    const def = (names: string | string[], fn: (...args: any[]) => any) => {
       for (const name of Array.isArray(names) ? names : [names]) {
         if (record[name] === undefined) {
           Object.defineProperty(record, name, { value: fn, enumerable: false, configurable: true });
@@ -479,18 +522,18 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     };
 
     // Instance CRUD.
-    def("save", async (options: any) => { await adapter.persistPatch(modelName, record[pk], plain(), options); return record; });
-    def("update", async (values: any, options: any) => { Object.assign(record, values); await adapter.persistPatch(modelName, record[pk], values, options); return record; });
-    def("destroy", async (options: any) => adapter.getDeleteFunction(modelName, undefined)({ [pk]: record[pk] }, options));
-    def("reload", async (options: any) => { const fresh = await adapter.getById(modelName, record[pk], options); if (fresh) Object.assign(record, fresh); return record; });
-    def("get", (key?: any) => (key === undefined || typeof key === "object" ? plain() : record[key]));
+    def("save", async (options: AdapterQueryOptions) => { await this.persistPatch(modelName, record[pk], plain(), options); return record; });
+    def("update", async (values: { [field: string]: unknown }, options: AdapterQueryOptions) => { Object.assign(record, values); await this.persistPatch(modelName, record[pk], values, options); return record; });
+    def("destroy", async (options: AdapterQueryOptions) => this.getDeleteFunction(modelName, undefined)({ [pk]: record[pk] }, options));
+    def("reload", async (options: AdapterQueryOptions) => { const fresh = await this.getById(modelName, record[pk], options); if (fresh) Object.assign(record, fresh); return record; });
+    def("get", (key?: string | { [opt: string]: unknown }) => (key === undefined || typeof key === "object" ? plain() : record[key]));
     def("toJSON", () => plain());
 
     // User-declared instance methods.
     for (const [k, fn] of Object.entries(model.__instanceMethods || {})) def(k, fn);
 
     // Relationship finders / mutators.
-    for (const assoc of Object.values(this.getAssociations(modelName)) as any[]) {
+    for (const assoc of Object.values(this.getAssociations(modelName))) {
       const { name: rel, associationType: type, target, foreignKey: fk } = assoc;
       // A relationship whose target lives on another adapter has no model here and
       // cannot be walked with a Valkey lookup. Ormize installs its own accessors
@@ -502,60 +545,74 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       const srcKey = assoc.sourceKey || pk;
       const { nameCap, singCap } = relNames(rel);
       if (type === "belongsTo") {
-        def(`get${nameCap}`, async (options: any) => (record[fk] == null ? null : adapter.getById(target, record[fk], options)));
-        def(`set${nameCap}`, async (t: any, options: any) => {
+        def(`get${nameCap}`, async (options: AdapterQueryOptions) => (record[fk] == null ? null : this.getById(target, record[fk], options)));
+        def(`set${nameCap}`, async (t: ValkeyRow, options: AdapterQueryOptions) => {
           const val = t ? t[tpk(target)] : null;
           record[fk] = val;
-          return adapter.persistPatch(modelName, record[pk], { [fk]: val }, options);
+          return this.persistPatch(modelName, record[pk], { [fk]: val }, options);
         });
       } else if (type === "hasOne") {
-        def(`get${nameCap}`, async (options: any) => (await adapter.findAll(target, { where: { [fk]: record[srcKey] }, limit: 1, transaction: options?.transaction }))[0] || null);
-        def(`set${nameCap}`, async (t: any, options: any) => {
-          const current = await adapter.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
-          for (const c of current) await adapter.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
-          if (t) await adapter.persistPatch(target, t[tpk(target)], { [fk]: record[srcKey] }, options);
+        def(`get${nameCap}`, async (options: AdapterQueryOptions) => (await this.findAll(target, { where: { [fk]: record[srcKey] }, limit: 1, transaction: options?.transaction }))[0] || null);
+        def(`set${nameCap}`, async (t: ValkeyRow, options: AdapterQueryOptions) => {
+          const current = await this.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
+          for (const c of current) await this.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
+          if (t) await this.persistPatch(target, t[tpk(target)], { [fk]: record[srcKey] }, options);
         });
       } else if (type === "hasMany" || type === "belongsToMany") {
         const isBtm = type === "belongsToMany";
         const { through, fkA, fkB } = assoc;
-        const add = async (recs: any, options: any) => {
+        // `through`/`fkA`/`fkB` are only ever set together, by `createRelationship`
+        // wiring a belongsToMany's join model (see `getAssociations`) — so a
+        // `belongsToMany` reaching this point always has all three. One that
+        // doesn't was never fully wired; skip it rather than install accessors
+        // that would query a model named "undefined".
+        if (isBtm && (!through || !fkA || !fkB)) {
+          continue;
+        }
+        // Definite-string aliases for use inside the `isBtm` branches below: the
+        // guard above already proved these are set whenever `isBtm` is true, but
+        // that proof doesn't survive into the closures TS is checking here.
+        const joinThrough = through as string;
+        const joinFkA = fkA as string;
+        const joinFkB = fkB as string;
+        const add = async (recs: ValkeyRow | ValkeyRow[], options: AdapterQueryOptions) => {
           const throughData = (options && options.through) || {};
           for (const t of arr(recs)) {
             const tid = t[tpk(target)];
             if (isBtm) {
-              const existing = await adapter.findAll(through, { where: { and: [{ [fkA]: record[srcKey] }, { [fkB]: tid }] }, transaction: options?.transaction });
-              if (!existing.length) await adapter.getCreateFunction(through)({ [fkA]: record[srcKey], [fkB]: tid, ...throughData }, options);
-              else if (Object.keys(throughData).length) await adapter.persistPatch(through, existing[0][adapter.model(through).primaryKey], throughData, options);
+              const existing = await this.findAll(joinThrough, { where: { and: [{ [joinFkA]: record[srcKey] }, { [joinFkB]: tid }] }, transaction: options?.transaction });
+              if (!existing.length) await this.getCreateFunction(joinThrough)({ [joinFkA]: record[srcKey], [joinFkB]: tid, ...throughData }, options);
+              else if (Object.keys(throughData).length) await this.persistPatch(joinThrough, existing[0][this.model(joinThrough).primaryKey], throughData, options);
             } else {
-              await adapter.persistPatch(target, tid, { [fk]: record[srcKey] }, options);
+              await this.persistPatch(target, tid, { [fk]: record[srcKey] }, options);
             }
           }
         };
-        const remove = async (recs: any, options: any) => {
+        const remove = async (recs: ValkeyRow | ValkeyRow[], options: AdapterQueryOptions) => {
           for (const t of arr(recs)) {
-            if (isBtm) await adapter.getDeleteFunction(through, undefined)({ and: [{ [fkA]: record[srcKey] }, { [fkB]: t[tpk(target)] }] }, options);
-            else await adapter.persistPatch(target, t[tpk(target)], { [fk]: null }, options);
+            if (isBtm) await this.getDeleteFunction(joinThrough, undefined)({ and: [{ [joinFkA]: record[srcKey] }, { [joinFkB]: t[tpk(target)] }] }, options);
+            else await this.persistPatch(target, t[tpk(target)], { [fk]: null }, options);
           }
         };
-        const get = async (options: any) => {
+        const get = async (options: AdapterQueryOptions) => {
           if (isBtm) {
-            const edges = await adapter.findAll(through, { where: { [fkA]: record[srcKey] }, transaction: options?.transaction });
-            const out: any[] = [];
+            const edges = await this.findAll(joinThrough, { where: { [joinFkA]: record[srcKey] }, transaction: options?.transaction });
+            const out: ValkeyRow[] = [];
             for (const e of edges) {
-              const t = await adapter.getById(target, e[fkB], options);
+              const t = await this.getById(target, e[joinFkB], options);
               if (t && (!options?.where || matchWhere(t, options.where))) out.push(t);
             }
             return out;
           }
           const where = options?.where ? { and: [{ [fk]: record[srcKey] }, options.where] } : { [fk]: record[srcKey] };
-          return adapter.findAll(target, { where, limit: options?.limit, transaction: options?.transaction });
+          return this.findAll(target, { where, limit: options?.limit, transaction: options?.transaction });
         };
-        const set = async (recs: any, options: any) => {
+        const set = async (recs: ValkeyRow | ValkeyRow[], options: AdapterQueryOptions) => {
           if (isBtm) {
-            await adapter.getDeleteFunction(through, undefined)({ [fkA]: record[srcKey] }, options);
+            await this.getDeleteFunction(joinThrough, undefined)({ [joinFkA]: record[srcKey] }, options);
           } else {
-            const current = await adapter.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
-            for (const c of current) await adapter.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
+            const current = await this.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
+            for (const c of current) await this.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
           }
           await add(recs, options);
         };
@@ -563,10 +620,10 @@ export default class ValkeyAdapter implements GqlizeAdapter {
         def([`remove${singCap}`, `remove${nameCap}`], remove);
         def(`set${nameCap}`, set);
         def(`get${nameCap}`, get);
-        def(`count${nameCap}`, async (options: any) => (await get(options)).length);
-        def([`has${singCap}`, `has${nameCap}`], async (recs: any, options: any) => {
-          const cur = new Set((await get(options)).map((r: any) => r[tpk(target)]));
-          return arr(recs).every((t: any) => cur.has(t[tpk(target)]));
+        def(`count${nameCap}`, async (options: AdapterQueryOptions) => (await get(options)).length);
+        def([`has${singCap}`, `has${nameCap}`], async (recs: ValkeyRow | ValkeyRow[], options: AdapterQueryOptions) => {
+          const cur = new Set((await get(options)).map((r: ValkeyRow) => r[tpk(target)]));
+          return arr(recs).every((t: ValkeyRow) => cur.has(t[tpk(target)]));
         });
       }
     }
@@ -598,6 +655,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   };
 
   hasInlineCountFeature = () => false;
+  // eslint-disable-next-line @typescript-eslint/require-await -- must stay async: satisfies the Promise-returning OrmAdapter.getInlineCount contract
   getInlineCount = async (_models: AdapterRow[]) => 0;
 
   processListArgsToOptions = (_defName: string, {args, offset, whereOperators}: AdapterListRequest): AdapterListOptions => {
@@ -635,6 +693,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   };
 
   // ---- mutation ----
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches AdapterCreateFunction's own permissive `input` bag
   getCreateFunction = (defName: string) => async (input: { [field: string]: any }, options: AdapterQueryOptions = {}) => {
     const model = this.model(defName);
     const { ex, finish } = this.execFor(options);
@@ -655,6 +714,10 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   };
 
   getUpdateFunction = (defName: string, whereOperators: WhereOperators | undefined) =>
+    // `processInput`'s return type matches `AdapterUpdateFunction`'s own contract
+    // signature exactly — permissive by design, since the patch shape belongs to
+    // whichever hook derives it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see comment above
     async (where: AdapterWhere, processInput: (instance: ValkeyRow) => Promise<{ [field: string]: any }> | { [field: string]: any }, options: AdapterQueryOptions = {}) => {
       const model = this.model(defName);
       const { ex, finish } = this.execFor(options);
@@ -705,6 +768,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     };
 
   /** Single-record update (used by the nested relationship-mutation `update` branch). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches OrmAdapter.update's own permissive patch bag
   update = async (record: ValkeyRow, input: { [field: string]: any }, options?: AdapterQueryOptions) => {
     const modelName = record?.__valkeyModel;
     if (!modelName) throw new Error("ValkeyAdapter: update() requires an adapter-returned record");
@@ -786,6 +850,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   };
 
   // ---- transactions ----
+  // eslint-disable-next-line @typescript-eslint/require-await -- must stay async: satisfies the Promise-returning OrmAdapter.beginTransaction contract
   beginTransaction = async () => {
     const tx = new ValkeyTransaction(this.client);
     return { handle: tx, commit: () => tx.commit(), rollback: () => tx.rollback() };

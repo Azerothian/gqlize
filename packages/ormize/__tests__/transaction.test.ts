@@ -7,7 +7,7 @@ import Sequelize from "sequelize";
 // NULL, so a nested create with a null name fails at the DB — exercising the
 // multi-step (parent + nested child) mutation path.
 async function buildOrm() {
-  const db: any = new Database();
+  const db = new Database();
   db.registerAdapter(
     new SequelizeAdapter({}, { dialect: "sqlite", logging: false }),
     "sqlite",
@@ -20,7 +20,7 @@ async function buildOrm() {
       { type: "hasMany", model: "Node", name: "children", options: { as: "children", foreignKey: "parentId", sourceKey: "id" } },
       { type: "belongsTo", model: "Node", name: "parent", options: { as: "parent", foreignKey: "parentId", sourceKey: "id" } },
     ],
-  } as any);
+  });
   await db.initialise();
   await db.sync();
   return db;
@@ -65,11 +65,11 @@ describe("manager - transactions", () => {
 // `Right` on "sqlite2". A coordinated `orm.transaction` must commit both or, on
 // failure, roll BOTH back — even though they are separate database connections.
 async function buildTwoAdapterOrm() {
-  const db: any = new Database();
+  const db = new Database();
   db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
   db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite2");
-  await db.addDefinition({ name: "Left", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } } as any, "sqlite");
-  await db.addDefinition({ name: "Right", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } } as any, "sqlite2");
+  await db.addDefinition({ name: "Left", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } }, "sqlite");
+  await db.addDefinition({ name: "Right", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } }, "sqlite2");
   await db.initialise();
   await db.sync();
   return db;
@@ -103,19 +103,19 @@ describe("manager - cross-adapter transactions", () => {
 
 describe("manager - ambient context tracking", () => {
   it("propagates the request context across async boundaries into hooks", async () => {
-    let seenInHook: any;
-    const db: any = new Database();
+    let seenInHook: unknown;
+    const db = new Database();
     db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
     await db.addDefinition({
       name: "Ctx",
       define: { name: { type: Sequelize.STRING, allowNull: false } },
       options: { timestamps: false },
-      before(opts: any) {
+      before(opts) {
         // The hook reads the ambient context implicitly — it was never threaded.
         seenInHook = db.getContext();
         return opts.params;
       },
-    } as any);
+    });
     await db.initialise();
     await db.sync();
 

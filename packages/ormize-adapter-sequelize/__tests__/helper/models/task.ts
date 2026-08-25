@@ -1,4 +1,4 @@
-import Sequelize, {Op} from "sequelize";
+import Sequelize, {Op, Model} from "sequelize";
 
 import {
   GraphQLString,
@@ -7,9 +7,11 @@ import {
   GraphQLInputObjectType,
   GraphQLObjectType,
   GraphQLInt,
+  type GraphQLResolveInfo,
 } from "graphql";
+import type { RequestContext } from "@azerothian/utilize/types/index";
+import { Events } from "@azerothian/utilize/events";
 
-import events from "../events";
 import { SequelizeDefinition } from '../../../src/types/index';
 
 
@@ -19,6 +21,15 @@ function delay(ms = 1) {
   });
 }
 
+// `taskModel`'s own annotation below (`: SequelizeDefinition`) contextually
+// types every hook/method/hook-map function nested in the literal from the
+// contract's own parameter types (`Definition`'s `before`/`after`/
+// `whereOperators`/`classMethods`/`instanceMethods`, `DefinitionOptions`'
+// `classMethods`/`instanceMethods`/`hooks`), which are declared with `any` in
+// several positions there (published in `@azerothian/utilize`, out of this
+// package's scope). Leaving these parameters unannotated lets TypeScript
+// infer those same contract types with no explicit `any` written here, rather
+// than restating the contract's own permissiveness at every call site.
 const taskModel: SequelizeDefinition = {
   name: "Task",
   define: {
@@ -48,20 +59,20 @@ const taskModel: SequelizeDefinition = {
       allowNull: true,
     },
   },
-  before(req: any) {
-    if (req.type === events.MUTATION_CREATE) {
+  before(req) {
+    if (req.type === Events.MUTATION_CREATE) {
       return Object.assign({}, req.params, {
         mutationCheck: "create",
       });
     }
-    if (req.type === events.MUTATION_UPDATE) {
+    if (req.type === Events.MUTATION_UPDATE) {
       return Object.assign({}, req.params, {
         mutationCheck: "update",
       });
     }
     return req.params;
   },
-  after(req: any) {
+  after(req) {
     return req.result;
   },
   override: {
@@ -73,15 +84,22 @@ const taskModel: SequelizeDefinition = {
           hidden2: {type: GraphQLString},
         },
       },
-      output(result: any, args: any, context: any, info: any) {
-        return JSON.parse(result.get("options"));
+      // `Definition.override[…].output` is declared `any` in the contract (not
+      // a function type), so — unlike the function-typed fields elsewhere in
+      // this file — there is no contextual signature to infer these params
+      // from; they are given real types instead: `result`/`model` are this
+      // adapter's own Sequelize row (see `buildOverrideOutputResolver`/
+      // `processInputs`'s real call sites), and `info` is a genuine GraphQL
+      // resolver argument.
+      output(result: Model, args: unknown, context: RequestContext, info: GraphQLResolveInfo) {
+        return JSON.parse(result.get("options") as string);
       },
-      input(field: any, args: any, context: any, info: any, model: any) {
+      input(field: unknown, args, context, info, model?: Model) {
         if (model) {
-          const currOpts = model.get("options");
+          const currOpts = model.get("options") as string | undefined;
           if (currOpts) {
             const opts = JSON.parse(currOpts);
-            return JSON.stringify(Object.assign({}, opts, field));
+            return JSON.stringify(Object.assign({}, opts, field as object));
           }
         }
         return JSON.stringify(field);
@@ -89,10 +107,10 @@ const taskModel: SequelizeDefinition = {
     },
     options2: {
       type: GraphQLString,
-      output(result: any, args: any, context: any, info: any) {
-        return JSON.parse(result.get("options2"));
+      output(result: Model, args: unknown, context: RequestContext, info: GraphQLResolveInfo) {
+        return JSON.parse(result.get("options2") as string);
       },
-      input(field: any, args: any, context: any, info: any, model: any) {
+      input(field: unknown, args, context, info, model?: Model) {
         return JSON.stringify(field);
       },
     },
@@ -120,15 +138,17 @@ const taskModel: SequelizeDefinition = {
       foreignKey: "taskId",
     },
   }],
+  // Not `async`: neither operator awaits anything, and `WhereOperator`'s
+  // return type (`Promise<any> | any`) accepts a plain return just as well.
   whereOperators: {
-    async hasNoItems(newWhere: any, findOptions: any) {
+    hasNoItems(newWhere, findOptions) {
       return {
         id: {
           [Op.notIn]: Sequelize.literal(`(SELECT DISTINCT("taskId") FROM "task-items")`)
         }
       };
     },
-    async chainTest(newWhere: any, findOptions: any) {
+    chainTest(newWhere, findOptions) {
       return {
         hasNoItems: true
       };
@@ -211,13 +231,13 @@ const taskModel: SequelizeDefinition = {
     tableName: "tasks",
     // paranoid: true,
     classMethods: {
-      reverseName({input: {amount}}: any, req: any) {
+      reverseName({input: {amount}}, req) {
         return {
           id: 1,
           name: `reverseName${amount}`,
         };
       },
-      reverseNameArray(args: any, req: any) {
+      reverseNameArray(args, req) {
         return [{
           id: 1,
           name: "reverseName4",
@@ -226,37 +246,42 @@ const taskModel: SequelizeDefinition = {
           name: "reverseName3",
         }];
       },
-      async getHiddenData(args: any, req: any) {
+      // Kept `async`: `delay()` is genuinely awaited below.
+      async getHiddenData(args, req) {
         await delay();
         return {
           hidden: "Hi",
         };
       },
-      getHiddenData2(args: any, req: any) {
+      getHiddenData2(args, req) {
         return {
           hidden: "Hi2",
         };
       },
     },
     instanceMethods: {
-      testInstanceMethod(this: any, {input: {amount}}: any, req: any) {
+      testInstanceMethod({input: {amount}}, req) {
+        // `this` is a Task row; the definition has no typed instance interface
+        // to type the parameter against (this fixture stays a plain
+        // `SequelizeDefinition`), so narrow it locally instead.
+        const row = this as unknown as { id: unknown; name: string };
         return [{
-          id: this.id,
-          name: `${this.name}${amount}`,
+          id: row.id,
+          name: `${row.name}${amount}`,
         }];
       },
     },
     hooks: {
-      beforeFind(options: any) {
+      beforeFind(options) {
         return options;
       },
-      beforeCreate(instance: any, options: any) {
+      beforeCreate(instance, options) {
         return instance;
       },
-      beforeUpdate(instance: any, options: any) {
+      beforeUpdate(instance, options) {
         return instance;
       },
-      beforeDestroy(instance: any, options:any ) {
+      beforeDestroy(instance, options) {
         return instance;
       },
     },

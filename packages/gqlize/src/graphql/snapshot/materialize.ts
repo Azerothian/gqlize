@@ -10,8 +10,6 @@ import {
   isObjectType,
   parseConstValue,
   specifiedScalarTypes,
-  type GraphQLFieldConfig,
-  type GraphQLFieldConfigMap,
   type GraphQLInputType,
   type GraphQLNamedType,
   type GraphQLOutputType,
@@ -21,11 +19,12 @@ import {
 } from "graphql";
 
 import GqlizeBinding from "../../manager";
-import type { Ormize } from "@azerothian/ormize";
 import type {
+  AnyOrmize,
+  GqlFieldConfig,
+  GqlFieldMap,
   GqlizeAdapter,
   GqlizeOptions,
-  IORBase,
   ModelTypeHatch,
   SchemaCache,
   SchemaHatch,
@@ -102,8 +101,8 @@ export interface MaterializeOptions {
    * another build (which would collide on name at schema construction).
    */
   extendFactory?: (types: Record<string, GraphQLNamedType>) => {
-    query?: GraphQLFieldConfigMap<any, any>;
-    mutation?: GraphQLFieldConfigMap<any, any>;
+    query?: GqlFieldMap;
+    mutation?: GqlFieldMap;
     /**
      * Extra `GraphQLSchema` config — `subscription`, `types`. Same reason as the
      * field maps: a subscription root that references this schema's model types
@@ -128,7 +127,7 @@ export interface MaterializeOptions {
  */
 export async function materializeSchema(
   snapshot: SchemaSnapshot,
-  orm: Ormize<any, IORBase>,
+  orm: AnyOrmize,
   options: GqlizeOptions & MaterializeOptions = {},
 ): Promise<GraphQLSchema> {
   const onMismatch = options.onMismatch || "throw";
@@ -226,9 +225,9 @@ export async function materializeSchema(
 
   const irByName = new Map<string, NamedTypeIR>(snapshot.types.map((t) => [t.name, t]));
   /** field configs per type, kept for the `$sql2gql` escape hatch */
-  const configs = new Map<string, GraphQLFieldConfigMap<any, any>>();
+  const configs = new Map<string, GqlFieldMap>();
   /** merged into the root types' field maps; filled before any thunk runs */
-  const rootExtras = new Map<string, GraphQLFieldConfigMap<any, any>>();
+  const rootExtras = new Map<string, GqlFieldMap>();
 
   function lookup(name: string): GraphQLNamedType | undefined {
     const found = typeMap.get(name);
@@ -361,11 +360,11 @@ export async function materializeSchema(
     return found;
   }
 
-  function fieldMap(typeName: string, fields: FieldIR[]): GraphQLFieldConfigMap<any, any> {
-    const out: GraphQLFieldConfigMap<any, any> = {};
+  function fieldMap(typeName: string, fields: FieldIR[]): GqlFieldMap {
+    const out: GqlFieldMap = {};
     for (const field of fields) {
       const coordinate = `${typeName}.${field.name}`;
-      let config: GraphQLFieldConfig<any, any> = {
+      let config: GqlFieldConfig = {
         // `decodeRef` answers with a `GraphQLType`: the ref is SDL, and SDL does
         // not distinguish input from output. What guarantees this one is an
         // output type is the schema the artifact was printed from.
@@ -482,7 +481,7 @@ export async function materializeSchema(
  */
 function checkFingerprint(
   snapshot: SchemaSnapshot,
-  orm: Ormize<any, IORBase>,
+  orm: AnyOrmize,
   options: GqlizeOptions & MaterializeOptions,
   onMismatch: "throw" | "warn" | "rebuild",
 ): Promise<GraphQLSchema> | undefined {
@@ -544,7 +543,7 @@ function checkFingerprint(
   return undefined;
 }
 
-function buildLiveSchema(orm: Ormize<any, IORBase>, options: GqlizeOptions & MaterializeOptions) {
+function buildLiveSchema(orm: AnyOrmize, options: GqlizeOptions & MaterializeOptions) {
   return buildSchema(new GqlizeBinding(orm, options), options);
 }
 
@@ -559,7 +558,7 @@ function buildLiveSchema(orm: Ormize<any, IORBase>, options: GqlizeOptions & Mat
  */
 function requireExtendFields(
   ledger: GqlizeBuildLedger,
-  extend: {query?: GraphQLFieldConfigMap<any, any>; mutation?: GraphQLFieldConfigMap<any, any>},
+  extend: {query?: GqlFieldMap; mutation?: GqlFieldMap},
 ) {
   const missing: string[] = [];
   for (const target of ["query", "mutation"] as const) {
@@ -584,8 +583,8 @@ function requireExtendFields(
 }
 
 function mergeExtend(
-  a: GraphQLFieldConfigMap<any, any> | undefined,
-  b: GraphQLFieldConfigMap<any, any> | undefined,
+  a: GqlFieldMap | undefined,
+  b: GqlFieldMap | undefined,
 ) {
   if (!a && !b) {
     return undefined;
@@ -647,7 +646,7 @@ function rebuildModelTypes(names: string[], typeMap: Map<string, GraphQLNamedTyp
 function attachTypeHatches(
   snapshot: SchemaSnapshot,
   typeMap: Map<string, GraphQLNamedType>,
-  configs: Map<string, GraphQLFieldConfigMap<any, any>>,
+  configs: Map<string, GqlFieldMap>,
 ) {
   for (const ir of snapshot.types) {
     if (ir.kind !== "object" || !(ir as ObjectTypeIR).model) { // eslint-disable-line @typescript-eslint/no-unnecessary-type-assertion -- ts7 needs it
@@ -659,7 +658,7 @@ function attachTypeHatches(
     }
     const pick = (want: "basic" | "related" | "complex") => () => {
       const all = configs.get(ir.name) || {};
-      const out: GraphQLFieldConfigMap<any, any> = {};
+      const out: GqlFieldMap = {};
       for (const [name, config] of Object.entries(all)) {
         const kind = readBinding(config)?.kind;
         const bucket = kind === "connection" || kind === "singleRelationship"

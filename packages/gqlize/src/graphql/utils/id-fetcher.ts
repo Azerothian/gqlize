@@ -24,10 +24,14 @@ SOFTWARE.
 */
 
 // https://github.com/mickhansen/graphql-sequelize/blob/master/src/relay.js
+import type { GraphQLResolveInfo } from "graphql";
 import { isModelAllowed } from "@azerothian/utilize";
 import { defaultIdCodec } from "../../codecs/id";
 import { processAfter } from "./after";
 import Events from "../../events";
+import type NodeTypeMapper from "./node-type-mapper";
+import type GQLManager from "../../manager";
+import type { GqlizeOptions, RequestContext } from "../../types";
 
 /**
  * Relay `node(id)` resolver.
@@ -43,11 +47,11 @@ import Events from "../../events";
  *   3. runs the OUTPUT hook on the result before returning it.
  */
 export default function idFetcher(
-  instance: any,
-  nodeTypeMapper: { item: (arg0: string) => any; },
-  options: any,
+  instance: GQLManager,
+  nodeTypeMapper: NodeTypeMapper,
+  options: GqlizeOptions | undefined,
 ) {
-  return async(globalId: string, context: any, info: { schema: { getType: (arg0: any) => any; }; }) => {
+  return async(globalId: string, context: RequestContext, info: GraphQLResolveInfo) => {
     if (globalId === null || globalId === undefined) {
       return null;
     }
@@ -66,7 +70,7 @@ export default function idFetcher(
     if (nodeType && typeof nodeType.resolve === "function") {
       const res = await Promise.resolve(nodeType.resolve(globalId, context, info));
       if (res) {
-        res.__graphqlType__ = type; //eslint-disable-line
+        (res as {__graphqlType__?: string}).__graphqlType__ = type;
       }
       return res;
     }
@@ -85,7 +89,7 @@ export default function idFetcher(
       return null;
     }
     if (options?.permission?.query) {
-      const allowed = await options.permission.query(type, options.permission.options);
+      const allowed = options.permission.query(type, options.permission.options);
       if (!allowed) {
         return null;
       }
@@ -120,7 +124,9 @@ export default function idFetcher(
     if (!node) {
       return null;
     }
-    node.__graphqlType__ = type; //eslint-disable-line
+    // The stamp `typeResolver` reads back to decide which object type a `node`
+    // result is; not a column, so it has to be hung off the row.
+    (node as {__graphqlType__?: string}).__graphqlType__ = type;
     return node;
   };
 }

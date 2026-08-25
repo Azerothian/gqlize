@@ -25,6 +25,28 @@ export type ParsedQuery = {
   count?: boolean;
 };
 
+/**
+ * Query values are `unknown` (`RestQuery`'s values are transport-neutral), but at
+ * runtime they are always something JSON-string-shaped: a scalar, or an array of
+ * scalars from a repeated query key (e.g. `?order=a&order=b`). Stringify only the
+ * shapes that are guaranteed to produce a useful representation, rather than
+ * risking `Object.prototype.toString`'s `"[object Object]"`.
+ */
+function stringifyQueryValue(raw: unknown): string {
+  if (Array.isArray(raw)) {
+    return raw.map(stringifyQueryValue).join(",");
+  }
+  if (
+    typeof raw === "string" ||
+    typeof raw === "number" ||
+    typeof raw === "boolean" ||
+    typeof raw === "bigint"
+  ) {
+    return String(raw);
+  }
+  return JSON.stringify(raw) ?? "";
+}
+
 function parseFilter(raw: unknown): AdapterWhere | undefined {
   if (raw === undefined || raw === null || raw === "") {
     return undefined;
@@ -33,7 +55,7 @@ function parseFilter(raw: unknown): AdapterWhere | undefined {
     return raw;
   }
   try {
-    return JSON.parse(String(raw));
+    return JSON.parse(stringifyQueryValue(raw));
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     throw new BadRequestException(`Invalid 'filter' query parameter (expected JSON): ${detail}`);
@@ -45,7 +67,7 @@ function parseOrder(raw: unknown): [string, "ASC" | "DESC"][] | undefined {
   if (!raw) {
     return undefined;
   }
-  const parts = String(raw)
+  const parts = stringifyQueryValue(raw)
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean);
@@ -81,7 +103,7 @@ function toInt(raw: unknown): number | undefined {
   if (raw === undefined || raw === null || raw === "") {
     return undefined;
   }
-  const n = parseInt(String(raw), 10);
+  const n = parseInt(stringifyQueryValue(raw), 10);
   return Number.isFinite(n) ? n : undefined;
 }
 

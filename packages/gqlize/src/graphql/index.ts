@@ -2,6 +2,8 @@ import {
   GraphQLSchema,
   GraphQLObjectType,
   GraphQLInterfaceType,
+  type GraphQLSchemaConfig,
+  type GraphQLType,
 } from "graphql";
 
 import createNodeInterface from "./utils/create-node-interface";
@@ -16,7 +18,7 @@ import createMutationInput from "./create-mutation-input";
 import createSchemaCache from "./create-schema-cache";
 import computeVisibleModels from "./utils/visible-models";
 import GQLManager from '../manager';
-import { GqlizeOptions, GqlizeAdapter, SchemaCache, SchemaHatch } from '../types';
+import { GqlFieldMap, GqlizeOptions, GqlizeAdapter, SchemaCache, SchemaHatch } from '../types';
 import { bindField } from "./resolvers/bind";
 import { applyExtendFields } from "./extend";
 import { createLedger, recordExternalType, setLedger } from "./snapshot/ledger";
@@ -60,19 +62,27 @@ export function warnUnknownPermissionKeys(options: GqlizeOptions) {
 }
 
 export function createModelTypes(instance: GQLManager, options: GqlizeOptions, nodeInterface: GraphQLInterfaceType, schemaCache: SchemaCache) {
-  return async(defName: string, o: any) => {
+  return async(defName: string, o: SchemaCache["types"]) => {
     if (!isModelAllowed(options.permission, defName)) {
       return o;
     }
-    o[defName] = await createModelType(defName, instance, options, nodeInterface, schemaCache);
+    // `createModelType` only returns `undefined` for a model the permission bag
+    // denies, which the guard above has already returned on — so this never
+    // stores a hole. Written as a guard anyway: `schemaCache.types` is iterated
+    // by key to build `ledger.modelTypes` and the node-type mapper, and a key
+    // holding `undefined` would reach both as if it were a real model.
+    const modelType = await createModelType(defName, instance, options, nodeInterface, schemaCache);
+    if (modelType) {
+      o[defName] = modelType;
+    }
     return o;
   };
 }
 export function createListObjects(instance: GQLManager, schemaCache: SchemaCache, options: GqlizeOptions) {
-  return async(defName:string, o: any) => {
+  return (defName:string, o: SchemaCache["lists"]) => {
     if (schemaCache.types[defName]) {
       if (options.permission?.query) {
-        const result = await options.permission.query(defName, options.permission.options);
+        const result = options.permission.query(defName, options.permission.options);
         if (!result) {
           return o;
         }
@@ -87,22 +97,22 @@ export function createListObjects(instance: GQLManager, schemaCache: SchemaCache
 }
 
 function createMutationInputs(instance: GQLManager, options: GqlizeOptions, schemaCache: SchemaCache, mutableDefNames: Set<string>) {
-  return async(defName: string, inputTypes: any) => {
+  return (defName: string, inputTypes: SchemaCache["mutationInputs"]) => {
     if (mutableDefNames.has(defName)) {
-      inputTypes[defName] = await createMutationInput(instance, defName, schemaCache, inputTypes, options, mutableDefNames);
+      inputTypes[defName] = createMutationInput(instance, defName, schemaCache, inputTypes, options, mutableDefNames);
     }
     return inputTypes;
   };
 }
 
 function createMutationModels(instance: GQLManager, options: GqlizeOptions, schemaCache: SchemaCache, mutableDefNames: Set<string>) {
-  return async(defName: string, o: any) => {
+  return (defName: string, o: SchemaCache["mutationModels"]) => {
     if (mutableDefNames.has(defName)) {
       const updateResult = isMutationAllowed(options.permission, defName, "update");
       const deleteResult = isMutationAllowed(options.permission, defName, "delete");
       const createResult = isMutationAllowed(options.permission, defName, "create");
       if (createResult || updateResult || deleteResult) {
-        const mutationModel = await createMutationModel(instance, defName, schemaCache, createResult, updateResult, deleteResult, options);
+        const mutationModel = createMutationModel(instance, defName, schemaCache, createResult, updateResult, deleteResult, options);
         // Every input the mutation would have accepted can be denied away — a
         // field with no arguments could not mutate anything, so drop it.
         if (Object.keys(mutationModel.args).length > 0) {
@@ -115,7 +125,7 @@ function createMutationModels(instance: GQLManager, options: GqlizeOptions, sche
 }
 
 export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: GqlizeOptions) {
-  const rootSchema: any = {};
+  const rootSchema: Partial<GraphQLSchemaConfig> = {};
   const definitions = instance.getDefinitions();
 
   warnUnknownPermissionKeys(gqlizeOptions);
@@ -154,7 +164,7 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     // passing any gqlize builder that could record it. Record it here instead:
     // it is user-authored, and an artifact that clones it duplicates the name
     // against the live instance the same type reaches through any other path.
-    const whereOperatorTypes: Record<string, any> = (definitions[defName] as any)?.whereOperatorTypes || {};
+    const whereOperatorTypes: Record<string, GraphQLType | undefined> = definitions[defName]?.whereOperatorTypes || {};
     Object.keys(whereOperatorTypes).forEach((operator) => {
       recordExternalType(schemaCache, whereOperatorTypes[operator], {
         via: "definitionWhereOperator",
@@ -183,7 +193,7 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     if (!schemaCache.types[defName]) {
       continue;
     }
-    if (options.permission?.mutation && !(await options.permission.mutation(defName, options.permission.options))) {
+    if (options.permission?.mutation && !options.permission.mutation(defName, options.permission.options)) {
       continue;
     }
     mutableDefNames.add(defName);
@@ -206,12 +216,12 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   if (!carriesType) {
     log.warn("gqlize: the configured id codec sets `carriesType: false`, so a global id cannot be resolved back to a type - the root `node(id:)` field has been omitted from the schema.");
   }
-  let queryRootFields: any = carriesType ? {
+  let queryRootFields: GqlFieldMap = carriesType ? {
     // The relay node field closes over a live id-fetcher that re-checks
     // permissions per request; it is always rebuilt, never serialized.
     node: bindField(nodeField, {kind: "nodeField"}, bindingContext),
   } : {};
-  let mutationRootFields: any = {};
+  let mutationRootFields: GqlFieldMap = {};
   if (Object.keys(queryLists).length > 0) {
     queryRootFields.models = bindField({
       type: new GraphQLObjectType({

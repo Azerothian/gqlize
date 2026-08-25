@@ -228,7 +228,9 @@ export function writeAccessors(host: AdapterRoutingHost, association: Associatio
       [accessors.set]: set,
       [accessors.add]: set,
       [accessors.remove]: clear,
-      [accessors.count]: async function(this: InstanceRow) {
+      // Synchronous by nature (no adapter call to await); callers of this
+      // accessor `await` it regardless, which resolves a plain value just fine.
+      [accessors.count]: function(this: InstanceRow) {
         return sourceAdapter.getValueFromInstance(this, foreignKey) === null ? 0 : 1;
       },
     };
@@ -374,7 +376,14 @@ function btmWriteAccessors(host: AdapterRoutingHost, association: Association, s
  * `addInstanceFunction`, and those with neither simply go without — the GraphQL
  * and `resolveXRelationship` paths do not depend on it.
  */
-export function addProxyAccessor(sourceAdapter: OrmAdapter, defName: string, modelClass: Model | undefined, funcName: string, func: (...args: any[]) => any) {
+export function addProxyAccessor(
+  sourceAdapter: OrmAdapter, defName: string, modelClass: Model | undefined, funcName: string,
+  // Matches `OrmAdapter.addInstanceFunction`'s own `(...args: any[]) => any`
+  // (utilize's published signature, not ours to narrow) — installed functions
+  // are called reflectively, by name, with call-site-specific arity.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must match addInstanceFunction's external signature
+  func: (...args: any[]) => any,
+) {
   if (modelClass?.prototype) {
     // Installing by name onto a prototype the adapter's own types describe
     // without an index signature — see {@link Model.prototype}.

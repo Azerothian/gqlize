@@ -23,19 +23,37 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+import type { GraphQLTypeResolver } from "graphql";
 import NodeTypeMapper from "./node-type-mapper";
+import type { AdapterRow, RequestContext } from "../../types";
 
 // https://github.com/mickhansen/graphql-sequelize/blob/master/src/relay.js
 
-export default function typeResolver(nodeTypeMapper: NodeTypeMapper) {
-  return (obj: { __graphqlType__: any; Model: { options: { name: { singular: any; }; }; }; _modelOptions: { name: { singular: any; }; }; name: any; }, context: any, info: { schema: { getType: (arg0: any) => any; }; }) => {
+/**
+ * The four places a row can carry the name of the type it belongs to, in the
+ * order `node(id:)` reads them. `__graphqlType__` is the one gqlize stamps
+ * itself; the other three are the shapes graphql-sequelize supported, and every
+ * one of them is optional on any given row.
+ */
+type TypeCarrier = {
+  __graphqlType__?: string;
+  Model?: { options: { name: { singular: string } } };
+  _modelOptions?: { name: { singular: string } };
+  name?: string;
+};
+
+export default function typeResolver(
+  nodeTypeMapper: NodeTypeMapper,
+): GraphQLTypeResolver<AdapterRow, RequestContext> {
+  return (obj, context, info) => {
+    const carrier = (obj ?? {}) as TypeCarrier;
     const type =
-      obj.__graphqlType__ || //eslint-disable-line
-      (obj.Model
-        ? obj.Model.options.name.singular
-        : obj._modelOptions //eslint-disable-line
-        ? obj._modelOptions.name.singular  //eslint-disable-line
-        : obj.name); //eslint-disable-line
+      carrier.__graphqlType__ ||
+      (carrier.Model
+        ? carrier.Model.options.name.singular
+        : carrier._modelOptions
+        ? carrier._modelOptions.name.singular
+        : carrier.name);
 
     if (!type) {
       throw new Error(
@@ -46,15 +64,14 @@ export default function typeResolver(nodeTypeMapper: NodeTypeMapper) {
 
     const nodeType = nodeTypeMapper.item(type);
     if (nodeType) {
-      let type;
-      if(typeof nodeType.type === "string") {
-        type = info.schema.getType(nodeType.type);
-      } else {
-        type = nodeType.type;
-      }
-      return type.name;
+      const resolved = typeof nodeType.type === "string"
+        ? info.schema.getType(nodeType.type)
+        : nodeType.type;
+      // `name` only exists on a named type; a list or non-null wrapper cannot be
+      // a `node` result, and neither can a name the schema does not know.
+      return (resolved as {name?: string} | null | undefined)?.name;
     }
 
-    return null;
+    return undefined;
   };
 }

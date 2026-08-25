@@ -4,7 +4,7 @@ import {
   GraphQLNonNull,
   // GraphQLList,
 } from "graphql";
-import type { GraphQLObjectTypeConfig } from "graphql";
+import type { GraphQLNullableOutputType, GraphQLObjectTypeConfig, GraphQLOutputType } from "graphql";
 
 // import {
 //   fromGlobalId,
@@ -16,7 +16,7 @@ import type { GraphQLObjectTypeConfig } from "graphql";
 import { globalIdFieldConfig } from "./utils/global-id-field";
 import { isFieldAllowed } from "@azerothian/utilize";
 import GQLManager from '../manager';
-import { Definition, GqlizeOptions, SchemaCache } from '../types';
+import { AdapterRow, Definition, GqlFieldMap, GqlizeOptions, RequestContext, SchemaCache } from '../types';
 import { bindField } from "./resolvers/bind";
 import { recordExternalType } from "./snapshot/ledger";
 import { isBuiltOutputType } from "./utils/authored-type";
@@ -54,7 +54,10 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
             nullable: fieldDef.allowNull,
           }, bindingContext);
         } else {
-          const type = instance.getGraphQLOutputType(defName, key, fieldDef.type);
+          // The adapter's type mapper serves both output and input positions and
+          // is declared over the whole type union; this call asks for the output
+          // side, and graphql rejects an input-only type when the field builds.
+          const type = instance.getGraphQLOutputType(defName, key, fieldDef.type) as GraphQLOutputType;
           // Field args are passed through verbatim, so their types are whatever
           // the user wrote — always external, and invisible to every other
           // recording site.
@@ -68,7 +71,7 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
             });
           });
           const config = {
-            type: fieldDef.allowNull ? type : new GraphQLNonNull(type as any),
+            type: fieldDef.allowNull ? type : new GraphQLNonNull(type as GraphQLNullableOutputType),
             description: ((definition.comments || {}).fields || {})[key] || fieldDef.description,
             args: fieldDef.args,
           };
@@ -79,7 +82,7 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
             : config;
         }
         return f;
-      }, {} as {[key: string]: any});
+      }, {} as GqlFieldMap);
       if (definition.override) {
         const overrideDefs = definition.override;
         fields = Object.keys(definition.override).reduce((f, fieldName) => {
@@ -95,7 +98,7 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
           // See `isBuiltOutputType` for why the slot arrives here as `unknown`.
           const namedType = isBuiltOutputType(overrideFieldDefinition.type)
             ? overrideFieldDefinition.type
-            : new GraphQLObjectType(overrideFieldDefinition.type as GraphQLObjectTypeConfig<any, any>);
+            : new GraphQLObjectType(overrideFieldDefinition.type as GraphQLObjectTypeConfig<AdapterRow, RequestContext>);
           recordExternalType(schemaCache, namedType, {
             via: "definitionOverride",
             defName,

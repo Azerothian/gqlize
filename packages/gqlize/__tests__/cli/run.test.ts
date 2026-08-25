@@ -10,6 +10,15 @@ import {run} from "../../src/cli/run";
 import {VERSION} from "../../src/version";
 import {SNAPSHOT_FORMAT_VERSION} from "../../src/graphql/snapshot/ir";
 
+// The orm is handed to the config module through a global (see the module
+// docstring below) — declaring its real type here means every read/write of
+// it, in this file and in the natively-imported config, is checked against
+// the actual shape `createInstance()` returns rather than reaching for `any`.
+declare global {
+  // eslint-disable-next-line no-var -- a `let`/`const` cannot be declared on `globalThis`
+  var __GQLIZE_CLI_TEST_ORM__: Awaited<ReturnType<typeof createInstance>> | undefined;
+}
+
 /**
  * End-to-end CLI tests: `run()` returns an exit code instead of calling
  * `process.exit`, so the whole binary is exercisable in-process.
@@ -25,11 +34,18 @@ describe("gqlize CLI", () => {
   let err: string[];
 
   const io = () => ({out: (l: string) => out.push(l), err: (l: string) => err.push(l)});
+  /** the instance `beforeAll` stashed on the global, guaranteed to be set once any test body runs */
+  const testOrm = () => {
+    if (!globalThis.__GQLIZE_CLI_TEST_ORM__) {
+      throw new Error("Expected beforeAll to have set globalThis.__GQLIZE_CLI_TEST_ORM__");
+    }
+    return globalThis.__GQLIZE_CLI_TEST_ORM__;
+  };
   const stdout = () => out.join("\n");
   const stderr = () => err.join("\n");
 
   beforeAll(async() => {
-    (globalThis as any).__GQLIZE_CLI_TEST_ORM__ = await createInstance();
+    globalThis.__GQLIZE_CLI_TEST_ORM__ = await createInstance();
   });
 
   beforeEach(async() => {
@@ -116,7 +132,7 @@ describe("gqlize CLI", () => {
 
       expect((await artifact(outFile)).types.length).toBeGreaterThan(0);
       const sdl = await readFile(sdlFile, "utf8");
-      expect(sdl).toEqual(printSchema(await createSchema((globalThis as any).__GQLIZE_CLI_TEST_ORM__)));
+      expect(sdl).toEqual(printSchema(await createSchema(testOrm())));
     });
 
     it("gzips with --gzip, appending .gz", async() => {
@@ -291,7 +307,7 @@ describe("gqlize CLI", () => {
     it("prints the live schema as SDL", async() => {
       const path = await config();
       expect(await run(["print", "-c", path], io())).toEqual(0);
-      expect(stdout()).toEqual(printSchema(await createSchema((globalThis as any).__GQLIZE_CLI_TEST_ORM__)));
+      expect(stdout()).toEqual(printSchema(await createSchema(testOrm())));
     });
 
     it("prints from an artifact, matching a live build", async() => {

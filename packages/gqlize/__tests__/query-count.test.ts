@@ -2,7 +2,7 @@ import {graphql} from "graphql";
 import Sequelize from "sequelize";
 import { Ormize as Database } from "@azerothian/ormize";
 import {createSchema} from "../src";
-import {validateResult} from "./helper";
+import {resultData, validateResult} from "./helper";
 import {createAdapterForDialect, registerTeardown} from "./helper/dialect";
 import {describe, it, expect} from "@jest/globals";
 
@@ -36,9 +36,9 @@ async function build(afterCountTransform?: (total: number) => number) {
     }],
     options: {
       hooks: {
-        beforeFind(options: any) { calls.childBeforeFind++; return options; },
-        afterFind(instances: any) { calls.childAfterFind++; return instances; },
-        beforeCount(options: any) { calls.childBeforeCount++; return options; },
+        beforeFind(options) { calls.childBeforeFind++; return options; },
+        afterFind(instances) { calls.childAfterFind++; return instances; },
+        beforeCount(options) { calls.childBeforeCount++; return options; },
         afterCount(total: number) {
           calls.childAfterCount++;
           return afterCountTransform ? afterCountTransform(total) : total;
@@ -51,6 +51,18 @@ async function build(afterCountTransform?: (total: number) => number) {
   return db;
 }
 
+type ParentTotalResult = {
+  models: {CParent: {edges: {node: {children: {total: number}}}[]}};
+};
+
+type ParentEdgesResult = {
+  models: {CParent: {edges: {node: {children: {edges: {node: {name: string}}[]}}}[]}};
+};
+
+type ChildTotalResult = {
+  models: {CChild: {total: number}};
+};
+
 describe("count-only resolution (select total without edges)", () => {
   it("runs a count (beforeCount + afterCount) instead of a findAll for a nested total", async () => {
     const db = await build();
@@ -60,13 +72,14 @@ describe("count-only resolution (select total without edges)", () => {
     await CChild.create({ name: "c2", parentId: p.get("id") });
 
     const schema = await createSchema(db);
-    const result = (await graphql({
+    const result = await graphql({
       schema,
       source: `query { models { CParent { edges { node { name children { total } } } } } }`,
-    })) as any;
+    });
     validateResult(result);
 
-    expect(result.data.models.CParent.edges[0].node.children.total).toEqual(2);
+    const data = resultData<ParentTotalResult>(result);
+    expect(data.models.CParent.edges[0].node.children.total).toEqual(2);
     expect(calls.childBeforeCount).toBeGreaterThanOrEqual(1);
     expect(calls.childAfterCount).toBeGreaterThanOrEqual(1);
     // no rows fetched for the children -> the child model's beforeFind never fired
@@ -81,12 +94,13 @@ describe("count-only resolution (select total without edges)", () => {
     await CChild.create({ name: "c2", parentId: p.get("id") });
 
     const schema = await createSchema(db);
-    const result = (await graphql({
+    const result = await graphql({
       schema,
       source: `query { models { CParent { edges { node { children { total } } } } } }`,
-    })) as any;
+    });
     validateResult(result);
-    expect(result.data.models.CParent.edges[0].node.children.total).toEqual(20);
+    const data = resultData<ParentTotalResult>(result);
+    expect(data.models.CParent.edges[0].node.children.total).toEqual(20);
   });
 
   it("selecting edges fetches rows (findAll), not the count-only path", async () => {
@@ -96,12 +110,13 @@ describe("count-only resolution (select total without edges)", () => {
     await CChild.create({ name: "c1", parentId: p.get("id") });
 
     const schema = await createSchema(db);
-    const result = (await graphql({
+    const result = await graphql({
       schema,
       source: `query { models { CParent { edges { node { children { edges { node { name } } } } } } } }`,
-    })) as any;
+    });
     validateResult(result);
-    expect(result.data.models.CParent.edges[0].node.children.edges).toHaveLength(1);
+    const data = resultData<ParentEdgesResult>(result);
+    expect(data.models.CParent.edges[0].node.children.edges).toHaveLength(1);
     // rows were fetched -> child beforeFind fired (JOIN eager load)
     expect(calls.childBeforeFind).toBeGreaterThanOrEqual(1);
   });
@@ -115,12 +130,13 @@ describe("count-only resolution (select total without edges)", () => {
 
     const schema = await createSchema(db);
     // no pagination -> children JOIN-loaded -> manual beforeFind + afterFind, once each
-    const result = (await graphql({
+    const result = await graphql({
       schema,
       source: `query { models { CParent { edges { node { children { edges { node { name } } } } } } } }`,
-    })) as any;
+    });
     validateResult(result);
-    expect(result.data.models.CParent.edges[0].node.children.edges).toHaveLength(2);
+    const data = resultData<ParentEdgesResult>(result);
+    expect(data.models.CParent.edges[0].node.children.edges).toHaveLength(2);
     expect(calls.childBeforeFind).toEqual(1);
     expect(calls.childAfterFind).toEqual(1);
   });
@@ -134,12 +150,13 @@ describe("count-only resolution (select total without edges)", () => {
 
     const schema = await createSchema(db);
     // first:1 -> separate:true -> native beforeFind/afterFind (not manual), once each
-    const result = (await graphql({
+    const result = await graphql({
       schema,
       source: `query { models { CParent { edges { node { children(first: 1) { edges { node { name } } } } } } } }`,
-    })) as any;
+    });
     validateResult(result);
-    expect(result.data.models.CParent.edges[0].node.children.edges).toHaveLength(1);
+    const data = resultData<ParentEdgesResult>(result);
+    expect(data.models.CParent.edges[0].node.children.edges).toHaveLength(1);
     expect(calls.childBeforeFind).toEqual(1);
     expect(calls.childAfterFind).toEqual(1);
   });
@@ -155,16 +172,17 @@ describe("count-only resolution (select total without edges)", () => {
     // explicit separate:true (no pagination) -> loaded via a separate query, which
     // fires the child find hooks natively; the eager post-pass must NOT fire them
     // again.
-    const result = (await graphql({
+    const result = await graphql({
       schema,
       source: `query { models {
         CParent(include: { children: { separate: true } }) {
           edges { node { children { edges { node { name } } } } }
         }
       } }`,
-    })) as any;
+    });
     validateResult(result);
-    expect(result.data.models.CParent.edges[0].node.children.edges).toHaveLength(2);
+    const data = resultData<ParentEdgesResult>(result);
+    expect(data.models.CParent.edges[0].node.children.edges).toHaveLength(2);
     expect(calls.childBeforeFind).toEqual(1);
     expect(calls.childAfterFind).toEqual(1);
   });
@@ -177,12 +195,13 @@ describe("count-only resolution (select total without edges)", () => {
     await CChild.create({ name: "c3" });
 
     const schema = await createSchema(db);
-    const result = (await graphql({
+    const result = await graphql({
       schema,
       source: `query { models { CChild { total } } }`,
-    })) as any;
+    });
     validateResult(result);
-    expect(result.data.models.CChild.total).toEqual(3);
+    const data = resultData<ChildTotalResult>(result);
+    expect(data.models.CChild.total).toEqual(3);
     expect(calls.childBeforeCount).toBeGreaterThanOrEqual(1);
     expect(calls.childAfterCount).toBeGreaterThanOrEqual(1);
     expect(calls.childBeforeFind).toEqual(0); // no rows fetched

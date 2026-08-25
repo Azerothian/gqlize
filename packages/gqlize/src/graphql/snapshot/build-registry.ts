@@ -1,9 +1,10 @@
 import type { GraphQLSchema } from "graphql";
 
-import type { GqlizeOptions } from "../../types";
+import type GqlizeBinding from "../../manager";
+import type { AnyOrmize, GqlizeOptions } from "../../types";
 
 export interface BuildRecord {
-  instance: any;
+  instance: AnyOrmize | GqlizeBinding;
   options: GqlizeOptions;
 }
 
@@ -19,7 +20,7 @@ export interface BuildRecord {
  */
 const builtWith = new WeakMap<GraphQLSchema, BuildRecord>();
 
-export function recordBuild(schema: GraphQLSchema, instance: any, options: GqlizeOptions = {}) {
+export function recordBuild(schema: GraphQLSchema, instance: AnyOrmize | GqlizeBinding, options: GqlizeOptions = {}) {
   builtWith.set(schema, {instance, options});
   return schema;
 }

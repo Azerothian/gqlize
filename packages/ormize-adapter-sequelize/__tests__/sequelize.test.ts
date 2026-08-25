@@ -3,10 +3,16 @@ import ItemModel from "./helper/models/item";
 import TaskModel from "./helper/models/task";
 import TaskItemModel from "./helper/models/task-item";
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import Sequelize from "sequelize";
+import Sequelize, { Model } from "sequelize";
+import type { Definition } from "@azerothian/utilize/types/index";
+import type { SequelizeDefinition } from "../src/types";
+
+/** The runtime-only descriptor branch of `classMethods` — see the comment at its one use below. */
+type ClassMethodFn = NonNullable<Definition["classMethods"]>[string];
 
 
 import { describe, expect, it } from "@jest/globals";
+import { GraphQLList } from "graphql";
 
 // import jsonType from "@vostro/graphql-types/lib/json";
 // import { SequelizeDefinition } from '../lib/types/index';
@@ -66,13 +72,15 @@ describe("tests", () => {
       dialect: "sqlite",
     });
     await adapter.createModel(TaskModel);
-    adapter.addInstanceFunction("Task", "it", function(this: any) {
+    adapter.addInstanceFunction("Task", "it", function(this: Model) {
       expect(this).toBeInstanceOf(adapter.getModel("Task"));
       return true;
     });
     await adapter.reset();
-    const Task = adapter.getModel("Task") as any;
-    const task = new Task();
+    const Task = adapter.getModel("Task");
+    // `it` is installed dynamically by `addInstanceFunction` above, so it has
+    // no place in `Task`'s own (Sequelize-generated) instance type.
+    const task = new Task() as unknown as { it: () => boolean };
     expect(task.it()).toEqual(true);
   });
 
@@ -85,7 +93,9 @@ describe("tests", () => {
       return true;
     });
     await adapter.reset();
-    const Task = adapter.getModel("Task") as any;
+    // `it` is installed dynamically by `addStaticFunction` above, so it has no
+    // place in `Task`'s own (Sequelize-generated) static type.
+    const Task = adapter.getModel("Task") as unknown as { it: () => boolean };
     expect(Task.it()).toEqual(true);
   });
 
@@ -98,7 +108,7 @@ describe("tests", () => {
     await adapter.createModel(ItemModel);
 
     await waterfall([TaskModel, TaskItemModel, ItemModel], async(model) => {
-      return waterfall(model.relationships, async(rel) => {
+      return waterfall(model.relationships, (rel) => {
         return adapter.createRelationship(model.name, rel.model, rel.name, rel.type, rel.options);
       });
     });
@@ -113,7 +123,7 @@ describe("tests", () => {
       dialect: "sqlite",
     });
 
-    const itemDef = {
+    const itemDef: SequelizeDefinition = {
       name: "Item",
       define: {
         "name": {
@@ -129,21 +139,21 @@ describe("tests", () => {
           create: `
           -- Note this drop function only works on PGSQL >=10
           -- PGSQL <= 9 needs argument definition to drop function
-          
+
           -- FOR PGSQL 9 <=
           -- select format('DROP FUNCTION %s(%s);', p.oid::regproc, pg_get_function_identity_arguments(p.oid))
           -- FROM pg_catalog.pg_proc p LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
           -- WHERE p.oid::regproc::text ilike '%selectOne%';
-          
-          
+
+
           CREATE OR REPLACE FUNCTION public."selectOne"(
             "start" int)
               RETURNS TABLE(id integer)
               LANGUAGE 'plpgsql'
               COST 15
-              VOLATILE 
+              VOLATILE
           AS $BODY$
-          
+
           BEGIN
             RETURN QUERY (SELECT "start");
           END
@@ -151,21 +161,39 @@ describe("tests", () => {
         },
       },
       classMethods: {
+        // The stored-procedure descriptor form (`SqlClassMethod`, see
+        // `installClassMethods`) is a runtime-only convention this adapter
+        // branches on: the shared `Definition.classMethods` contract type
+        // (published in `@azerothian/utilize`, out of this package's scope)
+        // only describes the function form, so there is no way to express
+        // this branch without an escape hatch. Cast narrowly to just this
+        // property, referencing the contract's own function type rather than
+        // restating its permissiveness with a literal `any` here.
         newStoredProcedure: {
           type: "sqlfunction",
           functionName: `selectOne`,
           args: ["number"],
-        },
+        } as unknown as ClassMethodFn,
       },
-    } as any;
-    await adapter.createModel(itemDef);
-    (adapter as any).sequelize.query = async(q: any, options: any) => {
-      //stop from writing to sqlite
-      //as stored procedures are not supported
-      console.log("q", {q, options}); //eslint-disable-line
     };
+    await adapter.createModel(itemDef);
+    // `Sequelize.query` is heavily overloaded; this replaces it wholesale with
+    // a stub (stored procedures are not supported by sqlite) rather than
+    // calling through, which only needs the one shape actually used below.
+    (adapter.sequelize as unknown as { query: (q: unknown, options: unknown) => Promise<void> }).query =
+      // eslint-disable-next-line @typescript-eslint/require-await -- must return `Promise<void>` to match `.query`'s real signature; there is nothing to await
+      async(q, options) => {
+        //stop from writing to sqlite
+        //as stored procedures are not supported
+        console.log("q", {q, options}); //eslint-disable-line
+      };
     await adapter.reset();
-    await (adapter.getORM().models.Item as any).newStoredProcedure({
+    // `newStoredProcedure` is installed dynamically by `installClassMethods`
+    // from the `SqlClassMethod` descriptor above, so it has no place in the
+    // model's own (Sequelize-generated) static type.
+    await (adapter.getORM().models.Item as unknown as {
+      newStoredProcedure: (args: unknown) => Promise<unknown>
+    }).newStoredProcedure({
       start: 1,
     });
     expect(adapter.getORM().models.Item).not.toBeUndefined();
@@ -235,7 +263,7 @@ describe("tests", () => {
     await adapter.createModel(itemChildDef);
 
     await waterfall([itemDef, itemChildMapDef, itemChildDef], async(model) => {
-      return waterfall(model.relationships, async(rel) => {
+      return waterfall(model.relationships, (rel) => {
         return adapter.createRelationship(model.name, rel.model, rel.name, rel.type, rel.options);
       });
     });
@@ -256,14 +284,22 @@ describe("tests", () => {
     const Task = adapter.getModel("Task");
     const task = await Task.create({
       name: "ttttttttttttttt",
-    }) as any;
+    });
+    // `Model<any, any>`'s attributes aren't narrowed to this fixture's real
+    // columns (a bare model handle, not the typed-generic form other tests
+    // use), so read the id back through a local, narrowly-scoped shape.
+    const taskId = (task as unknown as { id: unknown }).id;
 
-    const func = await adapter.createFunctionForFind("Task");
-    const proxyFunc = await func(task.id, "id", false);
-    const result = await proxyFunc() as any;
+    // `createFunctionForFind` and the function it returns are both
+    // synchronous (they only return a promise, they don't await one).
+    const func = adapter.createFunctionForFind("Task");
+    const proxyFunc = func(taskId, "id", false);
+    // `singular: false` above means this resolves the `findAll` branch, not
+    // the `findOne` one — narrow to that instead of the two-branch union.
+    const result = await proxyFunc() as unknown as Array<{ id: unknown }>;
     expect(result).not.toBeUndefined();
     expect(result).toHaveLength(1);
-    expect(result[0].id).toEqual(task.id);
+    expect(result[0].id).toEqual(taskId);
   });
   it("adapter - getPrimaryKeyNameForModel", async() => {
     const adapter = new SequelizeAdapter({}, {
@@ -371,10 +407,10 @@ describe("tests", () => {
     };
     await adapter.createModel(itemDef);
     await adapter.createModel(itemChildDef);
-    await waterfall(itemDef.relationships, async(rel) => {
+    await waterfall(itemDef.relationships, (rel) => {
       return adapter.createRelationship(itemDef.name, rel.model, rel.name, rel.type, rel.options);
     });
-    await waterfall(itemChildDef.relationships, async(rel) => {
+    await waterfall(itemChildDef.relationships, (rel) => {
       return adapter.createRelationship(itemChildDef.name, rel.model, rel.name, rel.type, rel.options);
     });
     await adapter.reset();
@@ -419,7 +455,7 @@ describe("tests", () => {
       }],
     };
     await adapter.createModel(itemDef);
-    await waterfall(itemDef.relationships, async(rel) => {
+    await waterfall(itemDef.relationships, (rel) => {
       return adapter.createRelationship(itemDef.name, rel.model, rel.name, rel.type, rel.options);
     });
     await adapter.reset();
@@ -467,7 +503,7 @@ describe("tests", () => {
       }],
     };
     await adapter.createModel(itemDef);
-    await waterfall(itemDef.relationships, async(rel) => {
+    await waterfall(itemDef.relationships, (rel) => {
       return adapter.createRelationship(itemDef.name, rel.model, rel.name, rel.type, rel.options);
     });
     await adapter.reset();
@@ -507,7 +543,7 @@ describe("tests", () => {
       }],
     };
     await adapter.createModel(itemDef);
-    await waterfall(itemDef.relationships, async(rel) => {
+    await waterfall(itemDef.relationships, (rel) => {
       return adapter.createRelationship(itemDef.name, rel.model, rel.name, rel.type, rel.options);
     });
     await adapter.reset();
@@ -553,7 +589,7 @@ describe("tests", () => {
       }],
     };
     await adapter.createModel(itemDef);
-    await waterfall(itemDef.relationships, async(rel) => {
+    await waterfall(itemDef.relationships, (rel) => {
       return adapter.createRelationship(itemDef.name, rel.model, rel.name, rel.type, rel.options);
     });
     await adapter.reset();
@@ -725,8 +761,13 @@ describe("tests", () => {
     await adapter.createModel(itemDef);
     const includeType = adapter.getIncludeGraphQLType(itemDef.name, itemDef, {
       model: (modelName: string) => modelName !== "Secret",
-    }) as any;
+    });
     expect(includeType).toBeDefined();
+    // A to-many relationship's include type is a list; narrow with a real
+    // instance check rather than casting.
+    if (!(includeType instanceof GraphQLList)) {
+      throw new Error("expected a GraphQLList include type");
+    }
     const includeFields = includeType.ofType.getFields();
     expect(includeFields.children).toBeDefined();
     // A denied datatype has no output type either, so it must not be joinable.
@@ -778,13 +819,13 @@ describe("tests", () => {
     await adapter.createModel(codeDef);
     const orderBy = adapter.getOrderByGraphQLType(codeDef.name, {
       field: (_modelName: string, fieldName: string) => fieldName === "label",
-    }) as any;
+    });
     expect(orderBy).toBeDefined();
-    const valueNames = orderBy.ofType.getValues().map((v: any) => v.name);
+    const valueNames = orderBy?.ofType.getValues().map((v) => v.name);
     expect(valueNames).toEqual(["labelASC", "labelDESC"]);
   });
 
-  it("adapter - hasInlineCountFeature - sqlite", async() => {
+  it("adapter - hasInlineCountFeature - sqlite", () => {
     const adapter = new SequelizeAdapter({
       disableInlineCount: false,
     }, {
@@ -793,7 +834,7 @@ describe("tests", () => {
     const result = adapter.hasInlineCountFeature();
     expect(result).toEqual(true);
   });
-  it("adapter - hasInlineCountFeature - disable inline count", async() => {
+  it("adapter - hasInlineCountFeature - disable inline count", () => {
     const adapter = new SequelizeAdapter({
       disableInlineCount: true,
     }, {
@@ -803,20 +844,23 @@ describe("tests", () => {
     expect(result).toEqual(false);
   });
 
-  it("adapter - hasInlineCountFeature - postgres", async() => {
+  it("adapter - hasInlineCountFeature - postgres", () => {
     const adapter = new SequelizeAdapter({}, {
       dialect: "sqlite",
-    }) as any;
-    adapter.sequelize.dialect.name = "postgres";
+    });
+    // Sequelize's own types don't publicly declare `.dialect` as an instance
+    // property (only on the *Options* config type) — a genuine untyped
+    // internal, narrowed here rather than casting the whole adapter.
+    (adapter.sequelize as unknown as { dialect: { name: string } }).dialect.name = "postgres";
     const result = adapter.hasInlineCountFeature();
     expect(result).toEqual(true);
   });
 
-  it("adapter - hasInlineCountFeature - mssql", async() => {
+  it("adapter - hasInlineCountFeature - mssql", () => {
     const adapter = new SequelizeAdapter({}, {
       dialect: "sqlite",
-    }) as any;
-    adapter.sequelize.dialect.name = "mssql";
+    });
+    (adapter.sequelize as unknown as { dialect: { name: string } }).dialect.name = "mssql";
     const result = adapter.hasInlineCountFeature();
     expect(result).toEqual(true);
   });
@@ -881,7 +925,7 @@ describe("tests", () => {
   it("adapter - processListArgsToOptions - hasInlineCount - mssql", async() => {
     const adapter = new SequelizeAdapter({}, {
       dialect: "sqlite",
-    }) as any;
+    });
     const itemDef = {
       name: "Item",
       define: {},
@@ -889,7 +933,7 @@ describe("tests", () => {
     };
 
     await adapter.createModel(itemDef);
-    adapter.sequelize.dialect.name = "mssql";
+    (adapter.sequelize as unknown as { dialect: { name: string } }).dialect.name = "mssql";
     const {getOptions, countOptions} = await adapter.processListArgsToOptions("Item", {
       args: {first: 1},
     });
@@ -905,7 +949,7 @@ describe("tests", () => {
   it("adapter - processListArgsToOptions - hasInlineCount - postgres", async() => {
     const adapter = new SequelizeAdapter({}, {
       dialect: "sqlite",
-    }) as any;
+    });
     adapter.sequelize.getDialect = () => "postgres";
     const itemDef = {
       name: "Item",
@@ -929,7 +973,7 @@ describe("tests", () => {
   it("adapter - processListArgsToOptions - no inlineCount", async() => {
     const adapter = new SequelizeAdapter({}, {
       dialect: "sqlite",
-    }) as any;
+    });
     const itemDef = {
       name: "Item",
       define: {},
@@ -942,7 +986,7 @@ describe("tests", () => {
       args: {first: 1},
     });
     expect(countOptions).toBeDefined();
-    expect(countOptions.limit).toBeUndefined();
+    expect(countOptions?.limit).toBeUndefined();
     expect(getOptions).toBeDefined();
     expect(getOptions.limit).toEqual(1);
     expect(getOptions.attributes).toHaveLength(3);
@@ -951,7 +995,7 @@ describe("tests", () => {
   it("adapter - resolveManyRelationship - fires beforeFind for a JOIN include", async() => {
     const adapter = new SequelizeAdapter({}, {
       dialect: "sqlite",
-    }) as any;
+    });
     await adapter.createModel(TaskModel);
     await adapter.createModel(TaskItemModel);
     // Only `items` and its inverse `task` — the include under test is TaskItem
@@ -962,13 +1006,21 @@ describe("tests", () => {
     await adapter.reset();
 
     const task = await adapter.getModel("Task").create({name: "parenttask"});
-    await adapter.getModel("TaskItem").create({name: "childitem", taskId: task.id});
+    // `Model<any, any>`'s attributes aren't narrowed to this fixture's real
+    // columns, so read `id` back through a local, narrowly-scoped shape.
+    const taskId = (task as unknown as { id: unknown }).id;
+    await adapter.getModel("TaskItem").create({name: "childitem", taskId});
 
     // Sequelize does not fire a JOIN-loaded child's beforeFind, so the adapter
     // fires it by hand — but only if `runHook` reaches it. It used to be dropped
     // on this path: the internal call passed six of eight positional arguments.
     const hookCalls: string[] = [];
-    const runHook = async(defName: string, hookName: string, value: any) => {
+    // Kept `async`: `AdapterRelationshipRequest.runHook` is declared
+    // `Promise<any>`-returning, and a plain `unknown` return isn't assignable
+    // to that — but nothing here awaits, since the stub has nothing to do but
+    // record the call and hand the value back.
+    // eslint-disable-next-line @typescript-eslint/require-await -- must stay async: see comment above
+    const runHook = async(defName: string, hookName: string, value: unknown) => {
       hookCalls.push(`${defName}.${hookName}`);
       return value;
     };
@@ -980,10 +1032,10 @@ describe("tests", () => {
       {args: {include: [{task: {}}]}, runHook},
     );
     expect(hookCalls).toEqual(["Task.beforeFind"]);
-    expect(models.map((m: any) => m.name)).toEqual(["childitem"]);
+    expect(models.map((m) => (m as { name: unknown }).name)).toEqual(["childitem"]);
   });
 
-  it("adapter - getTypeMapper", async() => {
+  it("adapter - getTypeMapper", () => {
     const adapter = new SequelizeAdapter({}, {
       dialect: "sqlite",
     });
@@ -1003,7 +1055,7 @@ describe("tests", () => {
       name: "ttttttttttttttt",
     });
 
-    const func = await adapter.getDeleteFunction("Task", undefined);
+    const func = adapter.getDeleteFunction("Task", undefined);
     await func({}, {}, (i) => i, (i) => i);
     // const result = await proxyFunc();
     // expect(result).not.toBeUndefined();

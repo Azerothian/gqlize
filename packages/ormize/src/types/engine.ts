@@ -19,6 +19,7 @@ import type { ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
  * to this at the points that have to reach a member whose name is only known at
  * runtime.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- members are read AND called (`row[accessors.get](...)`) by a name only known at runtime; `unknown` would block the call without a cast at every one of the many call sites below
 export type InstanceRow = { [member: string]: any };
 
 /**

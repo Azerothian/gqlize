@@ -10,7 +10,7 @@ import { GQLIZE_EXT, type BindingContext, type FieldBinding } from "./types";
  * but no descriptor — which is what keeps a newly added resolver from silently
  * vanishing out of a materialized schema.
  */
-export function bindField<T extends Record<string, any>>(
+export function bindField<T extends object>(
   config: T,
   binding: FieldBinding,
   ctx: BindingContext,
@@ -20,13 +20,22 @@ export function bindField<T extends Record<string, any>>(
     ...config,
     ...(resolve ? { resolve } : {}),
     extensions: {
-      ...(config.extensions),
+      ...((config as {extensions?: object}).extensions),
       [GQLIZE_EXT]: binding,
     },
   };
 }
 
-/** Reads back a descriptor stamped by `bindField`. */
-export function readBinding(field: { extensions?: any }): FieldBinding | undefined {
-  return field?.extensions?.[GQLIZE_EXT];
+/**
+ * Reads back a descriptor stamped by `bindField`.
+ *
+ * The parameter is the structural minimum rather than `GraphQLField` so both a
+ * built field and a still-unbuilt `GraphQLFieldConfig` can be passed; graphql's
+ * own `GraphQLFieldExtensions` carries an index signature, so both satisfy it
+ * without a cast at the call site.
+ */
+export function readBinding(
+  field: { extensions?: Readonly<Record<string, unknown>> | null } | null | undefined,
+): FieldBinding | undefined {
+  return field?.extensions?.[GQLIZE_EXT] as FieldBinding | undefined;
 }

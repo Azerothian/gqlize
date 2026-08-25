@@ -54,6 +54,19 @@ module.exports = {
   // worker concurrency. sqlite-only runs are fast enough that this is a non-issue.
   // On CI (few cores, slower) run fewer workers to avoid oversubscription.
   maxWorkers: process.env.CI ? 2 : 4,
+  // PGlite (in-process WASM Postgres) is slower than sqlite — especially the
+  // first test in a file, which lazily boots the WASM instance — and the workers
+  // running it starve whatever else Jest co-schedules, so every project needs
+  // more headroom than the 5s default.
+  //
+  // Set here at the root and NOT per-project on purpose: jest-circus seeds its
+  // state with a hard-coded 5000 and only ever overwrites it from
+  // `globalConfig.testTimeout` (jest-circus/build/jestAdapterInit.js — `if
+  // (globalConfig.testTimeout)`). A `testTimeout` inside a `projects` entry
+  // resolves into the *project* config, which circus never reads, so it is
+  // silently ignored. This lived on the `postgres` project and did nothing;
+  // suites timed out at 5000ms while the config claimed 30000.
+  testTimeout: 30000,
   collectCoverage: true,
   // An allowlist, not a wildcard with exclusions: `build:src` copies the whole
   // source tree into `publish/src`, so `**/*` counts every file twice for any
@@ -73,10 +86,6 @@ module.exports = {
       ...base,
       displayName: 'postgres',
       testMatch: POSTGRES_SUITES,
-      // PGlite (in-process WASM Postgres) is slower than sqlite — especially the
-      // first test in a file which lazily boots the WASM instance — so allow more
-      // headroom than the 5s default, which otherwise flakes on CI.
-      testTimeout: 30000,
       setupFiles: ['<rootDir>/__tests__/setup/dialect-postgres.ts'],
       setupFilesAfterEnv: ['<rootDir>/__tests__/setup/teardown.ts'],
     },

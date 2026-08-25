@@ -1,16 +1,19 @@
-import { Keys } from "./keys";
+import { Keys, KeyId } from "./keys";
 import { ValkeyModel } from "./model";
 import { Executor } from "./transaction";
+import type { ValkeyRow } from "./index";
 
 export interface IndexPlan {
   /** Equality-index ZSET keys this object belongs to. */
   equality: string[];
-  /** Unique-index string keys (for enforcement) + their field/value. */
-  unique: { key: string; field: string; value: any }[];
+  /** Unique-index string keys (for enforcement) + their field/value. `value` is
+   * carried for callers that want to log/inspect the plan; nothing in this
+   * module reads it back. */
+  unique: { key: string; field: string; value: unknown }[];
 }
 
 /** The index/unique keys an object belongs to, given its current field values. */
-export function planIndexes(keys: Keys, model: ValkeyModel, obj: any): IndexPlan {
+export function planIndexes(keys: Keys, model: ValkeyModel, obj: ValkeyRow): IndexPlan {
   const equality: string[] = [];
   for (const field of model.indexes) {
     if (field in obj) {
@@ -31,7 +34,7 @@ export function addToIndexes(
   ex: Executor,
   keys: Keys,
   model: ValkeyModel,
-  id: any,
+  id: KeyId,
   plan: IndexPlan,
   score: number,
   ttlMs?: number,
@@ -53,7 +56,7 @@ export function addToIndexes(
 }
 
 /** Remove an id from every index/unique/membership structure it belongs to. */
-export async function removeFromIndexes(ex: Executor, keys: Keys, model: ValkeyModel, id: any): Promise<void> {
+export async function removeFromIndexes(ex: Executor, keys: Keys, model: ValkeyModel, id: KeyId): Promise<void> {
   const sid = String(id);
   const mKey = keys.membership(model.name, id);
   const members = await ex.sMembers(mKey);
@@ -73,9 +76,9 @@ export function reindex(
   ex: Executor,
   keys: Keys,
   model: ValkeyModel,
-  id: any,
-  oldObj: any,
-  newObj: any,
+  id: KeyId,
+  oldObj: ValkeyRow,
+  newObj: ValkeyRow,
   score: number,
   ttlMs?: number,
 ): void {

@@ -1,5 +1,6 @@
 import deepmerge from "deepmerge";
 
+import { PERMISSION_KEYS } from "./gate";
 import type { Permission, PortableWhere, ScopeOperation, ScopePredicate } from "./gate";
 import type { RequestContext } from "./types/index";
 
@@ -71,7 +72,7 @@ export type RoleBasedPermissionOptions = {
  */
 type Decision = boolean | undefined;
 
-function decideKey(value: any): Decision {
+function decideKey(value: RuleNode | undefined): Decision {
   if (value === "deny") {
     return false;
   }
@@ -82,7 +83,7 @@ function decideKey(value: any): Decision {
 }
 
 /** One-arg gates: `model`, `query`, `mutation*`, `*Extension`. */
-function decideOne(node: any, name: string | number): Decision {
+function decideOne(node: RuleNode | undefined, name: string | number): Decision {
   const blanket = decideKey(node);
   if (blanket !== undefined) {
     return blanket;
@@ -94,7 +95,7 @@ function decideOne(node: any, name: string | number): Decision {
 }
 
 /** Two-arg gates: `field`, `relationship`, `*Methods`, `mutation*Input`. */
-function decideTwo(node: any, model: string | number, name: string | number): Decision {
+function decideTwo(node: RuleNode | undefined, model: string | number, name: string | number): Decision {
   const blanket = decideKey(node);
   if (blanket !== undefined) {
     return blanket;
@@ -132,7 +133,22 @@ function decideTwo(node: any, model: string | number, name: string | number): De
  * `mutation`, and any convenience alias for the method gates. Each would
  * *loosen* a key that denies today.
  */
-const ONE_ARG_GATES: { [gate: string]: string[] } = {
+/**
+ * Every `PERMISSION_KEYS` entry this helper is responsible for emitting.
+ * Two keys are excluded, for different reasons. `options` is the shared context
+ * value, not a predicate at all. `scope` *is* a predicate, but its leaves are
+ * values (`{own: "ownerId"}`) rather than allow/deny decisions, so it is compiled
+ * by `buildScopeGate` below instead of from a gate map — see the block after the
+ * drift check. Excluding it here narrows this check to the boolean gates; that
+ * `scope` is still emitted is proved at runtime instead, by `ROLE_BASED_GATES`
+ * and the "covers every gate a consumer reads" test in `__tests__/permissions`.
+ */
+type GateKey = Exclude<typeof PERMISSION_KEYS[number], "options" | "scope">;
+
+/** A gate map may name only real gates, and each maps to the rules keys feeding it. */
+type GateMap = { [gate in GateKey]?: string[] };
+
+const ONE_ARG_GATES = {
   model: ["model"],
   query: ["query"],
   mutation: ["mutation"],
@@ -141,17 +157,36 @@ const ONE_ARG_GATES: { [gate: string]: string[] } = {
   mutationDelete: ["mutationDelete"],
   queryExtension: ["queryExtension", "extensions"],
   mutationExtension: ["mutationExtension", "extensions"],
-};
+} satisfies GateMap;
 
-const TWO_ARG_GATES: { [gate: string]: string[] } = {
+const TWO_ARG_GATES = {
   field: ["field"],
   relationship: ["relationship"],
   queryClassMethods: ["queryClassMethods"],
   mutationClassMethods: ["mutationClassMethods"],
   queryInstanceMethods: ["queryInstanceMethods"],
+  mutationInstanceMethods: ["mutationInstanceMethods"],
   mutationCreateInput: ["mutationCreateInput", "field"],
   mutationUpdateInput: ["mutationUpdateInput", "field"],
-};
+} satisfies GateMap;
+
+/**
+ * Compile-time proof that the two gate maps together cover every gate a consumer
+ * reads. The `satisfies` above stops a typo'd gate name; this stops the opposite
+ * and more dangerous mistake — a real gate no map mentions, which emits no
+ * predicate at all. `isAllowed` reads an absent predicate as ALLOW, so under
+ * `defaultDeny` that surface is wide open while the bag looks gated.
+ * `mutationInstanceMethods` shipped in exactly that state.
+ *
+ * It bites: adding `scope` to `PERMISSION_KEYS` failed this line until `scope`
+ * was named as compiled elsewhere, which is the conversation it exists to force.
+ */
+type _GatesCoverEveryKey =
+  [Exclude<GateKey, keyof typeof ONE_ARG_GATES | keyof typeof TWO_ARG_GATES>] extends [never]
+    ? true
+    : never;
+const _gatesCoverEveryKey: _GatesCoverEveryKey = true;
+void _gatesCoverEveryKey;
 
 // --- `scope`: the one gate with a value, not a decision ----------------------
 //
@@ -402,11 +437,7 @@ function buildScopeGate(compiledRules: RoleRuleTree, principalOf: PrincipalReade
 
 /** Every rules key that means something. Anything else is a silent no-op. */
 const KNOWN_RULE_KEYS = new Set(
-  Object.keys(ONE_ARG_GATES)
-    .concat(Object.keys(TWO_ARG_GATES))
-    .reduce((keys: string[], gate: string) => {
-      return keys.concat(ONE_ARG_GATES[gate] || TWO_ARG_GATES[gate]);
-    }, [])
+  [...Object.values(ONE_ARG_GATES), ...Object.values(TWO_ARG_GATES)].flat()
     // `scope` is compiled by `buildScopeGate` rather than the gate maps, so it
     // has to be added by hand — otherwise a rules tree that scopes correctly
     // would be reported as containing a key nothing reads.
@@ -432,11 +463,11 @@ function warnUnknownRuleKeys(compiledRules: RoleRuleTree) {
   );
 }
 
-function buildGate(
+function buildGate<TArgs extends (string | number)[]>(
   compiledRules: RoleRuleTree,
   chain: string[],
   defaultDeny: boolean,
-  decide: (node: RuleNode | undefined, ...args: any[]) => Decision,
+  decide: (node: RuleNode | undefined, ...args: TArgs) => Decision,
 ) {
   const present = chain.filter((ruleKey) => compiledRules[ruleKey] !== undefined);
   if (present.length === 0) {
@@ -444,7 +475,7 @@ function buildGate(
     // entirely so `isAllowed` falls through to its permissive default.
     return defaultDeny ? () => false : undefined;
   }
-  return (...args: any[]) => {
+  return (...args: TArgs): boolean => {
     for (const ruleKey of present) {
       // `chain` only ever comes from the two gate maps, neither of which
       // names `scope` — the one key whose node is not a `RuleNode`.
@@ -475,7 +506,8 @@ function buildGate(
  *
  * Two-arg rules — `{[model]: "allow" | "deny" | {[name]: "allow" | "deny"}}`:
  * `field`, `relationship`, `queryClassMethods`, `mutationClassMethods`,
- * `queryInstanceMethods`, `mutationCreateInput`, `mutationUpdateInput`.
+ * `queryInstanceMethods`, `mutationInstanceMethods`, `mutationCreateInput`,
+ * `mutationUpdateInput`.
  *
  * One-arg rules — `{[model]: "allow" | "deny"}`: `model`, `query`, `mutation`,
  * `mutationCreate`, `mutationUpdate`, `mutationDelete`, plus `queryExtension`
@@ -546,14 +578,14 @@ export default function createRoleBasedPermissions(
   // in the tests, so the cast at the return is backed by a check rather than a
   // hope.
   const permission: Record<string, unknown> = {};
-  Object.keys(ONE_ARG_GATES).forEach((gate) => {
+  (Object.keys(ONE_ARG_GATES) as (keyof typeof ONE_ARG_GATES)[]).forEach((gate) => {
     const predicate = buildGate(compiledRules, ONE_ARG_GATES[gate], defaultDeny,
       (node, name: string | number) => decideOne(node, name));
     if (predicate) {
       permission[gate] = predicate;
     }
   });
-  Object.keys(TWO_ARG_GATES).forEach((gate) => {
+  (Object.keys(TWO_ARG_GATES) as (keyof typeof TWO_ARG_GATES)[]).forEach((gate) => {
     const predicate = buildGate(compiledRules, TWO_ARG_GATES[gate], defaultDeny,
       (node, model: string | number, name: string | number) => decideTwo(node, model, name));
     if (predicate) {

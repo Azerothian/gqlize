@@ -2,9 +2,9 @@ import createListObject from "./create-list-object";
 // import { fromCursor, toCursor } from "./objects/cursor";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isRelationshipAllowed } from "@azerothian/utilize";
-import { SchemaCache, GqlizeOptions, Definition, Association } from '../types';
+import { SchemaCache, GqlFieldMap, GqlizeOptions, Definition, Association } from '../types';
 import GQLManager from '../manager';
-import { GraphQLBoolean } from "graphql";
+import { GraphQLBoolean, type GraphQLOutputType } from "graphql";
 import { bindField } from "./resolvers/bind";
 
 /**
@@ -75,13 +75,21 @@ export default function createRelatedFieldsFunc(
                 targetDefName: association.target,
               }, { instance, options });
               break;
-            default:
-              f[relName] = createManyObject(instance, schemaCache, defName, targetDef, targetObject, "", association, (definition.comments?.fields || {})[relName], options);
+            default: {
+              // `createManyObject` returns nothing for a target definition with
+              // no `name`, which cannot become a list field. Guarded rather than
+              // assigned: a key holding `undefined` reaches `GraphQLObjectType`
+              // as a field with no config and fails the whole build.
+              const many = createManyObject(instance, schemaCache, defName, targetDef, targetObject, "", association, (definition.comments?.fields || {})[relName], options);
+              if (many) {
+                f[relName] = many;
+              }
               break;
+            }
           }
 
           return f;
-        }, {} as any);
+        }, {} as GqlFieldMap);
       }
       schemaCache.relatedFields[defName] = fields;
     }
@@ -89,7 +97,7 @@ export default function createRelatedFieldsFunc(
   };
 }
 
-function createManyObject(instance: GQLManager, schemaCache: SchemaCache, defName: string, targetDef: Definition, targetObject: any, prefix: string, relationship: Association, comment: string, options: GqlizeOptions) {
+function createManyObject(instance: GQLManager, schemaCache: SchemaCache, defName: string, targetDef: Definition, targetObject: GraphQLOutputType, prefix: string, relationship: Association, comment: string, options: GqlizeOptions) {
   if(targetDef?.name) {
     // The association is looked up on the *parent* (`defName`) while the rows
     // themselves belong to the target — hence both names in the descriptor.

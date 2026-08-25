@@ -3,11 +3,13 @@ import waterfall from "@azerothian/utilize/utils/waterfall";
 
 import {
   GraphQLObjectType,
+  type GraphQLFieldConfigArgumentMap,
+  type GraphQLOutputType,
 } from "graphql";
 
 import { capitalize } from "@azerothian/utilize/utils/word";
 import GQLManager from '../manager';
-import { Definitions, GqlizeOptions, SchemaCache, Definition } from '../types';
+import { Definitions, GqlFieldMap, GqlizeOptions, SchemaCache, Definition } from '../types';
 import type { ExposedMethods } from "@azerothian/utilize/types/index";
 import { bindField } from "./resolvers/bind";
 import { recordExternalType } from "./snapshot/ledger";
@@ -15,7 +17,7 @@ import { recordExternalType } from "./snapshot/ledger";
 
 
 export default function createClassMethods(instance: GQLManager, definitions: Definitions, options: GqlizeOptions, schemaCache: SchemaCache, targetName = "query") {
-  return async(defName: string, o: any) => {
+  return async(defName: string, o: GqlFieldMap) => {
     const definition = definitions[defName];
     let target;
     switch(targetName) {
@@ -42,28 +44,25 @@ export default function createClassMethods(instance: GQLManager, definitions: De
 }
 
 export function createClassMethodFields(instance: GQLManager, defName: string, definition: Definition, query: ExposedMethods, options: GqlizeOptions, schemaCache: SchemaCache, targetName: string) {
-  return waterfall(Object.keys(query), async(methodName: string, o: {
-    [x: string]: {
-      type: any;
-      args: any;
-      description: any;
-    };
-  }) => {
+  return waterfall(Object.keys(query), (methodName: string, o: GqlFieldMap) => {
     if (options.permission) {
       if (options.permission.queryClassMethods && targetName === "query") {
-        const result = await options.permission.queryClassMethods(defName, methodName, options.permission.options);
+        const result = options.permission.queryClassMethods(defName, methodName, options.permission.options);
         if (!result) {
           return o;
         }
       } else if (options.permission.mutationClassMethods && targetName === "mutations") {
-        const result = await options.permission.mutationClassMethods(defName, methodName, options.permission.options);
+        const result = options.permission.mutationClassMethods(defName, methodName, options.permission.options);
         if (!result) {
           return o;
         }
       }
     }
     const {type, args} = query[methodName];
-    const outputType = (typeof type === "string") ? schemaCache.types[type] : type;
+    // `ExposedMethod.type` is `unknown`: a definition author supplies either a
+    // name to look up or a live GraphQL type, and only the string case is
+    // checkable here. Anything else is rejected by graphql when the type builds.
+    const outputType = ((typeof type === "string") ? schemaCache.types[type] : type) as GraphQLOutputType | undefined;
     if (!outputType) {
       return o;
     }
@@ -92,7 +91,7 @@ export function createClassMethodFields(instance: GQLManager, defName: string, d
           };
         }
         return oa;
-      }, {} as any);
+      }, {} as GraphQLFieldConfigArgumentMap);
     }
 
     o[methodName] = bindField({

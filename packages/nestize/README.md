@@ -63,6 +63,16 @@ NestizeModule.forRootAsync({
 per-field operator object gqlize uses (`{ field: { eq, in, like, gte, … } }` with
 `and`/`or` composition).
 
+**`_actions` and `instanceMethods`.** The instance-method route enumerates the *implementations*
+under `options.instanceMethods` — one namespace shared by both `expose` targets — and gates every
+one of them on `permission.queryInstanceMethods`, regardless of whether the definition declared it
+under `expose.instanceMethods.query` or `.mutations`. So a method written as a gqlize pre-commit
+transform is reachable here too, under the query gate rather than
+`permission.mutationInstanceMethods`. It is also not run through a persist path: nestize loads the
+row, calls the method and serializes what it returns, so writes the method makes to `this` are not
+committed the way gqlize's `apply` argument commits them. Gate transforms explicitly, or leave
+`expose.instanceMethods` off here.
+
 ## Options (`NestizeModule.forRoot(orm, options)`)
 
 | Option             | Default | Meaning                                                    |

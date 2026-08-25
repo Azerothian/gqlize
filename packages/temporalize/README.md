@@ -110,6 +110,15 @@ with `and`/`or`/`not`). Lists page with `limit`/`offset`.
 `select` is a **mutation, not a finder** — it matches rows by `where` and then
 runs relationship mutations against them from `input`. It is gated as an update.
 
+`Task.instanceMethods.<name>` covers the *implementations* under `options.instanceMethods` — one
+namespace shared by both `expose` targets — and is gated on `permission.queryInstanceMethods`
+whether the definition declared the method under `expose.instanceMethods.query` or `.mutations`.
+A method written as a gqlize pre-commit transform therefore has an activity here, under the query
+gate rather than `permission.mutationInstanceMethods`, and the activity is not a persist path: it
+loads the row by primary key, calls the method and returns the plain result, so writes the method
+makes to `this` are not committed the way gqlize's `apply` argument commits them. Gate transforms
+explicitly, or leave `expose.instanceMethods` off.
+
 ## Queue naming
 
 `prefix + datasource + model`, joined by `queueSeparator`:
@@ -180,7 +189,7 @@ try {
 | `readOnly`          | `false`   | Refuse every mutating activity.                                 |
 | `transactional`     | `true`    | Wrap each mutating activity in `orm.transaction()`.             |
 | `includeRelations`  | `true`    | Include relationship keys in activity results.                  |
-| `expose`            | both on   | `{ classMethods?, instanceMethods? }`.                          |
+| `expose`            | both on   | `{ classMethods?, instanceMethods? }`. `instanceMethods` covers both `expose` targets under the query gate — see [Activities](#activities). |
 
 `createWorkers` adds `connection`, `namespace`, `workflowsPath`,
 `workflowBundle`, `onlyQueues` and `workerOptions`. `createTemporalizeClient`

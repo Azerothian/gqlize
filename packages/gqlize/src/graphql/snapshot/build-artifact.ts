@@ -5,6 +5,7 @@ import { printSchema, type GraphQLScalarType } from "graphql";
 
 import { createSchema } from "../../index";
 import type { GqlizeOptions } from "../../types";
+import type { SchemaSnapshot } from "./ir";
 import { snapshotSchema } from "./snapshot";
 
 export interface BuildArtifactOptions {
@@ -39,6 +40,7 @@ export interface BuildArtifactResult {
  * CLI (e.g. a monorepo build script).
  */
 export async function buildArtifact(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- published signature, re-exported from `@azerothian/gqlize/snapshot`. `createSchema` already pins this to `AnyOrmize`; narrowing it here too would change what a 6.0.0 consumer is allowed to pass, so it stays permissive.
   orm: any,
   opts: BuildArtifactOptions,
 ): Promise<BuildArtifactResult> {
@@ -85,9 +87,13 @@ async function writeAtomic(path: string, data: Buffer): Promise<number> {
   return data.byteLength;
 }
 
-function countFields(artifact: any): number {
+function countFields(artifact: SchemaSnapshot): number {
+  // Only two of the type kinds carry a countable member list; the rest (scalars,
+  // unions) contribute nothing, which is what the `|| 0` is for.
   return artifact.types.reduce(
-    (total: number, type: any) => total + (type.fields?.length || type.values?.length || 0),
+    (total, type) => total +
+      (("fields" in type ? type.fields?.length : undefined) ||
+        ("values" in type ? type.values?.length : undefined) || 0),
     0,
   );
 }

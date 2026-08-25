@@ -1,5 +1,5 @@
-import {createInstance, validateResult} from "./helper";
-import {graphql} from "graphql";
+import {createInstance, resultData, validateResult} from "./helper";
+import {graphql, GraphQLSchema} from "graphql";
 // import {createSchema} from "../src";
 import Sequelize from "sequelize";
 import {toGlobalId} from "graphql-relay";
@@ -12,6 +12,24 @@ import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
 // Sequelize.Promise = global.Promise;
 
+/** The shapes these queries/mutations select, named once rather than cast per assertion. */
+type Edge<T> = {node: T};
+type Connection<T> = {edges: Edge<T>[]};
+type TaskRow = {id: string; name: string};
+type TaskOptionsRow = {id: string; name: string; options: {hidden?: string; hidden2?: string}};
+type TaskNullCheckRow = {id: string; nullCheck: string | null};
+type TaskIntZeroRow = {id: string; intZeroCheck: number};
+type TaskMutationCheckRow = {id: string; name: string; mutationCheck: string};
+type TaskItemRow = {id: string; name: string; parentId: string | null};
+type TaskDeleteRow = {id: string};
+type TaskWithTaskItemRow = {id: string; task: {id: string}};
+type TaskItemsConnectionRow = {id: string; items: Connection<{id: string; name: string}>};
+type TaskWithNestedItemsRow = {id: string; items: Connection<{id: string}>};
+type ItemWithHasOneRow = {id: string; hasOne: {id: string; name: string; hasOneId: string}};
+type ItemWithBelongsToRow = {id: string; belongsTo: {id: string; name: string}; belongsToId: string};
+type ParentWithChildrenRow = {id: string; name?: string; children: Connection<{id: string; name?: string; parentId?: string}>};
+type IntrospectionInputFields = {__type: {inputFields: {name: string}[]}};
+
 describe("mutations", () => {
   it("create", async() => {
     const instance = await createInstance();
@@ -19,7 +37,7 @@ describe("mutations", () => {
     const mutation = `mutation {
       models {
         Task(create: {name: "item1"}) {
-          id, 
+          id,
           name
         }
       }
@@ -27,9 +45,9 @@ describe("mutations", () => {
     const mutationResult = await graphql({schema, source: mutation});
     validateResult(mutationResult);
     const query = "query { models { Task { edges { node { id, name } } } } }";
-    const queryResult = await graphql({schema, source: query}) as any; 
+    const queryResult = await graphql({schema, source: query});
     validateResult(queryResult);
-    return expect(queryResult.data.models.Task.edges).toHaveLength(1);
+    return expect(resultData<{models: {Task: Connection<TaskRow>}}>(queryResult).models.Task.edges).toHaveLength(1);
   });
   it("create - set parentid as null", async() => {
     const instance = await createInstance();
@@ -37,7 +55,7 @@ describe("mutations", () => {
     const mutation = `mutation {
       models {
         Item(create: {name: "item1", parentId: null}) {
-          id, 
+          id,
           name
         }
       }
@@ -45,9 +63,9 @@ describe("mutations", () => {
     const mutationResult = await graphql({schema, source: mutation});
     validateResult(mutationResult);
     const query = "query { models { Item { edges { node { id, name, parentId } } } } }";
-    const queryResult = await graphql({schema, source: query}) as any;
+    const queryResult = await graphql({schema, source: query});
     validateResult(queryResult);
-    return expect(queryResult.data.models.Item.edges).toHaveLength(1);
+    return expect(resultData<{models: {Item: Connection<TaskItemRow>}}>(queryResult).models.Item.edges).toHaveLength(1);
   });
   it("update - set parentid as null", async() => {
     const instance = await createInstance();
@@ -55,7 +73,7 @@ describe("mutations", () => {
     const createMutation = `mutation {
       models {
         Item(create: {name: "item1", parentId: null}) {
-          id, 
+          id,
           name
         }
       }
@@ -65,7 +83,7 @@ describe("mutations", () => {
     const updateMutation = `mutation {
       models {
         Item(update: { where:{name: {eq: "item1"}}, input: {name: "item2", parentId: null}}) {
-          id, 
+          id,
           name
         }
       }
@@ -73,9 +91,9 @@ describe("mutations", () => {
     const updateMutationResult = await graphql({schema, source: updateMutation});
     validateResult(updateMutationResult);
     const query = "query { models { Item { edges { node { id, name, parentId } } } } }";
-    const queryResult = await graphql({schema, source: query}) as any;
+    const queryResult = await graphql({schema, source: query});
     validateResult(queryResult);
-    return expect(queryResult.data.models.Item.edges).toHaveLength(1);
+    return expect(resultData<{models: {Item: Connection<TaskItemRow>}}>(queryResult).models.Item.edges).toHaveLength(1);
   });
   it("create - override", async() => {
     const instance = await createInstance();
@@ -83,7 +101,7 @@ describe("mutations", () => {
     const mutation = `mutation {
       models {
         Task(create: {name: "item1", options: {hidden: "nowhere"}}) {
-          id, 
+          id,
           name
           options {
             hidden
@@ -91,14 +109,14 @@ describe("mutations", () => {
         }
       }
     }`;
-    const mutationResult = await graphql({schema, source: mutation}) as any;
+    const mutationResult = await graphql({schema, source: mutation});
     validateResult(mutationResult);
-    expect(mutationResult.data.models.Task[0].options.hidden).toEqual("nowhere");
+    expect(resultData<{models: {Task: TaskOptionsRow[]}}>(mutationResult).models.Task[0].options.hidden).toEqual("nowhere");
 
     const q = "query { models { Task { edges { node { id, name, options {hidden} } } } } }";
-    const queryResult = await graphql({schema, source: q}) as any;
+    const queryResult = await graphql({schema, source: q});
     validateResult(queryResult);
-    return expect(queryResult.data.models.Task.edges[0].node.options.hidden).toEqual("nowhere");
+    return expect(resultData<{models: {Task: Connection<TaskOptionsRow>}}>(queryResult).models.Task.edges[0].node.options.hidden).toEqual("nowhere");
   });
   it("update - override", async() => {
     const instance = await createInstance();
@@ -106,7 +124,7 @@ describe("mutations", () => {
     const createMutation = `mutation {
       models {
         Task(create: {name: "item1", options: {hidden: "nowhere"}}) {
-          id, 
+          id,
           name
           options {
             hidden
@@ -114,14 +132,14 @@ describe("mutations", () => {
         }
       }
     }`;
-    const createMutationResult = await graphql({schema,  source: createMutation}) as any;
+    const createMutationResult = await graphql({schema,  source: createMutation});
     validateResult(createMutationResult);
-    const id = createMutationResult.data.models.Task[0].id;
+    const id = resultData<{models: {Task: TaskOptionsRow[]}}>(createMutationResult).models.Task[0].id;
 
     const updateMutation = `mutation {
       models {
         Task(update: {where: {id: {eq: "${id}"}}, input: {options: {hidden2: "nowhere2"}}}) {
-          id, 
+          id,
           name
           options {
             hidden
@@ -133,10 +151,11 @@ describe("mutations", () => {
     const updateMutationResult = await graphql({schema, source: updateMutation});
     validateResult(updateMutationResult);
     const q = "query { models { Task { edges { node { id, name, options {hidden, hidden2} } } } } }";
-    const queryResult = await graphql({schema, source: q}) as any;
+    const queryResult = await graphql({schema, source: q});
     validateResult(queryResult);
-    expect(queryResult.data.models.Task.edges[0].node.options.hidden).toEqual("nowhere");
-    return expect(queryResult.data.models.Task.edges[0].node.options.hidden2).toEqual("nowhere2");
+    const taskEdges = resultData<{models: {Task: Connection<TaskOptionsRow>}}>(queryResult).models.Task.edges;
+    expect(taskEdges[0].node.options.hidden).toEqual("nowhere");
+    return expect(taskEdges[0].node.options.hidden2).toEqual("nowhere2");
   });
   it("update - set null", async() => {
     const instance = await createInstance();
@@ -144,19 +163,19 @@ describe("mutations", () => {
     const createMutation = `mutation {
       models {
         Task(create: {name: "item1", nullCheck: "not null"}) {
-          id, 
+          id,
           name
         }
       }
     }`;
-    const createMutationResult = await graphql({schema, source: createMutation}) as any;
+    const createMutationResult = await graphql({schema, source: createMutation});
     validateResult(createMutationResult);
-    const id = createMutationResult.data.models.Task[0].id;
+    const id = resultData<{models: {Task: TaskRow[]}}>(createMutationResult).models.Task[0].id;
 
     const updateMutation = `mutation {
       models {
         Task(update: {where: {id: {eq: "${id}"}}, input: {nullCheck: null}}) {
-          id, 
+          id,
           name
         }
       }
@@ -175,9 +194,9 @@ describe("mutations", () => {
       }
     }
   }
-}`}) as any;
+}`});
     validateResult(queryResult);
-    expect(queryResult.data.models.Task.edges[0].node.nullCheck).toEqual(null);
+    expect(resultData<{models: {Task: Connection<TaskNullCheckRow>}}>(queryResult).models.Task.edges[0].node.nullCheck).toEqual(null);
   });
   it("update - set 0", async() => {
     const instance = await createInstance();
@@ -185,19 +204,19 @@ describe("mutations", () => {
     const createMutation = `mutation {
       models {
         Task(create: {name: "item1", intZeroCheck: 1}) {
-          id, 
+          id,
           name
         }
       }
     }`;
-    const createMutationResult = await graphql({schema, source: createMutation}) as any;
+    const createMutationResult = await graphql({schema, source: createMutation});
     validateResult(createMutationResult);
-    const id = createMutationResult.data.models.Task[0].id;
+    const id = resultData<{models: {Task: TaskRow[]}}>(createMutationResult).models.Task[0].id;
 
     const updateMutation = `mutation {
       models {
         Task(update: {where: {id: {eq: "${id}"}}, input: {intZeroCheck: 0}}) {
-          id, 
+          id,
           name
         }
       }
@@ -216,9 +235,9 @@ describe("mutations", () => {
       }
     }
   }
-}`}) as any;
+}`});
     validateResult(queryResult);
-    return expect(queryResult.data.models.Task.edges[0].node.intZeroCheck).toEqual(0);
+    return expect(resultData<{models: {Task: Connection<TaskIntZeroRow>}}>(queryResult).models.Task.edges[0].node.intZeroCheck).toEqual(0);
   });
   it("update", async() => {
     const instance = await createInstance();
@@ -230,15 +249,16 @@ describe("mutations", () => {
     const mutation = `mutation {
       models {
         Task(update: {where: {id: {eq: "${toGlobalId("Task", item.id)}"}}, input: {name: "UPDATED"}}) {
-          id, 
+          id,
           name
         }
       }
     }`;
-    const result = await graphql({schema, source: mutation}) as any;
+    const result = await graphql({schema, source: mutation});
     validateResult(result);
-    expect(result.data.models.Task[0].id).toEqual(toGlobalId("Task", item.id));
-    expect(result.data.models.Task[0].name).toEqual("UPDATED");
+    const taskRows = resultData<{models: {Task: TaskRow[]}}>(result).models.Task;
+    expect(taskRows[0].id).toEqual(toGlobalId("Task", item.id));
+    expect(taskRows[0].name).toEqual("UPDATED");
   });
   it("delete", async() => {
     const instance = await createInstance();
@@ -255,9 +275,9 @@ describe("mutations", () => {
         }
       }
     }`;
-    const result = await graphql({schema, source: mutation}) as any;
+    const result = await graphql({schema, source: mutation});
     validateResult(result);
-    expect(result.data.models.Task[0].id).toEqual(itemId);
+    expect(resultData<{models: {Task: TaskDeleteRow[]}}>(result).models.Task[0].id).toEqual(itemId);
     const query = `query {
       models {
         Task(where: {id: {eq: "${itemId}"}}) {
@@ -270,9 +290,9 @@ describe("mutations", () => {
         }
       }
     }`;
-    const queryResult = await graphql({schema, source: query}) as any;
+    const queryResult = await graphql({schema, source: query});
     validateResult(queryResult);
-    return expect(queryResult.data.models.Task.edges).toHaveLength(0);
+    return expect(resultData<{models: {Task: Connection<TaskRow>}}>(queryResult).models.Task.edges).toHaveLength(0);
   });
 
   it("delete - single", async() => {
@@ -306,12 +326,12 @@ describe("mutations", () => {
       }
     }`;
     const result = await graphql({
-      schema, 
-      source: mutation, 
+      schema,
+      source: mutation,
       variableValues
-    }) as any;
+    });
     validateResult(result);
-    expect(result.data.models.Task[0].id).toEqual(itemId);
+    expect(resultData<{models: {Task: TaskDeleteRow[]}}>(result).models.Task[0].id).toEqual(itemId);
     const query = `query {
       models {
         Task {
@@ -324,9 +344,9 @@ describe("mutations", () => {
         }
       }
     }`;
-    const queryResult = await graphql({schema, source: query}) as any;
+    const queryResult = await graphql({schema, source: query});
     validateResult(queryResult);
-    return expect(queryResult.data.models.Task.edges).toHaveLength(2);
+    return expect(resultData<{models: {Task: Connection<TaskRow>}}>(queryResult).models.Task.edges).toHaveLength(2);
   });
 
   it("update - multiple", async() => {
@@ -352,7 +372,7 @@ describe("mutations", () => {
           },
           input: {name: "UPDATED"}
         }) {
-          id, 
+          id,
           name
         }
       }
@@ -372,7 +392,7 @@ describe("mutations", () => {
           }
         }
       }
-    }`}) as any;
+    }`});
     validateResult(item2Result);
     const item3Result = await graphql({schema, source:`{
       models {
@@ -385,10 +405,10 @@ describe("mutations", () => {
           }
         }
       }
-    }`}) as any;
+    }`});
     validateResult(item3Result);
-    expect(item2Result.data.models.Task.edges[0].node.name).toEqual("UPDATED");
-    expect(item3Result.data.models.Task.edges[0].node.name).toEqual("UPDATED");
+    expect(resultData<{models: {Task: Connection<TaskRow>}}>(item2Result).models.Task.edges[0].node.name).toEqual("UPDATED");
+    expect(resultData<{models: {Task: Connection<TaskRow>}}>(item3Result).models.Task.edges[0].node.name).toEqual("UPDATED");
   });
   it("delete - multiple", async() => {
     const instance = await createInstance();
@@ -414,9 +434,9 @@ describe("mutations", () => {
         }
       }
     }`;
-    const result = await graphql({schema, source: mutation}) as any;
+    const result = await graphql({schema, source: mutation});
     validateResult(result);
-    expect(result.data.models.Task).toHaveLength(1);
+    expect(resultData<{models: {Task: TaskDeleteRow[]}}>(result).models.Task).toHaveLength(1);
     const queryResults = await graphql({schema, source:`{
       models {
         Task {
@@ -428,8 +448,8 @@ describe("mutations", () => {
           }
         }
       }
-    }`}) as any;
-    expect(queryResults.data.models.Task.edges).toHaveLength(1);
+    }`});
+    expect(resultData<{models: {Task: Connection<TaskRow>}}>(queryResults).models.Task.edges).toHaveLength(1);
   });
   it("classMethod", async() => {
     const instance = await createInstance();
@@ -449,9 +469,9 @@ describe("mutations", () => {
         }
       }
     }`;
-    const result = await graphql({schema, source:mutation}) as any;
+    const result = await graphql({schema, source:mutation});
     validateResult(result);
-    return expect(result.data.classMethods.Task.reverseName.name).toEqual("reverseName2");
+    return expect(resultData<{classMethods: {Task: {reverseName: TaskRow}}}>(result).classMethods.Task.reverseName.name).toEqual("reverseName2");
   });
   it("create - before hook", async() => {
     const instance = await createInstance();
@@ -459,15 +479,15 @@ describe("mutations", () => {
     const mutation = `mutation {
       models {
         Task(create: {name: "item1"}) {
-          id, 
+          id,
           name,
           mutationCheck
         }
       }
     }`;
-    const mutationResult = await graphql({schema, source:mutation}) as any;
+    const mutationResult = await graphql({schema, source:mutation});
     validateResult(mutationResult);
-    return expect(mutationResult.data.models.Task[0].mutationCheck).toEqual("create");
+    return expect(resultData<{models: {Task: TaskMutationCheckRow[]}}>(mutationResult).models.Task[0].mutationCheck).toEqual("create");
   });
   it("update - before hook", async() => {
     const instance = await createInstance();
@@ -480,15 +500,15 @@ describe("mutations", () => {
     const mutation = `mutation {
       models {
         Task(update: {where: {id:{eq:"${itemId}"}}, input: {name: "UPDATED"}}) {
-          id, 
+          id,
           name,
           mutationCheck
         }
       }
     }`;
-    const result = await graphql({schema, source:mutation}) as any;
+    const result = await graphql({schema, source:mutation});
     validateResult(result);
-    return expect(result.data.models.Task[0].mutationCheck).toEqual("update");
+    return expect(resultData<{models: {Task: TaskMutationCheckRow[]}}>(result).models.Task[0].mutationCheck).toEqual("update");
   });
 
   it("update - ensure input foreignKeys are types of GraphQLID", async() => {
@@ -514,10 +534,11 @@ describe("mutations", () => {
         }
       }
     }`;
-    const result = await graphql({schema, source:mutation}) as any;
+    const result = await graphql({schema, source:mutation});
     validateResult(result);
-    expect(result.data.models.TaskItem[0].id).toEqual(taskItemId);
-    expect(result.data.models.TaskItem[0].task.id).toEqual(taskId);
+    const taskItemRows = resultData<{models: {TaskItem: TaskWithTaskItemRow[]}}>(result).models.TaskItem;
+    expect(taskItemRows[0].id).toEqual(taskItemId);
+    expect(taskItemRows[0].task.id).toEqual(taskId);
   });
   it("create - hook variables {rootValue}", async() => {
     const taskModel = {
@@ -569,7 +590,7 @@ describe("mutations", () => {
     const createMutation = `mutation {
       models {
         Task(create:{name: "CREATED"}) {
-          id, 
+          id,
           name
         }
       }
@@ -633,7 +654,7 @@ describe("mutations", () => {
     const updateMutation = `mutation {
       models {
         Task(update: {where: {id: {eq:"${itemId}"}}, input: {name: "UPDATED"}}) {
-            id, 
+            id,
             name
           }
         }
@@ -705,8 +726,9 @@ describe("mutations", () => {
     const instance = await createInstance();
     const fields = instance.getFields("Task"); //TaskItem.$sqlgql.define;
     const schema = await createSchema(instance);
-    const {data: {__type: {inputFields}}} = await graphql({schema, source:"query {__type(name:\"TaskRequiredInput\") { inputFields {name} }}"}) as any;
-    const mutationInputFields = inputFields.map((x: any) => x.name);
+    const result = await graphql({schema, source:"query {__type(name:\"TaskRequiredInput\") { inputFields {name} }}"});
+    const {__type: {inputFields}} = resultData<IntrospectionInputFields>(result);
+    const mutationInputFields = inputFields.map((x) => x.name);
 
     // Primary and foreign keys are excluded from mutation input by default
     // (mass-assignment guard); every other field — including defaulted /
@@ -724,15 +746,16 @@ describe("mutations", () => {
     const mutation = `mutation {
       models {
         Item(create: {name: "item1"}) {
-          id, 
+          id,
           name
         }
       }
     }`;
-    const itemResult = await graphql({schema, source:mutation}) as any;
+    const itemResult = await graphql({schema, source:mutation});
     validateResult(itemResult);
-    const {data: {__type: {inputFields}}} = await graphql({schema, source:"query {__type(name:\"ItemRequiredInput\") { inputFields {name} }}"}) as any;
-    expect(Object.keys(inputFields).filter((x: any) => x.name === "id")).toHaveLength(0);
+    const result = await graphql({schema, source:"query {__type(name:\"ItemRequiredInput\") { inputFields {name} }}"});
+    const {__type: {inputFields}} = resultData<IntrospectionInputFields>(result);
+    expect(inputFields.filter((x) => x.name === "id")).toHaveLength(0);
   });
   it("create complex object", async() => {
     const instance = await createInstance();
@@ -751,10 +774,11 @@ describe("mutations", () => {
     }
   }
 }`;
-    const queryResults = await graphql({schema, source:mutation}) as any;
+    const queryResults = await graphql({schema, source:mutation});
     validateResult(queryResults);
-    expect(queryResults.data.models.Task).toHaveLength(1);
-    expect(queryResults.data.models.Task[0].items.edges).toHaveLength(1);
+    const taskRows = resultData<{models: {Task: TaskWithNestedItemsRow[]}}>(queryResults).models.Task;
+    expect(taskRows).toHaveLength(1);
+    expect(taskRows[0].items.edges).toHaveLength(1);
   });
   it("create complex object - hasOne", async() => {
     const instance = await createInstance();
@@ -764,7 +788,7 @@ describe("mutations", () => {
         Item(create: {
           name: "test",
           hasOne: {
-            create: { 
+            create: {
               name: "testitem"
             }
           }
@@ -778,10 +802,11 @@ describe("mutations", () => {
         }
       }
     }`;
-    const queryResults = await graphql({schema, source:mutation}) as any;
+    const queryResults = await graphql({schema, source:mutation});
     validateResult(queryResults);
-    expect(queryResults.data.models.Item).toHaveLength(1);
-    const item = queryResults.data.models.Item[0];
+    const itemRows = resultData<{models: {Item: ItemWithHasOneRow[]}}>(queryResults).models.Item;
+    expect(itemRows).toHaveLength(1);
+    const item = itemRows[0];
     const {hasOne} = item;
     expect(item.id).toEqual(hasOne.hasOneId);
   });
@@ -793,7 +818,7 @@ describe("mutations", () => {
         Item(create: {
           name: "test",
           belongsTo: {
-            create: { 
+            create: {
               name: "testitem2"
             }
           }
@@ -807,10 +832,11 @@ describe("mutations", () => {
         }
       }
     }`;
-    const queryResults = await graphql({schema, source:mutation}) as any;
+    const queryResults = await graphql({schema, source:mutation});
     validateResult(queryResults);
-    expect(queryResults.data.models.Item).toHaveLength(1);
-    const item = queryResults.data.models.Item[0];
+    const itemRows = resultData<{models: {Item: ItemWithBelongsToRow[]}}>(queryResults).models.Item;
+    expect(itemRows).toHaveLength(1);
+    const item = itemRows[0];
     const {belongsTo} = item;
     expect(item.belongsToId).toEqual(belongsTo.id);
   });
@@ -864,9 +890,9 @@ describe("mutations", () => {
         }
       }
     }`;
-    const result = await graphql({schema, source:mutation}) as any;
+    const result = await graphql({schema, source:mutation});
     validateResult(result);
-    expect(result.data.models.Task).toHaveLength(1);
+    expect(resultData<{models: {Task: TaskItemsConnectionRow[]}}>(result).models.Task).toHaveLength(1);
     const queryResults = await graphql({schema, source:`{
       models {
         Task(where: {name: {eq:"start"}}) {
@@ -886,9 +912,10 @@ describe("mutations", () => {
           }
         }
       }
-    }`}) as any;
-    expect(queryResults.data.models.Task.edges).toHaveLength(1);
-    expect(queryResults.data.models.Task.edges[0].node.items.edges).toHaveLength(1);
+    }`});
+    const startEdges = resultData<{models: {Task: Connection<TaskItemsConnectionRow>}}>(queryResults).models.Task.edges;
+    expect(startEdges).toHaveLength(1);
+    expect(startEdges[0].node.items.edges).toHaveLength(1);
     const endQueryResults = await graphql({schema, source:`{
       models {
         Task(where: {name: {eq:"end"}}) {
@@ -908,9 +935,10 @@ describe("mutations", () => {
           }
         }
       }
-    }`}) as any;
-    expect(endQueryResults.data.models.Task.edges).toHaveLength(1);
-    expect(endQueryResults.data.models.Task.edges[0].node.items.edges).toHaveLength(2);
+    }`});
+    const endEdges = resultData<{models: {Task: Connection<TaskItemsConnectionRow>}}>(endQueryResults).models.Task.edges;
+    expect(endEdges).toHaveLength(1);
+    expect(endEdges[0].node.items.edges).toHaveLength(2);
   });
   it("remove - multiple", async() => {
     const instance = await createInstance();
@@ -959,9 +987,9 @@ describe("mutations", () => {
         }
       }
     }`;
-    const result = await graphql({schema, source:mutation}) as any;
+    const result = await graphql({schema, source:mutation});
     validateResult(result);
-    expect(result.data.models.Task).toHaveLength(1);
+    expect(resultData<{models: {Task: TaskItemsConnectionRow[]}}>(result).models.Task).toHaveLength(1);
     const queryResults = await graphql({schema, source:`{
       models {
         Task(where: {name:{eq: "start"}}) {
@@ -981,9 +1009,10 @@ describe("mutations", () => {
           }
         }
       }
-    }`}) as any;
-    expect(queryResults.data.models.Task.edges).toHaveLength(1);
-    expect(queryResults.data.models.Task.edges[0].node.items.edges).toHaveLength(1);
+    }`});
+    const startEdges = resultData<{models: {Task: Connection<TaskItemsConnectionRow>}}>(queryResults).models.Task.edges;
+    expect(startEdges).toHaveLength(1);
+    expect(startEdges[0].node.items.edges).toHaveLength(1);
   });
 });
 
@@ -1071,9 +1100,9 @@ test("add multiple ids", async() => {
       }
     }
   }`;
-  const res = await graphql({schema, source:mutation, variableValues}) as any;
+  const res = await graphql({schema, source:mutation, variableValues});
 
-  expect(res.data.models.Parent[0].children.edges).toHaveLength(2);
+  expect(resultData<{models: {Parent: ParentWithChildrenRow[]}}>(res).models.Parent[0].children.edges).toHaveLength(2);
 
   const query = `
     query {
@@ -1098,9 +1127,10 @@ test("add multiple ids", async() => {
       }
     }
   `;
-  const queryResult = await graphql({schema, source:query}) as any;
+  const queryResult = await graphql({schema, source:query});
   validateResult(queryResult);
-  expect(queryResult.data.models.Parent.edges[0].node.children.edges).toHaveLength(2);
+  const parentEdges = resultData<{models: {Parent: Connection<ParentWithChildrenRow>}}>(queryResult).models.Parent.edges;
+  expect(parentEdges[0].node.children.edges).toHaveLength(2);
 
   const newChild = await ChildModel.create({
     name: "child3",
@@ -1110,7 +1140,7 @@ test("add multiple ids", async() => {
     mutation($childIds: [ID]) {
       models {
         Parent(update: {
-          where: {id: {eq:"${queryResult.data.models.Parent.edges[0].node.id}"}}
+          where: {id: {eq:"${parentEdges[0].node.id}"}}
           input: {
             name: "haha"
             children: {
@@ -1134,12 +1164,12 @@ test("add multiple ids", async() => {
   `;
   variableValues = {childIds: [toGlobalId("Child", newChild.id)]};
 
-  const res2 = await graphql({schema, source:mutation2,variableValues}) as any;
-  expect(res2.data.models.Parent[0].children.edges).toHaveLength(1);
+  const res2 = await graphql({schema, source:mutation2,variableValues});
+  expect(resultData<{models: {Parent: ParentWithChildrenRow[]}}>(res2).models.Parent[0].children.edges).toHaveLength(1);
 });
 
 describe("2 degree mutation(nested)", () => {
-  let parent: any, child: any, schema: any, db: Database;
+  let parent: {id: number}, child: {id: number}, schema: GraphQLSchema, db: Database;
   beforeAll(async() => {
     db = new Database();
     const sqlite = new SequelizeAdapter({}, {
@@ -1247,10 +1277,10 @@ describe("2 degree mutation(nested)", () => {
     }`;
 
     //when
-    const res = await graphql({schema, source:mutation, variableValues}) as any;
+    const res = await graphql({schema, source:mutation, variableValues});
 
     //then
-    expect(res.data.models.Parent[0].children.edges[0].node.name).toEqual("child 2");
+    expect(resultData<{models: {Parent: ParentWithChildrenRow[]}}>(res).models.Parent[0].children.edges[0].node.name).toEqual("child 2");
   });
 
   test("should delete child", async() => {
@@ -1295,13 +1325,13 @@ describe("2 degree mutation(nested)", () => {
     }`;
 
     //when
-    const res = await graphql({schema, source:mutation, variableValues}) as any;
+    const res = await graphql({schema, source:mutation, variableValues});
     const isChildStillExisting = await ChildModel.findOne({
       where: {id: child.id},
     });
 
     //then
-    expect(res.data.models.Parent[0] .children.edges).toHaveLength(0);
+    expect(resultData<{models: {Parent: ParentWithChildrenRow[]}}>(res).models.Parent[0].children.edges).toHaveLength(0);
     expect(isChildStillExisting).toBeFalsy();
   });
 
@@ -1347,13 +1377,13 @@ describe("2 degree mutation(nested)", () => {
     }`;
 
     //when
-    const res = await graphql({schema, source:mutation, variableValues}) as any;
+    const res = await graphql({schema, source:mutation, variableValues});
     const isChildStillExisting = await ChildModel.findOne({
       where: {id: child.id},
     });
 
     //then
-    expect(res.data.models.Parent[0] .children.edges).toHaveLength(0);
+    expect(resultData<{models: {Parent: ParentWithChildrenRow[]}}>(res).models.Parent[0].children.edges).toHaveLength(0);
     expect(isChildStillExisting).toBeTruthy();
   });
 
@@ -1398,14 +1428,14 @@ describe("2 degree mutation(nested)", () => {
     }`;
 
     //when
-    const res = await graphql({schema, source:mutation, variableValues}) as any;
+    const res = await graphql({schema, source:mutation, variableValues});
     await ChildModel.findOne({
       where: {id: child.id},
     });
 
     //then
-    expect(res.data.models.Parent[0] .children.edges).toHaveLength(1);
-    expect(res.data.models.Parent[0].children.edges[0].node.name).toEqual("child1");
+    const parentRows = resultData<{models: {Parent: ParentWithChildrenRow[]}}>(res).models.Parent;
+    expect(parentRows[0].children.edges).toHaveLength(1);
+    expect(parentRows[0].children.edges[0].node.name).toEqual("child1");
   });
 });
-

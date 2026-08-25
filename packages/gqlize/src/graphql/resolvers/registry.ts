@@ -1,4 +1,5 @@
 import type { GraphQLFieldResolver } from "graphql";
+import type { AdapterRow, RequestContext } from "../../types";
 import { buildConnectionResolver } from "./connection";
 import { buildSingleRelationshipResolver } from "./relationship";
 import {
@@ -23,7 +24,7 @@ import type { BindingContext, FieldBinding } from "./types";
 export function buildResolver(
   binding: FieldBinding,
   ctx: BindingContext,
-): GraphQLFieldResolver<any, any> | undefined {
+): GraphQLFieldResolver<AdapterRow, RequestContext> | undefined {
   switch (binding.kind) {
     case "connection":
       return buildConnectionResolver(binding, ctx);
@@ -48,7 +49,7 @@ export function buildResolver(
       return undefined;
     default:
       throw new Error(
-        `gqlize: unknown field binding kind "${(binding as any).kind}"`,
+        `gqlize: unknown field binding kind "${(binding as {kind: string}).kind}"`,
       );
   }
 }

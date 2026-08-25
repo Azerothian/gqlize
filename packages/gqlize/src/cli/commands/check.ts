@@ -4,6 +4,7 @@ import { createSchema } from "../../index";
 import { compareFingerprints, fingerprintDefinitions } from "../../graphql/snapshot/fingerprint";
 import { readSnapshot } from "../../graphql/snapshot/load";
 import { materializeSchema } from "../../graphql/snapshot/materialize";
+import type { AnyOrmize } from "../../types";
 import type { ParsedArgs } from "../args";
 import { resolveArtifactPath, resolveOut, type ResolvedConfig } from "../config";
 import { resolveProfiles, type ResolvedProfile } from "../profiles";
@@ -42,7 +43,7 @@ async function checkOne(
   resolved: ResolvedConfig,
   profile: ResolvedProfile,
   path: string,
-  orm: any,
+  orm: AnyOrmize,
   strict: boolean,
   out: (line: string) => void,
   err: (line: string) => void,
@@ -51,8 +52,8 @@ async function checkOne(
   let artifact;
   try {
     artifact = await readSnapshot(path);
-  } catch (e: any) {
-    err(`${label}${e.message}`);
+  } catch (e) {
+    err(`${label}${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 
