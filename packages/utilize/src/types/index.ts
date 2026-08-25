@@ -193,6 +193,18 @@ export interface OrmAdapter {
    */
   mergeFilterStatement?(fieldName: string, value: unknown, match: boolean | undefined, originalWhere: AdapterWhere | undefined): AdapterWhere;
   /**
+   * Optional: AND two already-processed filters together, in the backend's own
+   * vocabulary.
+   *
+   * The generalisation of {@link mergeFilterStatement}, which does the same for
+   * a single field condition. Needed where a whole filter has to be re-imposed
+   * on options that have already been translated — a `permission.scope`
+   * re-asserted after `definition.before` has had the chance to rewrite
+   * `where`. An adapter that omits it cannot be scoped behind such a hook, and
+   * ormize refuses the query rather than running it unscoped.
+   */
+  andFilterStatements?(a: AdapterWhere | undefined, b: AdapterWhere | undefined): AdapterWhere | undefined;
+  /**
    * Optional: install an extra instance method on an already-defined model. Used
    * to attach cross-adapter relationship accessors to adapters whose "model" is a
    * plain descriptor rather than a class with a prototype.
@@ -371,6 +383,12 @@ export interface DeclaredIncludeMap {
  */
 export type OrderEntry = [column: string, direction: string];
 
+/**
+ * What a write does when a row-level scope denies it. Declared here because
+ * {@link GqlizeOptions} names it; the behaviour lives in ormize.
+ */
+export type ScopeMissBehaviour = "empty" | "throw";
+
 export type GqlizeOptions = {
   /** Hooks applied to every model, keyed by hook name — see {@link HookMap}. */
   globalHooks?: HookMap
@@ -379,6 +397,15 @@ export type GqlizeOptions = {
    * {@link Permission} in `../gate` for why a typo has to be a compile error.
    */
   permission?: Permission,
+  /**
+   * What a write does when `permission.scope` denies it outright.
+   *
+   * `"empty"` (the default) reports the same nothing an unscoped write would
+   * report for a row that does not exist — the two have to be
+   * indistinguishable, or the difference is itself a read of the scoped-out
+   * row. `"throw"` trades that for a loud refusal.
+   */
+  onScopeMiss?: ScopeMissBehaviour,
   extend?: any,
   root?: any,
   subscriptions?: any

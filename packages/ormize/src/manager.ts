@@ -6,6 +6,9 @@ import {lowercase} from "@azerothian/utilize/utils/word";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
+import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
+import { ScopeDeniedError, applyScopeWhere, scopeFor, scopeMiss } from "./scope";
+import type { ScopeMissBehaviour } from "./scope";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, DataTypeDescriptor, NativeDataType,
@@ -149,6 +152,15 @@ export default class Ormize<
   relationships: {[defName: string]: {[relName: string]: WiredRelationship}};
   /** Adapters whose instance-level hooks are already installed; see `installInstanceHooks`. */
   private _instanceHookedAdapters = new Set<string>();
+  /**
+   * The permission bag, for the one key the engine reads at *resolution* time.
+   *
+   * Every other key is consumed by gqlize while building the schema and never
+   * reaches here. `scope` is the exception, which is why the engine needs the
+   * bag at all — see `RESOLUTION_TIME_PERMISSION_KEYS` in `@azerothian/utilize`.
+   */
+  private permission: Permission | undefined;
+  private onScopeMiss: ScopeMissBehaviour;
   /** Vestigial: initialised empty and never written. */
   globalKeys: {[name: string]: unknown};
   hooks: {[defName: string]: HookMap};
@@ -172,6 +184,58 @@ export default class Ormize<
     }, {} as {[hookName: string]: HookFunction[] | HookFunction});
     this.cache = new Cache();
     this.defaultAdapter = undefined;
+    this.permission = options.permission;
+    this.onScopeMiss = options.onScopeMiss || "empty";
+  }
+  /**
+   * Supply (or replace) the permission bag after construction.
+   *
+   * Hosts that compile permissions from something they only have later — a
+   * config file, a Nest module — build the bag after the orm exists. The
+   * sequelize adapter's `setBuildPermission` is the same pattern for the
+   * build-time half.
+   */
+  setPermission = (permission: Permission | undefined) => {
+    this.permission = permission;
+  }
+  /**
+   * Resolve `permission.scope` for one model and operation.
+   *
+   * `undefined` imposes nothing, `false` denies every row, anything else is the
+   * filter (and, for writes, the values) to apply. Memoised per request inside
+   * {@link scopeFor} — a nested selection would otherwise re-run the predicate
+   * once per parent row.
+   */
+  private resolveRowScope = (defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope> => {
+    return scopeFor(this.permission, defName, operation, context);
+  }
+  /**
+   * Re-impose a scope on options that have already been translated into the
+   * backend's vocabulary.
+   *
+   * Only needed where userland code has had a chance to rewrite `where` after
+   * the portable merge. An adapter with no way to AND two native filters cannot
+   * be scoped behind such a hook; running the query anyway would run it
+   * unscoped, so this refuses instead.
+   */
+  private reassertRowScope = async(
+    adapter: OrmAdapter, defName: string, where: PortableWhere,
+    whereOperators: ReturnType<typeof whereOperatorsFor>, options: AdapterQueryOptions,
+    targets: (AdapterQueryOptions | undefined)[],
+  ) => {
+    if (!adapter.andFilterStatements) {
+      throw new Error(
+        `Adapter '${adapter.adapterName}' cannot re-assert a row-level scope on '${defName}': ` +
+        "it does not implement andFilterStatements, and '" + defName + "' has a `before` hook " +
+        "that could have rewritten the filter. Implement andFilterStatements, or drop the hook.",
+      );
+    }
+    const native = await adapter.processFilterArgument(where, whereOperators, options);
+    for (const target of targets) {
+      if (target) {
+        target.where = adapter.andFilterStatements(target.where, native);
+      }
+    }
   }
   addHook = (hookName: string, hook: HookFunction) => {
     (this.globalHooks[hookName] as HookFunction[]).push(hook);
@@ -1050,6 +1114,22 @@ export default class Ormize<
       a.include = selection.include;
     }
     this.expandComputedOrder(defName, a, {context, info: selection?.raw});
+    // Row-level scope, merged while the filter is still in the caller's
+    // vocabulary. That is also what gives the count the same filter, since
+    // `processListArgsToOptions` derives `countOptions` from these args — a
+    // scope applied only to the fetch leaves `total` counting rows the caller
+    // is not allowed to see.
+    const rowScope = await this.resolveRowScope(defName, "read", context);
+    if (rowScope === false) {
+      // Denied outright. There is no portable filter for "match nothing" (§9.4
+      // of the design rejects `{in: []}` as one), and no reason to ask the
+      // backend: an empty page is exactly what a caller whose rows do not exist
+      // already sees, which is what makes the two indistinguishable.
+      return { total: 0, models: [] };
+    }
+    if (rowScope?.where) {
+      a.where = applyScopeWhere(a.where as PortableWhere | undefined, rowScope);
+    }
     const offset = cursorOffset(args);
     const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, {
       args: a, offset, selection, whereOperators: whereOperatorsFor(definition), options, selectedFields,
@@ -1070,6 +1150,17 @@ export default class Ormize<
         modelDefinition: definition,
         type: Events.QUERY,
       });
+      if (rowScope?.where) {
+        // F3. The hook is handed the built options and mutates them in place, so
+        // `params.where = {...}` drops the scope entirely. This is not a remote
+        // possibility: `before` + `Events.QUERY` is where row filtering lived
+        // before this key existed, so the deployments most likely to have such a
+        // hook are exactly the ones whose hook rewrites `where`.
+        await this.reassertRowScope(
+          adapter, defName, rowScope.where, whereOperatorsFor(definition), options,
+          [getOptions, countOptions],
+        );
+      }
     }
     // An exposed method's `input` runs last, after the model-wide `before`, so it
     // sees the final options rather than having its work overwritten by them.
@@ -1154,6 +1245,30 @@ export default class Ormize<
         }
         return o;
       }, i);
+    }
+
+    // The `set` half of a row-level scope: field values the scope *forces*.
+    //
+    // Applied after `definition.override` rather than merely after the
+    // mass-assignment allow-list, because an `override.ownerId.input` returning
+    // a value would otherwise stomp what the scope forces. The allow-list is the
+    // complementary half — `ownerId` is a foreign key, so
+    // `isStructurallyWritable` has already dropped whatever the client sent, and
+    // `set` supplies a value the client had no way to send.
+    const operation: ScopeOperation = model === undefined ? "create" : "update";
+    const rowScope = await this.resolveRowScope(defName, operation, context);
+    const forced = rowScope ? rowScope.set : undefined;
+    if (forced) {
+      for (const key of Object.keys(forced)) {
+        if (i[key] !== undefined && i[key] !== forced[key]) {
+          // A value survived the allow-list (the field opted in with
+          // `writable: true`) and disagrees with the scope. Writing the safe
+          // value anyway is the tempting implementation and it hides a forged
+          // request behind a successful mutation; refuse instead.
+          throw new ScopeDeniedError(defName, operation);
+        }
+        i[key] = forced[key];
+      }
     }
     return i;
   }
@@ -1350,6 +1465,13 @@ export default class Ormize<
   processCreate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
       const processCreate = adapter.getCreateFunction(defName);
+      if (await this.resolveRowScope(defName, "create", context) === false) {
+        // No row may be created at all. `processInputs` still forces whatever
+        // `set` a *live* scope carries; this is the outright deny, which has no
+        // values to force.
+        scopeMiss(defName, "create", this.onScopeMiss);
+        return [];
+      }
       const i = await this.processInputs(defName, args.input, args, context, selection?.raw);
       let input = translateFilter(i, globalKeys);
       if (definition.before) {
@@ -1393,8 +1515,24 @@ export default class Ormize<
         }
         return o;
       }, {} as MutationInput);
-      const where = translateFilter(args.where, globalKeys);
+      // A read scope alone is a false sense of security: the caller cannot see
+      // the row but can still name its id here. Merged after `translateFilter`,
+      // which rewrites relay global ids in the *caller's* filter — the scope's
+      // values are already raw and must not be put through it.
+      const rowScope = await this.resolveRowScope(defName, "update", context);
+      if (rowScope === false) {
+        scopeMiss(defName, "update", this.onScopeMiss);
+        return [];
+      }
+      // The cast keeps the pre-existing shape: `getUpdateFunction` declares a
+      // non-optional filter, and an absent `args.where` already reached it as
+      // `undefined` before this line existed. Substituting `{}` would be a
+      // behaviour change on a delete-shaped path, which is not this commit.
+      const where = applyScopeWhere(translateFilter(args.where, globalKeys), rowScope) as MutationFilter;
       if (definition.before) {
+        // Unlike the query hook, this one is handed the *input* and returns it;
+        // `where` is already built and out of its reach, so there is nothing to
+        // re-assert here (compare F3 in `resolveFindAll`).
         i = await definition.before({
           params: i, args, context, info: selection?.raw,
           modelDefinition: definition,
@@ -1418,8 +1556,17 @@ export default class Ormize<
     // select fields back.
     return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
       const options = createResolveContext(context, selection, source, {limit: args.limit});
+      // `select` writes no field, so it is easy to mistake for a read. It runs
+      // relationship sub-mutations against every row its filter matches, which
+      // makes it an update in everything but name — a layer that scoped only
+      // update and delete leaves this one open.
+      const rowScope = await this.resolveRowScope(defName, "update", context);
+      if (rowScope === false) {
+        scopeMiss(defName, "update", this.onScopeMiss);
+        return [];
+      }
       const where = await adapter.processFilterArgument(
-        translateFilter(args.where, globalKeys),
+        applyScopeWhere(translateFilter(args.where, globalKeys), rowScope),
         whereOperatorsFor(definition),
         options,
       );
@@ -1433,7 +1580,12 @@ export default class Ormize<
   processDelete = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
       const processDelete = adapter.getDeleteFunction(defName, whereOperatorsFor(definition));
-      const where = translateFilter(args, globalKeys);
+      const rowScope = await this.resolveRowScope(defName, "delete", context);
+      if (rowScope === false) {
+        scopeMiss(defName, "delete", this.onScopeMiss);
+        return [];
+      }
+      const where = applyScopeWhere(translateFilter(args, globalKeys), rowScope) as MutationFilter;
       const before = (model: AdapterRow) => {
         if (!definition.before) {
           return model;

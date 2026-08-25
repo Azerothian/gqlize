@@ -1007,6 +1007,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   ): AdapterWhere {
     return mergeFilterStatement(fieldName, value, match, originalWhere);
   }
+  andFilterStatements(a: AdapterWhere | undefined, b: AdapterWhere | undefined): AdapterWhere | undefined {
+    if (!a || Object.getOwnPropertyNames(a).length + Object.getOwnPropertySymbols(a).length === 0) {
+      return b;
+    }
+    if (!b || Object.getOwnPropertyNames(b).length + Object.getOwnPropertySymbols(b).length === 0) {
+      return a;
+    }
+    // A fresh `Op.and` rather than a spread, for the same reason
+    // `mergeScopeWhere` wraps: the two sides routinely constrain the same
+    // column, and a spread would keep whichever was written second.
+    return { [Op.and]: [a, b] };
+  }
   resolveSingleRelationship = async (
     _defName: string,
     relationship: Association,
