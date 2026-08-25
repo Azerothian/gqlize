@@ -108,8 +108,12 @@ describe("tests", () => {
     await adapter.createModel(ItemModel);
 
     await waterfall([TaskModel, TaskItemModel, ItemModel], async(model) => {
+      // `Definition.name` is optional on the type — a definition can be named by
+      // the key it is registered under instead — but every fixture here declares
+      // one, and `createRelationship` wants a `string`.
+      const defName = model.name!;
       return waterfall(model.relationships, (rel) => {
-        return adapter.createRelationship(model.name, rel.model, rel.name, rel.type, rel.options);
+        return adapter.createRelationship(defName, rel.model, rel.name, rel.type, rel.options);
       });
     });
 
@@ -185,7 +189,7 @@ describe("tests", () => {
       async(q, options) => {
         //stop from writing to sqlite
         //as stored procedures are not supported
-        console.log("q", {q, options}); //eslint-disable-line
+        console.log("q", {q, options});
       };
     await adapter.reset();
     // `newStoredProcedure` is installed dynamically by `installClassMethods`
@@ -637,9 +641,6 @@ describe("tests", () => {
     const defaultArgs = adapter.getDefaultListArgs(itemDef.name, itemDef);
     expect(defaultArgs).toBeDefined();
     expect(defaultArgs.where).toBeDefined();
-    // eslint-disable-next-line no-underscore-dangle
-    // expect(defaultArgs.where.type).toEqual((adapter.sequelize.models[itemDef.name] as any)._gqlmeta.queryType);
-
   });
 
   it("adapter - include - getDefaultListArgs", async() => {
@@ -680,8 +681,6 @@ describe("tests", () => {
     expect(defaultArgs.where).toBeDefined();
     expect(defaultArgs.include).toBeDefined();
     expect(defaultArgs.include.type).toBeDefined();
-    // eslint-disable-next-line no-underscore-dangle
-    // expect(defaultArgs.where.type).toEqual((adapter.sequelize.models[itemDef.name] as any)._gqlmeta.queryType);
     expect(defaultArgs.include).toBeDefined();
   });
 

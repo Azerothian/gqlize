@@ -43,7 +43,7 @@ export default function createClassMethods(instance: GQLManager, definitions: De
   };
 }
 
-export function createClassMethodFields(instance: GQLManager, defName: string, definition: Definition, query: ExposedMethods, options: GqlizeOptions, schemaCache: SchemaCache, targetName: string) {
+export function createClassMethodFields(instance: GQLManager, defName: string, definition: Definition, query: ExposedMethods, options: GqlizeOptions, schemaCache: SchemaCache, targetName: string): Promise<GqlFieldMap> {
   return waterfall(Object.keys(query), (methodName: string, o: GqlFieldMap) => {
     if (options.permission) {
       if (options.permission.queryClassMethods && targetName === "query") {

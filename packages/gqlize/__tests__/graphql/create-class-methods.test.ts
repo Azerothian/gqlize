@@ -2,7 +2,7 @@ import { Ormize as Database } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { createClassMethodFields } from "../../src/graphql/create-class-methods";
 import GqlizeBinding from "../../src/manager";
-import {GraphQLObjectType, GraphQLInt} from "graphql";
+import {GraphQLObjectType, GraphQLInt, type GraphQLResolveInfo} from "graphql";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import { Definition } from '../../src/types';
 import {test, expect} from "@jest/globals";
@@ -57,6 +57,11 @@ test("createClassMethodFields - mutations before/after hooks", async() => {
   // The builders take the binding, not the raw backend — it is a transparent
   // wrapper, so this is the same object the live schema build passes.
   const fields = await createClassMethodFields(new GqlizeBinding(db), itemDef.name || "", itemDef, mutations, {}, schemaCache, "mutations");
-  const result = await fields.testClassMethod.resolve({}, {amount: 1}, {}, {});
+  // `createClassMethodFields` is typed as returning a `GqlFieldMap`, on which
+  // `resolve` is optional — every field this builder emits has one, but the type
+  // cannot say so, hence the assertion before the call.
+  const {resolve} = fields.testClassMethod;
+  expect(resolve).toBeDefined();
+  const result = await resolve!({}, {amount: 1}, {}, {} as GraphQLResolveInfo);
   expect(result).toEqual(102);
 });
