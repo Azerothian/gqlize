@@ -533,6 +533,21 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       proto[instanceMethod] = instanceMethods[instanceMethod];
     });
   };
+  /**
+   * Sequelize-instance hooks go on the Sequelize object itself. Routing them
+   * through `sequelize.define` — which accepts the names without complaint —
+   * files them under `Model.options.hooks`, where `runHooks` will never look:
+   * hooks propagate model → instance, never the reverse. See #45.
+   */
+  installInstanceHooks = (hooks: HookMap) => {
+    Object.keys(hooks).forEach((hookName) => {
+      const hook = hooks[hookName];
+      if (typeof hook === "function") {
+        this.sequelize.addHook(hookName as never, hook as never);
+      }
+    });
+  };
+
   createModel = async (def: SequelizeDefinition, hooks?: HookMap): Promise<SequelizeModelClass> => {
     const { defaultAttr, defaultModel } = this.options;
     const newDef = Object.assign({}, def, {
