@@ -1,7 +1,7 @@
 {
   "name": "gqlize-monorepo",
   "private": true,
-  "packageManager": "pnpm@9.15.9",
+  "packageManager": "pnpm@11.23.0",
   "scripts": {
     "build": "turbo run build",
     "//lint": "The ceiling is a ratchet, not a target: it is today's warning count, so the number may only ever be lowered. About 1150 of them are `no-explicit-any` in the ported v5-era code; see tools/lint for what the rest are and why none of them is an error yet.",
@@ -19,22 +19,5 @@
   "redisMemoryServer": {
     "//": "redis-memory-server defaults to `redis-stable`, a moving target. It now resolves to Redis 8.x, whose source tree bundles the search/timeseries/bloom/json modules; `make` builds them and redisearch.so needs a Rust toolchain, which fails on ubuntu-latest. Pin to the last pre-module line - the valkey adapter only uses core hash/set/zset commands.",
     "version": "7.4.5"
-  },
-  "pnpm": {
-    "overrides": {
-      "graphql": "17.0.2",
-      "unicorn-magic": "0.4.0",
-      "brace-expansion@1": "1.1.17",
-      "brace-expansion@2": "2.1.4",
-      "js-yaml@3": "3.15.1"
-    },
-    "patchedDependencies": {
-      "graphql@17.0.2": "patches/graphql@17.0.2.patch"
-    },
-    "peerDependencyRules": {
-      "allowedVersions": {
-        "graphql-relay>graphql": "17"
-      }
-    }
   }
 }

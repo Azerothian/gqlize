@@ -6,11 +6,10 @@ import IORedis from "ioredis";
 //
 // `REDIS_URL` points at an already-running server and is what CI uses (a redis
 // service container). Without it we fall back to redis-memory-server, which
-// downloads a redis-server binary on first use — its postinstall is not in
-// `onlyBuiltDependencies`, so pnpm never runs it and the download always lands
-// inside the test run. That is fine locally (the binary is cached under
-// node_modules/.cache), but on a fresh CI runner it is a ~2 minute network
-// fetch that hangs the job outright when it stalls.
+// needs a redis-server binary. `allowBuilds` in pnpm-workspace.yaml lets its
+// postinstall run, so that ~2 minute network fetch happens once at install time
+// and is cached under node_modules/.cache — not inside the test run, where a
+// stall would hang the job outright.
 const REDIS_URL = process.env.REDIS_URL;
 
 let server: RedisMemoryServer | undefined;

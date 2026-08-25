@@ -2,6 +2,34 @@ packages:
   - "packages/*"
   - "examples/*"
   - "tools/*"
-onlyBuiltDependencies:
-  - esbuild
-  - sqlite3
+
+# Settings below moved here from the root package.json's "pnpm" field, which
+# pnpm no longer reads as of v11. See https://pnpm.io/settings
+
+overrides:
+  graphql: "17.0.2"
+  unicorn-magic: "0.4.0"
+  # Three transitive DoS advisories; the `pkg@major` keys are selectors, not
+  # versions - they scope the override to that major only.
+  "brace-expansion@1": "1.1.17"
+  "brace-expansion@2": "2.1.4"
+  "js-yaml@3": "3.15.1"
+
+patchedDependencies:
+  "graphql@17.0.2": patches/graphql@17.0.2.patch
+
+peerDependencyRules:
+  allowedVersions:
+    graphql-relay>graphql: "17"
+
+# Replaces onlyBuiltDependencies. v11 defaults `strictDepBuilds` to true, so
+# every dependency that wants to run a build script needs an explicit verdict
+# here or the install fails.
+allowBuilds:
+  '@scarf/scarf': false # telemetry phone-home
+  '@swc/core': true # resolves the napi binary for the workspace compiler
+  esbuild: true # ships a platform binary; nothing builds without it
+  protobufjs: false # postinstall only prints a version-scheme warning
+  redis-memory-server: true # downloads the redis binary the valkey suites need
+  sqlite3: true # native build, sequelize sqlite suites
+  unrs-resolver: true # native binding behind the eslint import resolver

@@ -109,8 +109,10 @@ The artifact is JSON rather than SDL because `printSchema` discards enum *intern
 `["name", "ASC"]` payloads behind `*OrderBy` members, fed straight to the adapter's `order`) and
 never prints applied directives. SDL is available as a secondary artifact for codegen and CI diffs.
 
-Root configuration files: `package.json` (scripts, `pnpm@9.15.9`, graphql override/patch),
-`pnpm-workspace.yaml` (`packages/*`, `examples/*`), `turbo.json` (task pipeline), `tsconfig.base.json`
+Root configuration files: `package.json` (scripts, `pnpm@11.23.0`), `pnpm-workspace.yaml`
+(`packages/*`, `examples/*`, `tools/*`, plus the graphql override/patch, the peer-dependency
+rules and the `allowBuilds` verdicts - pnpm 11 no longer reads a `pnpm` field from
+`package.json`), `turbo.json` (task pipeline), `tsconfig.base.json`
 (shared compiler options + `@azerothian/*` → `src/` path aliases), `tsconfig.json`
 (`tsc -b` project references), and `patches/graphql@17.0.2.patch`.
 

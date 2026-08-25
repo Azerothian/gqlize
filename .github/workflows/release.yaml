@@ -90,14 +90,15 @@ jobs:
             exit 1
           fi
 
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+      # Installs pnpm (version read from `packageManager` in package.json) and
+      # Node in one step. Registry auth is deliberately NOT configured here:
+      # each publish phase writes the ~/.npmrc it needs immediately before it
+      # runs, so a GitHub Packages token never lives through the npmjs phase.
+      - uses: pnpm/setup@v2
         with:
-          node-version: 24
-          cache: pnpm
-          registry-url: https://npm.pkg.github.com
-          scope: "@azerothian"
+          runtime: node@24
+          cache: true
+          install: false
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -160,9 +161,40 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # pnpm's runtime installs do not extract Node's bundled npm, so `npm` may
+      # not exist on PATH at all. Bootstrap it through pnpm, which also pins the
+      # version: `npm stage`, used by the npmjs phase below, needs >= 11.15.0.
+      # `pnpm add -g` refuses to run unless its bin directory is already on PATH,
+      # hence the inline export before the install and the $GITHUB_PATH append
+      # after it (the latter only takes effect from the next step onward).
+      - name: Provide the npm CLI (>= 11.15.0 for `npm stage`)
+        run: |
+          set -e
+          export PNPM_HOME="$HOME/.pnpm-global"
+          export PATH="$PNPM_HOME/bin:$PATH"
+          mkdir -p "$PNPM_HOME/bin"
+          pnpm add -g npm@^11.15.0
+          echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Verify the npm CLI
+        # Fail here, cheaply and legibly, rather than midway through publishing.
+        run: npm --version
+
+      # Both npm and pnpm read ~/.npmrc as their user config. Writing it here,
+      # rather than via setup-node, keeps the credential's lifetime confined to
+      # the GitHub Packages phase; the npmjs phase overwrites the file.
+      - name: Point @azerothian at GitHub Packages
+        env:
+          GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          printf '@azerothian:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' \
+            "$GITHUB_PACKAGES_TOKEN" > ~/.npmrc
+          echo "Configured npmrc keys:"
+          sed 's/=.*//' ~/.npmrc
+
       - name: Publish to GitHub Packages
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           NPM_TAG: ${{ steps.version.outputs.npm_tag }}
           REGISTRY: https://npm.pkg.github.com
@@ -182,32 +214,21 @@ jobs:
           done
 
       # --- npmjs.org ----------------------------------------------------------
-      # Re-running setup-node rewrites ~/.npmrc to point at npmjs. Safe here because
-      # the GitHub Packages publish above has already completed.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          scope: "@azerothian"
-
-      - name: Pin npm CLI (>= 11.15.0 for `npm stage`)
-        run: |
-          npm i -g npm@^11.15.0
-          npm --version
-
-      - name: Clear the placeholder auth token so npm falls through to OIDC
+      # Overwrite ~/.npmrc so the scope points at npmjs. Safe here because the
+      # GitHub Packages publish above has already completed.
+      #
+      # The file gets the scope -> registry mapping and NOTHING ELSE. npm treats
+      # any configured credential as an explicit opt out of trusted publishing:
+      # the previous incarnation of this workflow had setup-node write a
+      # placeholder `_authToken` that npm dutifully sent, earning an E401 without
+      # ever minting an OIDC token. Writing no token at all is what makes the
+      # OIDC fallthrough work - do not add one back.
+      - name: Point @azerothian at npmjs (registry only, no credential)
         run: |
           set -e
-          # setup-node writes `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into
-          # $NPM_CONFIG_USERCONFIG and, when no token is supplied, exports NODE_AUTH_TOKEN
-          # at job scope as the literal string XXXXX-XXXXX-XXXXX-XXXXX. npm treats any
-          # configured credential as an explicit opt out of trusted publishing, so it sent
-          # the placeholder and got E401 without ever minting an OIDC token. Removing the
-          # line (rather than the env var, which is exported job-wide and out of reach of a
-          # step-level `env:`) leaves the scope -> npmjs registry mapping intact.
-          sed -i '/_authToken/d' "$NPM_CONFIG_USERCONFIG"
-          echo "Remaining npmjs config keys:"
-          sed 's/=.*//' "$NPM_CONFIG_USERCONFIG"
+          printf '@azerothian:registry=https://registry.npmjs.org/\n' > ~/.npmrc
+          echo "Configured npmrc keys:"
+          sed 's/=.*//' ~/.npmrc
 
       - name: Show the OIDC claims npmjs matches a trusted publisher against
         # Diagnostic only, never fatal. npm surfaces just `body.message` from a failed
