@@ -45,7 +45,12 @@ type VariableValues = { readonly [name: string]: unknown } | null | undefined;
  * The map's `ast` parameter stays `any` on purpose: dispatch is by `ast.kind` at
  * runtime, so no single node type describes every entry. Each handler names the
  * node it actually accepts, which is where the checking that matters happens.
+ * (Confirmed: giving the map's signature the common `ValueNode` parameter type
+ * instead breaks every entry — each handler only accepts its own narrower node
+ * type, and a function typed as a property, unlike a method, is checked
+ * contravariantly, so none of them would be assignable.)
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous dispatch table; each handler below narrows its own `ast` param to the node type it actually accepts
 const astToJson: { [kind: string]: (ast: any, variables?: VariableValues) => unknown } = {
   [Kind.INT](ast: ValueNode, variables?: VariableValues) {
     return GraphQLInt.parseLiteral(ast, variables);

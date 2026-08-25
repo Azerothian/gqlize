@@ -113,7 +113,7 @@ async function findConfig(cwd: string): Promise<string | undefined> {
  *  3. re-exec once through the application's `tsx`, guarded by an env flag so a
  *     failure there cannot loop.
  */
-async function importConfig(path: string): Promise<any> {
+async function importConfig(path: string): Promise<unknown> {
   // `.mjs`/`.mts` are unambiguously ESM; skip straight to `import`
   if (!/\.m[jt]s$/.test(path)) {
     try {
@@ -125,11 +125,14 @@ async function importConfig(path: string): Promise<any> {
   }
   try {
     return await import(pathToFileURL(path).href);
-  } catch (err: any) {
+  } catch (err) {
     if (isTypeScriptLoadFailure(err) && !process.env.GQLIZE_CLI_REEXEC) {
       await reexecThroughTsx(path);
     }
-    throw new Error(`gqlize: failed to load config ${path}: ${err.message}`, {cause: err});
+    throw new Error(
+      `gqlize: failed to load config ${path}: ${err instanceof Error ? err.message : String(err)}`,
+      {cause: err},
+    );
   }
 }
 
@@ -139,10 +142,13 @@ async function importConfig(path: string): Promise<any> {
  * exported so the classification is pinned by tests, since getting it wrong
  * either loses a real error or re-execs on one.
  */
-export function isTypeScriptLoadFailure(err: any) {
-  return err?.code === "ERR_UNKNOWN_FILE_EXTENSION" ||
-    err?.code === "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING" ||
-    /Unknown file extension|type stripping|Unsupported/i.test(err?.message || "");
+export function isTypeScriptLoadFailure(err: unknown) {
+  // Neither field is on `Error`, and the thrown value need not be one at all —
+  // `import()` of a broken config can reject with anything the module threw.
+  const {code, message} = (err ?? {}) as {code?: unknown; message?: unknown};
+  return code === "ERR_UNKNOWN_FILE_EXTENSION" ||
+    code === "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING" ||
+    /Unknown file extension|type stripping|Unsupported/i.test(typeof message === "string" ? message : "");
 }
 
 async function reexecThroughTsx(configPath: string): Promise<void> {
@@ -175,10 +181,14 @@ async function reexecThroughTsx(configPath: string): Promise<void> {
  * synthetic `default` off the namespace object, so "has an `orm` function" is a
  * far more reliable signal than "is called `default`".
  */
-function normalise(mod: any, path: string): GqlizeConfig {
-  const candidates = [mod?.default?.default, mod?.default, mod?.config, mod];
+function normalise(mod: unknown, path: string): GqlizeConfig {
+  // The module is whatever the user's file exported, so every access here is a
+  // widening on an opaque value; `looksLikeConfig` below is the actual test.
+  const ns = mod as {default?: {default?: unknown}; config?: unknown} | null | undefined;
+  const candidates: unknown[] = [ns?.default?.default, ns?.default, ns?.config, mod];
   const looksLikeConfig = candidates.find(
-    (candidate) => candidate && typeof candidate === "object" && typeof candidate.orm === "function",
+    (candidate) => candidate && typeof candidate === "object" &&
+      typeof (candidate as {orm?: unknown}).orm === "function",
   );
   const candidate = looksLikeConfig ?? candidates.find((c) => c !== undefined);
   if (!candidate || typeof candidate !== "object") {

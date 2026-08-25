@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it } from "@jest/globals";
+import type { Ormize } from "@azerothian/ormize";
+import type { ActivityMap } from "../src/types";
 import { createActivities } from "../src/activities";
 import { ErrorType } from "../src/workflow-types";
+import type { FindAllResult } from "../src/workflow-types";
 import { buildOrm, ctx, expectFailure } from "./helper";
 
+/** Plain-JSON shape of a row as it leaves an activity, for the two fixture models in `./helper`. */
+type TaskRow = { id: number; name: string; done?: boolean; itemId?: number | null };
+type ItemRow = { id: number; label: string };
+
 describe("generated activities", () => {
-  let orm: any;
-  let acts: any;
+  let orm: Ormize;
+  let acts: ActivityMap;
 
   beforeEach(async () => {
     orm = await buildOrm();
@@ -40,20 +47,20 @@ describe("generated activities", () => {
 
   describe("crud round trip", () => {
     it("creates and reads back", async () => {
-      const created = await acts["Task.create"]({ context: ctx, input: { name: "alpha" } });
+      const created = (await acts["Task.create"]({ context: ctx, input: { name: "alpha" } })) as TaskRow[];
       expect(created).toHaveLength(1);
       expect(created[0].name).toBe("alpha");
 
-      const list = await acts["Task.findAll"]({ context: ctx });
+      const list = (await acts["Task.findAll"]({ context: ctx })) as FindAllResult<TaskRow>;
       expect(list.total).toBe(1);
       expect(list.rows[0].name).toBe("alpha");
 
-      const one = await acts["Task.findByPk"]({ context: ctx, id: created[0].id });
+      const one = (await acts["Task.findByPk"]({ context: ctx, id: created[0].id })) as TaskRow;
       expect(one.name).toBe("alpha");
     });
 
     it("returns plain JSON, not ORM instances", async () => {
-      const [created] = await acts["Task.create"]({ context: ctx, input: { name: "alpha" } });
+      const [created] = (await acts["Task.create"]({ context: ctx, input: { name: "alpha" } })) as TaskRow[];
       expect(Object.getPrototypeOf(created)).toBe(Object.prototype);
       expect(() => JSON.stringify(created)).not.toThrow();
     });
@@ -62,16 +69,25 @@ describe("generated activities", () => {
       for (const name of ["a", "b", "c"]) {
         await acts["Task.create"]({ context: ctx, input: { name } });
       }
-      const filtered = await acts["Task.findAll"]({ context: ctx, where: { name: { eq: "b" } } });
+      const filtered = (await acts["Task.findAll"]({ context: ctx, where: { name: { eq: "b" } } })) as FindAllResult<TaskRow>;
       expect(filtered.total).toBe(1);
       expect(filtered.rows[0].name).toBe("b");
 
-      const page = await acts["Task.findAll"]({ context: ctx, orderBy: [["name", "DESC"]], limit: 2 });
+      const page = (await acts["Task.findAll"]({
+        context: ctx,
+        orderBy: [["name", "DESC"]],
+        limit: 2,
+      })) as FindAllResult<TaskRow>;
       expect(page.total).toBe(3);
-      expect(page.rows.map((r: any) => r.name)).toEqual(["c", "b"]);
+      expect(page.rows.map((r) => r.name)).toEqual(["c", "b"]);
 
-      const offset = await acts["Task.findAll"]({ context: ctx, orderBy: [["name", "ASC"]], limit: 1, offset: 2 });
-      expect(offset.rows.map((r: any) => r.name)).toEqual(["c"]);
+      const offset = (await acts["Task.findAll"]({
+        context: ctx,
+        orderBy: [["name", "ASC"]],
+        limit: 1,
+        offset: 2,
+      })) as FindAllResult<TaskRow>;
+      expect(offset.rows.map((r) => r.name)).toEqual(["c"]);
     });
 
     it("counts without returning rows", async () => {
@@ -87,34 +103,34 @@ describe("generated activities", () => {
 
     it("updates matching rows", async () => {
       await acts["Task.create"]({ context: ctx, input: { name: "alpha" } });
-      const updated = await acts["Task.update"]({
+      const updated = (await acts["Task.update"]({
         context: ctx,
         input: { done: true },
         where: { name: { eq: "alpha" } },
-      });
+      })) as TaskRow[];
       expect(updated).toHaveLength(1);
       expect(updated[0].done).toBe(true);
     });
 
     it("destroys matching rows", async () => {
       await acts["Task.create"]({ context: ctx, input: { name: "alpha" } });
-      const deleted = await acts["Task.destroy"]({ context: ctx, where: { name: { eq: "alpha" } } });
+      const deleted = (await acts["Task.destroy"]({ context: ctx, where: { name: { eq: "alpha" } } })) as TaskRow[];
       expect(deleted).toHaveLength(1);
       expect(await acts["Task.count"]({ context: ctx })).toBe(0);
     });
 
     it("select rewires relationships without writing the matched rows", async () => {
-      const [item] = await acts["Item.create"]({ context: ctx, input: { label: "parent" } });
-      const rows = await acts["Item.select"]({
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "parent" } })) as ItemRow[];
+      const rows = (await acts["Item.select"]({
         context: ctx,
         where: { label: { eq: "parent" } },
         input: { tasks: { create: [{ name: "child" }] } },
-      });
+      })) as ItemRow[];
       expect(rows).toHaveLength(1);
       // The matched Item is untouched; the child Task now points at it.
       expect(rows[0].label).toBe("parent");
-      const tasks = await acts["Task.findAll"]({ context: ctx });
-      expect(tasks.rows.map((t: any) => [t.name, t.itemId])).toEqual([["child", item.id]]);
+      const tasks = (await acts["Task.findAll"]({ context: ctx })) as FindAllResult<TaskRow>;
+      expect(tasks.rows.map((t) => [t.name, t.itemId])).toEqual([["child", item.id]]);
     });
   });
 
@@ -122,12 +138,12 @@ describe("generated activities", () => {
     it("dispatches a class method with args and context", async () => {
       await acts["Item.create"]({ context: ctx, input: { label: "alpha" } });
       await acts["Item.create"]({ context: ctx, input: { label: "beta" } });
-      const result = await acts["Item.classMethods.labelsUpper"]({ context: ctx, args: {} });
+      const result = (await acts["Item.classMethods.labelsUpper"]({ context: ctx, args: {} })) as string[];
       expect(result.sort()).toEqual(["ALPHA", "BETA"]);
     });
 
     it("loads the addressed row before dispatching an instance method", async () => {
-      const [item] = await acts["Item.create"]({ context: ctx, input: { label: "alpha" } });
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
       const result = await acts["Item.instanceMethods.describe"]({
         context: ctx,
         id: item.id,
@@ -158,7 +174,7 @@ describe("generated activities", () => {
         acts["Task.update"]({ context: ctx, input: { done: true } }),
         ErrorType.UnscopedMutation
       );
-      const updated = await acts["Task.update"]({ context: ctx, input: { done: true }, all: true });
+      const updated = (await acts["Task.update"]({ context: ctx, input: { done: true }, all: true })) as TaskRow[];
       expect(updated).toHaveLength(1);
     });
 

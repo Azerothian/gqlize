@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=24"
   },
-  "description": "Shared GraphQL-free utilities for gqlize/ormize: role-based permission construction and permission-gating helpers",
+  "description": "Shared GraphQL-free utilities for gqlize/ormize: role-based permission construction, permission-gating helpers, and the exposed-method declaration readers",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Azerothian/gqlize.git",

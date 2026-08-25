@@ -25,8 +25,8 @@ export async function run(argv: string[], io: RunIO = {}): Promise<number> {
   let args;
   try {
     args = parseCliArgs(argv);
-  } catch (e: any) {
-    err(e.message);
+  } catch (e) {
+    err(e instanceof Error ? e.message : String(e));
     err("");
     err(HELP);
     return 2;
@@ -53,9 +53,13 @@ export async function run(argv: string[], io: RunIO = {}): Promise<number> {
       case "check":
         return await (await import("./commands/check")).default(resolved, args, out, err);
     }
-  } catch (e: any) {
-    err(e instanceof UsageError ? `gqlize: ${e.message}` : (e?.stack || String(e)));
-    return e instanceof UsageError ? 2 : 1;
+  } catch (e) {
+    if (e instanceof UsageError) {
+      err(`gqlize: ${e.message}`);
+      return 2;
+    }
+    err(e instanceof Error ? (e.stack ?? e.message) : String(e));
+    return 1;
   }
 }
 

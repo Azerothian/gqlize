@@ -14,11 +14,14 @@ import {
 } from "graphql";
 import {describe, it, expect} from "@jest/globals";
 
-import {createInstance} from "../helper";
+import {createInstance, resultData} from "../helper";
+import {asObjectType} from "../helper/graphql-introspection";
 import {createSchema} from "../../src";
+import type {Definition, GqlizeOptions, SchemaCache} from "../../src/types";
+import type GQLManager from "../../src/manager";
 import {resolveExternalType} from "../../src/graphql/external-types";
 import {createLedger, getLedger, recordExternalType, setLedger} from "../../src/graphql/snapshot/ledger";
-import {materializeSchema, snapshotSchema} from "../../src/snapshot";
+import {materializeSchema, snapshotSchema, type MaterializeOptions, type SchemaSnapshot} from "../../src/snapshot";
 
 /**
  * gqlize#16 — "importing a schema with custom types fails".
@@ -31,8 +34,8 @@ import {materializeSchema, snapshotSchema} from "../../src/snapshot";
  * types with one name and refused to build.
  */
 
-function typeNames(artifact: any): string[] {
-  return artifact.types.map((t: any) => t.name);
+function typeNames(artifact: SchemaSnapshot): string[] {
+  return artifact.types.map((t) => t.name);
 }
 
 function enumValues(schema: GraphQLSchema, name: string) {
@@ -41,7 +44,11 @@ function enumValues(schema: GraphQLSchema, name: string) {
 }
 
 /** through JSON, so this proves the *artifact* works, not the live object graph */
-async function roundtrip(definitions: any[], options: any = {}, loadOptions: any = options) {
+async function roundtrip(
+  definitions: Definition[],
+  options: GqlizeOptions = {},
+  loadOptions: GqlizeOptions & MaterializeOptions = options,
+) {
   const instance = await createInstance(definitions);
   const live = await createSchema(instance, options);
   const artifact = JSON.parse(JSON.stringify(snapshotSchema(live)));
@@ -66,7 +73,7 @@ describe("live types shared with the artifact", () => {
       name: "Device",
       define: {name: {type: Sequelize.STRING, allowNull: true}},
       whereOperators: {
-        statusIs: async() => ({}),
+        statusIs: () => ({}),
       },
       whereOperatorTypes: {
         statusIs: SharedStatus,
@@ -101,13 +108,13 @@ describe("live types shared with the artifact", () => {
     // threw at snapshot time or lost its coercion.
     const Slug = new GraphQLScalarType({
       name: "Slug",
-      serialize: (value: any) => `slug:${value}`,
-      parseValue: (value: any) => String(value).replace(/^slug:/, ""),
+      serialize: (value) => `slug:${String(value)}`,
+      parseValue: (value) => String(value).replace(/^slug:/, ""),
     });
     const {live, rebuilt} = await roundtrip([{
       name: "Page",
       define: {name: {type: Sequelize.STRING, allowNull: true}},
-      whereOperators: {slugIs: async() => ({})},
+      whereOperators: {slugIs: () => ({})},
       whereOperatorTypes: {slugIs: Slug},
       options: {tableName: "pages"},
     }]);
@@ -118,7 +125,7 @@ describe("live types shared with the artifact", () => {
     expect(scalar.serialize("a")).toEqual("slug:a");
   });
 
-  it("records and re-derives a type declared on a model field's args", async() => {
+  it("records and re-derives a type declared on a model field's args", () => {
     // `create-basic-fields` passes `define[field].args` to graphql verbatim, so
     // those types are user-authored and invisible to every other recording site.
     // This drives `recordExternalType`/`resolveExternalType` against the
@@ -129,7 +136,11 @@ describe("live types shared with the artifact", () => {
       name: "Casing",
       values: {UPPER: {value: "upper"}, LOWER: {value: "lower"}},
     });
-    const schemaCache: any = {};
+    // A schema cache normally accumulates every builder's per-type bucket; this
+    // stub only needs to carry a ledger, which is exactly what `setLedger`/
+    // `getLedger`/`recordExternalType` read and write — `unknown` stands in for
+    // the rest of `SchemaCache`'s shape rather than reaching for `any`.
+    const schemaCache = {} as unknown as SchemaCache;
     setLedger(schemaCache, createLedger());
     const ref = {
       via: "definitionField", defName: "Note", fieldName: "body", use: "arg", argName: "casing",
@@ -137,18 +148,21 @@ describe("live types shared with the artifact", () => {
     recordExternalType(schemaCache, Casing, ref);
     expect(getLedger(schemaCache)?.externalTypes.Casing).toEqual(ref);
 
-    const instance: any = {
+    // A minimal stub of the real manager class: `resolveExternalType` only
+    // reads `getDefinition`/`getFields` off it for this direct-drive test, so
+    // `unknown` stands in for the rest of the class rather than `any`.
+    const instance = {
       getDefinition: () => ({name: "Note"}),
       getFields: () => ({body: {args: {casing: {type: Casing}}}}),
-    };
+    } as unknown as GQLManager;
     expect(resolveExternalType("Casing", ref, instance, schemaCache)).toBe(Casing);
 
     // and a definition that no longer declares the arg says so, rather than
     // failing later inside `new GraphQLSchema`
-    const stale: any = {
+    const stale = {
       getDefinition: () => ({name: "Note"}),
       getFields: () => ({body: {args: {}}}),
-    };
+    } as unknown as GQLManager;
     expect(() => resolveExternalType("Casing", ref, stale, schemaCache))
       .toThrow(/argument "casing" on Note\.body/);
   });
@@ -250,13 +264,14 @@ describe("extend fields through loadSchema", () => {
     const {rebuilt} = await roundtrip([], {extend});
 
     expect(rebuilt.getTypeMap().Health).toBe(Health);
-    const result: any = await graphql({
+    type HealthResult = {health: {status: string; checked: boolean}};
+    const result = await graphql({
       schema: rebuilt,
       source: "{ health { status checked } }",
     });
     expect(result.errors).toBeUndefined();
     // both the root resolver and the nested field resolvers are the user's
-    expect(result.data.health).toEqual({status: "green", checked: true});
+    expect(resultData<HealthResult>(result).health).toEqual({status: "green", checked: true});
   });
 
   it("shares one instance when an extend type is also reachable from a definition", async() => {
@@ -278,16 +293,17 @@ describe("extend fields through loadSchema", () => {
     const {live, rebuilt} = await roundtrip([{
       name: "Student",
       define: {name: {type: Sequelize.STRING, allowNull: true}},
-      whereOperators: {gradeIs: async() => ({})},
+      whereOperators: {gradeIs: () => ({})},
       whereOperatorTypes: {gradeIs: Grade},
       options: {tableName: "students"},
     }], {extend});
 
     expect(printSchema(rebuilt)).toEqual(printSchema(live));
     expect(rebuilt.getTypeMap().Grade).toBe(Grade);
-    const result: any = await graphql({schema: rebuilt, source: "{ report { grade } }"});
+    type ReportResult = {report: {grade: string}};
+    const result = await graphql({schema: rebuilt, source: "{ report { grade } }"});
     expect(result.errors).toBeUndefined();
-    expect(result.data.report).toEqual({grade: "A"});
+    expect(resultData<ReportResult>(result).report).toEqual({grade: "A"});
   });
 
   it("refuses to load when the artifact's extend fields are not supplied", async() => {
@@ -338,15 +354,20 @@ describe("a live type that collides with one the artifact owns", () => {
 });
 
 describe("root slots", () => {
-  const subscriptionFor = (taskType: any) => new GraphQLObjectType({
+  const subscriptionFor = (taskType: GraphQLObjectType) => new GraphQLObjectType({
     name: "Subscription",
     fields: () => ({
       taskChanged: {
         type: taskType,
+        // No `await` inside: this generator's *asynchrony* is the contract
+        // `graphql`'s own `subscribe()` requires (it needs an AsyncIterable,
+        // not a sync one) — dropping `async` would change what this yields,
+        // not just how it's typed.
+        // eslint-disable-next-line @typescript-eslint/require-await -- must stay an async generator so `subscribe()` sees an AsyncIterable, not a sync one
         subscribe: async function* () {
           yield {taskChanged: {id: 1, name: "sub"}};
         },
-        resolve: (payload: any) => payload.taskChanged,
+        resolve: (payload: {taskChanged: {id: number; name: string}}) => payload.taskChanged,
       },
     }),
   });
@@ -358,7 +379,7 @@ describe("root slots", () => {
     ));
 
     const rebuilt = await materializeSchema(artifact, instance, {
-      extendFactory: (types: any) => ({root: {subscription: subscriptionFor(types.Task)}}),
+      extendFactory: (types) => ({root: {subscription: subscriptionFor(asObjectType(types.Task))}}),
     });
 
     expect(rebuilt.getSubscriptionType()?.name).toEqual("Subscription");
@@ -367,13 +388,20 @@ describe("root slots", () => {
       .toBe(rebuilt.getTypeMap().Task);
 
     // and the user's `subscribe` — a closure, so it only survives by reference
-    const stream: any = await subscribe({
+    const streamOrResult = await subscribe({
       schema: rebuilt,
       document: parse("subscription { taskChanged { name } }"),
     });
-    const first = await stream.next();
+    if (!(Symbol.asyncIterator in streamOrResult)) {
+      throw new Error("Expected subscribe() to return an async iterable stream");
+    }
+    const first = await streamOrResult.next();
+    if (first.done) {
+      throw new Error("Expected the subscription to yield a value");
+    }
     expect(first.value.errors).toBeUndefined();
-    expect(first.value.data.taskChanged).toEqual({name: "sub"});
+    type TaskChangedResult = {taskChanged: {name: string}};
+    expect(resultData<TaskChangedResult>(first.value).taskChanged).toEqual({name: "sub"});
   });
 
   it("reports the collision when `root` supplies a stale copy of a model type", async() => {
@@ -388,6 +416,6 @@ describe("root slots", () => {
 
     await expect(materializeSchema(artifact, instance, {
       root: {subscription: subscriptionFor(staleTask)},
-    } as any)).rejects.toThrow(/more than one type per name[\s\S]*"Task"/);
+    })).rejects.toThrow(/more than one type per name[\s\S]*"Task"/);
   });
 });

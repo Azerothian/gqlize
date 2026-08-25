@@ -1,5 +1,7 @@
 import {createSchema as buildSchema} from "../../src";
 import {materializeSchema, snapshotSchema} from "../../src/snapshot";
+import type {Ormize} from "@azerothian/ormize";
+import type {GqlizeOptions} from "../../src/types";
 
 /**
  * Stands in for `../src` in the `roundtrip` jest project.
@@ -14,7 +16,10 @@ import {materializeSchema, snapshotSchema} from "../../src/snapshot";
  * straight to the materializer would let object identity paper over anything the
  * IR failed to describe.
  */
-export async function createSchema(orm: any, options?: any) {
+// `Ormize`'s own generic defaults (`{[name: string]: any}`, `IORBase`) already
+// match what `buildSchema`/`materializeSchema` expect, with no explicit `any`
+// needed here.
+export async function createSchema(orm: Ormize, options?: GqlizeOptions) {
   const live = await buildSchema(orm, options);
   const artifact = JSON.parse(JSON.stringify(snapshotSchema(live)));
   return materializeSchema(artifact, orm, options);

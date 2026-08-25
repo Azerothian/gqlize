@@ -1,15 +1,24 @@
 import { beforeAll, describe, expect, it, jest } from "@jest/globals";
+import type { Worker, WorkerOptions } from "@temporalio/worker";
+import type { CreateWorkersOptions } from "../src/worker";
 import { buildOrm } from "./helper";
 
 // `@temporalio/worker` loads a native addon and Worker.create() opens a
 // connection, so the factory's wiring is asserted against a stubbed SDK: which
 // queues get a worker, and which activities each one registers.
-const created: any[] = [];
+const created: WorkerOptions[] = [];
 jest.mock("@temporalio/worker", () => ({
   Worker: {
-    create: async (options: any) => {
+    // eslint-disable-next-line @typescript-eslint/require-await -- stands in for Worker.create, which returns a Promise<Worker>
+    create: async (options: WorkerOptions) => {
       created.push(options);
-      return { run: async () => undefined, shutdown: () => undefined, options };
+      return {
+        // eslint-disable-next-line @typescript-eslint/require-await -- stands in for Worker.run, which returns a Promise<void>
+        run: async () => undefined,
+        shutdown: () => undefined,
+        // The real Worker carries much more (a native handle, poll loops, etc.);
+        // only run/shutdown are ever called through temporalize's worker factory.
+      } as unknown as Worker;
     },
   },
 }));
@@ -17,12 +26,12 @@ jest.mock("@temporalio/worker", () => ({
 import { createWorkers } from "../src/worker";
 
 describe("createWorkers", () => {
-  let orm: any;
+  let orm: Awaited<ReturnType<typeof buildOrm>>;
   beforeAll(async () => {
     orm = await buildOrm();
   });
 
-  const build = async (options: any = {}) => {
+  const build = async (options: CreateWorkersOptions = {}) => {
     created.length = 0;
     return createWorkers(orm, options);
   };
@@ -33,7 +42,7 @@ describe("createWorkers", () => {
 
     const task = workers.get("myapp.sqlite.Task")!;
     expect(task.models).toEqual(["Task"]);
-    const keys = Object.keys(created.find((o) => o.taskQueue === "myapp.sqlite.Task").activities);
+    const keys = Object.keys(created.find((o) => o.taskQueue === "myapp.sqlite.Task")!.activities!);
     expect(keys).toContain("Task.create");
     expect(keys).toContain("Task.findAll");
     expect(keys.some((k) => k.startsWith("Item."))).toBe(false);
@@ -43,7 +52,7 @@ describe("createWorkers", () => {
     const workers = await build({ queues: { Item: "shared", Task: "shared" } });
     expect(workers.workers).toHaveLength(1);
     expect(workers.workers[0].models).toEqual(["Item", "Task"]);
-    const keys = Object.keys(created[0].activities);
+    const keys = Object.keys(created[0].activities!);
     expect(keys).toContain("Item.create");
     expect(keys).toContain("Task.create");
   });
@@ -81,7 +90,7 @@ describe("createWorkers", () => {
   });
 
   it("prefers a prebuilt bundle over workflowsPath", async () => {
-    await build({ queuePrefix: "myapp", workflowsPath: "/tmp/workflows.js", workflowBundle: { code: "x" } as any });
+    await build({ queuePrefix: "myapp", workflowsPath: "/tmp/workflows.js", workflowBundle: { code: "x" } });
     expect(created[0].workflowBundle).toEqual({ code: "x" });
     expect(created[0]).not.toHaveProperty("workflowsPath");
   });

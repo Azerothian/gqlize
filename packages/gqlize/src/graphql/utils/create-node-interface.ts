@@ -30,8 +30,10 @@ import {
 import NodeTypeMapper from "./node-type-mapper";
 import idFetcher from "./id-fetcher";
 import typeResolver from "./type-resolver";
+import type GQLManager from "../../manager";
+import type { GqlizeOptions } from "../../types";
 
-export default function createNodeInterface(dbInstance: any, options?: any) {
+export default function createNodeInterface(dbInstance: GQLManager, options?: GqlizeOptions) {
   const nodeTypeMapper = new NodeTypeMapper();
   const nodeObjects = nodeDefinitions(
     idFetcher(dbInstance, nodeTypeMapper, options),

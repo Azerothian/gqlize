@@ -16,10 +16,10 @@ import {createInstance} from "../helper";
 import {createSchema} from "../../src";
 import {createLedger} from "../../src/graphql/snapshot/ledger";
 import {snapshotSchema} from "../../src/graphql/snapshot/snapshot";
-import {SNAPSHOT_FORMAT_VERSION, type ObjectTypeIR} from "../../src/graphql/snapshot/ir";
+import {SNAPSHOT_FORMAT_VERSION, type EnumTypeIR, type ObjectTypeIR} from "../../src/graphql/snapshot/ir";
 
 /** minimal gqlize-shaped schema: a ledger in `extensions` is what makes it snapshottable */
-function bare(fields: GraphQLFieldConfigMap<any, any>) {
+function bare(fields: GraphQLFieldConfigMap<unknown, unknown>) {
   return new GraphQLSchema({
     query: new GraphQLObjectType({name: "RootQuery", fields}),
     extensions: {gqlize: createLedger()},
@@ -138,8 +138,8 @@ describe("snapshotSchema — the real fixture", () => {
     }
     const encoded = Object.fromEntries(
       snap.types
-        .filter((t) => t.kind === "enum")
-        .map((t: any) => [t.name, t.values.map((v: any) => [v.name, v.value ?? v.name])]),
+        .filter((t): t is EnumTypeIR => t.kind === "enum")
+        .map((t) => [t.name, t.values.map((v) => [v.name, v.value ?? v.name])]),
     );
     expect(encoded).toEqual(live);
     expect(Object.keys(live).length).toBeGreaterThan(0);

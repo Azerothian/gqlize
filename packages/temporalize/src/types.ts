@@ -57,4 +57,5 @@ export type QueueMap = {
  * per-model shapes are named by `ModelActivities` in `workflow-types`, which is
  * what a caller should reach for when it knows the model.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous dispatch map, see doc comment above
 export type ActivityMap = { [activityName: string]: (req: any) => Promise<unknown> };

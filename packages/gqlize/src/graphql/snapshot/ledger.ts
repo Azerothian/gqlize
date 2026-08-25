@@ -1,4 +1,6 @@
-import { getNamedType, isIntrospectionType, isSpecifiedScalarType, type GraphQLType } from "graphql";
+import { getNamedType, isIntrospectionType, isSpecifiedScalarType, type GraphQLNamedType, type GraphQLType } from "graphql";
+
+import type { SchemaCache } from "../../types";
 
 /**
  * Where a user-authored GraphQL type entered the schema.
@@ -74,15 +76,14 @@ export function createLedger(): GqlizeBuildLedger {
 
 /**
  * The ledger rides on the schema cache — same per-build lifetime, and every
- * builder that can meet a user-supplied type already receives one. `SchemaCache`
- * itself lives in the graphql-free `@azerothian/utilize`, hence the cast.
+ * builder that can meet a user-supplied type already receives one.
  */
-export function setLedger(schemaCache: any, ledger: GqlizeBuildLedger) {
+export function setLedger(schemaCache: SchemaCache, ledger: GqlizeBuildLedger) {
   schemaCache.ledger = ledger;
   return ledger;
 }
 
-export function getLedger(schemaCache: any): GqlizeBuildLedger | undefined {
+export function getLedger(schemaCache: SchemaCache | undefined): GqlizeBuildLedger | undefined {
   return schemaCache?.ledger;
 }
 
@@ -97,7 +98,7 @@ export function getLedger(schemaCache: any): GqlizeBuildLedger | undefined {
  * itself, and a user handing back `GraphQLString` says nothing about `String`.
  */
 export function recordExternalType(
-  schemaCache: any,
+  schemaCache: SchemaCache,
   // Wrappers are accepted as well as named types: `getNamedType` below unwraps
   // them, and callers legitimately hand over a `GraphQLNonNull`/`GraphQLList`.
   type: GraphQLType | { name?: string } | undefined,
@@ -107,9 +108,12 @@ export function recordExternalType(
   if (!ledger || !type) {
     return type;
   }
-  let named: any = type;
+  // A named type is what this ends up reading; the assertion is what lets the
+  // guards below take it, and the `name` check is what makes it true — a plain
+  // config object has no `name` graphql would recognise and falls through.
+  let named = type as GraphQLNamedType;
   try {
-    named = getNamedType(type as any) ?? type;
+    named = getNamedType(type as GraphQLType) ?? named;
   } catch {
     // not a GraphQL type instance (e.g. a plain config object) — use it as-is
   }

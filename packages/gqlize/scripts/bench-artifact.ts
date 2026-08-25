@@ -86,7 +86,7 @@ async function main() {
   const log = (line: string) => console.log(line); //eslint-disable-line no-console
 
   const db = new Ormize();
-  db.registerAdapter(new SequelizeAdapter({}, {dialect: "sqlite", logging: false}) as any, "sqlite");
+  db.registerAdapter(new SequelizeAdapter({}, {dialect: "sqlite", logging: false}), "sqlite");
   for (const definition of syntheticDefinitions(args)) {
     db.addDefinition(definition);
   }

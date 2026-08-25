@@ -19,7 +19,11 @@ function delay(ms = 1) {
   });
 }
 
-export default {
+// `const x: Definition = {...}` rather than `{...} as Definition`: contextual
+// typing threads through to every nested hook/method/hatch below, so each one
+// picks up its real parameter types from `Definition` instead of needing its
+// own `any` annotations.
+const taskDefinition: Definition = {
   name: "Task",
   define: {
     name: {
@@ -56,7 +60,7 @@ export default {
       allowNull: true,
     },
   },
-  before(req: any) {
+  before(req) {
     if (req.type === events.MUTATION_CREATE) {
       return Object.assign({}, req.params, {
         mutationCheck: "create",
@@ -69,7 +73,7 @@ export default {
     }
     return req.params;
   },
-  after(req: any) {
+  after(req) {
     return req.result;
   },
   override: {
@@ -81,7 +85,9 @@ export default {
           hidden2: {type: GraphQLString},
         },
       },
-      output(result: any, args: any, context: any, info: any) {
+      // `Definition.override[field].output` is `any` — this is one field's
+      // resolved row, so a real (if minimal) type beats reaching back for `any`.
+      output(result: {get: (key: string) => string}, args: unknown, context: unknown, info: unknown) {
         return JSON.parse(result.get("options"));
       },
       input(field, args, context, info, model) {
@@ -97,10 +103,10 @@ export default {
     },
     options2: {
       type: GraphQLString,
-      output(result: any, args: any, context: any, info: any) {
+      output(result: {get: (key: string) => string}, args: unknown, context: unknown, info: unknown) {
         return JSON.parse(result.get("options2"));
       },
-      input(field: any, args: any, context: any, info: any, model: any) {
+      input(field, args, context, info, model) {
         return JSON.stringify(field);
       },
     },
@@ -129,14 +135,14 @@ export default {
     },
   }],
   whereOperators: {
-    async hasNoItems(newWhere: any, findOptions: any) {
+    hasNoItems(newWhere, findOptions) {
       return {
         id: {
           [Op.notIn]: Sequelize.literal(`(SELECT DISTINCT("taskId") FROM "task-items")`)
         }
       };
     },
-    async chainTest(newWhere: any, findOptions: any) {
+    chainTest(newWhere, findOptions) {
       return {
         hasNoItems: true
       };
@@ -295,4 +301,6 @@ export default {
       // {unique: true, fields: ["name"]},
     ],
   },
-} as Definition;
+};
+
+export default taskDefinition;

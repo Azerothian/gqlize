@@ -4,9 +4,11 @@ import { GraphQLBoolean } from "graphql";
 // import {toGlobalId} from "graphql-relay/lib/node/node";
 import { Definition } from '../../../src/types';
 
-export default {
+const itemDef: Definition = {
   name: "Item",
-  tableName: "items",
+  // `tableName` is not a `Definition` field — `options.tableName` below is the
+  // real one; this was a dead, silently-ignored duplicate that only surfaced
+  // once switching off `as Definition` turned on excess-property checking.
   comment: "item comment",
   define: {
     id: {
@@ -86,7 +88,7 @@ export default {
       },
     },
   },
-  after({result}: any) {
+  after({result}) {
     if (!result) {
       return result;
     }
@@ -99,4 +101,6 @@ export default {
     // }
     return result.name !== "item-null" ? result : null;
   },
-} as Definition;
+};
+
+export default itemDef;

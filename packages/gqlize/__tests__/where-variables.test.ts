@@ -2,9 +2,15 @@ import {graphql} from "graphql";
 import Sequelize from "sequelize";
 import { Ormize as Database } from "@azerothian/ormize";
 import {createSchema} from "../src";
-import {validateResult} from "./helper";
+import {resultData, validateResult} from "./helper";
 import {createAdapterForDialect, registerTeardown} from "./helper/dialect";
 import {describe, it, expect} from "@jest/globals";
+
+type WidgetNameResult = {models: {Widget: {edges: {node: {name: string}}[]}}};
+type WidgetNameQtyResult = {models: {Widget: {edges: {node: {name: string; qty: number}}[]}}};
+type WidgetPartsResult = {models: {Widget: {edges: {node: {name: string; parts: {edges: {node: {name: string}}[]}}}[]}}};
+type WidgetUpdateResult = {models: {Widget: {id: string; name: string}[]}};
+type WidgetDataResult = {models: {Widget: {edges: {node: {name: string; data: unknown}}[]}}};
 
 async function build() {
   const db = new Database();
@@ -41,9 +47,10 @@ describe("variables inside a where object", () => {
       schema,
       source: `query ($n: String) { models { Widget(where: { name: { eq: $n } }) { edges { node { name } } } } }`,
       variableValues: {n: "alpha"},
-    })) as any;
+    }));
     validateResult(result);
-    expect(result.data.models.Widget.edges.map((e: any) => e.node.name)).toEqual(["alpha"]);
+    const data = resultData<WidgetNameResult>(result);
+    expect(data.models.Widget.edges.map((e) => e.node.name)).toEqual(["alpha"]);
   });
 
   it("int field: variable in top-level where", async () => {
@@ -56,9 +63,10 @@ describe("variables inside a where object", () => {
       schema,
       source: `query ($q: Int) { models { Widget(where: { qty: { eq: $q } }) { edges { node { name qty } } } } }`,
       variableValues: {q: 2},
-    })) as any;
+    }));
     validateResult(result);
-    expect(result.data.models.Widget.edges.map((e: any) => e.node.name)).toEqual(["b"]);
+    const data = resultData<WidgetNameQtyResult>(result);
+    expect(data.models.Widget.edges.map((e) => e.node.name)).toEqual(["b"]);
   });
 
   it("nested relationship where: variable", async () => {
@@ -72,10 +80,11 @@ describe("variables inside a where object", () => {
       schema,
       source: `query ($p: String) { models { Widget { edges { node { name parts(where: { name: { eq: $p } }) { edges { node { name } } } } } } } }`,
       variableValues: {p: "keep"},
-    })) as any;
+    }));
     validateResult(result);
-    const parts = result.data.models.Widget.edges[0].node.parts.edges;
-    expect(parts.map((e: any) => e.node.name)).toEqual(["keep"]);
+    const data = resultData<WidgetPartsResult>(result);
+    const parts = data.models.Widget.edges[0].node.parts.edges;
+    expect(parts.map((e) => e.node.name)).toEqual(["keep"]);
   });
 
   it("mutation update: variable in where", async () => {
@@ -88,9 +97,10 @@ describe("variables inside a where object", () => {
       schema,
       source: `mutation ($n: String) { models { Widget(update: { where: { name: { eq: $n } }, input: { name: "updated" } }) { id name } } }`,
       variableValues: {n: "x"},
-    })) as any;
+    }));
     validateResult(result);
-    expect(result.data.models.Widget.map((w: any) => w.name)).toEqual(["updated"]);
+    const data = resultData<WidgetUpdateResult>(result);
+    expect(data.models.Widget.map((w) => w.name)).toEqual(["updated"]);
     expect(await Widget.count({where: {name: "updated"}})).toEqual(1);
   });
 
@@ -105,9 +115,10 @@ describe("variables inside a where object", () => {
       schema,
       source: `query ($nf: GQLTQueryWidgetWherename) { models { Widget(where: { name: $nf }) { edges { node { name } } } } }`,
       variableValues: {nf: {eq: "alpha"}},
-    })) as any;
+    }));
     validateResult(result);
-    expect(result.data.models.Widget.edges.map((e: any) => e.node.name)).toEqual(["alpha"]);
+    const data = resultData<WidgetNameResult>(result);
+    expect(data.models.Widget.edges.map((e) => e.node.name)).toEqual(["alpha"]);
   });
 
   it("string field: the whole where supplied as a variable", async () => {
@@ -120,9 +131,10 @@ describe("variables inside a where object", () => {
       schema,
       source: `query ($w: GQLTQueryWidgetWhere) { models { Widget(where: $w) { edges { node { name } } } } }`,
       variableValues: {w: {name: {eq: "beta"}}},
-    })) as any;
+    }));
     validateResult(result);
-    expect(result.data.models.Widget.edges.map((e: any) => e.node.name)).toEqual(["beta"]);
+    const data = resultData<WidgetNameResult>(result);
+    expect(data.models.Widget.edges.map((e) => e.node.name)).toEqual(["beta"]);
   });
 
   it("JSON field: variable nested inside a where literal", async () => {
@@ -135,8 +147,9 @@ describe("variables inside a where object", () => {
       schema,
       source: `query ($k: String) { models { Widget(where: { data: { eq: { kind: $k } } }) { edges { node { name data } } } } }`,
       variableValues: {k: "a"},
-    })) as any;
+    }));
     validateResult(result);
-    expect(result.data.models.Widget.edges.map((e: any) => e.node.name)).toEqual(["j1"]);
+    const data = resultData<WidgetDataResult>(result);
+    expect(data.models.Widget.edges.map((e) => e.node.name)).toEqual(["j1"]);
   });
 });

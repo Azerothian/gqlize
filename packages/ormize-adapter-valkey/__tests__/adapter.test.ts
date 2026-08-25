@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/globals";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
+import type { AdapterQueryOptions, AdapterWhere } from "@azerothian/utilize/types/index";
+import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
 
-let client: any;
+let client: IORedis;
 let adapter: ValkeyAdapter;
 
 const UserDef = {
@@ -28,8 +30,8 @@ beforeAll(async () => { client = await makeClient(); });
 afterAll(async () => { await shutdown(); });
 beforeEach(async () => { await flush(client); await build(); });
 
-const create = (input: any, options?: any) => adapter.getCreateFunction("User")(input, options);
-const find = (where?: any) => adapter.findAll("User", { where });
+const create = (input: { [field: string]: unknown }, options?: AdapterQueryOptions) => adapter.getCreateFunction("User")(input, options);
+const find = (where?: AdapterWhere) => adapter.findAll("User", { where });
 
 describe("valkey adapter — CRUD + type fidelity", () => {
   it("creates and reads back with types preserved", async () => {

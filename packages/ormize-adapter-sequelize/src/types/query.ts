@@ -27,7 +27,7 @@ import type { SequelizeDefinition } from "./index";
  * before it returns. A model without one is a wiring error, not a case for every
  * read site to branch on.
  */
-export type SequelizeModelClass = ModelCtor<Model<any, any>> & {
+export type SequelizeModelClass = ModelCtor<Model> & {
   definition: SequelizeDefinition;
   relationships: { [relName: string]: SequelizeRelationship };
 };
@@ -53,7 +53,7 @@ export type SequelizeRelationship = {
  * a shape — but the adapter that produced it may, which is precisely why
  * `OrmAdapter` is declared with method syntax rather than function properties.
  */
-export type SequelizeRow = Model<any, any>;
+export type SequelizeRow = Model;
 
 /**
  * The list arguments this adapter reads off a field's args bag. Open, because
@@ -75,6 +75,7 @@ export type ListArgs = {
  * the contract declares it: the hook name selects the value's shape, so neither
  * it nor the return can be narrowed here.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches OrmAdapter's own `runHook` field signature verbatim (see utilize/src/types/index.ts), which is deliberately this permissive
 export type RunHook = (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>;
 
 /** An association prefix in an ORDER BY entry — Sequelize's `{model, as}` form. */

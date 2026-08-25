@@ -13,6 +13,7 @@ export type NestizeAsyncOptions = {
   imports?: ModuleMetadata["imports"];
   inject?: FactoryProvider["inject"];
   /** `...args: any[]` mirrors Nest's own factory contract: what is injected is `inject`'s business. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches @nestjs/common's own `FactoryProvider.useFactory: (...args: any[]) => T | Promise<T>` exactly; narrowing it here would just be a cast at the call site instead
   useFactory: (...args: any[]) => NestizeAsyncResult | Promise<NestizeAsyncResult>;
   /**
    * Route path prefix. Must be supplied here (not via the async `options`)

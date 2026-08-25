@@ -1,5 +1,6 @@
 import Sequelize, {
   Model,
+  ModelStatic,
   InferAttributes,
   InferCreationAttributes,
   CreationOptional,
@@ -17,7 +18,7 @@ interface WidgetInstance
   qty: number | null;
 }
 interface WidgetStatics {
-  countAll(args: any, context: any): Promise<number>;
+  countAll(args: unknown, context: unknown): Promise<number>;
 }
 
 const WidgetDef = defineModel<WidgetInstance, WidgetStatics>({
@@ -27,7 +28,9 @@ const WidgetDef = defineModel<WidgetInstance, WidgetStatics>({
     qty: { type: Sequelize.INTEGER, allowNull: true },
   },
   classMethods: {
-    async countAll(this: any) {
+    // Not `async`: `this.count()` already returns the `Promise<number>` this
+    // must produce, so there is nothing to await.
+    countAll(this: ModelStatic<WidgetInstance>) {
       return this.count();
     },
   },
@@ -36,7 +39,7 @@ const WidgetDef = defineModel<WidgetInstance, WidgetStatics>({
 describe("definition typesystem", () => {
   it("defineModel is a runtime identity (returns the definition verbatim)", () => {
     const raw = { name: "X", define: {} };
-    expect(defineModel<WidgetInstance>(raw as any)).toBe(raw);
+    expect(defineModel<WidgetInstance>(raw)).toBe(raw);
     expect(WidgetDef.name).toEqual("Widget");
   });
 

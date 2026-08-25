@@ -1,6 +1,7 @@
 import {
   GraphQLObjectType,
   GraphQLString,
+  isObjectType,
   type GraphQLFieldConfigMap,
 } from "graphql";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
@@ -69,8 +70,11 @@ describe("a deeply chained schema", () => {
     // would still produce a schema, just a smaller one
     const deepest = `Synth${MODELS - 1}`;
     expect(rebuilt.getType(deepest)).toBeDefined();
-    expect(Object.keys((rebuilt.getType(`Synth${MODELS - 2}`) as any).getFields()))
-      .toContain("children");
+    const penultimate = rebuilt.getType(`Synth${MODELS - 2}`);
+    if (!isObjectType(penultimate)) {
+      throw new Error(`Expected "Synth${MODELS - 2}" to be a GraphQLObjectType`);
+    }
+    expect(Object.keys(penultimate.getFields())).toContain("children");
   });
 });
 
@@ -87,14 +91,14 @@ function chainOf(prefix: string, depth: number, tail: GraphQLObjectType): GraphQ
       // per-chain prefix: two chains sharing link names would plant 6000
       // collisions and prove nothing about the one under test
       name: `${prefix}Link${i}`,
-      fields: (): GraphQLFieldConfigMap<any, any> => ({next: {type: next}}),
+      fields: (): GraphQLFieldConfigMap<unknown, unknown> => ({next: {type: next}}),
     });
   }
   return current;
 }
 
 describe("duplicate-type diagnostics at depth", () => {
-  it("names the duplicate rather than reporting a stack overflow", async() => {
+  it("names the duplicate rather than reporting a stack overflow", () => {
     // Two distinct instances of one name, each at the bottom of a long chain —
     // the shape a large schema fails with, where the diagnostic is the only
     // thing standing between the user and "multiple types named X" with no

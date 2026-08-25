@@ -221,11 +221,20 @@ closes the gap by rebuilding live and diffing the sorted SDL.
 Consumer-facing (`packages/ormize/src/manager.ts`):
 
 - `registerAdapter(adapter, overrideName?)` — register an adapter; first one becomes `defaultAdapter`.
+  The adapter must carry an `adapterName`, or the call must pass `overrideName`; a nameless adapter throws
+  here rather than landing under the key `"undefined"` and leaving `defaultAdapter` unset, which used to
+  surface as the *next* `addDefinition` blaming the definition for a name the adapter never supplied.
 - `addDefinition(def, adapterName?)` — register a model definition (validates a unique `name`, wires the hook map, calls `adapter.createModel`).
-- `initialise()` — process all relationships, then `initialise()` every adapter.
+- `initialise()` — process all relationships, then validate every cross-adapter relationship's key columns,
+  then `initialise()` every adapter. The key check is a post-pass rather than part of wiring because a column
+  need not exist yet when the relationship naming it is processed: relationships are wired concurrently, and a
+  same-adapter association creates its foreign key as a side effect. A cross-adapter `foreignKey` / `sourceKey` /
+  `targetKey` / `otherKey` naming a field that does not exist throws here — ormize reads such a column itself and
+  cannot create it, so it must be declared in `define` by hand. See
+  [guide §11](guide.md#11-multiple-data-sources).
 - `sync(options?)` / `reset(options?)` — delegate to adapters.
 - Hook registration: `addHook`, `addHookObject`, `unshiftHook`, `unshiftHookObject`, `createHook`.
-- Introspection: `getModel(s)`, `getDefinition(s)`, `getFields`, `getAssociations`, `getGlobalKeys`.
+- Introspection: `getModel(s)`, `getDefinition(s)`, `hasDefinition`, `getFields`, `getAssociations`, `getGlobalKeys`.
 
 Internal resolution methods invoked by generated resolvers:
 
@@ -253,10 +262,10 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | --- | --- |
 | `name` | Unique model name (required). |
 | `datasource` | Optional adapter name; defaults to the manager's default adapter. |
-| `define` | Field map. Each value is a `DefinitionField`: `type`, `allowNull`, `primaryKey`, `foreignKey`, `unique`, `defaultValue`, `values` (enum), `validate`, `description`, `comment`. |
+| `define` | Field map. Each value is a `DefinitionField`: `type`, `allowNull`, `primaryKey`, `foreignKey`, `unique`, `defaultValue`, `values` (enum), `validate`, `description`, `comment`, plus `args` and `resolve` (per-field GraphQL arguments and a field resolver — see [guide: Field arguments & field resolvers](guide.md#field-arguments--field-resolvers)), `writable` (opt a pk/fk back into mutation input) and `ignoreGlobalKey`. |
 | `override` | Per-field custom GraphQL type plus `input`/`output` transform functions (e.g. storing JSON in a string column but exposing a typed object). |
 | `ignoreFields` | Columns to exclude from the generated type. |
-| `relationships` | Array of `Relationship`: `{ model, name, type, options }` where `type ∈ hasOne | belongsTo | hasMany | belongsToMany` and `options` carries `as`, `foreignKey`, `sourceKey`, `through`, `constraints`. |
+| `relationships` | Array of `Relationship`: `{ model, name, type, options }` where `type ∈ hasOne | belongsTo | hasMany | belongsToMany` and `options` carries `as`, `foreignKey`, `sourceKey`, `through`, `constraints`. `name`, a known `type` and a `model` naming an already-defined target are all validated at wiring time, before either the same-adapter or cross-adapter branch runs, and each throws naming the relationship. Cross-adapter key columns are re-checked in a post-pass at the end of `initialise()` (see §3). |
 | `whereOperators` / `whereOperatorTypes` | Custom filter operators (async functions returning a where fragment) and their GraphQL input types. |
 | `expose` | Declares which methods surface to GraphQL: `expose.classMethods.{query,mutations}` and `expose.instanceMethods.{query,mutations}`, each an `ExposedMethod`: `{ type?, args?, before?, after?, fields?, include?, input?, output?, orderBy?, where? }`. `type` may be a string model reference (`"Task"`) or a list (`"Task[]"`), or a concrete GraphQL type. See [Exposed methods](#exposed-methods). |
 | `classMethods` / `instanceMethods` | The implementations behind `expose` (in the Sequelize adapter these are placed under `options.classMethods` / `options.instanceMethods`). |
@@ -334,7 +343,7 @@ gqlize, ormize and every adapter agree on what a declaration means:
 | `input` | `(params, ctx) => params` | `methodOptionHooks` | Carried on `Selection.optionHooks` and run against the built query options. |
 | `output` | `(value, ctx) => any` | `create-complex-fields.ts` | Produces the field value; makes the implementation optional. |
 | `orderBy` | `string[]` \| `(direction, ctx) => OrderEntry[]` | `computedOrderableFields`, `expandOrderBy` | Contributes `<name>ASC`/`<name>DESC` to the model's orderBy enum; expanded to real ordering at query time. |
-| `where` | `string` \| `{ type?, operators?, resolve }` | `computedWhereFields`, `computedWhereOperators`, `whereOperatorsFor` | Contributes a nested operator object to the model's `where`, resolved as a custom where-operator. |
+| `where` | `string` \| `{ type?, operators?, resolve }` | `computedWhereFields`, `computedWhereOperators`, `whereOperatorsFor` | Contributes a nested operator object to the model's `where`, resolved as a custom where-operator. `type` is the GraphQL input type the operators take and defaults to `GraphQLString`; the `string` form names a real column and borrows its type instead. |
 
 Rules the surface holds to:
 
@@ -345,6 +354,10 @@ Rules the surface holds to:
 - **Permission-gated contributions.** `computedOrderableFields` and `computedWhereFields` both
   filter through `permission.queryInstanceMethods` — sortability and filterability each leak a
   denied field's value.
+  The portable `where: "column"` form carries a second gate: it is dropped outright when the
+  borrowed column is not itself filterable — denied by permissions, or simply not filterable on
+  that backend — rather than falling back to a default type, so a denied column cannot be
+  reached through a computed alias (`packages/graphql-types/src/adapter-args.ts`).
 - **Declared `fields` are server-side.** They load columns the client's selection set could
   never reach. The definition author wrote both sides, so it is their call; it is documented
   rather than discovered.
@@ -815,7 +828,15 @@ contract groups into:
 - `createModel` calls `sequelize.define(name, define, options)`, attaches class/instance
   methods (including SQL-generating class methods), and stashes the `definition` on the model.
 - `getFields` reflects over `rawAttributes` to derive `primaryKey`, `allowNull`,
-  `foreignKey`/`foreignTarget`, and `autoPopulated`.
+  `foreignKey`/`foreignTarget`, and `autoPopulated`, and carries through `description`
+  (`description ?? comment`, matching the valkey adapter), `defaultValue`, `args`, `resolve`,
+  `ignoreGlobalKey` and `writable`. The last four are meaningless to Sequelize and survive only
+  because `define` passes unknown attribute keys onto `rawAttributes` untouched — undocumented
+  behaviour, so `__tests__/define-model.test.ts` carries a canary for it. They are read back by
+  name rather than by spreading `rawAttributes`, which also hangs a circular `Model`
+  back-reference, internals such as `_modelAttribute`, and a `unique` normalised to a shape
+  `DefinitionFieldMeta` does not describe — and `getFields` memoises, so all of it would be
+  retained per field for the process's lifetime.
 - Filtering: `createQueryType` (from `@azerothian/graphql-types`) builds the `where` input;
   `processFilterArgument` → `replaceWhereOperators` (`utils/where-ops.ts`) maps GraphQL
   operator names to Sequelize `Op.*`, and custom operators are resolved. Every read of a

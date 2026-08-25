@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/globals";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
+import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
 
-let rawClient: any;
+let rawClient: IORedis;
 
 const Def = {
   name: "Thing",
@@ -24,10 +25,13 @@ describe("valkey adapter — never scans the keyspace", () => {
     const seen = new Set<string>();
     // Record every command name the adapter invokes on the client.
     const spy = new Proxy(rawClient, {
-      get(target, prop: string) {
-        const v = target[prop];
+      get(target, prop) {
+        // `target` is a real `IORedis`, so an arbitrary-string index into it
+        // needs its own (test-only) view; the value's actual shape is read back
+        // via `typeof` immediately below, not assumed here.
+        const v = (target as unknown as { [k: string]: unknown })[prop as string];
         if (typeof v === "function") {
-          return (...args: any[]) => {
+          return (...args: unknown[]) => {
             if (typeof prop === "string") seen.add(prop.toLowerCase());
             return v.apply(target, args);
           };

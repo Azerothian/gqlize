@@ -59,6 +59,7 @@ describe("utilize - createRoleBasedPermissions", () => {
       "mutationCreateInput",
       "mutationDelete",
       "mutationExtension",
+      "mutationInstanceMethods",
       "mutationUpdate",
       "mutationUpdateInput",
       "query",
@@ -71,6 +72,20 @@ describe("utilize - createRoleBasedPermissions", () => {
 
     const unread = ROLE_BASED_GATES.filter((gate) => !(PERMISSION_KEYS as readonly string[]).includes(gate));
     expect(unread).toEqual([]);
+  });
+
+  it("covers every gate a consumer reads", () => {
+    // The other direction, and the one that fails open. `unread` above catches a
+    // gate this helper emits that nothing consults; this catches a gate a
+    // consumer *does* consult that this helper never emits — which under
+    // `defaultDeny` leaves that surface wide open while the bag looks gated.
+    // `mutationInstanceMethods` shipped in exactly that state: gqlize enforced
+    // it at schema build, `PERMISSION_KEYS` listed it, and `TWO_ARG_GATES` did
+    // not, so `apply` transforms stayed fully exposed to every role.
+    const ungated = (PERMISSION_KEYS as readonly string[])
+      .filter((key) => key !== "options")
+      .filter((key) => !ROLE_BASED_GATES.includes(key));
+    expect(ungated).toEqual([]);
   });
 
   it("defaultDeny emits every boolean gate, but never a scope", () => {

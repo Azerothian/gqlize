@@ -1,10 +1,12 @@
-import {GraphQLObjectType, GraphQLString} from "graphql";
-import Sequelize from "sequelize";
+import {GraphQLObjectType, GraphQLScalarType, GraphQLString} from "graphql";
+import Sequelize, {type Dialect} from "sequelize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import {Ormize} from "@azerothian/ormize";
 import {describe, it, expect} from "@jest/globals";
 
-import {compareFingerprints, fingerprintDefinitions} from "../../src/snapshot";
+import {compareFingerprints, fingerprintDefinitions, type Fingerprint, type FingerprintOptions} from "../../src/snapshot";
+import type {Definition} from "../../src/types";
+import type GQLManager from "../../src/manager";
 import {describeDrift, stableStringify} from "../../src/graphql/snapshot/fingerprint";
 
 /**
@@ -22,7 +24,7 @@ import {describeDrift, stableStringify} from "../../src/graphql/snapshot/fingerp
  * lets the postgres half of the dialect test run without a server.
  */
 
-function baseDefs(): any[] {
+function baseDefs(): Definition[] {
   return [
     {
       name: "Parent",
@@ -50,7 +52,7 @@ function baseDefs(): any[] {
   ];
 }
 
-async function orm(defs: any[] = baseDefs(), dialect: any = "sqlite") {
+async function orm(defs: Definition[] = baseDefs(), dialect: Dialect = "sqlite") {
   const db = new Ormize();
   db.registerAdapter(new SequelizeAdapter({}, {dialect, logging: false}), "db");
   for (const def of defs) {
@@ -61,14 +63,18 @@ async function orm(defs: any[] = baseDefs(), dialect: any = "sqlite") {
 }
 
 /** apply `mutate` to a fresh copy of the fixture, then fingerprint it */
-async function fpWith(mutate: (defs: any[]) => void, opts?: any) {
+async function fpWith(mutate: (defs: Definition[]) => void, opts?: FingerprintOptions) {
   const defs = baseDefs();
   mutate(defs);
   return fingerprintDefinitions(await orm(defs), opts);
 }
 
-function byName(defs: any[], name: string) {
-  return defs.find((d) => d.name === name);
+function byName(defs: Definition[], name: string): Definition {
+  const def = defs.find((d) => d.name === name);
+  if (!def) {
+    throw new Error(`Expected a definition named "${name}"`);
+  }
+  return def;
 }
 
 describe("fingerprintDefinitions", () => {
@@ -90,41 +96,43 @@ describe("fingerprintDefinitions", () => {
   });
 
   describe("flips `models` on", () => {
-    let base: any;
+    let base!: Fingerprint;
     beforeAll(async() => {
       base = fingerprintDefinitions(await orm());
     });
 
-    const drifts = async(fp: any) => compareFingerprints(base, fp);
+    // `compareFingerprints` is synchronous, so `drifts` needs neither `async`
+    // nor an `await` at its call sites.
+    const drifts = (fp: Fingerprint) => compareFingerprints(base, fp);
 
     it("a new field", async() => {
-      expect(await drifts(await fpWith((defs) => {
-        byName(defs, "Child").define.extra = {type: Sequelize.STRING, allowNull: true};
+      expect(drifts(await fpWith((defs) => {
+        byName(defs, "Child").define!.extra = {type: Sequelize.STRING, allowNull: true};
       }))).toEqual(["models"]);
     });
 
     it("a field turning non-null", async() => {
-      expect(await drifts(await fpWith((defs) => {
-        byName(defs, "Child").define.name.allowNull = false;
+      expect(drifts(await fpWith((defs) => {
+        byName(defs, "Child").define!.name.allowNull = false;
       }))).toEqual(["models"]);
     });
 
     it("a field changing type", async() => {
-      expect(await drifts(await fpWith((defs) => {
-        byName(defs, "Child").define.name.type = Sequelize.INTEGER;
+      expect(drifts(await fpWith((defs) => {
+        byName(defs, "Child").define!.name.type = Sequelize.INTEGER;
       }))).toEqual(["models"]);
     });
 
     it("an enum gaining a member", async() => {
       // SDL-invisible-adjacent: the enum's *name* is unchanged, so hashing the
       // GraphQL type name alone would miss this.
-      expect(await drifts(await fpWith((defs) => {
-        byName(defs, "Child").define.state.type = Sequelize.ENUM("open", "closed", "archived");
+      expect(drifts(await fpWith((defs) => {
+        byName(defs, "Child").define!.state.type = Sequelize.ENUM("open", "closed", "archived");
       }))).toEqual(["models"]);
     });
 
     it("a field comment", async() => {
-      expect(await drifts(await fpWith((defs) => {
+      expect(drifts(await fpWith((defs) => {
         byName(defs, "Child").comments = {fields: {name: "the child's name"}};
       }))).toEqual(["models"]);
     });
@@ -132,9 +140,9 @@ describe("fingerprintDefinitions", () => {
     it("a new relationship", async() => {
       // `adapters` moves too: it is keyed by definition name, so a new model
       // shows up there as well as in `models`. Both say "rebuild".
-      expect(await drifts(await fpWith((defs) => {
+      expect(drifts(await fpWith((defs) => {
         defs.push({name: "Pet", define: {name: {type: Sequelize.STRING, allowNull: true}}});
-        byName(defs, "Child").relationships.push({
+        byName(defs, "Child").relationships!.push({
           type: "hasMany", model: "Pet", name: "pets",
           options: {as: "pets", foreignKey: "childId"},
         });
@@ -142,13 +150,13 @@ describe("fingerprintDefinitions", () => {
     });
 
     it("a relationship rename", async() => {
-      expect(await drifts(await fpWith((defs) => {
-        byName(defs, "Parent").relationships[0].options.as = "kids";
+      expect(drifts(await fpWith((defs) => {
+        byName(defs, "Parent").relationships![0].options.as = "kids";
       }))).toEqual(["models"]);
     });
 
     it("a new class method", async() => {
-      expect(await drifts(await fpWith((defs) => {
+      expect(drifts(await fpWith((defs) => {
         byName(defs, "Child").expose = {
           classMethods: {query: {getThing: {type: GraphQLString, args: {q: {type: GraphQLString}}}}},
         };
@@ -156,7 +164,7 @@ describe("fingerprintDefinitions", () => {
     });
 
     it("a class method gaining an argument", async() => {
-      const withMethod = (args: any) => (defs: any[]) => {
+      const withMethod = (args: Record<string, {type: GraphQLScalarType}>) => (defs: Definition[]) => {
         byName(defs, "Child").expose = {
           classMethods: {query: {getThing: {type: GraphQLString, args}}},
         };
@@ -168,7 +176,7 @@ describe("fingerprintDefinitions", () => {
     });
 
     it("a field override", async() => {
-      expect(await drifts(await fpWith((defs) => {
+      expect(drifts(await fpWith((defs) => {
         byName(defs, "Child").override = {
           name: {type: new GraphQLObjectType({name: "ChildName", fields: {raw: {type: GraphQLString}}})},
         };
@@ -176,7 +184,7 @@ describe("fingerprintDefinitions", () => {
     });
 
     it("an ignored field", async() => {
-      expect(await drifts(await fpWith((defs) => {
+      expect(drifts(await fpWith((defs) => {
         byName(defs, "Child").ignoreFields = ["name"];
       }))).toEqual(["models"]);
     });
@@ -272,9 +280,12 @@ describe("compareFingerprints", () => {
   });
 
   it("treats a missing fingerprint as drift, not as a match", () => {
-    // "unchecked" must never read as "fresh" — that is the failure this exists for
-    expect(compareFingerprints(undefined, {} as any)).toEqual(["fingerprint"]);
-    expect(compareFingerprints({} as any, null)).toEqual(["fingerprint"]);
+    // "unchecked" must never read as "fresh" — that is the failure this exists for.
+    // The other side is `{}`: it is never read (both calls short-circuit on the
+    // missing side), so it stands in for "any fingerprint-shaped value" rather
+    // than a real one.
+    expect(compareFingerprints(undefined, {} as unknown as Fingerprint)).toEqual(["fingerprint"]);
+    expect(compareFingerprints({} as unknown as Fingerprint, null)).toEqual(["fingerprint"]);
   });
 
   it("reports every differing key, sorted", async() => {
@@ -297,14 +308,14 @@ describe("the field-type fallback ladder", () => {
    * produces: three distinct digests is three distinct code paths, and the
    * dialect-stability assertion is what says *which* rung produced the middle one.
    */
-  async function binding(patch: (instance: any) => void, dialect: any = "sqlite") {
+  async function binding(patch: (instance: GQLManager) => void, dialect: Dialect = "sqlite") {
     const {default: GqlizeBinding} = await import("../../src/manager");
-    const instance: any = new GqlizeBinding(await orm(baseDefs(), dialect));
+    const instance = new GqlizeBinding(await orm(baseDefs(), dialect));
     patch(instance);
     return fingerprintDefinitions(instance).models;
   }
 
-  const blindToGraphQL = (instance: any) => {
+  const blindToGraphQL = (instance: GQLManager) => {
     instance.getGraphQLOutputType = () => {
       throw new Error("no type mapper");
     };
@@ -357,9 +368,9 @@ describe("stableStringify", () => {
 });
 
 describe("describeDrift", () => {
-  const artifact: any = {
+  const artifact: Fingerprint = {
     formatVersion: 1, gqlizeVersion: "7.0.0-beta.5", graphqlVersion: "17.0.2",
-    adapters: "aaa", models: "bbb", permissionProfile: "public", optionsShape: "ccc",
+    adapters: "aaa", models: "bbb", permissionProfile: "public", idProfile: null, cursorProfile: null, optionsShape: "ccc",
   };
 
   it("prints the value for the keys where the value is the diagnosis", () => {

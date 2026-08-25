@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/globals";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
+import type { AdapterQueryOptions, AdapterWhere } from "@azerothian/utilize/types/index";
+import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
 
-let client: any;
+let client: IORedis;
 let adapter: ValkeyAdapter;
 
 const UserDef = {
@@ -24,7 +26,7 @@ beforeEach(async () => {
   await adapter.createModel(UserDef);
 });
 
-const find = (where?: any, options?: any) => adapter.findAll("User", { where, ...options });
+const find = (where?: AdapterWhere, options?: AdapterQueryOptions) => adapter.findAll("User", { where, ...options });
 
 describe("valkey adapter — transactions (MULTI/EXEC + overlay)", () => {
   it("commit persists all buffered writes atomically", async () => {

@@ -2,7 +2,7 @@ import {
   GraphQLNonNull, GraphQLList, GraphQLInt,
   GraphQLID, GraphQLBoolean,
 } from "graphql";
-import type { GraphQLNullableInputType } from "graphql";
+import type { GraphQLInputFieldConfig, GraphQLInputFieldConfigMap, GraphQLInputType, GraphQLNullableInputType, ThunkObjMap } from "graphql";
 import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
@@ -16,7 +16,7 @@ import { isBuiltInputType, type AuthoredTypeSlot } from "./utils/authored-type";
 
 /** Whether a relationship may appear on a create/update input object. */
 function isRelationshipInputAllowed(options: GqlizeOptions, defName: string, relName: string, forceOptional: boolean) {
-  const permission: any = options.permission;
+  const permission = options.permission;
   if (!permission) {
     return true;
   }
@@ -55,8 +55,8 @@ function hasInputFields(defName: string, defFields: DefinitionFields, associatio
 }
 
 //(instance, defName, fields, relationships, inputTypes, false)
-export function generateInputFields(instance: GQLManager, defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, inputTypes: any, schemaCache: SchemaCache, forceOptional: boolean, options: GqlizeOptions) {
-  const def = waterfallSync(Object.keys(defFields), (fieldName: string, fields: {[key: string]: any}) => {
+export function generateInputFields(instance: GQLManager, defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, inputTypes: SchemaCache["mutationInputs"], schemaCache: SchemaCache, forceOptional: boolean, options: GqlizeOptions) {
+  const def = waterfallSync(Object.keys(defFields), (fieldName: string, fields: GraphQLInputFieldConfigMap) => {
     const doNotSkip = isInputFieldWritable(options.permission, defName, fieldName, forceOptional ? "update" : "create", defFields[fieldName]);
     if (!doNotSkip) {
       return fields;
@@ -81,7 +81,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         // that supplies a built `inputType` supplies a built `type` alongside it.
         const inputType: GraphQLNullableInputType = isBuiltInputType(overrideFieldDefinition.type)
           ? type as unknown as GraphQLNullableInputType
-          : createGQLInputObject(name, type.fields, schemaCache, comment);
+          : createGQLInputObject(name, type.fields as ThunkObjMap<GraphQLInputFieldConfig>, schemaCache, comment);
         recordExternalType(schemaCache, inputType, {
           via: "definitionOverride",
           defName,
@@ -110,8 +110,12 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
           description: comment || `This a primary key for ${defName}`,
         };
       } else {
-        const type = instance.getGraphQLInputType(defName, `${fieldName}${forceOptional ? "Optional" : "Required"}`, field.type);
-        const t = field.allowNull || field.autoPopulated || forceOptional ? type : new GraphQLNonNull(type as any);
+        // The adapter's type mapper serves both output and input positions and is
+        // declared over the whole type union; the `Input` suffix it is called with
+        // is what asks for the input side, and graphql rejects an output-only type
+        // when the input object is built.
+        const type = instance.getGraphQLInputType(defName, `${fieldName}${forceOptional ? "Optional" : "Required"}`, field.type) as GraphQLInputType;
+        const t = field.allowNull || field.autoPopulated || forceOptional ? type : new GraphQLNonNull(type as GraphQLNullableInputType);
         fields[fieldName] = {
           type: t,
           description: comment,
@@ -121,26 +125,28 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
     return fields;
   }, {});
 
-  return waterfallSync(Object.keys(associations), (relName: string, fields: any) => {
+  return waterfallSync(Object.keys(associations), (relName: string, fields: GraphQLInputFieldConfigMap) => {
     if (!isRelationshipInputAllowed(options, defName, relName, forceOptional)) {
       return fields;
     }
     const association = associations[relName];
-    if (!inputTypes[association.target]) {
+    const targetInputs = inputTypes[association.target];
+    if (!targetInputs) {
       return fields;
     }
-    const fld: any = {};
+    const fld: GraphQLInputFieldConfigMap = {};
     const filterType = instance.getFilterGraphQLType(association.target);
-    const createInput = inputTypes[association.target].required;
+    const createInput = targetInputs.required;
+    const optionalInput = targetInputs.optional;
     let updateInput, selectInput;
-    if (inputTypes[association.target].optional) {
+    if (optionalInput) {
       updateInput = createGQLInputObject(`${defName}${capitalize(relName)}Update`, {
         where: {
           type: filterType,
           description: "This will apply a filter to your mutation",
         },
         input: {
-          type: inputTypes[association.target].optional,
+          type: optionalInput,
           description: "This will update the items that you targeted with the filter in the where element",
         },
       }, schemaCache, "");
@@ -153,7 +159,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
           description: "Filter used to find the existing related elements to run relationship mutations on",
         },
         input: {
-          type: inputTypes[association.target].optional,
+          type: optionalInput,
           description: "Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified",
         },
       }, schemaCache, "");
@@ -266,7 +272,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
   }, def);
 }
 
-export default function createMutationInput(instance: GQLManager, defName: string, schemaCache: SchemaCache, inputTypes: any, options: any, mutableDefNames: Set<string>) {
+export default function createMutationInput(instance: GQLManager, defName: string, schemaCache: SchemaCache, inputTypes: SchemaCache["mutationInputs"], options: GqlizeOptions, mutableDefNames: Set<string>) {
   const fields = instance.getFields(defName);
   const associations = instance.getAssociations(defName);
   const definition = instance.getDefinition(defName);

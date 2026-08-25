@@ -11,9 +11,11 @@ import { makeClient, flush, shutdown } from "./helper/redis";
  * `graphql()` types every field value as `unknown`; the assertions here walk the
  * result tree by name, so results are read through one deliberately loose alias.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above; assertions chain arbitrarily deep into this without narrowing
 type QueryResult = { data?: any; errors?: readonly { message: string }[] };
 
 /** One connection edge, as these assertions read it. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as QueryResult above: a node's shape varies per query, and assertions read it unnarrowed
 type Edge = { node: Record<string, any> };
 
 let client: Awaited<ReturnType<typeof makeClient>>;

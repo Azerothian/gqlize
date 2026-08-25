@@ -79,7 +79,7 @@ export default function computeVisibleModels(instance: GQLManager, definitions: 
 }
 
 function isAllowedInstanceMethod(options: GqlizeOptions, defName: string, methodName: string) {
-  const permission: any = options.permission;
+  const permission = options.permission;
   if (!permission?.queryInstanceMethods) {
     return true;
   }

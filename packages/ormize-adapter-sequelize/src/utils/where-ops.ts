@@ -1,12 +1,27 @@
 
-  
-import {Op} from 'sequelize';
 
-const ops = Reflect.ownKeys(Op).reduce((ops, k) => {
-  const v = (Op as any)[k];
-  ops[k] = v;
-  return ops;
-}, {} as any);
+import {Op} from 'sequelize';
+import type { AdapterWhere } from "@azerothian/utilize/types/index";
+
+/**
+ * A key/value map keyed by both string and symbol property names. Used here for
+ * the reflected `Op` lookup table (string operator name -> its `Op` symbol) and
+ * for the where-tree nodes `replaceKeyDeep` walks (which may already carry `Op`
+ * symbol keys from an earlier pass).
+ */
+type PropertyKeyMap<V> = { [key: string | symbol]: V };
+
+// `Op` is declared as a closed interface of `unique symbol` members — there is
+// no index signature, because every member is meant to be reached by its own
+// name. Reflect.ownKeys walks it dynamically instead (so a Sequelize version
+// that adds an operator is picked up without a matching edit here), which is
+// exactly the shape a closed interface cannot describe; the cast reflects that
+// this loop, not the interface, is where the openness lives.
+const ops: PropertyKeyMap<symbol> = Reflect.ownKeys(Op).reduce((acc: PropertyKeyMap<symbol>, k) => {
+  const v = (Op as unknown as PropertyKeyMap<symbol>)[k];
+  acc[k] = v;
+  return acc;
+}, {});
 
 /**
  * String names reserved as Sequelize where-operators (e.g. `in`, `between`,
@@ -27,31 +42,32 @@ export const reservedOperatorNames: ReadonlySet<string> = new Set(
  * @param keyMap
  * @returns {Object}
  */
-function replaceKeyDeep(obj: any, keyMap: any) {
-  return ([] as any[]).concat(Object.getOwnPropertySymbols(obj), Object.keys(obj)).reduce((memo, key)=> {
+function replaceKeyDeep(obj: PropertyKeyMap<unknown>, keyMap: PropertyKeyMap<symbol>): PropertyKeyMap<unknown> {
+  return ([] as (string | symbol)[]).concat(Object.getOwnPropertySymbols(obj), Object.keys(obj)).reduce((memo: PropertyKeyMap<unknown>, key) => {
 
     // determine which key we are going to use
     const targetKey = keyMap[key] ? keyMap[key] : key;
+    const value = obj[key];
 
-    if (Array.isArray(obj[key])) {
+    if (Array.isArray(value)) {
       // recurse if an array
-      memo[targetKey] = obj[key].map((val: any) => {
+      memo[targetKey] = value.map((val: unknown) => {
         if (Object.prototype.toString.call(val) === '[object Object]') {
-          return replaceKeyDeep(val, keyMap);
+          return replaceKeyDeep(val as PropertyKeyMap<unknown>, keyMap);
         }
         return val;
       });
-    } else if (Object.prototype.toString.call(obj[key]) === '[object Object]') {
+    } else if (Object.prototype.toString.call(value) === '[object Object]') {
       // recurse if Object
-      memo[targetKey] = replaceKeyDeep(obj[key], keyMap);
+      memo[targetKey] = replaceKeyDeep(value as PropertyKeyMap<unknown>, keyMap);
     } else {
       // assign the new value
-      memo[targetKey] = obj[key];
+      memo[targetKey] = value;
     }
 
     // return the modified object
     return memo;
-  }, {} as any);
+  }, {});
 }
 
 /**
@@ -59,6 +75,6 @@ function replaceKeyDeep(obj: any, keyMap: any) {
  * @param where arguments object in GraphQL Safe format meaning no leading "$" chars.
  * @returns {Object}
  */
-export function replaceWhereOperators(where: any) {
+export function replaceWhereOperators(where: AdapterWhere): AdapterWhere {
   return replaceKeyDeep(where, ops);
 }

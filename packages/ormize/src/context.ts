@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { RequestContext } from "@azerothian/utilize/types/index";
 import type OrmizeTransaction from "./transaction";
 
 /**
@@ -10,7 +11,7 @@ import type OrmizeTransaction from "./transaction";
  */
 export interface OrmizeStore {
   transaction?: OrmizeTransaction;
-  context?: any;
+  context?: RequestContext;
 }
 
 export const store = new AsyncLocalStorage<OrmizeStore>();

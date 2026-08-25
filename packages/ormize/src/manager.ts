@@ -105,6 +105,7 @@ const gqlizeHookList = [
  * with. `any` on the tail is the variadic pass-through case — the extra
  * arguments differ per hook and ormize only relays them.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- exported (part of the v6 public surface): a hook takes/returns whatever shape flows through the operation it's attached to, and the extra args are relayed verbatim, never inspected
 export type HookFunction = (value: any, ...args: any[]) => any;
 
 /**
@@ -140,6 +141,7 @@ export type WiredRelationship = {
 export type * from "./types/engine";
 
 export default class Ormize<
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the main public class's own type parameter bound/default (v6 surface); gqlize itself instantiates `Ormize<any, IORBase>`, so this has to stay as permissive as the callers that already depend on it
   TModels extends Record<string, any> = { [name: string]: any },
   TBase extends IORBase = IORBase,
 > {
@@ -494,6 +496,7 @@ export default class Ormize<
       TBase
     >;
   }
+  // eslint-disable-next-line @typescript-eslint/require-await -- must stay async: callers (and __tests__/resolution-errors.test.ts) rely on requireDefinition's throw arriving as a rejected promise, not a sync throw
   getDefinitionHooks = async(defName: string): Promise<HookMap> => {
     const def = this.requireDefinition(defName, "Ormize.getDefinitionHooks");
     return (def.hooks || def.options?.hooks) || {};
@@ -592,7 +595,7 @@ export default class Ormize<
       return o;
     }, { ...nativeHooks });
 
-    (this.models as Record<string, any>)[def.name] = await adapter.createModel(def, nativeHooks);
+    (this.models as Record<string, unknown>)[def.name] = await adapter.createModel(def, nativeHooks);
   }
 
   /**
@@ -644,27 +647,32 @@ export default class Ormize<
   }
 
   createHook(hookName: string, def: Definition): HookFunction {
-    return async(first: any, ...args: any[]) => {
+    // `first`/`args` take their types from `HookFunction` by context (the
+    // declared return type above), rather than repeating its `any`s here.
+    return async(first, ...args) => {
       const hooks = await this.getDefinitionHooks(def.name as string);
       let v = first;
       if (hooks[hookName]) {
         const hook = hooks[hookName];
         if (Array.isArray(hook)) {
           if (hooks[hookName].length > 0) {
-            v = await waterfall(hook, async(hook: HookFunction, f: any) => {
+            // Forwards to `hook`, whose own return may or may not be a promise —
+            // `waterfall`'s `.then()` chain adopts it either way, so this callback
+            // does not need to be `async` itself.
+            v = await waterfall(hook, (hook: HookFunction, f) => {
               return hook(f, ...args);
             }, v);
           }
         } else  if (hook instanceof Function) {
           v = await hook(v, ...args);
-        } 
+        }
       }
       if (this.globalHooks[hookName]) {
         if (this.globalHooks[hookName] instanceof Function) {
           v = await (this.globalHooks[hookName])(def.name, v, ...args);
         } else if (Array.isArray(this.globalHooks[hookName])) {
           if (this.globalHooks[hookName].length > 0) {
-            v = await waterfall(this.globalHooks[hookName], async(hook: HookFunction, f: any) => {
+            v = await waterfall(this.globalHooks[hookName], (hook: HookFunction, f) => {
               return hook(def.name, f, ...args);
             }, v);
           }
@@ -688,6 +696,7 @@ export default class Ormize<
    * not fire itself — e.g. a child model's beforeFind/afterFind for JOIN-loaded
    * relations, or afterCount. A no-op (returns `value`) when no such hook exists.
    */
+  // eslint-disable-next-line @typescript-eslint/require-await -- must stay async: declared `Promise<T>` and every caller awaits it; the plain `return value` branch would otherwise return `T` where `Promise<T>` is declared
   runHook = async <T = unknown>(defName: string, hookName: string, value: T, ...args: unknown[]): Promise<T> => {
     const hooks = this.hooks[defName];
     if (hooks && hooks[hookName]) {
@@ -1012,7 +1021,9 @@ export default class Ormize<
       // record, so there is no single find to proxy — see {@link btmGetter}.
       addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, btmGetter(this.host, association));
     } else {
-      const findFunc = await targetAdapter.createFunctionForFind(rel.model);
+      // `createFunctionForFind` is synchronous — it returns the find function
+      // itself, not a promise of one.
+      const findFunc = targetAdapter.createFunctionForFind(rel.model);
       // Captured out of the closure: the `!def.name` guard at the top of this
       // method narrows the property, but that narrowing does not survive into a
       // callback.
@@ -1242,7 +1253,9 @@ export default class Ormize<
   isTypeOf = (defName: string, _definition: Definition, value: unknown): boolean => {
     // `getModel` returns the adapter's model handle, which for a class-based
     // adapter is the constructor `instanceof` needs.
-    const Model = this.getModel(defName) as unknown as abstract new (...args: any[]) => unknown;
+    // Never constructed — only used for `instanceof` below — so the constructor's
+    // own argument types don't matter here.
+    const Model = this.getModel(defName) as unknown as abstract new (...args: unknown[]) => unknown;
     const isType = value instanceof Model;
     return isType;
   }
@@ -1701,7 +1714,10 @@ export default class Ormize<
     }
     const methods = mutationInstanceMethods(definition);
     const written: MutationInput = {};
-    const target: any = row === undefined ? values : new Proxy(row as any, {
+    // Same shape as `InstanceRow` — the row is reached through members named
+    // only at runtime (a Sequelize accessor bound to the real receiver, or
+    // whatever field a transform reads/writes).
+    const target: InstanceRow | MutationInput = row === undefined ? values : new Proxy(row as InstanceRow, {
       get(t, p) {
         const v = Reflect.get(t, p, t);
         // Methods have to keep seeing the real row as their receiver, or a
@@ -1715,8 +1731,11 @@ export default class Ormize<
         return Reflect.set(t, p, v, t);
       },
     });
+    // `requested.length === 0` already returned above, so `apply` is defined
+    // from here on; the assertion just recovers that for the type checker.
+    const applyMap = apply as { [methodName: string]: unknown };
     for (const methodName of requested) {
-      const value = (apply as any)[methodName];
+      const value = applyMap[methodName];
       // A no-arg transform is a `Boolean` flag; naming it without asking for it
       // is not a request to run it.
       if (value === false || value === null || value === undefined) {
@@ -1733,7 +1752,7 @@ export default class Ormize<
       if (typeof implementation !== "function") {
         throw new Error(`ormize: instance-method transform "${defName}.${methodName}" is exposed but the model declares no such instance method.`);
       }
-      let methodArgs: any = value === true ? {} : value;
+      let methodArgs: unknown = value === true ? {} : value;
       if (entry.before) {
         methodArgs = await entry.before({
           params: methodArgs, args, context, info,

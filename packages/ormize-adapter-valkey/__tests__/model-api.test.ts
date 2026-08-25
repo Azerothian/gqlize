@@ -2,19 +2,24 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/glo
 import { Ormize } from "@azerothian/ormize";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import type { Definition } from "@azerothian/utilize/types/index";
+import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
 
-let client: any;
+let client: IORedis;
 
 // Portable models with user class/instance methods; a plain hasMany for finders.
-const makeDefs = () => [
+// Annotated as `Definition[]` (rather than left to the array-literal's own
+// inferred union) so each object is checked against the real contract type
+// on its own, instead of TS synthesizing a merged shape across both literals.
+const makeDefs = (): Definition[] => [
   {
     name: "Author",
     define: { name: { type: DataTypes.String, index: true } },
     options: {
       classMethods: { hello: () => "class-hello" },
-      instanceMethods: { greet(this: any) { return `hi ${this.name}`; } },
+      instanceMethods: { greet(this: { name: string }) { return `hi ${this.name}`; } },
     },
     relationships: [{ type: "hasMany", model: "Post", name: "posts", options: { foreignKey: "authorId" } }],
   },
@@ -35,7 +40,7 @@ beforeAll(async () => { client = await makeClient(); });
 afterAll(async () => { await shutdown(); });
 
 describe.each(backends)("$name adapter — Sequelize-style model API", ({ name, makeAdapter }) => {
-  let orm: any;
+  let orm: Ormize;
   beforeEach(async () => {
     if (name === "valkey") await flush(client);
     orm = new Ormize();
@@ -92,10 +97,10 @@ describe.each(backends)("$name adapter — Sequelize-style model API", ({ name, 
     const p2 = await orm.models.Post.create({ title: "p2" });
 
     const fresh = await orm.models.Author.findByPk(a.id);
-    expect((await fresh.getPosts()).map((p: any) => p.title)).toEqual(["p1"]);
+    expect((await fresh.getPosts()).map((p: { title: string }) => p.title)).toEqual(["p1"]);
 
     await fresh.addPost(p2); // associate an existing record
-    expect((await fresh.getPosts()).map((p: any) => p.title).sort()).toEqual(["p1", "p2"]);
+    expect((await fresh.getPosts()).map((p: { title: string }) => p.title).sort()).toEqual(["p1", "p2"]);
     expect(await fresh.countPosts()).toBe(2);
   });
 });

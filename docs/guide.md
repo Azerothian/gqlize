@@ -436,6 +436,9 @@ whereOperatorTypes: { hasNoComments: GraphQLBoolean },
 Post(where: { hasNoComments: true }) { edges { node { id title } } }
 ```
 
+An exposed instance method can contribute a filter the same way, without declaring the operator
+separately — see [The declarative keys](#the-declarative-keys) (`where`).
+
 ### Ordering (`orderBy`)
 
 `orderBy` is an enum named `{Model}OrderBy` with `{field}ASC` / `{field}DESC` values:
@@ -444,6 +447,10 @@ Post(where: { hasNoComments: true }) { edges { node { id title } } }
 Post(orderBy: titleASC)  { edges { node { title } } }
 Post(orderBy: createdAtDESC) { edges { node { title } } }
 ```
+
+Columns are not the only members: an exposed instance method that declares an `orderBy` adds its
+own `{name}ASC` / `{name}DESC` pair to the enum — see
+[The declarative keys](#the-declarative-keys).
 
 ### Pagination (cursors)
 
@@ -663,7 +670,7 @@ engine also built.
 | `input` | `(params, ctx) => params` | Shape the built query. Receives the same `params` object `definition.before` gets. |
 | `output` | `(value, ctx) => any` | Produce or format the field's value. A method with an `output` needs no implementation at all. |
 | `orderBy` | `string[]` \| `(direction, ctx) => OrderEntry[]` | Contribute `<name>ASC` / `<name>DESC` to the model's `orderBy` enum. |
-| `where` | `string` \| `{ type?, operators?, resolve }` | Contribute a nested operator object to the model's `where` input. |
+| `where` | `string` \| `{ type?, operators?, resolve }` | Contribute a nested operator object to the model's `where` input. `type` is the GraphQL input type the operators take, defaulting to `GraphQLString`; `string` borrows a real column's type instead. |
 
 `ctx` carries `{ args, context, info, modelDefinition, source }` — the args the field was
 selected with, the request context, and the definition the method belongs to.
@@ -756,6 +763,14 @@ composes with `and`/`or` and works at include depth exactly as it does at the ro
 > **Declared `fields` are server-side.** `fields: ["passwordHash"]` loads a column the client's
 > selection set could never reach. That is deliberate — the definition author wrote both the
 > declaration and the method that reads it — but it is worth knowing rather than discovering.
+
+> **The portable `where: "column"` form is dropped when that column is not filterable.**
+> It borrows the named column's value type, so if permissions (or the adapter — Valkey can only
+> filter what it has indexed) left that column out of the model's `where` input, the computed
+> alias disappears with it rather than falling back to a default type. Filterability is a boolean
+> oracle on the value either way, and a denied column must not become reachable through a
+> computed name. The object form is unaffected: it declares its own `type` and its `resolve`
+> decides what it touches.
 
 **Permissions.** The ordering and filtering contributions are gated by
 `permission.queryInstanceMethods`: a method the caller may not select contributes no enum
@@ -986,6 +1001,7 @@ const schema = await createSchema(db, {
     queryClassMethods:    (modelName, methodName) => true,
     mutationClassMethods: (modelName, methodName) => true,
     queryInstanceMethods: (modelName, methodName) => true,
+    mutationInstanceMethods: (modelName, methodName) => true,   // hide a transform from `apply`
     queryExtension:    (fieldName) => true,                     // hide an `options.extend.query` field
     mutationExtension: (fieldName) => true,                     // hide an `options.extend.mutation` field
     options: { /* shared value passed to every predicate */ },
@@ -1002,6 +1018,14 @@ A key that is not in this list is not a predicate at all, and an absent predicat
 **allow** — so a typo silently widens the schema rather than narrowing it. `createSchema`
 types `options`, which turns a misspelled key into a compile error, and warns on
 `console.warn` at build time for callers who aren't typechecking.
+
+**Denying a model also drops the relationships pointing at it.** Removing a model with
+`permission.model`, or emptying it of every field with `permission.field`, leaves nothing for a
+relationship to point at — so every relationship field targeting it disappears too, silently and
+by design. That is how the denial propagates, but it means a missing relationship field is not
+always a bug in the relationship: check the target's permissions first. The one case that *does*
+warn on `console.warn` is a relationship whose target has no definition behind it at all, which
+is an authoring mistake rather than a denial.
 
 **Role-based helper.** `createRoleBasedPermissions(role, rules, options?)` compiles an
 allow/deny rules tree into the `permission` object above (defaults to deny):
@@ -1302,6 +1326,41 @@ db.addDefinition({ name: "Audit", datasource: "sqlite", define: { /* … */ } })
 
 A definition's `datasource` (or the second arg to `addDefinition`) selects its adapter; the
 first registered adapter is the default.
+
+**Cross-adapter key columns must be declared by hand.** Within one adapter, a native association
+creates its own foreign key as a side effect, so the column need not appear in `define`. Across
+adapters there is no association to do that: ormize reads the key column itself to stitch the two
+sides together, and it cannot create a column in someone else's datastore. Declare it explicitly
+on whichever model holds it:
+
+```ts
+db.addDefinition({
+  name: "Post", datasource: "pg",
+  define: { title: { type: Sequelize.STRING } },
+  relationships: [
+    { type: "hasMany", model: "Audit", name: "audits", options: { foreignKey: "postId" } },
+  ],
+});
+
+db.addDefinition({
+  name: "Audit", datasource: "sqlite",
+  define: {
+    action: { type: Sequelize.STRING },
+    postId: { type: Sequelize.INTEGER },   // required: `pg` cannot create a column in `sqlite`
+  },
+});
+```
+
+Which side holds the key follows the relationship type: `belongsTo` keeps `foreignKey` on the
+source and `targetKey` on the target; `hasMany`/`hasOne` keep `sourceKey` on the source and
+`foreignKey` on each target; `belongsToMany` puts `foreignKey` and `otherKey` on the join model
+and `sourceKey`/`targetKey` on the two ends.
+
+`initialise()` validates all of them in a pass once every relationship is wired, and throws
+naming the relationship, the option that produced the name, and the fields the model actually
+has — rather than letting it wire cleanly and fail at the first query as a raw
+`no such column: Audit.postId`. Same-adapter relationships are deliberately not checked, since
+the association creates the column.
 
 ---
 

@@ -1,4 +1,5 @@
 import Sequelize from "sequelize";
+import type { Definition, DefinitionFields, Relationship } from "@azerothian/utilize/types/index";
 
 /**
  * A parameterised pile of ormize definitions, for measuring and for pinning
@@ -28,19 +29,19 @@ export interface SyntheticOptions {
   prefix?: string;
 }
 
-export function syntheticDefinitions(opts: SyntheticOptions): any[] {
+export function syntheticDefinitions(opts: SyntheticOptions): Definition[] {
   const {models, topology = "chain", fields = 8, prefix = "Synth"} = opts;
   const name = (i: number) => `${prefix}${i}`;
-  const definitions: any[] = [];
+  const definitions: Definition[] = [];
   for (let i = 0; i < models; i++) {
-    const define: Record<string, any> = {};
+    const define: DefinitionFields = {};
     for (let f = 0; f < fields; f++) {
       define[`field${f}`] = {
         type: f % 4 === 3 ? Sequelize.INTEGER : Sequelize.STRING,
         allowNull: f % 2 === 0,
       };
     }
-    const relationships: any[] = [];
+    const relationships: Relationship[] = [];
     if (topology === "chain") {
       // `hasMany`, not `belongsTo`, because that is what a chain costs in
       // practice: the link runs model -> Connection -> Edge -> model, so each

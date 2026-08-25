@@ -82,7 +82,7 @@ export default {
       },
     },
   },
-  after({result}: any) {
+  after({result}) {
     if (!result) {
       return result;
     }

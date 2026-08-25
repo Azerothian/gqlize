@@ -288,16 +288,20 @@ const isSet = (value: unknown) => value !== undefined && value !== null;
 const VERBS: {
   name: keyof RelationshipMutation;
   present: (value: unknown) => boolean;
-  apply: (scope: MutationScope, value: any) => Promise<void>;
+  // `value` is genuinely heterogeneous across rows: each verb's real parameter
+  // type differs (see the `applyX` signatures below), and only `args[verb.name]`
+  // at the call site knows which one applies. Narrowed locally, once per verb,
+  // right where the table hands off to the verb's own (properly typed) function.
+  apply: (scope: MutationScope, value: unknown) => Promise<void>;
 }[] = [
-  {name: "create", present: Boolean, apply: applyCreate},
-  {name: "update", present: Boolean, apply: applyUpdate},
-  {name: "delete", present: Boolean, apply: applyDelete},
-  {name: "remove", present: isSet, apply: applyRemove},
-  {name: "add", present: Boolean, apply: applyAdd},
-  {name: "set", present: isSet, apply: applySet},
-  {name: "restore", present: isSet, apply: applyRestore},
-  {name: "select", present: isSet, apply: applySelect},
+  {name: "create", present: Boolean, apply: (s, v) => applyCreate(s, v as MutationInput[])},
+  {name: "update", present: Boolean, apply: (s, v) => applyUpdate(s, v as { where?: MutationFilter; limit?: number; input?: MutationInput }[])},
+  {name: "delete", present: Boolean, apply: (s, v) => applyDelete(s, v as MutationFilter[])},
+  {name: "remove", present: isSet, apply: (s, v) => applyRemove(s, v as true | MutationFilter[])},
+  {name: "add", present: Boolean, apply: (s, v) => applyAdd(s, v as (MutationFilter | LinkEntry)[])},
+  {name: "set", present: isSet, apply: (s, v) => applySet(s, v as MutationFilter | (MutationFilter | LinkEntry)[])},
+  {name: "restore", present: isSet, apply: (s, v) => applyRestore(s, v as MutationFilter | MutationFilter[])},
+  {name: "select", present: isSet, apply: (s, v) => applySelect(s, v as SelectEntry | SelectEntry[])},
 ];
 
 /**

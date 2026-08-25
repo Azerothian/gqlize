@@ -26,7 +26,13 @@ describe("temporalize - permission typing", () => {
         modle: () => true,
       }),
     };
-    // and at runtime, for JS callers and bags built programmatically
-    expect(unknownPermissionKeys(options.resolvePermission!(undefined) as any)).toEqual(["modle"]);
+    // and at runtime, for JS callers and bags built programmatically. The mock
+    // above is synchronous, so the `Promise` member of the return union never
+    // actually occurs here.
+    const result = options.resolvePermission!(undefined);
+    if (result instanceof Promise) {
+      throw new Error("expected resolvePermission to resolve synchronously in this test");
+    }
+    expect(unknownPermissionKeys(result)).toEqual(["modle"]);
   });
 });

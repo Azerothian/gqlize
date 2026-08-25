@@ -4,12 +4,14 @@ import { Ormize as Database } from "@azerothian/ormize";
 import { describe, it, expect } from "@jest/globals";
 
 import { createSchema } from "../src";
+import type {Definition} from "../src/types";
 import { createAdapterForDialect, registerTeardown } from "./helper/dialect";
+import { fieldOn, mutationType, queryType, walkFields } from "./helper/graphql-introspection";
 
 // Every definition here opts out of Sequelize's automatic `createdAt`/`updatedAt`
 // columns: those are ordinary fields, so leaving them on would keep the types
 // under test non-empty and the cases would prove nothing.
-async function createInstance(definitions: any[]) {
+async function createInstance(definitions: Definition[]) {
   const db = new Database();
   const { adapter, name, teardown } = await createAdapterForDialect();
   registerTeardown(teardown);
@@ -42,7 +44,7 @@ describe("permissions - types emptied by restrictions", () => {
         label: { type: Sequelize.STRING },
       },
     }, survivor]);
-    const schema: any = await createSchema(instance, {
+    const schema = await createSchema(instance, {
       permission: {
         field(modelName: string) {
           return modelName !== "Coded";
@@ -51,7 +53,7 @@ describe("permissions - types emptied by restrictions", () => {
     });
     expect(validateSchema(schema)).toEqual([]);
     expect(schema.getType("Coded")).not.toBeDefined();
-    const queryFields = schema.getQueryType().getFields().models.type.getFields();
+    const queryFields = walkFields(queryType(schema), "models").getFields();
     expect(queryFields.Coded).not.toBeDefined();
     expect(queryFields.Survivor).toBeDefined();
   });
@@ -81,7 +83,7 @@ describe("permissions - types emptied by restrictions", () => {
         options: { foreignKey: "branchCode" },
       }],
     }, survivor]);
-    const schema: any = await createSchema(instance, {
+    const schema = await createSchema(instance, {
       permission: {
         field(modelName: string) {
           return modelName !== "Leaf" && modelName !== "Branch";
@@ -109,7 +111,7 @@ describe("permissions - types emptied by restrictions", () => {
         name: { type: Sequelize.STRING },
       },
     }, survivor]);
-    const schema: any = await createSchema(instance, {
+    const schema = await createSchema(instance, {
       permission: {
         mutationCreateInput(modelName: string) {
           return modelName !== "Thing";
@@ -122,9 +124,9 @@ describe("permissions - types emptied by restrictions", () => {
     expect(validateSchema(schema)).toEqual([]);
     expect(schema.getType("ThingRequiredInput")).not.toBeDefined();
     expect(schema.getType("ThingOptionalInput")).not.toBeDefined();
-    const thing = schema.getMutationType().getFields().models.type.getFields().Thing;
+    const thing = fieldOn(walkFields(mutationType(schema), "models"), "Thing");
     // `delete` needs only the filter type, so the mutation itself survives.
-    expect(thing.args.map((a: any) => a.name)).toEqual(["delete"]);
+    expect(thing.args.map((a) => a.name)).toEqual(["delete"]);
     expect(schema.getType("SurvivorRequiredInput")).toBeDefined();
   });
 
@@ -136,7 +138,7 @@ describe("permissions - types emptied by restrictions", () => {
         name: { type: Sequelize.STRING },
       },
     }, survivor]);
-    const schema: any = await createSchema(instance, {
+    const schema = await createSchema(instance, {
       permission: {
         mutationCreateInput(modelName: string) {
           return modelName !== "Thing";
@@ -150,7 +152,7 @@ describe("permissions - types emptied by restrictions", () => {
       },
     });
     expect(validateSchema(schema)).toEqual([]);
-    const mutationFields = schema.getMutationType().getFields().models.type.getFields();
+    const mutationFields = walkFields(mutationType(schema), "models").getFields();
     expect(mutationFields.Thing).not.toBeDefined();
     expect(mutationFields.Survivor).toBeDefined();
   });

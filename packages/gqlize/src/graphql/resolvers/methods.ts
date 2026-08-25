@@ -1,3 +1,5 @@
+import type { GraphQLResolveInfo } from "graphql";
+import type { AdapterRow, RequestContext } from "../../types";
 import type { BindingContext, FieldBinding } from "./types";
 
 /** `definition.expose.instanceMethods.query[methodName]` */
@@ -16,11 +18,14 @@ export function buildInstanceMethodResolver(
   const { before, after, output } = methodDef;
   const { methodName, defName } = binding;
 
-  return async function resolve(source: any, args: any, context: any, info: any) {
+  return async function resolve(source: AdapterRow, args: unknown, context: RequestContext, info: GraphQLResolveInfo) {
     if (before) {
       args = await before(args, context);
     }
-    const implementation = source?.[methodName];
+    // The method is defined on the row's prototype, which only the adapter knows
+    // the shape of — reaching it is a widening, and the `typeof` below is what
+    // decides whether there is anything to call.
+    const implementation = (source as Record<string, unknown> | null | undefined)?.[methodName];
     // An entry that declares `output` needs no implementation at all: the
     // formatter produces the value from the loaded row. Without one, an absent
     // implementation is still an error — there is nothing to resolve from.
@@ -62,7 +67,7 @@ export function buildClassMethodResolver(
   const { before, after } = methodDef;
   const { defName, methodName } = binding;
 
-  return async function resolve(source: any, args: any, context: any, info: any) {
+  return async function resolve(source: AdapterRow, args: unknown, context: RequestContext, info: GraphQLResolveInfo) {
     return instance.resolveClassMethod(defName, methodName, args, context, before, after);
   };
 }

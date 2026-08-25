@@ -40,6 +40,7 @@ export interface GqlizeConfig extends GqlizeProfile {
    * invocation. The CLI never calls `initialise()`/`sync()` itself — connection
    * details, migrations and seeding are the application's business.
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the consumer's own ormize instance, generic over the model map their `define()` chain accumulated. This is the published shape of a `gqlize.config.ts`; pinning it to `AnyOrmize` would change what a 6.0.0 config file is allowed to return. The CLI forwards the value to `createSchema`, which is where the type is actually required.
   orm: () => any | Promise<any>;
   /** default artifact path; `./gqlize.schema.json` when omitted */
   out?: string;

@@ -13,6 +13,7 @@
  * cannot name `PermissionContext` from `@azerothian/utilize` — it is the same
  * idea.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- caller-owned shape, see doc comment above
 export type CallerContext = any;
 
 /**

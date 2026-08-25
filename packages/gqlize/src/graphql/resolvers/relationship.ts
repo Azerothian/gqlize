@@ -1,5 +1,7 @@
+import type { GraphQLResolveInfo } from "graphql";
 import { processAfter } from "../utils/after";
 import Events from "../../events";
+import type { AdapterRow, FindAllArgs, RequestContext } from "../../types";
 import type { BindingContext, FieldBinding } from "./types";
 
 export function buildSingleRelationshipResolver(
@@ -21,7 +23,7 @@ export function buildSingleRelationshipResolver(
   }
   const targetDef = instance.getDefinition(binding.targetDefName);
 
-  return async function resolve(source: any, args: any, context: any, info: any) {
+  return async function resolve(source: AdapterRow, args: FindAllArgs, context: RequestContext, info: GraphQLResolveInfo) {
     const node = await instance.resolveSingleRelationship(
       targetDef?.name || "",
       association,

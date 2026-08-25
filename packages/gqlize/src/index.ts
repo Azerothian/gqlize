@@ -1,7 +1,6 @@
 import GqlizeBinding from "./manager";
 import { createSchema as buildSchema } from "./graphql/index";
-import type { Ormize } from "@azerothian/ormize";
-import type { GqlizeOptions, IORBase } from "./types";
+import type { AnyOrmize, GqlizeOptions } from "./types";
 
 /**
  * `options` is typed rather than `any` on purpose: `permission` is a closed
@@ -10,7 +9,7 @@ import type { GqlizeOptions, IORBase } from "./types";
  * predicate means ALLOW — a typo fails *open*, silently. `unknownPermissionKeys`
  * covers the same mistake at runtime for JS callers.
  */
-export function createSchema(orm: Ormize<any, IORBase>, options?: GqlizeOptions) {
+export function createSchema(orm: AnyOrmize, options?: GqlizeOptions) {
   return buildSchema(new GqlizeBinding(orm, options), options);
 }
 

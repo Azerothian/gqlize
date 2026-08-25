@@ -16,7 +16,7 @@ import type {
 } from "@azerothian/utilize/types/orm";
 
 /** Author-declared attributes of an optional-bucket instance (Model brand excluded). */
-type OptionalAttrs<I> = I extends Model<any, any> ? Partial<InferAttributes<I>> : {};
+type OptionalAttrs<I> = I extends Model ? Partial<InferAttributes<I>> : {};
 
 /**
  * The composed Sequelize model type. The required merged instance keeps its full
@@ -27,7 +27,7 @@ type OptionalAttrs<I> = I extends Model<any, any> ? Partial<InferAttributes<I>> 
  * preserves the required fragment's creation-attribute typing.
  */
 export type SequelizeModelOf<ReqInstance, OptInstance, ReqStatics, OptStatics> =
-  ReqInstance extends Model<any, any>
+  ReqInstance extends Model
     ? ModelStatic<ReqInstance & OptionalAttrs<OptInstance>> & ReqStatics & Partial<OptStatics>
     : never;
 
@@ -61,7 +61,7 @@ export type IORSequelizeModel = "sequelize";
  * At runtime this is the identity function — the type parameters are erased.
  */
 export function defineModel<
-  TInstance extends Model<any, any>,
+  TInstance extends Model,
   TStatics extends object = {},
   const D extends Definition = Definition,
 >(def: D): ITypedDefinition<D["name"] & string, TInstance, TStatics> {

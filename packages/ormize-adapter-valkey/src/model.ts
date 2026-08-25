@@ -1,4 +1,4 @@
-import { DataTypeDescriptor, DataTypes } from "@azerothian/utilize/types/data-type";
+import { DataType, DataTypeDescriptor, DataTypes } from "@azerothian/utilize/types/data-type";
 import type { Definition, DefinitionFieldMeta, Relationship } from "@azerothian/utilize/types/index";
 import { resolveAttributeTypes } from "./data-type-mapper";
 
@@ -94,8 +94,8 @@ export class ValkeyModel {
     if (pk) {
       this.primaryKey = pk;
       const f = this.fields[pk];
-      this.pkStrategy = f.defaultValue !== undefined || f.type.type === "UUID" ? "uuid" : "provided";
-      if (f.defaultValue !== undefined && f.type.type === "UUID") {
+      this.pkStrategy = f.defaultValue !== undefined || f.type.type === DataType.UUID ? "uuid" : "provided";
+      if (f.defaultValue !== undefined && f.type.type === DataType.UUID) {
         this.pkStrategy = "uuid";
       }
     } else {

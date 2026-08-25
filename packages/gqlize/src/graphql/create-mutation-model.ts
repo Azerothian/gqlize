@@ -1,4 +1,4 @@
-import {GraphQLBoolean, GraphQLInputObjectType, GraphQLList, type GraphQLInputFieldConfigMap} from "graphql";
+import {GraphQLBoolean, GraphQLInputObjectType, GraphQLList, type GraphQLFieldConfigArgumentMap, type GraphQLInputFieldConfigMap} from "graphql";
 import { isMutationInstanceMethodAllowed } from "@azerothian/utilize/gate";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import { capitalize } from "@azerothian/utilize/utils/word";
@@ -63,10 +63,10 @@ export function createInstanceMutationsInput(
   });
 }
 
-export default function createMutationModel(instance: GQLManager, defName: string, schemaCache: SchemaCache, create: any, update: any, del: any, options: GqlizeOptions = {}) {
+export default function createMutationModel(instance: GQLManager, defName: string, schemaCache: SchemaCache, create: boolean, update: boolean, del: boolean, options: GqlizeOptions = {}) {
 
   const input = schemaCache.mutationInputs[defName];
-  const inp: any = {};
+  const inp: GraphQLFieldConfigArgumentMap = {};
   // `input.create`/`input.update` are absent when permissions leave the model
   // with nothing writable — there is no type for the argument to reference.
   if (create && input.create) {
@@ -87,7 +87,9 @@ export default function createMutationModel(instance: GQLManager, defName: strin
       description: `This will find elements for ${defName} and run relationship mutations on them without modifying the elements themselves`,
     };
   }
-  if (del) {
+  // `input.delete` is built unconditionally, so the second half of this test is
+  // for the type only — kept in the same shape as `create`/`update` above.
+  if (del && input.delete) {
     inp.delete = {
       type: input.delete,
       description: `This will delete a new element for ${defName}`,

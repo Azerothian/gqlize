@@ -1,11 +1,22 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/globals";
-import { Ormize } from "@azerothian/ormize";
+import { Ormize, type MutationFilter, type MutationInputTree } from "@azerothian/ormize";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
+import type { AdapterWhere, Definition, Selection } from "@azerothian/utilize/types/index";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
 
-let client: any;
+let client: IORedis;
+
+/**
+ * A row as either adapter returns it — a Sequelize model instance or a plain
+ * Valkey hash. This suite runs the same assertions against both backends and
+ * reads dynamic fields (`title`, `label`, `authorId`, ...) off whichever one
+ * produced the row, so there is no one real shape to name here.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above: two different adapters' rows, read dynamically by field name across both
+type Row = { [field: string]: any };
 
 // One portable model set (authored with DataTypes.*) covering all four relation
 // types, run against BOTH adapters:
@@ -17,7 +28,7 @@ let client: any;
 // No explicit primary key → both adapters synthesize an auto-increment integer
 // `id` (Sequelize's default; Valkey via an INCR sequence). Foreign keys are
 // auto-created by the relationships (nullable), so set/remove can unlink.
-const makeDefs = () => [
+const makeDefs = (): Definition[] => [
   {
     name: "Author",
     define: { name: { type: DataTypes.String, index: true } },
@@ -61,7 +72,7 @@ beforeAll(async () => { client = await makeClient(); });
 afterAll(async () => { await shutdown(); });
 
 describe.each(backends)("$name adapter — relation types + transactions", ({ name, makeAdapter }) => {
-  let orm: any;
+  let orm: Ormize;
 
   beforeEach(async () => {
     if (name === "valkey") await flush(client);
@@ -72,14 +83,20 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
     await orm.sync();
   });
 
-  const create = (model: string, input: any, options?: any) => orm.processCreate(model, null, { input }, {}, options).then((r: any[]) => r[0]);
-  const update = (model: string, where: any, input: any, options?: any) => orm.processUpdate(model, null, { input, where }, {}, options);
-  const list = (model: string, where?: any) => orm.resolveFindAll(model, null, where ? { where } : {}, {}, undefined).then((r: any) => r.models);
-  const one = async (model: string, where: any) => (await list(model, where))[0];
+  // `selection` (unused by any call in this file — every call site omits it)
+  // forwards to `processCreate`/`processUpdate`'s own trailing `selection?`
+  // parameter, not an "options" bag; named for what it actually is.
+  const create = (model: string, input: MutationInputTree, selection?: Selection) =>
+    orm.processCreate(model, null, { input }, {}, selection).then((r) => r[0] as Row);
+  const update = (model: string, where: MutationFilter, input: MutationInputTree, selection?: Selection) =>
+    orm.processUpdate(model, null, { input, where }, {}, selection);
+  const list = (model: string, where?: AdapterWhere) =>
+    orm.resolveFindAll(model, null, where ? { where } : {}, {}, undefined).then((r) => r.models as Row[]);
+  const one = async (model: string, where: AdapterWhere) => (await list(model, where))[0];
   // Read a relationship portably via FK/join queries (avoids adapter-specific
   // resolveSingleRelationship arg quirks). Collections use the shared
   // resolveManyRelationship contract.
-  async function related(sourceModel: string, relName: string, source: any) {
+  async function related(sourceModel: string, relName: string, source: Row) {
     const adapter = orm.getModelAdapter(sourceModel);
     const assoc = adapter.getAssociations(sourceModel)[relName];
     const spk = adapter.getPrimaryKeyNameForModel(sourceModel)[0];
@@ -93,13 +110,16 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
       return one(assoc.target, { [assoc.foreignKey]: source[assoc.sourceKey || spk] });
     }
     const { models } = await adapter.resolveManyRelationship(assoc.target, assoc, source, {args: {}, offset: 0});
-    return models;
+    return models as Row[];
   }
 
   // Read a to-many relation from a FRESHLY re-queried source (a stale source can
   // carry adapter-cached associations, e.g. Sequelize's eager-loaded values).
-  const posts = async () => (await related("Author", "posts", await one("Author", { name: "dave" }))).map((p: any) => p.title).sort();
-  const tags = async () => (await related("Post", "tags", await one("Post", { title: "bm" }))).map((t: any) => t.label).sort();
+  // `related` is called here for hasMany/belongsToMany associations only, so its
+  // result is always the collection branch (`Row[]`), never the single-row or
+  // `null` branches its other callers see.
+  const posts = async () => ((await related("Author", "posts", await one("Author", { name: "dave" }))) as Row[]).map((p) => p.title).sort();
+  const tags = async () => ((await related("Post", "tags", await one("Post", { title: "bm" }))) as Row[]).map((t) => t.label).sort();
 
   it("belongsTo — nested create, set, remove", async () => {
     const post = await create("Post", { title: "p1", author: { create: { name: "alice" } } });
@@ -117,7 +137,9 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
 
   it("hasOne — nested create + read", async () => {
     const author = await create("Author", { name: "carol", profile: { create: { bio: "hello" } } });
-    const profile = await related("Author", "profile", await one("Author", { name: "carol" }));
+    // `related` returns its single-row (`hasOne`) branch here, never a
+    // collection — the just-created profile is known present.
+    const profile = (await related("Author", "profile", await one("Author", { name: "carol" }))) as Row;
     expect(profile.bio).toBe("hello");
     expect(profile.authorId).toEqual(author.id);
   });
@@ -142,7 +164,7 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
     expect(await tags()).toEqual(["t1", "t2"]);
 
     // Reverse direction.
-    expect((await related("Tag", "posts", await one("Tag", { label: "t1" }))).map((p: any) => p.title)).toEqual(["bm"]);
+    expect(((await related("Tag", "posts", await one("Tag", { label: "t1" }))) as Row[]).map((p) => p.title)).toEqual(["bm"]);
 
     // add an existing tag (with a through column — accepted by both adapters).
     await create("Tag", { label: "t3" });

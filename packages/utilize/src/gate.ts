@@ -25,6 +25,7 @@ const log = {
  * argument and never inspected here, so `any` is deliberate: its shape belongs
  * to whoever built the bag.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the role/user bag is built by the caller and never inspected here; `unknown` would force a narrowing on every predicate that reads it, in code this package cannot see.
 export type PermissionContext = any;
 
 /**
@@ -163,7 +164,7 @@ export function isClassMethodAllowed(
   return isAllowed(fn, model, method, permission?.options);
 }
 
-function mutationPredicate(permission: Permission | undefined, kind: MutationKind): any {
+function mutationPredicate(permission: Permission | undefined, kind: MutationKind): Permission["mutationCreate"] {
   switch (kind) {
     case "create":
       return permission?.mutationCreate;

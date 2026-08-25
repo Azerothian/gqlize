@@ -29,6 +29,10 @@ const IGNORES = [
   "**/.yalc/**",
   "**/node_modules/**",
   "**/*.d.ts",
+  // Local agent/editor state. Gitignored, so it is absent in CI — linting it
+  // made a local `pnpm lint` report thousands of warnings CI never sees, and
+  // type-aware linting over that many extra files exhausted the default heap.
+  ".claude/**",
   // Their own workspace members, on their own TypeScript, outside the published
   // surface — and not wired into any turbo task yet either. Worth linting once
   // they are in CI at all.
@@ -76,17 +80,20 @@ const DECLINED = {
 };
 
 /**
- * Rules that report something worth a human look but that nobody should be
- * blocked on today. The root `lint` script caps the total with `--max-warnings`
- * at whatever it is now, which makes it a ratchet: the number can only be
- * lowered, and a change that adds a warning has to remove one first.
+ * Rules that report something worth a human look. These were the ratchet: the
+ * root `lint` script caps the total with `--max-warnings`, a number that may
+ * only be lowered. It reached **zero**, so the cap is `0` and these are warnings
+ * in name only — one new `any` fails the build.
  *
- * `no-explicit-any` is ~1150 of them and is the honest state of the ported
- * v5-era code. `require-await` is ~60 and is mostly structural: an `async`
- * method that satisfies a `Promise`-returning interface has to be `async`
- * whether or not its body awaits, and dropping the keyword would change the
- * declared return type. `await-thenable` and `no-base-to-string` are a dozen
- * between them and each one needs reading before it is touched.
+ * They stay `warn` rather than `error` on purpose. An editor shows a warning
+ * without painting the file red mid-edit, so a half-written line is not an
+ * error while you are still typing it; CI does not care which severity it was.
+ *
+ * `no-explicit-any` was ~1150 of these and was the honest state of the ported
+ * v5-era code. What survives is a named type alias or a suppression carrying a
+ * comment that says which vocabulary the value belongs to — the adapter's, the
+ * consumer's, or the backend's — and why this package cannot name it. Adding
+ * another means writing that sentence.
  */
 const WATCHED = {
   "@typescript-eslint/no-explicit-any": "warn",

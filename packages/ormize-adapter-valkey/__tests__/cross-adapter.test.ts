@@ -1,19 +1,48 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/globals";
-import { graphql } from "graphql";
+import { graphql, type GraphQLSchema, type GraphQLObjectType, type GraphQLInputObjectType } from "graphql";
 import { createSchema } from "@azerothian/gqlize";
 import { Ormize } from "@azerothian/ormize";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
+import type { Relationship } from "@azerothian/utilize/types/index";
 import Sequelize from "sequelize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
 
-let client: any;
+let client: IORedis;
+
+/**
+ * `graphql()` types every field value as `unknown`; these assertions walk deep,
+ * dynamically-shaped result trees by field name across many query shapes, so
+ * results are read through one deliberately loose alias (same rationale as the
+ * identically-named type in gqlize.test.ts).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above; assertions chain arbitrarily deep into this without narrowing
+type QueryResult = { data?: any; errors?: readonly { message: string }[] };
+
+/** One connection edge, as these assertions read it. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as QueryResult above: a node's shape varies per query, and assertions read it unnarrowed
+type Edge = { node: Record<string, any> };
+
+/**
+ * A row as either adapter returns it — a Sequelize model instance or a plain
+ * Valkey hash (same rationale as relations.test.ts's identically-named type).
+ * Used only for the direct (non-GraphQL) adapter/manager reads in this file.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above: two different adapters' rows, read dynamically by field name
+type Row = { [field: string]: any };
+
+/** The one row `processCreate` was asked to make, narrowed to `Row` — see its doc comment. */
+async function createOne(orm: Ormize, model: string, input: Record<string, unknown>): Promise<Row> {
+  const [row] = await orm.processCreate(model, null, { input }, {}, undefined);
+  return row as Row;
+}
 
 // `Item` lives on Valkey and `File` on SQLite, related in both directions: the
 // belongsTo crosses SQLite -> Valkey, the hasMany crosses Valkey -> SQLite.
 async function build(prefix: string) {
-  const orm: any = new Ormize();
+  const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
   orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
   await orm.addDefinition({
@@ -48,8 +77,8 @@ async function build(prefix: string) {
   return { orm, schema };
 }
 
-const q = async (schema: any, source: string) => {
-  const r: any = await graphql({ schema, source });
+const q = async (schema: GraphQLSchema, source: string) => {
+  const r = await graphql({ schema, source }) as QueryResult;
   expect(r.errors).toBeUndefined();
   return r.data;
 };
@@ -67,8 +96,8 @@ describe("cross-adapter relationships — schema", () => {
 
   it("exposes the relationship field on both sides", async () => {
     const { schema } = await build("xa-fields");
-    expect(Object.keys((schema.getType("File") as any).getFields())).toContain("item");
-    expect(Object.keys((schema.getType("Item") as any).getFields())).toContain("files");
+    expect(Object.keys((schema.getType("File") as GraphQLObjectType).getFields())).toContain("item");
+    expect(Object.keys((schema.getType("Item") as GraphQLObjectType).getFields())).toContain("files");
   });
 
   it("reports the relationship as cross-adapter on both sides", async () => {
@@ -87,19 +116,22 @@ describe("cross-adapter relationships — schema", () => {
     const { schema } = await build("xa-include");
     // Neither a SQL JOIN nor a single Valkey round trip can span two datastores,
     // so neither side may offer the relation as an eager-include target.
-    for (const [typeName, relName] of [["GQLTFileInclude", "item"], ["GQLTItemInclude", "files"]]) {
-      const includeType: any = schema.getType(typeName);
-      if (includeType?.getFields) {
-        expect(Object.keys(includeType.getFields())).not.toContain(relName);
-      }
+    for (const [typeName, relName] of [["GQLTFileInclude", "item"], ["GQLTItemInclude", "files"]] as const) {
+      const includeType = schema.getType(typeName) as GraphQLInputObjectType | undefined;
+      // Asserted unconditionally (rather than only when the include type
+      // exists) so this isn't a conditional expect: a schema that omits the
+      // type entirely also satisfies "does not expose the relation as
+      // includable".
+      const keys = includeType?.getFields ? Object.keys(includeType.getFields()) : [];
+      expect(keys).not.toContain(relName);
     }
   });
 });
 
 describe("cross-adapter relationships — queries", () => {
-  const seed = async (orm: any) => {
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
-    const [other] = await orm.processCreate("Item", null, { input: { label: "b" } }, {}, undefined);
+  const seed = async (orm: Ormize) => {
+    const item = await createOne(orm, "Item", { label: "a" });
+    const other = await createOne(orm, "Item", { label: "b" });
     for (const [name, size] of [["f1", 10], ["f2", 20], ["f3", 30]]) {
       await orm.processCreate("File", null, { input: { name, size, itemId: item.id } }, {}, undefined);
     }
@@ -120,14 +152,14 @@ describe("cross-adapter relationships — queries", () => {
     const d = await q(schema, `{ models { Item(where: { label: { eq: "a" } }) { edges { node { files { total edges { node { name } } } } } } } }`);
     const files = d.models.Item.edges[0].node.files;
     expect(files.total).toBe(3);
-    expect(files.edges.map((e: any) => e.node.name).sort()).toEqual(["f1", "f2", "f3"]);
+    expect(files.edges.map((e: Edge) => e.node.name).sort()).toEqual(["f1", "f2", "f3"]);
   });
 
   it("scopes the hasMany to its own parent", async () => {
     const { orm, schema } = await build("xa-q3");
     await seed(orm);
     const d = await q(schema, `{ models { Item(where: { label: { eq: "b" } }) { edges { node { files { edges { node { name } } } } } } } }`);
-    expect(d.models.Item.edges[0].node.files.edges.map((e: any) => e.node.name)).toEqual(["other"]);
+    expect(d.models.Item.edges[0].node.files.edges.map((e: Edge) => e.node.name)).toEqual(["other"]);
   });
 
   it("applies `where` on top of the join key", async () => {
@@ -135,7 +167,7 @@ describe("cross-adapter relationships — queries", () => {
     await seed(orm);
     const d = await q(schema, `{ models { Item(where: { label: { eq: "a" } }) { edges { node { files(where: { size: { gte: 20 } }) { total edges { node { name } } } } } } } }`);
     const files = d.models.Item.edges[0].node.files;
-    expect(files.edges.map((e: any) => e.node.name).sort()).toEqual(["f2", "f3"]);
+    expect(files.edges.map((e: Edge) => e.node.name).sort()).toEqual(["f2", "f3"]);
     expect(files.total).toBe(2);
   });
 
@@ -144,7 +176,7 @@ describe("cross-adapter relationships — queries", () => {
     await seed(orm);
     const d = await q(schema, `{ models { Item(where: { label: { eq: "a" } }) { edges { node { files(orderBy: sizeDESC, first: 2) { total edges { node { name } } } } } } } }`);
     const files = d.models.Item.edges[0].node.files;
-    expect(files.edges.map((e: any) => e.node.name)).toEqual(["f3", "f2"]);
+    expect(files.edges.map((e: Edge) => e.node.name)).toEqual(["f3", "f2"]);
     // `total` is the unpaginated count of the scoped set.
     expect(files.total).toBe(3);
   });
@@ -192,7 +224,7 @@ describe("cross-adapter relationships — queries", () => {
 // The mirror of `build()`: the hasMany parent is on SQLite and the children are
 // on Valkey, so Valkey is the adapter that has to answer the scoped query.
 async function buildMirror(prefix: string) {
-  const orm: any = new Ormize();
+  const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
   orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
   await orm.addDefinition({
@@ -224,8 +256,8 @@ async function buildMirror(prefix: string) {
 describe("cross-adapter relationships — Valkey as the queried target", () => {
   it("resolves a Sequelize hasMany whose children live on Valkey", async () => {
     const { orm, schema } = await buildMirror("xa-m1");
-    const [owner] = await orm.processCreate("Owner", null, { input: { name: "o1" } }, {}, undefined);
-    const [other] = await orm.processCreate("Owner", null, { input: { name: "o2" } }, {}, undefined);
+    const owner = await createOne(orm, "Owner", { name: "o1" });
+    const other = await createOne(orm, "Owner", { name: "o2" });
     await orm.processCreate("Tag", null, { input: { value: "t1", ownerId: String(owner.id) } }, {}, undefined);
     await orm.processCreate("Tag", null, { input: { value: "t2", ownerId: String(owner.id) } }, {}, undefined);
     await orm.processCreate("Tag", null, { input: { value: "t3", ownerId: String(other.id) } }, {}, undefined);
@@ -233,12 +265,12 @@ describe("cross-adapter relationships — Valkey as the queried target", () => {
     const d = await q(schema, `{ models { Owner(where: { name: { eq: "o1" } }) { edges { node { tags { total edges { node { value } } } } } } } }`);
     const tags = d.models.Owner.edges[0].node.tags;
     expect(tags.total).toBe(2);
-    expect(tags.edges.map((e: any) => e.node.value).sort()).toEqual(["t1", "t2"]);
+    expect(tags.edges.map((e: Edge) => e.node.value).sort()).toEqual(["t1", "t2"]);
   });
 
   it("resolves a Valkey belongsTo whose parent lives on Sequelize", async () => {
     const { orm, schema } = await buildMirror("xa-m2");
-    const [owner] = await orm.processCreate("Owner", null, { input: { name: "o1" } }, {}, undefined);
+    const owner = await createOne(orm, "Owner", { name: "o1" });
     await orm.processCreate("Tag", null, { input: { value: "t1", ownerId: String(owner.id) } }, {}, undefined);
 
     const d = await q(schema, `{ models { Tag { edges { node { value owner { name } } } } } }`);
@@ -251,7 +283,7 @@ describe("cross-adapter relationships — mutations", () => {
     const { orm, schema } = await build("xa-mut1");
     await q(schema, `mutation { models { Item(create: { label: "a", files: { create: [{ name: "f1" }] } }) { label } } }`);
     const d = await q(schema, `{ models { Item { edges { node { files { total edges { node { name } } } } } } } }`);
-    expect(d.models.Item.edges[0].node.files.edges.map((e: any) => e.node.name)).toEqual(["f1"]);
+    expect(d.models.Item.edges[0].node.files.edges.map((e: Edge) => e.node.name)).toEqual(["f1"]);
     // ...and the foreign key really landed on the SQLite row
     const files = await orm.models.File.findAll();
     expect(files).toHaveLength(1);
@@ -264,12 +296,12 @@ describe("cross-adapter relationships — mutations", () => {
     await orm.processCreate("File", null, { input: { name: "f1" } }, {}, undefined);
     await q(schema, `mutation { models { Item(update: { where: { label: { eq: "a" } }, input: { files: { add: [{ name: { eq: "f1" } }] } } }) { label } } }`);
     const d = await q(schema, `{ models { Item { edges { node { files { edges { node { name } } } } } } } }`);
-    expect(d.models.Item.edges[0].node.files.edges.map((e: any) => e.node.name)).toEqual(["f1"]);
+    expect(d.models.Item.edges[0].node.files.edges.map((e: Edge) => e.node.name)).toEqual(["f1"]);
   });
 
   it("unlinks a child through a hasMany `remove`", async () => {
     const { orm, schema } = await build("xa-mut3");
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
+    const item = await createOne(orm, "Item", { label: "a" });
     await orm.processCreate("File", null, { input: { name: "f1", itemId: item.id } }, {}, undefined);
     await q(schema, `mutation { models { Item(update: { where: { label: { eq: "a" } }, input: { files: { remove: [{ name: { eq: "f1" } }] } } }) { label } } }`);
     const d = await q(schema, `{ models { Item { edges { node { files { total } } } } } }`);
@@ -278,12 +310,12 @@ describe("cross-adapter relationships — mutations", () => {
 
   it("replaces the whole collection through a hasMany `set`", async () => {
     const { orm, schema } = await build("xa-mut5");
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
+    const item = await createOne(orm, "Item", { label: "a" });
     await orm.processCreate("File", null, { input: { name: "f1", itemId: item.id } }, {}, undefined);
     await orm.processCreate("File", null, { input: { name: "f2" } }, {}, undefined);
     await q(schema, `mutation { models { Item(update: { where: { label: { eq: "a" } }, input: { files: { set: [{ name: { eq: "f2" } }] } } }) { label } } }`);
     const d = await q(schema, `{ models { Item { edges { node { files { edges { node { name } } } } } } } }`);
-    expect(d.models.Item.edges[0].node.files.edges.map((e: any) => e.node.name)).toEqual(["f2"]);
+    expect(d.models.Item.edges[0].node.files.edges.map((e: Edge) => e.node.name)).toEqual(["f2"]);
   });
 
   it("points a belongsTo at an existing parent on the other adapter", async () => {
@@ -297,7 +329,7 @@ describe("cross-adapter relationships — mutations", () => {
 
   it("clears a belongsTo through `remove`", async () => {
     const { orm, schema } = await build("xa-mut6");
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
+    const item = await createOne(orm, "Item", { label: "a" });
     await orm.processCreate("File", null, { input: { name: "f1", itemId: item.id } }, {}, undefined);
     await q(schema, `mutation { models { File(update: { where: { name: { eq: "f1" } }, input: { item: { remove: true } } }) { name } } }`);
     const d = await q(schema, `{ models { File { edges { node { item { label } } } } } }`);
@@ -306,29 +338,29 @@ describe("cross-adapter relationships — mutations", () => {
 
   it("updates a child on the other adapter through a hasMany `update`", async () => {
     const { orm, schema } = await build("xa-mut7");
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
+    const item = await createOne(orm, "Item", { label: "a" });
     await orm.processCreate("File", null, { input: { name: "f1", size: 1, itemId: item.id } }, {}, undefined);
     await orm.processCreate("File", null, { input: { name: "f2", size: 1 } }, {}, undefined);
     await q(schema, `mutation { models { Item(update: { where: { label: { eq: "a" } }, input: { files: { update: [{ where: { name: { eq: "f1" } }, input: { size: 99 } }] } } }) { label } } }`);
     const d = await q(schema, `{ models { File { edges { node { name size } } } } }`);
-    const sizes = Object.fromEntries(d.models.File.edges.map((e: any) => [e.node.name, e.node.size]));
+    const sizes = Object.fromEntries(d.models.File.edges.map((e: Edge) => [e.node.name, e.node.size]));
     // ...and the unrelated file is left alone: the update is scoped to the parent.
     expect(sizes).toEqual({ f1: 99, f2: 1 });
   });
 
   it("deletes a child on the other adapter through a hasMany `delete`", async () => {
     const { orm, schema } = await build("xa-mut8");
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
+    const item = await createOne(orm, "Item", { label: "a" });
     await orm.processCreate("File", null, { input: { name: "f1", itemId: item.id } }, {}, undefined);
     await orm.processCreate("File", null, { input: { name: "f2", itemId: item.id } }, {}, undefined);
     await q(schema, `mutation { models { Item(update: { where: { label: { eq: "a" } }, input: { files: { delete: [{ name: { eq: "f1" } }] } } }) { label } } }`);
     const d = await q(schema, `{ models { File { edges { node { name } } } } }`);
-    expect(d.models.File.edges.map((e: any) => e.node.name)).toEqual(["f2"]);
+    expect(d.models.File.edges.map((e: Edge) => e.node.name)).toEqual(["f2"]);
   });
 
   it("runs a nested mutation on a child through `select` without modifying it", async () => {
     const { orm, schema } = await build("xa-mut9");
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
+    const item = await createOne(orm, "Item", { label: "a" });
     await orm.processCreate("File", null, { input: { name: "f1", size: 1, itemId: item.id } }, {}, undefined);
     // `size` is ignored — `select` only runs the relationship mutations in `input`,
     // here unlinking the child from the very parent that selected it.
@@ -346,22 +378,22 @@ describe("cross-adapter relationships — mutations", () => {
 
   it("updates the parent on the other adapter through a belongsTo `update`", async () => {
     const { orm, schema } = await build("xa-mut11");
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
+    const item = await createOne(orm, "Item", { label: "a" });
     await orm.processCreate("Item", null, { input: { label: "b" } }, {}, undefined);
     await orm.processCreate("File", null, { input: { name: "f1", itemId: item.id } }, {}, undefined);
     await q(schema, `mutation { models { File(update: { where: { name: { eq: "f1" } }, input: { item: { update: { where: { label: { eq: "a" } }, input: { label: "a2" } } } } }) { name } } }`);
     const d = await q(schema, `{ models { Item { edges { node { label } } } } }`);
-    expect(d.models.Item.edges.map((e: any) => e.node.label).sort()).toEqual(["a2", "b"]);
+    expect(d.models.Item.edges.map((e: Edge) => e.node.label).sort()).toEqual(["a2", "b"]);
   });
 
   it("deletes the parent on the other adapter through a belongsTo `delete`", async () => {
     const { orm, schema } = await build("xa-mut12");
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
+    const item = await createOne(orm, "Item", { label: "a" });
     await orm.processCreate("Item", null, { input: { label: "b" } }, {}, undefined);
     await orm.processCreate("File", null, { input: { name: "f1", itemId: item.id } }, {}, undefined);
     await q(schema, `mutation { models { File(update: { where: { name: { eq: "f1" } }, input: { item: { delete: { label: { eq: "a" } } } } }) { name } } }`);
     const d = await q(schema, `{ models { Item { edges { node { label } } } } }`);
-    expect(d.models.Item.edges.map((e: any) => e.node.label)).toEqual(["b"]);
+    expect(d.models.Item.edges.map((e: Edge) => e.node.label)).toEqual(["b"]);
   });
 });
 
@@ -373,7 +405,7 @@ describe("cross-adapter relationships — mutations with Valkey as the target", 
     const { schema } = await buildMirror("xa-mm1");
     await q(schema, `mutation { models { Owner(create: { name: "o1", tags: { create: [{ value: "t1" }] } }) { name } } }`);
     const d = await q(schema, `{ models { Owner { edges { node { tags { edges { node { value } } } } } } } }`);
-    expect(d.models.Owner.edges[0].node.tags.edges.map((e: any) => e.node.value)).toEqual(["t1"]);
+    expect(d.models.Owner.edges[0].node.tags.edges.map((e: Edge) => e.node.value)).toEqual(["t1"]);
   });
 
   it("links, updates, unlinks and deletes a Valkey child from a SQLite parent", async () => {
@@ -381,7 +413,7 @@ describe("cross-adapter relationships — mutations with Valkey as the target", 
     await orm.processCreate("Owner", null, { input: { name: "o1" } }, {}, undefined);
     await orm.processCreate("Tag", null, { input: { value: "t1" } }, {}, undefined);
     const tags = async () => (await q(schema, `{ models { Owner { edges { node { tags { edges { node { value } } } } } } } }`))
-      .models.Owner.edges[0].node.tags.edges.map((e: any) => e.node.value);
+      .models.Owner.edges[0].node.tags.edges.map((e: Edge) => e.node.value);
 
     const mutate = (input: string) => q(schema, `mutation { models { Owner(update: { where: { name: { eq: "o1" } }, input: { tags: ${input} } }) { name } } }`);
     await mutate(`{ add: [{ value: { eq: "t1" } }] }`);
@@ -414,7 +446,7 @@ describe("cross-adapter relationships — mutations with Valkey as the target", 
 // The third relationship type: like hasMany the key lives on the target, but only
 // one row comes back.
 async function buildHasOne(prefix: string) {
-  const orm: any = new Ormize();
+  const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
   orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
   await orm.addDefinition({
@@ -445,7 +477,7 @@ async function buildHasOne(prefix: string) {
 describe("cross-adapter relationships — hasOne", () => {
   it("resolves a hasOne whose target lives on the other adapter", async () => {
     const { orm, schema } = await buildHasOne("xa-h1");
-    const [account] = await orm.processCreate("Account", null, { input: { email: "a@b.c" } }, {}, undefined);
+    const account = await createOne(orm, "Account", { email: "a@b.c" });
     await orm.processCreate("Profile", null, { input: { nickname: "nick", accountId: `${account.id}` } }, {}, undefined);
     const d = await q(schema, `{ models { Account { edges { node { email profile { nickname } } } } } }`);
     expect(d.models.Account.edges[0].node).toEqual({ email: "a@b.c", profile: { nickname: "nick" } });
@@ -471,7 +503,7 @@ describe("cross-adapter relationships — hasOne", () => {
     // Replacing a hasOne unlinks whoever held the slot before.
     await mutate(`{ set: { nickname: { eq: "other" } } }`);
     expect(await profile()).toEqual({ nickname: "other" });
-    const orphaned = await orm.getModelAdapter("Profile").findAll("Profile", { where: { nickname: { eq: "nick" } } });
+    const orphaned = (await orm.getModelAdapter("Profile").findAll("Profile", { where: { nickname: { eq: "nick" } } })) as Row[];
     expect(orphaned[0].accountId).toBeNull();
     await mutate(`{ remove: true }`);
     expect(await profile()).toBeNull();
@@ -484,7 +516,7 @@ describe("cross-adapter relationships — hasOne", () => {
 // caller's choice, expressed by which adapter the through model is registered on
 // — both are exercised below.
 async function buildBtm(prefix: string, throughOn: "valkey" | "sqlite") {
-  const orm: any = new Ormize();
+  const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
   orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
   await orm.addDefinition({
@@ -550,10 +582,10 @@ describe.each(["sqlite", "valkey"] as const)("cross-adapter relationships — be
     return built;
   };
   // Every mutation below drives the SQLite side; the queries read both directions.
-  const mutate = (schema: any, body: string) => q(schema, `mutation { models { Student(update: { where: { name: { eq: "ann" } }, input: { courses: ${body} } }) { name } } }`);
-  const coursesOf = async (schema: any, student = "ann", args = "") => (await q(schema, `{ models { Student(where: { name: { eq: "${student}" } }) { edges { node { courses${args} { total edges { node { title } } } } } } } }`))
+  const mutate = (schema: GraphQLSchema, body: string) => q(schema, `mutation { models { Student(update: { where: { name: { eq: "ann" } }, input: { courses: ${body} } }) { name } } }`);
+  const coursesOf = async (schema: GraphQLSchema, student = "ann", args = "") => (await q(schema, `{ models { Student(where: { name: { eq: "${student}" } }) { edges { node { courses${args} { total edges { node { title } } } } } } } }`))
     .models.Student.edges[0].node.courses;
-  const enrolments = async (orm: any) => orm.getModelAdapter("Enrolment").findAll("Enrolment", {});
+  const enrolments = (orm: Ormize): Promise<Row[]> => orm.getModelAdapter("Enrolment").findAll("Enrolment", {}) as Promise<Row[]>;
 
   it("flags the relationship as cross-adapter and carries its join model", async () => {
     const { orm } = await build("xa-btm-s");
@@ -572,17 +604,17 @@ describe.each(["sqlite", "valkey"] as const)("cross-adapter relationships — be
 
     const courses = await coursesOf(schema);
     expect(courses.total).toBe(2);
-    expect(courses.edges.map((e: any) => e.node.title).sort()).toEqual(["art", "maths"]);
+    expect(courses.edges.map((e: Edge) => e.node.title).sort()).toEqual(["art", "maths"]);
     // The mirror direction reads the same join rows by the other key.
     const d = await q(schema, `{ models { Course(where: { title: { eq: "maths" } }) { edges { node { students { edges { node { name } } } } } } } }`);
-    expect(d.models.Course.edges[0].node.students.edges.map((e: any) => e.node.name)).toEqual(["ann"]);
+    expect(d.models.Course.edges[0].node.students.edges.map((e: Edge) => e.node.name)).toEqual(["ann"]);
     expect(await enrolments(orm)).toHaveLength(2);
   });
 
   it("writes and then updates join-row attributes through `add`", async () => {
     const { orm, schema } = await build("xa-btm-t");
     await mutate(schema, `{ add: [{ where: { title: { eq: "maths" } }, through: { grade: "A" } }] }`);
-    expect((await enrolments(orm)).map((e: any) => e.grade)).toEqual(["A"]);
+    expect((await enrolments(orm)).map((e) => e.grade)).toEqual(["A"]);
     // Adding an already-linked target updates the existing row rather than
     // creating a second one.
     await mutate(schema, `{ add: [{ where: { title: { eq: "maths" } }, through: { grade: "B" } }] }`);
@@ -595,8 +627,8 @@ describe.each(["sqlite", "valkey"] as const)("cross-adapter relationships — be
     const { orm, schema } = await build("xa-btm-o");
     await mutate(schema, `{ add: [{ where: { title: { eq: "maths" } } }] }`);
     await q(schema, `mutation { models { Student(update: { where: { name: { eq: "bob" } }, input: { courses: { add: [{ where: { title: { eq: "art" } } }] } } }) { name } } }`);
-    expect((await coursesOf(schema, "ann")).edges.map((e: any) => e.node.title)).toEqual(["maths"]);
-    expect((await coursesOf(schema, "bob")).edges.map((e: any) => e.node.title)).toEqual(["art"]);
+    expect((await coursesOf(schema, "ann")).edges.map((e: Edge) => e.node.title)).toEqual(["maths"]);
+    expect((await coursesOf(schema, "bob")).edges.map((e: Edge) => e.node.title)).toEqual(["art"]);
     expect(await enrolments(orm)).toHaveLength(2);
   });
 
@@ -604,7 +636,7 @@ describe.each(["sqlite", "valkey"] as const)("cross-adapter relationships — be
     const { orm, schema } = await build("xa-btm-r");
     await mutate(schema, `{ add: [{ where: { title: { eq: "maths" } } }, { where: { title: { eq: "art" } } }] }`);
     await mutate(schema, `{ remove: [{ title: { eq: "maths" } }] }`);
-    expect((await coursesOf(schema)).edges.map((e: any) => e.node.title)).toEqual(["art"]);
+    expect((await coursesOf(schema)).edges.map((e: Edge) => e.node.title)).toEqual(["art"]);
     // The link is gone but the target is not.
     expect(await enrolments(orm)).toHaveLength(1);
     const d = await q(schema, `{ models { Course(where: { title: { eq: "maths" } }) { total } } }`);
@@ -615,30 +647,30 @@ describe.each(["sqlite", "valkey"] as const)("cross-adapter relationships — be
     const { schema } = await build("xa-btm-e");
     await mutate(schema, `{ add: [{ where: { title: { eq: "maths" } } }, { where: { title: { eq: "art" } } }] }`);
     await mutate(schema, `{ set: [{ where: { title: { eq: "music" } }, through: { grade: "C" } }] }`);
-    expect((await coursesOf(schema)).edges.map((e: any) => e.node.title)).toEqual(["music"]);
+    expect((await coursesOf(schema)).edges.map((e: Edge) => e.node.title)).toEqual(["music"]);
   });
 
   it("creates the target on the other adapter and links it", async () => {
     const { schema } = await build("xa-btm-c");
     await mutate(schema, `{ create: [{ title: "physics" }] }`);
-    expect((await coursesOf(schema)).edges.map((e: any) => e.node.title)).toEqual(["physics"]);
+    expect((await coursesOf(schema)).edges.map((e: Edge) => e.node.title)).toEqual(["physics"]);
   });
 
   it("updates and deletes targets through the relationship", async () => {
     const { schema } = await build("xa-btm-u");
     await mutate(schema, `{ add: [{ where: { title: { eq: "maths" } } }, { where: { title: { eq: "art" } } }] }`);
     await mutate(schema, `{ update: [{ where: { title: { eq: "art" } }, input: { title: "drawing" } }] }`);
-    expect((await coursesOf(schema)).edges.map((e: any) => e.node.title).sort()).toEqual(["drawing", "maths"]);
+    expect((await coursesOf(schema)).edges.map((e: Edge) => e.node.title).sort()).toEqual(["drawing", "maths"]);
     await mutate(schema, `{ delete: [{ title: { eq: "maths" } }] }`);
-    expect((await coursesOf(schema)).edges.map((e: any) => e.node.title)).toEqual(["drawing"]);
+    expect((await coursesOf(schema)).edges.map((e: Edge) => e.node.title)).toEqual(["drawing"]);
   });
 
   it("applies `where`, ordering and pagination on top of the join", async () => {
     const { schema } = await build("xa-btm-w");
     await mutate(schema, `{ add: [{ where: { title: { eq: "maths" } } }, { where: { title: { eq: "art" } } }, { where: { title: { eq: "music" } } }] }`);
-    expect((await coursesOf(schema, "ann", `(where: { title: { eq: "art" } })`)).edges.map((e: any) => e.node.title)).toEqual(["art"]);
+    expect((await coursesOf(schema, "ann", `(where: { title: { eq: "art" } })`)).edges.map((e: Edge) => e.node.title)).toEqual(["art"]);
     const page = await coursesOf(schema, "ann", "(orderBy: titleASC, first: 2)");
-    expect(page.edges.map((e: any) => e.node.title)).toEqual(["art", "maths"]);
+    expect(page.edges.map((e: Edge) => e.node.title)).toEqual(["art", "maths"]);
     // `total` is the unpaginated count of the linked set.
     expect(page.total).toBe(3);
   });
@@ -651,8 +683,8 @@ describe.each(["sqlite", "valkey"] as const)("cross-adapter relationships — be
   it("exposes accessors on the source instance", async () => {
     const { orm, schema } = await build("xa-btm-a");
     await mutate(schema, `{ add: [{ where: { title: { eq: "maths" } } }] }`);
-    const [student] = await orm.getModelAdapter("Student").findAll("Student", { where: { name: "ann" } });
-    expect((await student.getCourses()).map((c: any) => c.title)).toEqual(["maths"]);
+    const [student] = (await orm.getModelAdapter("Student").findAll("Student", { where: { name: "ann" } })) as Row[];
+    expect((await student.getCourses()).map((c: Row) => c.title)).toEqual(["maths"]);
     expect(await student.countCourses()).toBe(1);
   });
 });
@@ -660,8 +692,8 @@ describe.each(["sqlite", "valkey"] as const)("cross-adapter relationships — be
 // A through model nobody registered is generated on the first registered adapter
 // — here Valkey, which is registered first below.
 describe("cross-adapter relationships — a generated join model", () => {
-  const buildWith = async (prefix: string, options: any, reciprocal?: any) => {
-    const orm: any = new Ormize();
+  const buildWith = async (prefix: string, options: Relationship["options"], reciprocal?: Relationship["options"]) => {
+    const orm = new Ormize();
     orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
     orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
     await orm.addDefinition({
@@ -680,12 +712,12 @@ describe("cross-adapter relationships — a generated join model", () => {
     await orm.sync();
     return { orm, schema: await createSchema(orm) };
   };
-  const link = async (schema: any) => {
+  const link = async (schema: GraphQLSchema) => {
     await q(schema, `mutation { models { Left(create: { name: "l1" }) { name } } }`);
     await q(schema, `mutation { models { Right(create: { name: "r1" }) { name } } }`);
     await q(schema, `mutation { models { Left(update: { where: { name: { eq: "l1" } }, input: { rights: { add: [{ where: { name: { eq: "r1" } } }] } } }) { name } } }`);
     return (await q(schema, `{ models { Left { edges { node { rights { edges { node { name } } } } } } } }`))
-      .models.Left.edges[0].node.rights.edges.map((e: any) => e.node.name);
+      .models.Left.edges[0].node.rights.edges.map((e: Edge) => e.node.name);
   };
 
   it("generates the named through model on the first registered adapter", async () => {
@@ -704,19 +736,22 @@ describe("cross-adapter relationships — a generated join model", () => {
     expect(orm.getAssociations("Right").lefts.through).toBe("LeftRight");
     expect(await link(schema)).toEqual(["r1"]);
     const d = await q(schema, `{ models { Right { edges { node { lefts { edges { node { name } } } } } } } }`);
-    expect(d.models.Right.edges[0].node.lefts.edges.map((e: any) => e.node.name)).toEqual(["l1"]);
+    expect(d.models.Right.edges[0].node.lefts.edges.map((e: Edge) => e.node.name)).toEqual(["l1"]);
   });
 
   it("mirrors the type of each key it points at", async () => {
     const { orm } = await buildWith("xa-btm-g3", { through: "LeftRight", foreignKey: "leftId", otherKey: "rightId" });
     const fields = orm.getFields("LeftRight");
+    // `DefinitionFieldMeta.type` is `unknown` by contract — the adapter never
+    // promises a shape for the underlying DataType descriptor — so it's
+    // narrowed locally to the one property this assertion reads.
     // `Left.id` is a SQLite auto-increment integer, `Right.id` a Valkey UUID.
-    expect(fields.leftId.type.type).toBe("Int");
-    expect(fields.rightId.type.type).toBe("UUID");
+    expect((fields.leftId.type as { type: string }).type).toBe("Int");
+    expect((fields.rightId.type as { type: string }).type).toBe("UUID");
   });
 
   it("leaves an explicitly registered through model alone", async () => {
-    const orm: any = new Ormize();
+    const orm = new Ormize();
     orm.registerAdapter(new ValkeyAdapter({ prefix: "xa-btm-g4" }, client), "valkey");
     orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
     await orm.addDefinition({
@@ -754,7 +789,7 @@ describe("cross-adapter relationships — a generated join model", () => {
 // Soft delete lives on the SQLite side — Valkey has no paranoid mode — so this
 // pair exercises `delete`/`restore` on a cross-adapter collection.
 async function buildParanoid(prefix: string) {
-  const orm: any = new Ormize();
+  const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
   orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
   await orm.addDefinition({
@@ -785,7 +820,7 @@ async function buildParanoid(prefix: string) {
 describe("cross-adapter relationships — soft delete", () => {
   it("soft-deletes and restores a child on the other adapter", async () => {
     const { orm, schema } = await buildParanoid("xa-p1");
-    const [box] = await orm.processCreate("Box", null, { input: { label: "b1" } }, {}, undefined);
+    const box = await createOne(orm, "Box", { label: "b1" });
     await orm.processCreate("Doc", null, { input: { title: "d1", boxId: box.id } }, {}, undefined);
     const docs = async () => (await q(schema, `{ models { Box { edges { node { docs { total } } } } } }`))
       .models.Box.edges[0].node.docs.total;
@@ -800,8 +835,8 @@ describe("cross-adapter relationships — soft delete", () => {
 describe("cross-adapter relationships — ormize API", () => {
   it("exposes an accessor on the Sequelize source instance", async () => {
     const { orm } = await build("xa-api1");
-    const [item] = await orm.processCreate("Item", null, { input: { label: "a" } }, {}, undefined);
-    const [file] = await orm.processCreate("File", null, { input: { name: "f1", itemId: item.id } }, {}, undefined);
+    const item = await createOne(orm, "Item", { label: "a" });
+    const file = await createOne(orm, "File", { name: "f1", itemId: item.id });
     expect((await file.getItem()).label).toBe("a");
   });
 });

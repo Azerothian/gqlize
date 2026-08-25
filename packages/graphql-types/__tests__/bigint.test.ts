@@ -12,6 +12,25 @@ describe("graphql-types - GQLTBigInt", () => {
     expect(BigIntType.serialize(123n)).toBe("123");
     expect(BigIntType.serialize(PAST_SAFE)).toBe(PAST_SAFE);
   });
+  it("serialize accepts the same runtime shapes parseValue does", () => {
+    expect(BigIntType.serialize(42)).toBe("42");
+    expect(BigIntType.serialize(true)).toBe("true");
+  });
+  it("serialize refuses a value with no meaningful string form", () => {
+    // The failure this pins: `${{}}` is "[object Object]", a plausible-looking
+    // string that would be written to a client as if it were an integer. Same
+    // stance as `GQLTIP`, which refuses rather than emits a lookalike.
+    expect(() => BigIntType.serialize({})).toThrow(/BigInt cannot represent value: object/);
+    expect(() => BigIntType.serialize([1, 2])).toThrow(/BigInt cannot represent value: object/);
+  });
+  it("serialize accepts a driver wrapper that carries a big integer", () => {
+    // The refusal above must not extend to non-primitives in general: drivers
+    // hand bigint columns back as wrapper objects (mysql `Long`, `BigNumber`, a
+    // `Buffer` of digits), and rejecting those outright would break them for no
+    // safety gain — they round-trip exactly.
+    expect(BigIntType.serialize({toString: () => PAST_SAFE})).toBe(PAST_SAFE);
+    expect(BigIntType.serialize(Buffer.from(PAST_SAFE))).toBe(PAST_SAFE);
+  });
   it("parseValue keeps precision past Number.MAX_SAFE_INTEGER", () => {
     expect(BigIntType.parseValue(PAST_SAFE)).toBe(9007199254740993n);
     // The failure this pins: `Number("9007199254740993")` is 9007199254740992.

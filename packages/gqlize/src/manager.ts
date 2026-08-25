@@ -8,21 +8,8 @@ import logger from "@azerothian/utilize/utils/logger";
 import buildIncludeFromSelection, { mergeIncludeMaps, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
 import { methodOptionHooks, methodProjection, queryInstanceMethods, type MethodSelection } from "@azerothian/utilize/exposed-methods";
 import { getArgumentValues, type GraphQLObjectType } from "graphql";
-import type { Ormize } from "@azerothian/ormize";
 import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
-import { AdapterRow, Association, DeclaredIncludeMap, FindAllArgs, GlobalKeyTargets, GqlizeAdapter, GqlizeOptions, IncludeMap, IORBase, NativeDataType, Permission, RequestContext, Selection } from './types';
-
-/**
- * The engine this binding wraps.
- *
- * `any` for the model map is deliberate. `Ormize` is generic over the map its
- * fluent `define()` chain accumulates, and the binding never reads a model by
- * name — it forwards. Naming a concrete map here would reject every instance a
- * caller actually builds, and naming the default one would reject the typed ones.
- * The base parameter keeps its own constraint: it is a registry key, and `any`
- * is not one.
- */
-type AnyOrmize = Ormize<any, IORBase>;
+import { AdapterRow, AnyOrmize, Association, DeclaredIncludeMap, FindAllArgs, GlobalKeyTargets, GqlizeAdapter, GqlizeOptions, IncludeMap, NativeDataType, Permission, RequestContext, Selection } from './types';
 
 /**
  * GraphQL binding that composes an `Ormize` backend instance. The schema builders
@@ -196,7 +183,7 @@ export default class GqlizeBinding {
       if (!methods[name]) {
         continue;
       }
-      let args: any = undefined;
+      let args: MethodSelection["args"] = undefined;
       try {
         const fieldDef = typeFields?.[name];
         if (fieldDef) {
@@ -349,7 +336,10 @@ export default class GqlizeBinding {
   resolveSingleRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, info?: GraphQLResolveInfo) => {
     return this.orm.resolveSingleRelationship(defName, association, source, args, context, this.buildSelection(defName, info));
   }
-  resolveFindAll = async(defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, info: GraphQLResolveInfo) => {
+  // `info` is optional for the same reason it is on the relationship resolvers:
+  // `node(id:)` fetches through this path deliberately without one, so the
+  // interface-level selection cannot narrow which columns are loaded.
+  resolveFindAll = async(defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, info?: GraphQLResolveInfo) => {
     const adapter = this.getModelAdapter(defName);
     const a = await adapter.replaceIdInArgs(args, defName, info?.variableValues, {codec: this.idCodec});
     const selection = this.buildSelection(defName, info, a);

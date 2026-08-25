@@ -3,6 +3,11 @@ import fs from "fs";
 import path from "path";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { GqlizeAdapter } from "../../src/types";
+// Type-only imports: erased at compile time, so the sqlite project still never
+// actually loads the PGlite WASM module at runtime (the real `require`s stay
+// inside the lazy `getSharedPg()` below) — these just give `SharedPg` real types.
+import type { PGlite } from "@electric-sql/pglite";
+import type { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 
 /**
  * Dialect-aware test adapter factory. The dialect is selected by the
@@ -24,8 +29,8 @@ export function currentDialect(): "sqlite" | "postgres" {
 }
 
 interface SharedPg {
-  pglite: any;
-  server: any;
+  pglite: PGlite;
+  server: PGLiteSocketServer;
   dir: string;
 }
 let shared: SharedPg | undefined;
@@ -94,7 +99,7 @@ export async function createAdapterForDialect(): Promise<DialectAdapter> {
     // Clean slate for this test — the previous test's connection is already
     // closed by the afterEach teardown, so direct access is safe here.
     await s.pglite.exec("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;");
-    const adapter = new SequelizeAdapter({}, {
+    const sequelizeAdapter = new SequelizeAdapter({}, {
       dialect: "postgres",
       host: s.dir,
       port: 5432,
@@ -103,9 +108,12 @@ export async function createAdapterForDialect(): Promise<DialectAdapter> {
       database: "postgres",
       logging: false,
       pool: { max: 1, min: 0, idle: 1000 },
-    }) as unknown as GqlizeAdapter;
+    });
+    const adapter = sequelizeAdapter as unknown as GqlizeAdapter;
     const teardown = async () => {
-      try { await (adapter as any).sequelize.close(); } catch (e) { /* noop */ }
+      // Closing over the concrete adapter (rather than the widened `GqlizeAdapter`
+      // view) gives real access to `.sequelize` with no cast at all.
+      try { await sequelizeAdapter.sequelize.close(); } catch (e) { /* noop */ }
     };
     return { adapter, name: "postgres", teardown };
   }

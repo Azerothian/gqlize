@@ -2,7 +2,23 @@ import {createInstance} from "./helper";
 import {createSchema} from "../src";
 import { GraphQLObjectType } from 'graphql';
 import {describe, it, expect, jest} from "@jest/globals";
-import {BUILD_TIME_PERMISSION_KEYS, PERMISSION_KEYS, RESOLUTION_TIME_PERMISSION_KEYS} from "@azerothian/utilize";
+import {
+  BUILD_TIME_PERMISSION_KEYS,
+  PERMISSION_KEYS,
+  RESOLUTION_TIME_PERMISSION_KEYS,
+  type Permission,
+} from "@azerothian/utilize";
+import {
+  argInputObjectType,
+  asInputObjectType,
+  enumType,
+  fieldOn,
+  inputFieldInputObjectType,
+  inputObjectType,
+  mutationType,
+  queryType,
+  walkFields,
+} from "./helper/graphql-introspection";
 
 describe("permissions", () => {
   it("model", async() => {
@@ -34,9 +50,8 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const taskFields = schema.getQueryType()?.getFields().
-      models.type.getFields().Task.type.getFields().edges.type.ofType.getFields().node.type.getFields();
+    });
+    const taskFields = walkFields(queryType(schema), "models", "Task", "edges", "node").getFields();
     expect(taskFields.mutationCheck).toBeDefined();
     expect(taskFields.name).not.toBeDefined();
   });
@@ -71,8 +86,8 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const queryFields = schema.getQueryType().getFields().classMethods.type.getFields().Task.type.getFields();
+    });
+    const queryFields = walkFields(queryType(schema), "classMethods", "Task").getFields();
     expect(queryFields.getHiddenData).not.toBeDefined();
     return expect(queryFields.getHiddenData2).toBeDefined();
   });
@@ -87,8 +102,8 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const queryFields = schema.getQueryType().getFields().classMethods.type.getFields().Task.type.getFields();
+    });
+    const queryFields = walkFields(queryType(schema), "classMethods", "Task").getFields();
     expect(queryFields.getHiddenData).not.toBeDefined();
     return expect(queryFields.getHiddenData2).toBeDefined();
   });
@@ -103,8 +118,8 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const taskFields = schema.getQueryType().getFields().models.type.getFields().Task.type.getFields().edges.type.ofType.getFields().node.type.getFields();
+    });
+    const taskFields = walkFields(queryType(schema), "models", "Task", "edges", "node").getFields();
     return expect(taskFields.items).not.toBeDefined();
   });
   it("relationship - denying every relationship omits the include type", async() => {
@@ -118,12 +133,12 @@ describe("permissions", () => {
           return modelName !== "Task";
         },
       },
-    }) as any;
+    });
     expect(schema.getType("GQLTTaskIncludeObject")).not.toBeDefined();
-    const taskField = schema.getQueryType().getFields().models.type.getFields().Task;
-    expect(taskField.args.find((a: any) => a.name === "include")).not.toBeDefined();
+    const taskField = fieldOn(walkFields(queryType(schema), "models"), "Task");
+    expect(taskField.args.find((a) => a.name === "include")).not.toBeDefined();
     // Sibling models are unaffected and keep their include argument.
-    const taskItemField = schema.getQueryType().getFields().models.type.getFields().TaskItem;
+    const taskItemField = walkFields(queryType(schema), "models").getFields().TaskItem;
     expect(taskItemField).toBeDefined();
   });
   it("model - denied datatypes are excluded from include types", async() => {
@@ -136,32 +151,35 @@ describe("permissions", () => {
           return modelName !== "Item";
         },
       },
-    }) as any;
+    });
     const includeType = schema.getType("GQLTTaskIncludeObject");
     expect(includeType).toBeDefined();
-    const includeFields = includeType.getFields();
+    if (!includeType) {
+      throw new Error("Expected GQLTTaskIncludeObject to be defined");
+    }
+    const includeFields = asInputObjectType(includeType).getFields();
     expect(includeFields.items).toBeDefined();
     expect(includeFields.item).not.toBeDefined();
     expect(includeFields.btmItems).not.toBeDefined();
   });
   it("type cache - a later build with a stricter permission re-gates the cached types", async() => {
     const instance = await createInstance();
-    const open: any = await createSchema(instance);
-    expect(Object.keys(open.getType("GQLTQueryTaskWhere").getFields())).toContain("name");
-    expect(open.getType("TaskOrderBy").getValues().map((v: any) => v.name)).toContain("nameASC");
+    const open = await createSchema(instance);
+    expect(Object.keys(inputObjectType(open, "GQLTQueryTaskWhere").getFields())).toContain("name");
+    expect(enumType(open, "TaskOrderBy").getValues().map((v) => v.name)).toContain("nameASC");
 
     // Adapters cache the filter/order/include types by model name, so a second
     // build off the same instance used to hand back the first build's types and
     // silently ignore the stricter permission.
-    const locked: any = await createSchema(instance, {
+    const locked = await createSchema(instance, {
       permission: {
         field(modelName: string, fieldName: string) {
           return !(modelName === "Task" && fieldName === "name");
         },
       },
     });
-    expect(Object.keys(locked.getType("GQLTQueryTaskWhere").getFields())).not.toContain("name");
-    expect(locked.getType("TaskOrderBy").getValues().map((v: any) => v.name)).not.toContain("nameASC");
+    expect(Object.keys(inputObjectType(locked, "GQLTQueryTaskWhere").getFields())).not.toContain("name");
+    expect(enumType(locked, "TaskOrderBy").getValues().map((v) => v.name)).not.toContain("nameASC");
   });
   it("mutation model", async() => {
     const instance = await createInstance();
@@ -174,9 +192,9 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const queryFields = schema.getQueryType().getFields().models.type.getFields();
-    const mutationFields = schema.getMutationType().getFields().models.type.getFields();
+    });
+    const queryFields = walkFields(queryType(schema), "models").getFields();
+    const mutationFields = walkFields(mutationType(schema), "models").getFields();
     expect(queryFields.Task).toBeDefined();
     return expect(mutationFields.Task).not.toBeDefined();
   });
@@ -191,11 +209,11 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const {args} = schema.getMutationType().getFields().models.type.getFields().Task;
-    expect(args.filter((a: any) => a.name === "delete")).toHaveLength(1);
-    expect(args.filter((a: any) => a.name === "update")).toHaveLength(1);
-    return expect(args.filter((a: any) => a.name === "create")).toHaveLength(0);
+    });
+    const {args} = fieldOn(walkFields(mutationType(schema), "models"), "Task");
+    expect(args.filter((a) => a.name === "delete")).toHaveLength(1);
+    expect(args.filter((a) => a.name === "update")).toHaveLength(1);
+    return expect(args.filter((a) => a.name === "create")).toHaveLength(0);
   });
   it("mutation model - update", async() => {
     const instance = await createInstance();
@@ -208,11 +226,11 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const {args} = schema.getMutationType().getFields().models.type.getFields().Task;
-    expect(args.filter((a: any) => a.name === "delete")).toHaveLength(1);
-    expect(args.filter((a: any) => a.name === "update")).toHaveLength(0);
-    return expect(args.filter((a: any) => a.name === "create")).toHaveLength(1);
+    });
+    const {args} = fieldOn(walkFields(mutationType(schema), "models"), "Task");
+    expect(args.filter((a) => a.name === "delete")).toHaveLength(1);
+    expect(args.filter((a) => a.name === "update")).toHaveLength(0);
+    return expect(args.filter((a) => a.name === "create")).toHaveLength(1);
   });
   it("mutation model - delete", async() => {
     const instance = await createInstance();
@@ -225,11 +243,11 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const {args} = schema.getMutationType().getFields().models.type.getFields().Task;
-    expect(args.filter((a: any) => a.name === "delete")).toHaveLength(0);
-    expect(args.filter((a: any) => a.name === "update")).toHaveLength(1);
-    return expect(args.filter((a: any) => a.name === "create")).toHaveLength(1);
+    });
+    const {args} = fieldOn(walkFields(mutationType(schema), "models"), "Task");
+    expect(args.filter((a) => a.name === "delete")).toHaveLength(0);
+    expect(args.filter((a) => a.name === "update")).toHaveLength(1);
+    return expect(args.filter((a) => a.name === "create")).toHaveLength(1);
   });
   it("mutation model - classMethods", async() => {
     const instance = await createInstance();
@@ -242,8 +260,8 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const func = schema.getMutationType().getFields().classMethods.type.getFields().Task.type.getFields();
+    });
+    const func = walkFields(mutationType(schema), "classMethods", "Task").getFields();
     expect(func.reverseName2).toBeDefined();
     return expect(func.reverseName).not.toBeDefined();
   });
@@ -260,10 +278,14 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const {args} = schema.getMutationType().getFields().models.type.getFields().Task;
-    const updateField = args.find((a: any) => a.name === "update");
-    const updateFieldTypeInputFields = updateField.type.ofType.getFields().input.type.getFields();
+    });
+    const {args} = fieldOn(walkFields(mutationType(schema), "models"), "Task");
+    const updateField = args.find((a) => a.name === "update");
+    if (!updateField) {
+      throw new Error('Expected an "update" argument');
+    }
+    const updateInputField = argInputObjectType(updateField).getFields().input;
+    const updateFieldTypeInputFields = inputFieldInputObjectType(updateInputField).getFields();
     return expect(updateFieldTypeInputFields.options2).toBeUndefined();
   });
 
@@ -278,10 +300,13 @@ describe("permissions", () => {
           return true;
         },
       },
-    }) as any;
-    const {args} = schema.getMutationType().getFields().models.type.getFields().Task;
-    const field = args.find((a: any) => a.name === "create");
-    const fieldTypeInputFields = field.type.ofType.getFields();
+    });
+    const {args} = fieldOn(walkFields(mutationType(schema), "models"), "Task");
+    const field = args.find((a) => a.name === "create");
+    if (!field) {
+      throw new Error('Expected a "create" argument');
+    }
+    const fieldTypeInputFields = argInputObjectType(field).getFields();
     return expect(fieldTypeInputFields.options2).toBeUndefined();
   });
 
@@ -297,11 +322,20 @@ describe("permissions", () => {
     // `true`, i.e. to an unrestricted query. Asserting it is never called at
     // build time is what keeps that from being a comment.
     const {GraphQLString} = await import("graphql");
-    const permission: any = {options: {role: "test"}};
-    PERMISSION_KEYS.forEach((key) => {
-      if (key !== "options") {
-        permission[key] = jest.fn(() => true);
+    const permission: Permission = {options: {role: "test"}};
+    const mocks: Record<string, ReturnType<typeof jest.fn>> = {};
+    (PERMISSION_KEYS as readonly string[]).forEach((key) => {
+      if (key === "options") {
+        return;
       }
+      const fn = jest.fn((..._args: unknown[]) => true);
+      mocks[key] = fn;
+      // `Permission` is deliberately closed (no index signature), so a
+      // misspelled key is a compile error for a real caller. Writing every
+      // predicate in one loop off `PERMISSION_KEYS` needs an escape hatch for
+      // that closedness — `unknown` rather than `any` since nothing here reads
+      // the value back through this reference.
+      (permission as unknown as Record<string, unknown>)[key] = fn;
     });
 
     const instance = await createInstance();
@@ -313,24 +347,24 @@ describe("permissions", () => {
       permission,
     });
 
-    const uncalled = BUILD_TIME_PERMISSION_KEYS
-      .filter((key) => key !== "options" && permission[key].mock.calls.length === 0);
+    const uncalled = (BUILD_TIME_PERMISSION_KEYS as readonly string[])
+      .filter((key) => key !== "options" && mocks[key].mock.calls.length === 0);
     expect(uncalled).toEqual([]);
 
-    const calledAtBuildTime = RESOLUTION_TIME_PERMISSION_KEYS
-      .filter((key) => permission[key].mock.calls.length > 0);
+    const calledAtBuildTime = (RESOLUTION_TIME_PERMISSION_KEYS as readonly string[])
+      .filter((key) => mocks[key].mock.calls.length > 0);
     expect(calledAtBuildTime).toEqual([]);
   });
 
   it("threads permission.options into every predicate", async() => {
     const options = {role: "test"};
-    const model = jest.fn(() => true);
-    const field = jest.fn(() => true);
+    const model = jest.fn((_defName: string, _options?: unknown) => true);
+    const field = jest.fn((_defName: string, _fieldName: string, _options?: unknown) => true);
     const instance = await createInstance();
     await createSchema(instance, {permission: {model, field, options}});
 
-    expect(model.mock.calls.every((call: any[]) => call[call.length - 1] === options)).toBe(true);
-    expect(field.mock.calls.every((call: any[]) => call[call.length - 1] === options)).toBe(true);
+    expect(model.mock.calls.every((call) => call[call.length - 1] === options)).toBe(true);
+    expect(field.mock.calls.every((call) => call[call.length - 1] === options)).toBe(true);
   });
 
   it("warns about an unknown permission key, and still builds", async() => {
@@ -342,6 +376,7 @@ describe("permissions", () => {
       // on the calls made rather than on a call count.
       // `as any` stands in for the JS caller: `Permission` is closed, so a
       // misspelled key is a compile error for a TS one.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- simulates a JS caller passing a misspelled key past the closed `Permission` type; no TS caller could construct this literal.
       const schema = await createSchema(instance, {permission: {modle: () => false}} as any);
       const warned = warn.mock.calls.some((call) => String(call[0]).includes("modle"));
       expect(warned).toBe(true);

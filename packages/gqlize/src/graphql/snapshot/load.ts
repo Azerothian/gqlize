@@ -22,6 +22,7 @@ const gunzipAsync = promisify(gunzip);
  */
 export async function loadSchema(
   artifactPath: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- published signature, re-exported from `@azerothian/gqlize/snapshot`. `createSchema` already pins this to `AnyOrmize`; narrowing it here too would change what a 6.0.0 consumer is allowed to pass, so it stays permissive.
   orm: any,
   options: GqlizeOptions & MaterializeOptions = {},
 ): Promise<GraphQLSchema> {
@@ -33,9 +34,9 @@ export async function readSnapshot(artifactPath: string): Promise<SchemaSnapshot
   let buffer: Buffer;
   try {
     buffer = await readFile(artifactPath);
-  } catch (err: any) {
+  } catch (err) {
     throw new Error(
-      `gqlize: could not read schema artifact "${artifactPath}": ${err.message}`,
+      `gqlize: could not read schema artifact "${artifactPath}": ${err instanceof Error ? err.message : String(err)}`,
       {cause: err},
     );
   }
@@ -44,9 +45,9 @@ export async function readSnapshot(artifactPath: string): Promise<SchemaSnapshot
   }
   try {
     return JSON.parse(buffer.toString("utf8"));
-  } catch (err: any) {
+  } catch (err) {
     throw new Error(
-      `gqlize: schema artifact "${artifactPath}" is not valid JSON: ${err.message}`,
+      `gqlize: schema artifact "${artifactPath}" is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
       {cause: err},
     );
   }

@@ -2,8 +2,7 @@ import { createHash } from "node:crypto";
 import { getNamedType, isEnumType, version as graphqlVersion } from "graphql";
 
 import GqlizeBinding from "../../manager";
-import type { Ormize } from "@azerothian/ormize";
-import type { DataTypeDescriptor, Definition, DefinitionFieldMeta, GqlizeOptions, IORBase } from "../../types";
+import type { AnyOrmize, DataTypeDescriptor, Definition, DefinitionFieldMeta, GqlizeOptions } from "../../types";
 import { VERSION as gqlizeVersion } from "../../version";
 
 export const FINGERPRINT_FORMAT_VERSION = 1;
@@ -63,7 +62,7 @@ export interface FingerprintOptions {
  * schema's shape) and every hook/predicate body (they are closures). What is
  * included is the projection the builders actually read.
  */
-export function fingerprintDefinitions(orm: Ormize<any, IORBase> | GqlizeBinding, opts: FingerprintOptions = {}): Fingerprint {
+export function fingerprintDefinitions(orm: AnyOrmize | GqlizeBinding, opts: FingerprintOptions = {}): Fingerprint {
   const instance = orm instanceof GqlizeBinding ? orm : new GqlizeBinding(orm);
   return {
     formatVersion: FINGERPRINT_FORMAT_VERSION,
@@ -253,8 +252,18 @@ function typeShape(type: unknown): string | {name: unknown; fields?: string[]} |
   if (!type) {
     return undefined;
   }
-  if (typeof type !== "object" && typeof type !== "function") {
+  // Excluding `object` and `function` would not narrow `unknown`, leaving
+  // `String()` reading as a stringification of something with no useful one, so
+  // the primitives are named instead. A symbol needs its own branch: it has no
+  // implicit conversion, and only `.toString()` reaches it.
+  if (typeof type === "string") {
+    return type;
+  }
+  if (typeof type === "number" || typeof type === "boolean" || typeof type === "bigint") {
     return String(type);
+  }
+  if (typeof type === "symbol") {
+    return type.toString();
   }
   // Either shape carries `name`; only a config object carries a literal `fields`.
   const authored = type as {name?: unknown; fields?: unknown};

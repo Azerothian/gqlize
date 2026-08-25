@@ -273,6 +273,9 @@ export function setupSwagger(app: INestApplication, orm: Ormize, options: OpenAp
   // pure `buildOpenApiDocument` path).
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- `import()` would make this async and change the API
   const { SwaggerModule } = require("@nestjs/swagger");
-  SwaggerModule.setup(options.path || "docs", app, doc as any);
+  // `SwaggerModule` above is untyped (it comes from a lazy `require`, not a static
+  // import), so this call already isn't checked against `@nestjs/swagger`'s own
+  // `OpenAPIObject` — casting `doc` here added nothing.
+  SwaggerModule.setup(options.path || "docs", app, doc);
   return doc;
 }

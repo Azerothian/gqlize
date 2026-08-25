@@ -3,13 +3,13 @@ import {mergeFilterStatement} from "../src";
 
 import { expect, test } from "@jest/globals";
 
-test("sequelize-adapter - mergeFilterStatement - simple match", async() => {
+test("sequelize-adapter - mergeFilterStatement - simple match", () => {
   const result = mergeFilterStatement("id", 1, true);
   expect(result.id).not.toBeUndefined();
   expect(result.id[Op.eq]).not.toBeUndefined();
   expect(result.id[Op.eq]).toEqual(1);
 });
-test("sequelize-adapter - mergeFilterStatement - simple negative match", async() => {
+test("sequelize-adapter - mergeFilterStatement - simple negative match", () => {
   const result = mergeFilterStatement("id", 1, false);
   expect(result.id).not.toBeUndefined();
   expect(result.id[Op.ne]).not.toBeUndefined();
@@ -17,14 +17,14 @@ test("sequelize-adapter - mergeFilterStatement - simple negative match", async()
 });
 
 
-test("sequelize-adapter - mergeFilterStatement - simple match array", async() => {
+test("sequelize-adapter - mergeFilterStatement - simple match array", () => {
   const arg = [1];
   const result = mergeFilterStatement("id", arg, true);
   expect(result.id).not.toBeUndefined();
   expect(result.id[Op.in]).not.toBeUndefined();
   expect(result.id[Op.in]).toEqual(arg);
 });
-test("sequelize-adapter - mergeFilterStatement - simple negative match array", async() => {
+test("sequelize-adapter - mergeFilterStatement - simple negative match array", () => {
   const arg = [1];
   const result = mergeFilterStatement("id", arg, false);
   expect(result.id).not.toBeUndefined();
@@ -32,7 +32,7 @@ test("sequelize-adapter - mergeFilterStatement - simple negative match array", a
   expect(result.id[Op.notIn]).toEqual(arg);
 });
 
-test("sequelize-adapter - mergeFilterStatement - merge match", async() => {
+test("sequelize-adapter - mergeFilterStatement - merge match", () => {
   const result = mergeFilterStatement("id", 1, true, {
     "id": 2
   });
@@ -48,7 +48,7 @@ test("sequelize-adapter - mergeFilterStatement - merge match", async() => {
 });
 
 
-test("sequelize-adapter - mergeFilterStatement - merge negative match", async() => {
+test("sequelize-adapter - mergeFilterStatement - merge negative match", () => {
   const result = mergeFilterStatement("id", 1, false, {
     "id": 2
   });
@@ -62,7 +62,7 @@ test("sequelize-adapter - mergeFilterStatement - merge negative match", async() 
 });
 
 
-test("sequelize-adapter - mergeFilterStatement - merge match array", async() => {
+test("sequelize-adapter - mergeFilterStatement - merge match array", () => {
   const arg = [1];
   const result = mergeFilterStatement("id", arg, true, {
     "id": 2
@@ -76,7 +76,7 @@ test("sequelize-adapter - mergeFilterStatement - merge match array", async() => 
   expect(result[Op.and][1].id[Op.in]).toEqual(arg);
 });
 
-test("sequelize-adapter - mergeFilterStatement - merge negative match array", async() => {
+test("sequelize-adapter - mergeFilterStatement - merge negative match array", () => {
   const arg = [1];
   const result = mergeFilterStatement("id", arg, false, {
     "id": 2
