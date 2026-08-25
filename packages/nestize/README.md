@@ -64,14 +64,21 @@ per-field operator object gqlize uses (`{ field: { eq, in, like, gte, … } }` w
 `and`/`or` composition).
 
 **`_actions` and `instanceMethods`.** The instance-method route enumerates the *implementations*
-under `options.instanceMethods` — one namespace shared by both `expose` targets — and gates every
-one of them on `permission.queryInstanceMethods`, regardless of whether the definition declared it
-under `expose.instanceMethods.query` or `.mutations`. So a method written as a gqlize pre-commit
-transform is reachable here too, under the query gate rather than
-`permission.mutationInstanceMethods`. It is also not run through a persist path: nestize loads the
-row, calls the method and serializes what it returns, so writes the method makes to `this` are not
-committed the way gqlize's `apply` argument commits them. Gate transforms explicitly, or leave
-`expose.instanceMethods` off here.
+under `options.instanceMethods` — one namespace shared by both `expose` targets — so every declared
+method has a route. Which `expose` target named it decides how the route behaves:
+
+| Declared under | Gate | Behaviour | Response |
+| --- | --- | --- | --- |
+| `expose.instanceMethods.mutations` | `permission.mutationInstanceMethods`, **and** the model's `mutationUpdate` gate | run as a pre-commit transform through `processUpdate` with an empty input and an `apply` bag — the same path gqlize's `apply` argument takes, so it gets the transaction, the recording proxy and scope enforcement | the persisted row |
+| `expose.instanceMethods.query`, or neither target | `permission.queryInstanceMethods` | load the row by primary key and call the method | whatever the method returned |
+
+A transform's writes to `this` are committed, and the request body is its params
+— an absent or empty body means "run it with no params", because calling the
+route is itself the ask. (gqlize's `apply` input reads a falsy value as "named
+but not asked for" only because it lists every exposed transform at once.)
+
+`expose.instanceMethods` defaults to **off** here; temporalize defaults it on.
+Nothing is reachable over REST until you opt in.
 
 ## Options (`NestizeModule.forRoot(orm, options)`)
 
@@ -81,7 +88,7 @@ committed the way gqlize's `apply` argument commits them. Gate transforms explic
 | `pathPrefix`       | —       | Prefix applied to every route (e.g. `api`).                |
 | `includeRelations` | `true`  | Expose nested relationship routes.                         |
 | `readOnly`         | `false` | Only allow reads; writes return `405`.                     |
-| `expose`           | —       | `{ classMethods?, instanceMethods? }` — expose `_actions` routes. |
+| `expose`           | —       | `{ classMethods?, instanceMethods? }` — expose `_actions` routes. Off by default. |
 
 ## License
 

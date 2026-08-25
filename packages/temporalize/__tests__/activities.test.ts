@@ -165,6 +165,46 @@ describe("generated activities", () => {
         ErrorType.Validation
       );
     });
+
+    it("commits what a `mutations`-target transform assigns to `this`", async () => {
+      // `relabel` returns nothing; everything it does is a write to `this`.
+      // Calling it and serialising the return value — which is what an activity
+      // used to do for every instance method — dropped that write entirely.
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
+      await acts["Item.instanceMethods.relabel"]({ context: ctx, id: item.id, args: { to: "omega" } });
+      const after = (await acts["Item.findByPk"]({ context: ctx, id: item.id })) as ItemRow;
+      expect(after.label).toBe("omega");
+    });
+
+    it("answers a transform with the persisted row, not the method's return", async () => {
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
+      const result = (await acts["Item.instanceMethods.relabel"]({ context: ctx, id: item.id })) as ItemRow[];
+      expect(Array.isArray(result) ? result[0].label : (result as ItemRow).label).toBe("alpha!");
+    });
+
+    it("runs a transform with no params when `args` is omitted", async () => {
+      // Scheduling the activity is itself the ask. gqlize's "named but not asked
+      // for" reading of a falsy value exists only because its `apply` input lists
+      // every exposed transform at once; an activity names exactly one.
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
+      await acts["Item.instanceMethods.relabel"]({ context: ctx, id: item.id });
+      const after = (await acts["Item.findByPk"]({ context: ctx, id: item.id })) as ItemRow;
+      expect(after.label).toBe("alpha!");
+    });
+
+    it("still fails non-retryably when a transform addresses a missing row", async () => {
+      await expectFailure(
+        acts["Item.instanceMethods.relabel"]({ context: ctx, id: 999 }),
+        ErrorType.NotFound
+      );
+    });
+
+    it("requires an id for a transform too", async () => {
+      await expectFailure(
+        acts["Item.instanceMethods.relabel"]({ context: ctx }),
+        ErrorType.Validation
+      );
+    });
   });
 
   describe("guards", () => {

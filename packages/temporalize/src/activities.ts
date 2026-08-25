@@ -1,4 +1,5 @@
 import { isAllowed, isModelAllowed } from "@azerothian/utilize";
+import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import type { Definition, Permission, PermissionContext } from "@azerothian/utilize";
 import type { Ormize } from "@azerothian/ormize";
 import { TemporalizeRegistry } from "./registry";
@@ -132,11 +133,15 @@ export function createActivities(
     return (keys && keys[0]) || "id";
   };
 
-  const loadInstance = async (name: string, call: Call, id: PrimaryKeyValue | undefined): Promise<PlainRow> => {
+  const requireId = (name: string, id: PrimaryKeyValue | undefined): PrimaryKeyValue => {
     if (id === undefined || id === null) {
       fail(ErrorType.Validation, `temporalize: 'id' is required to address a ${name} instance`);
     }
-    const args = { where: { [pkName(name)]: { eq: id } }, first: 1 };
+    return id;
+  };
+
+  const loadInstance = async (name: string, call: Call, id: PrimaryKeyValue | undefined): Promise<PlainRow> => {
+    const args = { where: { [pkName(name)]: { eq: requireId(name, id) } }, first: 1 };
     const { models: found } = await orm.resolveFindAll(name, null, args, call.context);
     if (!found || found.length === 0) {
       fail(ErrorType.NotFound, `temporalize: ${name} '${id}' not found`);
@@ -256,12 +261,53 @@ export function createActivities(
     }
 
     if (exposeInstance) {
+      // Activities are enumerated from the *implementation* map, which is one
+      // namespace shared by both `expose.instanceMethods` targets. Which target
+      // declared a method is the only thing that says whether it reads or
+      // writes, and `assertNoExposedMethodCollisions` guarantees the two sets
+      // are name-disjoint, so this lookup is unambiguous. A method declared
+      // under neither — the common case, since `expose` is optional — keeps the
+      // read-only treatment it has always had.
+      const transforms = mutationInstanceMethods(definition);
       for (const method of methodNames(definition, "instanceMethods")) {
+        const isTransform = !!transforms[method];
         activities[instanceMethodActivityName(name, method)] = (req: ActivityRequest<InstanceMethodArgs>) =>
           invoke(name, req, true, async (call) => {
-            assertWritable(options.readOnly);
-            if (!isAllowed(call.permission?.queryInstanceMethods, name, method, call.permission?.options)) {
+            const gate = isTransform
+              ? call.permission?.mutationInstanceMethods
+              : call.permission?.queryInstanceMethods;
+            if (!isAllowed(gate, name, method, call.permission?.options)) {
               fail(ErrorType.Forbidden, `temporalize: instance method '${method}' not allowed for ${name}`);
+            }
+            if (isTransform) {
+              // A transform is a write, so it answers to the same read-only flag
+              // and model-level update gate every CRUD write activity checks.
+              // `mutationInstanceMethods` says which transforms a role may run;
+              // it does not say the role may write at all.
+              assertMutable(call, name, "update");
+              // A transform reshapes a row on its way to a write. Loading the
+              // row and calling the method — which is what this activity used to
+              // do — drops everything it assigns to `this`, and left the
+              // surrounding transaction holding nothing but the read. Routing it
+              // through the same `processUpdate`/`apply` path gqlize's `apply`
+              // argument takes brings the persist, the proxy that records those
+              // writes, and scope enforcement with it.
+              //
+              // Invoking the activity is itself the ask, so absent args mean
+              // "run it with no params". gqlize's "named but not asked for"
+              // reading of a falsy value only exists because its `apply` input
+              // lists every exposed transform at once; an activity names one.
+              const params = req.args === undefined || req.args === null || req.args === false ? true : req.args;
+              const rows = await orm.processUpdate(name, null, {
+                input: {},
+                where: { [pkName(name)]: { eq: requireId(name, req.id) } },
+                limit: 1,
+                apply: { [method]: params },
+              }, call.context);
+              if (!rows || rows.length === 0) {
+                fail(ErrorType.NotFound, `temporalize: ${name} '${req.id}' not found`);
+              }
+              return present(call.schemas, name, rows);
             }
             const row = await loadInstance(name, call, req.id);
             // The loaded row is an adapter instance, so its methods are not

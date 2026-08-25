@@ -22,6 +22,12 @@ const RULES: RoleRules = {
   outsider: { model: { Item: "deny" } },
   nocreate: { mutationCreate: { Item: "deny" } },
   nomethods: { mutationClassMethods: { Item: { labelsUpper: "deny" } } },
+  // Denies the write gate only. Before instance methods were split by `expose`
+  // target, a `mutations`-target method was checked against `queryInstanceMethods`,
+  // so this rule did not reach it.
+  noinstancewrite: { mutationInstanceMethods: { Item: { relabel: "deny" } } },
+  // The mirror: denies the read gate only, which must not reach the transform.
+  noinstanceread: { queryInstanceMethods: { Item: { describe: "deny" } } },
 };
 
 function forRole(role: string) {
@@ -127,5 +133,39 @@ describe("permission gating", () => {
       acts["Item.classMethods.labelsUpper"]({ context: as("nomethods") }),
       ErrorType.Forbidden
     );
+  });
+
+  it("gates instance methods by the `expose` target that declared them", async () => {
+    // `relabel` is declared under `expose.instanceMethods.mutations`, so it
+    // answers to `mutationInstanceMethods`; `describe` is declared under neither
+    // target and keeps the read gate. Denying one must not reach the other.
+    const [item] = (await acts["Item.create"]({ context: as("admin"), input: { label: "alpha" } })) as ItemRow[];
+
+    await expectFailure(
+      acts["Item.instanceMethods.relabel"]({ context: as("noinstancewrite"), id: item.id }),
+      ErrorType.Forbidden
+    );
+    await expect(
+      acts["Item.instanceMethods.describe"]({ context: as("noinstancewrite"), id: item.id, args: {} })
+    ).resolves.toBe("alpha:");
+
+    await expectFailure(
+      acts["Item.instanceMethods.describe"]({ context: as("noinstanceread"), id: item.id, args: {} }),
+      ErrorType.Forbidden
+    );
+    await expect(
+      acts["Item.instanceMethods.relabel"]({ context: as("noinstanceread"), id: item.id })
+    ).resolves.toBeDefined();
+  });
+
+  it("denies a transform for a read-only role, and leaves the read alone", async () => {
+    const [item] = (await acts["Item.create"]({ context: as("admin"), input: { label: "alpha" } })) as ItemRow[];
+    await expectFailure(
+      acts["Item.instanceMethods.relabel"]({ context: as("reader"), id: item.id }),
+      ErrorType.Forbidden
+    );
+    await expect(
+      acts["Item.instanceMethods.describe"]({ context: as("reader"), id: item.id, args: {} })
+    ).resolves.toBe("alpha:");
   });
 });
