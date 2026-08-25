@@ -24,10 +24,12 @@ Every example below is drawn from the behaviour exercised in the test suite
    - [Count-only (`total`)](#count-only-total)
    - [Global IDs & `node`](#global-ids--node)
    - [Class & instance methods](#class--instance-methods)
+     - [The declarative keys](#the-declarative-keys)
 7. [Mutations](#7-mutations)
    - [Create / update / delete](#create--update--delete)
    - [Nested relationship writes](#nested-relationship-writes)
    - [Class-method mutations](#class-method-mutations)
+   - [Instance-method transforms (`apply`)](#instance-method-transforms-apply)
 8. [Permissions](#8-permissions)
 9. [Hooks](#9-hooks)
 10. [Custom scalars & JSON columns](#10-custom-scalars--json-columns)
@@ -561,6 +563,127 @@ query { models { Post { edges { node { wordCount } } } } }     # instance method
 
 Method `type` may be a string reference (`"Post"`, `"Post[]"`) or a concrete GraphQL type.
 
+#### The declarative keys
+
+Beyond `type`/`args`/`before`/`after`, an exposed method may declare what it needs loaded and
+how it shapes the query it is selected in. Every key is optional, and every key is available on
+all four `expose.{classMethods,instanceMethods}.{query,mutations}` targets — but `fields`,
+`include`, `input`, `orderBy` and `where` only *mean* something for
+`instanceMethods.query`, because only there does a method run against a row inside a query the
+engine also built.
+
+| Key | Shape | What it does |
+| --- | --- | --- |
+| `fields` | `string[]` \| `"*"` | Columns the method reads off `this`. Unioned into the projection. `"*"` opts the query out of narrowing entirely. |
+| `include` | `{ [relName]: Partial<IncludeDescriptor> }` | Relations the method reads. Merged into the include plan. `{ items: {} }` is enough; `{ items: { required: true } }` shapes the join. |
+| `input` | `(params, ctx) => params` | Shape the built query. Receives the same `params` object `definition.before` gets. |
+| `output` | `(value, ctx) => any` | Produce or format the field's value. A method with an `output` needs no implementation at all. |
+| `orderBy` | `string[]` \| `(direction, ctx) => OrderEntry[]` | Contribute `<name>ASC` / `<name>DESC` to the model's `orderBy` enum. |
+| `where` | `string` \| `{ type?, operators?, resolve }` | Contribute a nested operator object to the model's `where` input. |
+
+`ctx` carries `{ args, context, info, modelDefinition, source }` — the args the field was
+selected with, the request context, and the definition the method belongs to.
+
+**`fields` and `include` — loading what the method reads.**
+gqlize narrows the projection to the columns the selection set actually asked for. An exposed
+method is a *field name*, not a column, so without a declaration the columns it reads off `this`
+are simply not there:
+
+```ts
+instanceMethods: {
+  query: {
+    // Reads `this.firstName` / `this.lastName`, which the client need not select.
+    fullName: { type: GraphQLString, fields: ["firstName", "lastName"] },
+    // Reads a relation.
+    petNames: { type: new GraphQLList(GraphQLString), include: { pets: {} } },
+    // Reads the whole row; opt out of narrowing.
+    audit:    { type: GraphQLString, fields: "*" },
+  },
+},
+```
+
+The widening applies only when the method is actually selected, and it is additive — it adds to
+what the selection set asked for rather than replacing it.
+
+**`input` and `output` — shaping the query and the value.**
+
+```ts
+recent: {
+  type: GraphQLString,
+  args: { since: { type: GraphQLString } },
+  // Narrow the query this field was selected in.
+  input: (params, { args }) => ({ ...params, where: { ...params.where, createdAt: { [Op.gt]: args.since } } }),
+  // Produce the value. No `instanceMethods.recent` implementation is needed.
+  output: (value, { source }) => source.get("title").toUpperCase(),
+},
+```
+
+Hooks run in a fixed order: `fields`/`include` merge into the projection first, then
+`definition.before`, then each selected method's `input` in declaration order — so a method's
+`input` sees the final options and gets the last word. `output` then produces the field value,
+and `after` post-hooks it.
+
+Selecting the same method twice under different aliases runs `input` once per occurrence (each
+seeing its own args) and `output` once per row per occurrence.
+
+**`orderBy` and `where` — sorting and filtering on a computed field.**
+
+```ts
+fullName: {
+  type: GraphQLString,
+  fields: ["firstName", "lastName"],
+  output: (v, { source }) => `${source.get("firstName")} ${source.get("lastName")}`,
+  // `fullNameASC` / `fullNameDESC` join the orderBy enum.
+  orderBy: ["lastName", "firstName"],
+  // `where: { fullName: { eq: "John Smith" } }` becomes a real query fragment.
+  where: {
+    operators: ["eq"],
+    resolve(whereObject, options, value) {
+      const [first, last] = String(value[Op.eq]).split(" ");
+      return { firstName: { [Op.eq]: first }, lastName: { [Op.eq]: last } };
+    },
+  },
+},
+
+// The portable short form: apply the operator object to a real column instead.
+surname: { type: GraphQLString, fields: ["lastName"], where: "lastName" },
+```
+
+`orderBy` may also be a function, for expressions the backend understands:
+
+```ts
+nameLength: {
+  type: GraphQLInt,
+  fields: ["firstName", "lastName"],
+  orderBy: (direction) => [[Sequelize.literal(`LENGTH("firstName" || ' ' || "lastName")`), direction]],
+},
+```
+
+`resolve` receives the operator object already keyed by the backend's operator symbols — the
+same shape a `whereOperators` entry gets — and returns a where fragment, so a computed filter
+composes with `and`/`or` and works at include depth exactly as it does at the root.
+
+> **Push-down only.** `orderBy` and `where` must produce *query fragments*. gqlize will not
+> sort or filter in memory after the fact: post-filtering would break `first`/`last` and cursor
+> offsets and desync `total`, and fetch-all-then-filter is a DoS vector on precisely the models
+> where you would reach for it. If an ordering or filter cannot be expressed against the
+> backend, don't declare it.
+
+> **Declared `fields` are server-side.** `fields: ["passwordHash"]` loads a column the client's
+> selection set could never reach. That is deliberate — the definition author wrote both the
+> declaration and the method that reads it — but it is worth knowing rather than discovering.
+
+**Permissions.** The ordering and filtering contributions are gated by
+`permission.queryInstanceMethods`: a method the caller may not select contributes no enum
+value and no `where` field, because sortability and filterability each leak a denied field's
+value. See [§8 Permissions](#8-permissions).
+
+**Name collisions.** An exposed instance method cannot share a name with a column, and a name
+cannot appear in both `instanceMethods.query` and `instanceMethods.mutations` — the generated
+type, `orderBy` enum and `where` input each have one slot for it, and both instance-method
+targets resolve to the same implementation. Either case fails the schema build with an explicit
+error.
+
 ---
 
 ## 7. Mutations
@@ -697,6 +820,62 @@ Post(update: {
 ```graphql
 mutation { classMethods { Post { publish(input: { amount: 2 }) { id title } } } }
 ```
+
+### Instance-method transforms (`apply`)
+
+`expose.instanceMethods.mutations` declares instance methods that reshape a record on its way to
+a write. They surface as an `apply` argument alongside `create` / `update`:
+
+```ts
+db.addDefinition({
+  name: "Post",
+  expose: {
+    instanceMethods: {
+      mutations: {
+        appendSuffix: { args: { suffix: { type: new GraphQLNonNull(GraphQLString) } } },
+        markChecked: {},   // no args → a Boolean flag
+      },
+    },
+  },
+  options: {
+    instanceMethods: {
+      // Direct-write flavour: mutate `this`, return nothing.
+      appendSuffix({ suffix }) { this.name = `${this.name}${suffix}`; },
+      // Returned-values flavour: return a partial input to merge.
+      markChecked() { return { checked: true }; },
+    },
+  },
+});
+```
+
+```graphql
+mutation {
+  models {
+    Post(
+      create: { title: "Hello" },
+      apply: { appendSuffix: { suffix: "!" }, markChecked: true }
+    ) { id title checked }
+  }
+}
+```
+
+A transform declaring args takes its arg bag; one declaring none takes `Boolean`, and only
+`true` runs it. Both flavours work on create and on update: on create `this` is the pending
+values object, on update it is the live row — and direct writes to it are captured and
+persisted, so `this.name = …` is not silently dropped. Transforms run in the order named, each
+seeing what the previous one wrote.
+
+Transforms run **after** `definition.before` and immediately before the adapter persists, so a
+transform wins over a value that hook set.
+
+> **Transforms are transactional.** An instance-method transform runs inside the mutation's own
+> transaction, so a throw rolls the whole mutation back — including any nested relationship
+> writes. That is the point: it means a transform can veto a write. It also means a transform
+> must not reach outside the transaction — no third-party call whose effects the rollback
+> cannot undo.
+
+Transforms are gated by `permission.mutationInstanceMethods`; a denied transform contributes no
+field to `apply`. See [§8 Permissions](#8-permissions).
 
 ---
 

@@ -47,6 +47,11 @@ export type Permission = {
   queryClassMethods?: (defName: string, methodName: string, options?: PermissionContext) => boolean;
   mutationClassMethods?: (defName: string, methodName: string, options?: PermissionContext) => boolean;
   queryInstanceMethods?: (defName: string, methodName: string, options?: PermissionContext) => boolean;
+  /**
+   * Gates `expose.instanceMethods.mutations` — the pre-commit transforms
+   * surfaced as the `apply` argument on a model's mutation field.
+   */
+  mutationInstanceMethods?: (defName: string, methodName: string, options?: PermissionContext) => boolean;
   /** First argument is the `options.extend.query` field key, not a model name. */
   queryExtension?: (fieldName: string, options?: PermissionContext) => boolean;
   /** First argument is the `options.extend.mutation` field key, not a model name. */
@@ -87,6 +92,36 @@ export function isFieldAllowed(permission: Permission | undefined, model: string
  */
 export function isRelationshipAllowed(permission: Permission | undefined, model: string, relationship: string, target?: string): boolean {
   return isAllowed(permission?.relationship, model, relationship, target, permission?.options);
+}
+
+/**
+ * Whether an exposed *query* instance method is reachable
+ * (`permission.queryInstanceMethods`).
+ *
+ * A denied method contributes no output field — and, because sortability and
+ * filterability are each another way to leak a value, no `orderBy` enum member
+ * and no `where` field either. This is the helper form of the check
+ * `create-complex-fields` used to make inline.
+ */
+export function isQueryInstanceMethodAllowed(permission: Permission | undefined, model: string, method: string): boolean {
+  return isAllowed(permission?.queryInstanceMethods, model, method, permission?.options);
+}
+
+/**
+ * Whether an exposed *mutation* instance method (a pre-commit transform) is
+ * reachable (`permission.mutationInstanceMethods`). A denied transform is
+ * absent from the generated `apply` input, so it cannot be requested at all.
+ */
+export function isMutationInstanceMethodAllowed(permission: Permission | undefined, model: string, method: string): boolean {
+  return isAllowed(permission?.mutationInstanceMethods, model, method, permission?.options);
+}
+
+/** Whether an exposed class method is reachable, on either target. */
+export function isClassMethodAllowed(
+  permission: Permission | undefined, model: string, method: string, target: "query" | "mutations",
+): boolean {
+  const fn = target === "query" ? permission?.queryClassMethods : permission?.mutationClassMethods;
+  return isAllowed(fn, model, method, permission?.options);
 }
 
 function mutationPredicate(permission: Permission | undefined, kind: MutationKind): any {
@@ -188,6 +223,7 @@ export const PERMISSION_KEYS = [
   "queryClassMethods",
   "mutationClassMethods",
   "queryInstanceMethods",
+  "mutationInstanceMethods",
   "queryExtension",
   "mutationExtension",
 ] as const;

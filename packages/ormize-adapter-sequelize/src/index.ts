@@ -16,6 +16,7 @@ import { isFieldAllowed } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import { replaceDefWhereOperators } from "./utils/where-operators";
+import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothian/utilize/exposed-methods";
 const log = logger("gqlize::adapter::sequelize::");
 
 /**
@@ -797,6 +798,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   queryConfigFor = (defName: string, definition?: Definition, permission?: Permission): QueryTypeConfig =>
     this.createQueryConfig((definition ?? this.targetOf(defName)?.definition) as SequelizeDefinition, permission);
   orderableFields = (defName: string): string[] => Object.keys(this.getFields(defName));
+  /** Computed sorts are declared on the definition; the shared builder stays definition-blind. */
+  computedOrderableFields = (defName: string, permission?: Permission): string[] =>
+    computedOrderableFieldsFor(this.targetOf(defName)?.definition, defName, permission !== undefined ? permission : this._buildPermission);
   relationshipsOf = (defName: string, definition?: Definition): Relationship[] =>
     (definition?.relationships || []);
   /**

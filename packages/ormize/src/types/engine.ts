@@ -36,6 +36,13 @@ export type MutationFilter = AdapterWhere;
 export type MutationInput = { [field: string]: unknown };
 
 /**
+ * The instance-method transforms one create/update asked to run, keyed by exposed
+ * method name. A transform declaring args carries its arg bag; one declaring none
+ * is a `Boolean` flag, and only `true` runs it.
+ */
+export type MutationApply = { [methodName: string]: unknown };
+
+/**
  * The relationship sub-mutations for one relationship, as they arrive nested in a
  * create/update input: `{files: {create: [...], add: [...]}}`. Every operation is
  * optional, and the singular forms (`belongsTo`/`hasOne`) take a single filter
@@ -84,7 +91,7 @@ export interface MutationHost extends AdapterRoutingHost {
   getDefinition(defName: string): Definition;
   getGlobalKeys(defName: string): string[];
   processInputs(defName: string, input: MutationInputTree, args: unknown, context: RequestContext, info: unknown, model?: AdapterRow): Promise<MutationInput>;
-  processCreate(defName: string, source: AdapterRow, args: { input: MutationInputTree }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
+  processCreate(defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
   processDelete(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
   processRelationshipMutation(defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, selection?: Selection): Promise<AdapterRow>;
 }

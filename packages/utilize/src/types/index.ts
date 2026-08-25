@@ -290,7 +290,23 @@ export type Selection = {
   translateFilter?: <W extends AdapterWhere | undefined>(where: W, globalKeys: string[]) => W;
   /** default identity; gqlize passes v => fromGlobalId(v).id */
   translateId?: (value: unknown) => unknown;
+  /**
+   * Query-shaping hooks contributed by the `input` of each selected exposed
+   * method. Run after `processListArgsToOptions` **and after
+   * `definition.before`**, in selection order, so a method's `input` sees the
+   * final options and gets the last word on them.
+   *
+   * Each returns the params to carry forward; returning nothing keeps the
+   * params it was handed (a hook that mutated them in place).
+   */
+  optionHooks?: OptionHook[];
 };
+
+/**
+ * A query-shaping hook contributed by an exposed method's `input`, bound to the
+ * occurrence it came from. Carried on {@link Selection.optionHooks}.
+ */
+export type OptionHook = (params: any, context?: any) => any | Promise<any>;
 
 /**
  * Descriptor for a single relationship that should be eager-loaded as part of
@@ -317,6 +333,16 @@ export interface IncludeDescriptor {
 /** One level of the include plan, keyed by relationship name. */
 export interface IncludeMap {
   [relName: string]: IncludeDescriptor;
+}
+
+/**
+ * An include plan as a definition *declares* it, rather than as the engine
+ * carries it. `target` and `associationType` are properties of the relationship,
+ * not choices — they are looked up from the live association — so a declaration
+ * is just `{items: {}}`, or `{items: {required: true}}` to shape the join.
+ */
+export interface DeclaredIncludeMap {
+  [relName: string]: Partial<IncludeDescriptor>;
 }
 
 /**
@@ -484,6 +510,112 @@ export type WhereOperators = {
   [name: string]: WhereOperator
 }
 
+/**
+ * Context handed to an exposed method's declarative hooks. `source` is the
+ * loaded row for `output` (absent for `input`, which runs before any row is
+ * fetched); the rest mirror what a resolver sees.
+ */
+export type ExposedMethodContext = {
+  /** The loaded row, for `output`. Absent on the query-building hooks. */
+  source?: any;
+  /** The arguments the field was selected with, after `before`. */
+  args?: any;
+  /** The request context. */
+  context?: any;
+  /** The raw GraphQL execution info, when the caller is GraphQL. */
+  info?: any;
+  /** The definition the method is declared on. */
+  modelDefinition?: Definition;
+};
+
+/**
+ * How an exposed method contributes a filter to its model's `where` input.
+ *
+ * The `string` form is portable: it names a real column, and the method's
+ * operator object is applied to that column instead. The object form is the
+ * adapter-shaped escape hatch — `resolve` is an ordinary
+ * {@link WhereOperator}, so it receives `(whereObject, options, value)` where
+ * `value` is the operator object the client sent (`{like: "%smith%"}`) and
+ * returns a real where-fragment.
+ */
+export type ExposedMethodWhere = string | {
+  /** See {@link DefinitionField.type}. The value type each operator compares against; defaults to `String`. */
+  type?: unknown;
+  /** Restrict the generated operators to this list. Defaults to the adapter's full vocabulary. */
+  operators?: string[];
+  resolve: WhereOperator;
+};
+
+/**
+ * How an exposed method contributes to its model's `orderBy` enum.
+ *
+ * The `string[]` form is portable: the named columns are ordered in sequence,
+ * each in the requested direction. The function form is the adapter-shaped
+ * escape hatch and returns the {@link OrderEntry} list to splice in.
+ *
+ * Both must produce push-down ordering. There is no in-memory post-sort: it
+ * would break `first`/`last`, cursor offsets and `total`.
+ */
+export type ExposedMethodOrderBy =
+  | string[]
+  | ((direction: string, ctx: ExposedMethodContext) => OrderEntry[]);
+
+/**
+ * One entry under `expose.classMethods.{query,mutations}` or
+ * `expose.instanceMethods.{query,mutations}`.
+ *
+ * Beyond the schema shape (`type`/`args`) and the pre/post hooks, an entry may
+ * declare what the method *needs loaded* and how it *shapes the query*. Those
+ * declarations exist because attribute narrowing projects a query down to the
+ * columns the selection set asked for, and an exposed method is a field name,
+ * not a column — so the columns it reads off `this` are dropped unless it says
+ * which ones they are.
+ */
+export type ExposedMethod = {
+  /**
+   * See {@link DefinitionField.type}. Required for every target that produces an
+   * output field; unused (and so optional) for `instanceMethods.mutations`,
+   * which are pre-commit transforms rather than fields.
+   */
+  type?: unknown;
+  args?: any;
+  before?: any;
+  after?: any;
+  /**
+   * Columns this method reads off `this`, unioned into the query's projection.
+   * `"*"` opts the query out of attribute narrowing entirely.
+   *
+   * NOTE: these are server-side. `fields: ["passwordHash"]` loads a column the
+   * client's own selection set could never reach — the definition author wrote
+   * both sides, so that is their call.
+   */
+  fields?: string[] | "*";
+  /** Relations this method reads, merged into (never clobbering) the include plan. */
+  include?: DeclaredIncludeMap;
+  /**
+   * Shape the built query. Receives the same `params` object `definition.before`
+   * receives, and runs *after* it — so a method's `input` sees the final options
+   * and gets the last word on them. Return the params to use.
+   */
+  input?: (params: any, ctx: ExposedMethodContext) => any;
+  /**
+   * Produce or format the field's value from the loaded row. Runs after the
+   * method implementation (which receives `undefined` as `value` when there is
+   * none — declaring `output` alone is how a field with no implementation
+   * works) and before `after`.
+   */
+  output?: (value: any, ctx: ExposedMethodContext) => any;
+  /** Contribute `<name>ASC` / `<name>DESC` to the model's `orderBy` enum. */
+  orderBy?: ExposedMethodOrderBy;
+  /** Contribute a normal nested operator object to the model's `where` input. */
+  where?: ExposedMethodWhere;
+};
+
+/** A map of exposed methods, keyed by method name. */
+export type ExposedMethods = {
+  [name: string]: ExposedMethod;
+};
+
 export type Definition = {
   name?: string;
   datasource?: string;
@@ -511,45 +643,18 @@ export type Definition = {
   after?: (options: { result: any, args: any, context: any, info: any, modelDefinition: Definition, type: Events}) => any;
   expose?: {
     classMethods?: {
-      query?: {
-        [name: string]: {
-          /** See {@link DefinitionField.type}. */
-          type: unknown;
-          args?: any;
-          before?: any;
-          after?: any;
-        }
-      }
-      mutations?: {
-        [name: string]: {
-          /** See {@link DefinitionField.type}. */
-          type: unknown;
-          args?: any;
-          before?: any;
-          after?: any;
-        }
-      }
+      query?: ExposedMethods;
+      mutations?: ExposedMethods;
     },
     instanceMethods?: {
-      query?: {
-        [name: string]: {
-          /** See {@link DefinitionField.type}. */
-          type: unknown;
-          args?: any;
-          before?: any;
-          after?: any;
-        }
-      }
-      mutations?: {
-        [name: string]: {
-          /** See {@link DefinitionField.type}. */
-          type: unknown;
-          args?: any;
-          before?: any;
-          after?: any;
-        }
-      }
-
+      query?: ExposedMethods;
+      /**
+       * Pre-commit transforms, not a second mutation surface: each entry is a
+       * custom function that reshapes the data on its way to the write, with the
+       * row (update) or the pending values (create) as `this`. Surfaced as the
+       * `apply` argument on the model's mutation field.
+       */
+      mutations?: ExposedMethods;
     }
   }
   instanceMethods?: {

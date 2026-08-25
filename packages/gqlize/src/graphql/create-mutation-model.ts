@@ -1,8 +1,67 @@
-
-import {GraphQLList} from "graphql";
+import {GraphQLBoolean, GraphQLInputObjectType, GraphQLList, type GraphQLInputFieldConfigMap} from "graphql";
+import { isMutationInstanceMethodAllowed } from "@azerothian/utilize/gate";
+import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
+import { capitalize } from "@azerothian/utilize/utils/word";
 import GQLManager from '../manager';
 import { GqlizeOptions, SchemaCache } from '../types';
 import { bindField } from "./resolvers/bind";
+import { recordExternalType } from "./snapshot/ledger";
+
+/**
+ * The `apply` argument's input type: one field per exposed instance-method
+ * transform, or `undefined` when the model declares none that survive
+ * permissions (an input object with no fields is an invalid GraphQL type).
+ *
+ * A transform's field is typed by its declared `args`. A transform with no args
+ * takes `Boolean` — the same default `whereOperators` get as `isolatedFields`,
+ * and the same "name it to run it" reading.
+ */
+export function createInstanceMutationsInput(
+  instance: GQLManager, defName: string, schemaCache: SchemaCache, options: GqlizeOptions,
+): GraphQLInputObjectType | undefined {
+  const definition = instance.getDefinition(defName);
+  const methods = mutationInstanceMethods(definition);
+  const fields: GraphQLInputFieldConfigMap = {};
+  for (const methodName of Object.keys(methods)) {
+    if (!isMutationInstanceMethodAllowed(options.permission, defName, methodName)) {
+      continue;
+    }
+    const { args } = methods[methodName];
+    const description = (definition.comments?.instanceMethods || {})[methodName];
+    const argNames = Object.keys(args || {});
+    if (argNames.length === 0) {
+      fields[methodName] = { type: GraphQLBoolean, description };
+      continue;
+    }
+    // Transform args are passed through verbatim, so their types are whatever
+    // the user wrote — always external, exactly as on the query target.
+    argNames.forEach((argName) => {
+      recordExternalType(schemaCache, args[argName]?.type, {
+        via: "definitionExpose",
+        defName,
+        group: "instanceMethods",
+        target: "mutations",
+        methodName,
+        use: "arg",
+        argName,
+      });
+    });
+    fields[methodName] = {
+      description,
+      type: new GraphQLInputObjectType({
+        name: `GQLT${defName}Apply${capitalize(methodName)}`,
+        fields: () => args as GraphQLInputFieldConfigMap,
+      }),
+    };
+  }
+  if (Object.keys(fields).length === 0) {
+    return undefined;
+  }
+  return new GraphQLInputObjectType({
+    name: `GQLT${defName}InstanceMutations`,
+    fields: () => fields,
+  });
+}
 
 export default function createMutationModel(instance: GQLManager, defName: string, schemaCache: SchemaCache, create: any, update: any, del: any, options: GqlizeOptions = {}) {
 
@@ -33,6 +92,18 @@ export default function createMutationModel(instance: GQLManager, defName: strin
       type: input.delete,
       description: `This will delete a new element for ${defName}`,
     };
+  }
+  // Transforms reshape data on its way to a write, so they are only meaningful
+  // alongside one. They run inside the mutation's own transaction, after
+  // `definition.before` and immediately before the adapter persists.
+  if (create || update) {
+    const apply = createInstanceMutationsInput(instance, defName, schemaCache, options);
+    if (apply) {
+      inp.apply = {
+        type: apply,
+        description: `Instance-method transforms to run against each ${defName} being created or updated, before it is committed`,
+      };
+    }
   }
   return bindField({
     type: new GraphQLList(schemaCache.types[defName]),

@@ -6,11 +6,12 @@ import {lowercase} from "@azerothian/utilize/utils/word";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
+import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, DataTypeDescriptor, NativeDataType,
-  RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs } from '@azerothian/utilize/types/index';
+  RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs, OrderEntry } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
-import type { InstanceRow, MutationFilter, MutationHost, MutationInput,
+import type { InstanceRow, MutationApply, MutationFilter, MutationHost, MutationInput,
   MutationInputTree, ResolveOptions } from "./types/engine";
 import { addProxyAccessor, btmGetter, createProxyFunction, joinScope, writeAccessors } from "./cross-adapter";
 import { applyRelationshipMutations } from "./relationship-mutations";
@@ -879,13 +880,14 @@ export default class Ormize<
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
     const a = args;
+    this.expandComputedOrder(defName, a, {context, info: selection?.raw});
     const offset = cursorOffset(args);
     // Count-only: the nested connection selects `total` but not `edges`/rows — the
     // adapter runs a count instead of a findAll (fires beforeCount natively); fire
     // afterCount here.
     const countOnly = Boolean(selection?.countOnly);
     const result = await adapter.resolveManyRelationship(defName, association, source, {
-      args: a, offset, selection, whereOperators: definition.whereOperators, options, countOnly,
+      args: a, offset, selection, whereOperators: whereOperatorsFor(definition), options, countOnly,
       selectedFields: selection?.fields, runHook: this.runHook,
     });
     if (countOnly && result) {
@@ -915,6 +917,43 @@ export default class Ormize<
    * query on top of the caller's `where`. Used to scope a cross-adapter
    * relationship to its join key.
    */
+  /**
+   * Rewrite any computed `orderBy` entry into the real column ordering it stands
+   * for, at the root and at every level of the include plan.
+   *
+   * A generated `<method>ASC` enum member carries the method's own name rather
+   * than a column, so this lookup is what makes it mean anything — deliberately
+   * at runtime, so a materialized schema snapshot picks up a changed declaration
+   * for free. Push-down only: the expansion produces query fragments, never an
+   * in-memory post-sort (which would break `first`/`last`, cursor offsets and
+   * `total`).
+   */
+  private expandComputedOrder = (defName: string, a: FindAllArgs, ctx: {context?: unknown, info?: unknown}) => {
+    const definition = this.getDefinition(defName);
+    const expanded = expandOrderBy(definition, a.orderBy as OrderEntry[] | undefined, ctx);
+    if (expanded !== a.orderBy) {
+      a.orderBy = expanded;
+    }
+    this.expandComputedIncludeOrder(a.include as IncludeMap[] | IncludeMap | undefined, ctx);
+  }
+  private expandComputedIncludeOrder = (include: IncludeMap[] | IncludeMap | undefined, ctx: {context?: unknown, info?: unknown}) => {
+    if (!include) {
+      return;
+    }
+    for (const map of (Array.isArray(include) ? include : [include])) {
+      for (const relName of Object.keys(map)) {
+        const descriptor = map[relName];
+        let targetDef: Definition | undefined;
+        try {
+          targetDef = this.getDefinition(descriptor.target);
+        } catch (e) {
+          targetDef = undefined; // a target this engine does not own has nothing to expand against
+        }
+        descriptor.orderBy = expandOrderBy(targetDef, descriptor.orderBy, ctx);
+        this.expandComputedIncludeOrder(descriptor.include, ctx);
+      }
+    }
+  }
   resolveFindAll = async(defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection, scope?: {field: string, value: unknown}) => {
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
@@ -927,9 +966,10 @@ export default class Ormize<
     if (selection?.include && !a.include) {
       a.include = selection.include;
     }
+    this.expandComputedOrder(defName, a, {context, info: selection?.raw});
     const offset = cursorOffset(args);
     const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, {
-      args: a, offset, selection, whereOperators: definition.whereOperators, options, selectedFields,
+      args: a, offset, selection, whereOperators: whereOperatorsFor(definition), options, selectedFields,
       runHook: this.runHook,
     });
     if (scope) {
@@ -947,6 +987,22 @@ export default class Ormize<
         modelDefinition: definition,
         type: Events.QUERY,
       });
+    }
+    // An exposed method's `input` runs last, after the model-wide `before`, so it
+    // sees the final options rather than having its work overwritten by them.
+    // One run per selection occurrence, in selection order.
+    const optionHooks = selection?.optionHooks || [];
+    for (const hook of optionHooks) {
+      await hook(getOptions, context);
+    }
+    if (optionHooks.length > 0 && countOptions) {
+      // A backend without an inline count answers `total` from a second query.
+      // A hook that narrowed the row set has to narrow that one too, or `total`
+      // reports a page size the connection never returns. Only the two keys that
+      // decide *which* rows match are carried over — `limit`/`order` mean nothing
+      // to a count, and copying them would corrupt it.
+      countOptions.where = getOptions.where;
+      countOptions.include = getOptions.include;
     }
     // Count-only: the connection selects `total` but not `edges`/rows — skip the
     // findAll and run a count (fires beforeCount natively + afterCount manually).
@@ -1125,7 +1181,90 @@ export default class Ormize<
     }));
   }
 
-  processCreate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+  /**
+   * Run the pre-commit instance-method transforms an `apply` argument asked for,
+   * and fold what they wrote into the values about to be persisted.
+   *
+   * `this` inside a transform is the thing being written: on update the live row
+   * (so it can read columns it did not receive), on create the pending values
+   * (no row exists yet). A transform may either return an object to merge or
+   * assign to `this` directly — on update the direct writes have to be captured,
+   * because the adapter persists the values map rather than whatever the row
+   * happens to have changed, hence the recording proxy.
+   *
+   * Called from inside {@link mutationEntry}, so a throw here rolls the whole
+   * mutation back — relationship writes included.
+   */
+  private applyInstanceTransforms = async(
+    defName: string,
+    definition: Definition,
+    apply: { [methodName: string]: unknown } | undefined,
+    row: AdapterRow | undefined,
+    values: MutationInput,
+    args: unknown,
+    context: RequestContext,
+    info: unknown,
+  ): Promise<MutationInput> => {
+    const requested = apply ? Object.keys(apply) : [];
+    if (requested.length === 0) {
+      return values;
+    }
+    const methods = mutationInstanceMethods(definition);
+    const written: MutationInput = {};
+    const target: any = row === undefined ? values : new Proxy(row as any, {
+      get(t, p) {
+        const v = Reflect.get(t, p, t);
+        // Methods have to keep seeing the real row as their receiver, or a
+        // Sequelize accessor would run against the proxy and re-enter the trap.
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+      set(t, p, v) {
+        if (typeof p === "string") {
+          written[p] = v;
+        }
+        return Reflect.set(t, p, v, t);
+      },
+    });
+    for (const methodName of requested) {
+      const value = (apply as any)[methodName];
+      // A no-arg transform is a `Boolean` flag; naming it without asking for it
+      // is not a request to run it.
+      if (value === false || value === null || value === undefined) {
+        continue;
+      }
+      const entry = methods[methodName];
+      if (!entry) {
+        throw new Error(`ormize: "${defName}.${methodName}" is not exposed as an instance-method transform.`);
+      }
+      // Same resolution order the adapter uses when it installs these onto the
+      // model prototype: `options.instanceMethods` is the nested spelling,
+      // `instanceMethods` the flat one.
+      const implementation = definition.options?.instanceMethods?.[methodName] || definition.instanceMethods?.[methodName];
+      if (typeof implementation !== "function") {
+        throw new Error(`ormize: instance-method transform "${defName}.${methodName}" is exposed but the model declares no such instance method.`);
+      }
+      let methodArgs: any = value === true ? {} : value;
+      if (entry.before) {
+        methodArgs = await entry.before({
+          params: methodArgs, args, context, info,
+          modelDefinition: definition,
+          type: row === undefined ? Events.MUTATION_CREATE : Events.MUTATION_UPDATE,
+        });
+      }
+      let result = await implementation.call(target, methodArgs, context);
+      if (entry.after) {
+        result = await entry.after(result, context);
+      }
+      // Assigning through `target` keeps a later transform in the same mutation
+      // reading what an earlier one wrote, whichever way it wrote it.
+      if (result && typeof result === "object" && !Array.isArray(result)) {
+        Object.assign(target, result);
+      }
+    }
+    return row === undefined ? values : Object.assign(values, written);
+  }
+
+  processCreate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
       const processCreate = adapter.getCreateFunction(defName);
       const i = await this.processInputs(defName, args.input, args, context, selection?.raw);
@@ -1137,6 +1276,7 @@ export default class Ormize<
           type: Events.MUTATION_CREATE,
         });
       }
+      input = await this.applyInstanceTransforms(defName, definition, args.apply, undefined, input, args, context, selection?.raw);
       if (Object.keys(input).length > 0) {
         let result = await processCreate(input, createResolveContext(context, selection, source));
         if (result !== undefined && result !== null) {
@@ -1148,10 +1288,10 @@ export default class Ormize<
     });
   }
 
-  processUpdate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+  processUpdate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
       const translateId = selection?.translateId || ((v: unknown) => v);
-      const processUpdate = adapter.getUpdateFunction(defName, definition.whereOperators);
+      const processUpdate = adapter.getUpdateFunction(defName, whereOperatorsFor(definition));
       let i: MutationInput = Object.keys(args.input).reduce((o, k) => {
         if (globalKeys.indexOf(k) > -1) {
           let v = args.input[k];
@@ -1178,8 +1318,9 @@ export default class Ormize<
           type: Events.MUTATION_UPDATE,
         });
       }
-      const results = await processUpdate(where, (model) => {
-        return this.processInputs(defName, i, args, context, selection?.raw, model);
+      const results = await processUpdate(where, async(model) => {
+        const values = await this.processInputs(defName, i, args, context, selection?.raw, model);
+        return this.applyInstanceTransforms(defName, definition, args.apply, model, values, args, context, selection?.raw);
       }, createResolveContext(context, selection, source, {limit: args.limit}));
       await waterfall(results, async(r: AdapterRow) => {
         await this.processRelationshipMutation(defName, r, args.input, context, selection);
@@ -1196,7 +1337,7 @@ export default class Ormize<
       const options = createResolveContext(context, selection, source, {limit: args.limit});
       const where = await adapter.processFilterArgument(
         translateFilter(args.where, globalKeys),
-        definition.whereOperators,
+        whereOperatorsFor(definition),
         options,
       );
       const results = await adapter.findAll(defName, Object.assign({where, limit: args.limit}, options));
@@ -1208,7 +1349,7 @@ export default class Ormize<
   }
   processDelete = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, translateFilter}) => {
-      const processDelete = adapter.getDeleteFunction(defName, definition.whereOperators);
+      const processDelete = adapter.getDeleteFunction(defName, whereOperatorsFor(definition));
       const where = translateFilter(args, globalKeys);
       const before = (model: AdapterRow) => {
         if (!definition.before) {

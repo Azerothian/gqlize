@@ -7,6 +7,7 @@ import createBasicFieldsFunc from "./create-basic-fields";
 import createRelatedFieldsFunc from "./create-related-fields";
 import createComplexFieldsFunc from "./create-complex-fields";
 import { isModelAllowed } from "@azerothian/utilize";
+import { assertNoExposedMethodCollisions } from "@azerothian/utilize/exposed-methods";
 import GQLManager from "../manager";
 import { ModelTypeHatch, SchemaCache } from '../types';
 
@@ -15,6 +16,10 @@ export default async function createModelType(defName: string, instance: GQLMana
     return undefined;
   }
   const definition = instance.getDefinition(defName);
+  // Cheapest place to catch a name an exposed instance method can never own:
+  // this is the one point that sees the model's columns and its expose block
+  // together, and it runs before anything has had a chance to shadow the other.
+  assertNoExposedMethodCollisions(defName, definition, Object.keys(instance.getFields(defName)));
   const basicFields = createBasicFieldsFunc(defName, instance, definition, options, schemaCache);
   const relatedFields = createRelatedFieldsFunc(defName, instance, definition, options, schemaCache);
   const complexFields = createComplexFieldsFunc(defName, instance, definition, options, schemaCache);

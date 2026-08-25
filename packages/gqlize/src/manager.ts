@@ -4,9 +4,11 @@ import { GraphQLResolveInfo } from "graphql";
 import type { FieldNode } from "graphql";
 import logger from "@azerothian/utilize/utils/logger";
 import buildIncludeFromSelection, { mergeIncludeMaps, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
+import { methodOptionHooks, methodProjection, queryInstanceMethods, type MethodSelection } from "@azerothian/utilize/exposed-methods";
+import { getArgumentValues, type GraphQLObjectType } from "graphql";
 import type { Ormize } from "@azerothian/ormize";
 import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
-import { AdapterRow, Association, FindAllArgs, GqlizeAdapter, IncludeMap, IORBase, NativeDataType, Permission, RequestContext, Selection } from './types';
+import { AdapterRow, Association, DeclaredIncludeMap, FindAllArgs, GqlizeAdapter, IncludeMap, IORBase, NativeDataType, Permission, RequestContext, Selection } from './types';
 
 /**
  * The engine this binding wraps.
@@ -136,11 +138,103 @@ export default class GqlizeBinding {
     }
     return out;
   }
+  /**
+   * The exposed query instance methods this selection set actually asks for, one
+   * entry per occurrence with the args it was selected with.
+   *
+   * Occurrences rather than names: the same method aliased twice with different
+   * args is two contributions to the query, and its `input` gets to see each.
+   */
+  private selectedMethods(defName: string, nodes: FieldNode[] | undefined, info: GraphQLResolveInfo | undefined): MethodSelection[] {
+    if (!nodes?.length || !info) {
+      return [];
+    }
+    let methods;
+    try {
+      methods = queryInstanceMethods(this.getDefinition(defName));
+    } catch (e) {
+      return [];
+    }
+    if (Object.keys(methods).length === 0) {
+      return [];
+    }
+    const out: MethodSelection[] = [];
+    // The output type is only needed to coerce args; a selection reaching here
+    // without one in the schema simply contributes its declarations without them.
+    const type = info.schema?.getType(defName) as GraphQLObjectType | undefined;
+    const typeFields = typeof type?.getFields === "function" ? type.getFields() : undefined;
+    for (const node of nodes) {
+      const name = node.name.value;
+      if (!methods[name]) {
+        continue;
+      }
+      let args: any = undefined;
+      try {
+        const fieldDef = typeFields?.[name];
+        if (fieldDef) {
+          args = getArgumentValues(fieldDef, node, info.variableValues);
+        }
+      } catch (e) {
+        args = undefined;
+      }
+      out.push({ name, args });
+    }
+    return out;
+  }
+
+  /**
+   * Fill in what an author's declared `include` map leaves implicit.
+   *
+   * A declaration names the relations the method reads (`{items: {}}`); the
+   * `target`/`associationType` an {@link IncludeDescriptor} carries are facts
+   * about the association, not choices the author should have to restate. A key
+   * naming no association is dropped rather than sent to the adapter as a
+   * relation it cannot resolve.
+   */
+  private normalizeDeclaredInclude(defName: string, declared: DeclaredIncludeMap | undefined): IncludeMap | undefined {
+    if (!declared) {
+      return undefined;
+    }
+    let associations: {[relName: string]: Association};
+    try {
+      associations = this.getAssociations(defName);
+    } catch (e) {
+      return undefined;
+    }
+    const out: IncludeMap = {};
+    for (const relName of Object.keys(declared)) {
+      const association = associations[relName];
+      if (!association) {
+        logger("gqlize::manager").warn(`instance-method include declares "${defName}.${relName}", which is not a relationship — ignoring`);
+        continue;
+      }
+      out[relName] = {
+        ...declared[relName],
+        target: declared[relName].target || association.target,
+        associationType: declared[relName].associationType || association.associationType,
+      };
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
+
   private buildSelection(defName: string, info: GraphQLResolveInfo | undefined, a?: FindAllArgs): Selection {
+    const nodes = (info && Array.isArray(info.fieldNodes)) ? getSelectionFieldNodes(info.fieldNodes[0], info) : undefined;
+    const selectedNames = nodes?.map((f) => f.name.value);
+    const methods = this.selectedMethods(defName, nodes, info);
+    // An exposed method is a *field name*, not a column, so the columns it reads
+    // off `this` are absent from the selection set and would be projected away.
+    // Widening here — next to `withCrossAdapterJoinKeys`, which widens for
+    // exactly this class of reason — is what makes the declaration mean anything.
+    const declared = methods.length > 0 ? methodProjection(this.getDefinition(defName), selectedNames) : {};
+    const fields = declared.fields === "*"
+      ? undefined // opted out of narrowing: load every column
+      : this.withCrossAdapterJoinKeys(defName, declared.fields?.length
+        ? [...new Set([...(selectedNames || []), ...declared.fields])]
+        : selectedNames);
     const selection: Selection = {
       raw: info,
       variableValues: info?.variableValues,
-      fields: (info && Array.isArray(info.fieldNodes)) ? this.withCrossAdapterJoinKeys(defName, getSelectionFields(info.fieldNodes[0], info)) : undefined,
+      fields,
       countOnly: wantsCountOnly(info),
       translateFilter: (w, keys) => replaceIdDeep(w, keys, info?.variableValues),
       translateId: (v) => fromGlobalId(v as string).id,
@@ -165,7 +259,23 @@ export default class GqlizeBinding {
           logger("gqlize::manager").warn("auto-include build failed, falling back to per-relation resolution", e);
         }
       }
+      // Declared relations merge on top of whatever plan exists — a method's
+      // `include` adds to a client-supplied one rather than clobbering it — and
+      // apply whether or not auto-include is on: they are an explicit request by
+      // the definition's author, not an inference from the selection set.
+      const methodInclude = this.normalizeDeclaredInclude(defName, declared.include);
+      if (methodInclude) {
+        const existing = a.include as IncludeMap[] | undefined;
+        a.include = [mergeIncludeMaps(existing?.[0] || {}, methodInclude)];
+      }
       selection.include = a.include as IncludeMap[] | undefined;
+    }
+    if (methods.length > 0) {
+      const definition = this.getDefinition(defName);
+      const optionHooks = methodOptionHooks(definition, methods, { info, modelDefinition: definition });
+      if (optionHooks) {
+        selection.optionHooks = optionHooks;
+      }
     }
     return selection;
   }
@@ -197,10 +307,10 @@ export default class GqlizeBinding {
   processRelationshipMutation = (defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processRelationshipMutation(defName, source, input, context, this.buildSelection(defName, info));
   }
-  processCreate = (defName: string, source: AdapterRow, args: { input: MutationInputTree }, context: RequestContext, info: GraphQLResolveInfo) => {
+  processCreate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processCreate(defName, source, args, context, this.buildSelection(defName, info));
   }
-  processUpdate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number }, context: RequestContext, info: GraphQLResolveInfo) => {
+  processUpdate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processUpdate(defName, source, args, context, this.buildSelection(defName, info));
   }
   processSelect = (defName: string, source: AdapterRow, args: { input?: MutationInputTree; where?: MutationFilter; limit?: number }, context: RequestContext, info: GraphQLResolveInfo) => {
@@ -211,17 +321,19 @@ export default class GqlizeBinding {
   }
 }
 
-function getSelectionFields(startNode: FieldNode | undefined, info?: GraphQLResolveInfo) {
+function getSelectionFieldNodes(startNode: FieldNode | undefined, info?: GraphQLResolveInfo) {
   if (!startNode || !info) {
     return undefined;
   }
   // Descend the relay connection (edges { node { … } }) to the node selection set,
-  // then collect the requested field names — expanding inline/named fragments.
+  // then collect the requested fields — expanding inline/named fragments. The
+  // nodes rather than their names, because an exposed method's own args live on
+  // them and the same method may appear more than once under different aliases.
   const nodeSelectionSet = getChildSelectionSet(startNode.selectionSet, true, info);
   if (!nodeSelectionSet) {
     return undefined;
   }
-  return flattenFieldNodes(nodeSelectionSet, info).map((f) => f.name.value);
+  return flattenFieldNodes(nodeSelectionSet, info);
 }
 
 // A relay connection field that selects `total` but not `edges`/rows can be

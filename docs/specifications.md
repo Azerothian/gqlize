@@ -256,7 +256,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `ignoreFields` | Columns to exclude from the generated type. |
 | `relationships` | Array of `Relationship`: `{ model, name, type, options }` where `type ∈ hasOne | belongsTo | hasMany | belongsToMany` and `options` carries `as`, `foreignKey`, `sourceKey`, `through`, `constraints`. |
 | `whereOperators` / `whereOperatorTypes` | Custom filter operators (async functions returning a where fragment) and their GraphQL input types. |
-| `expose` | Declares which methods surface to GraphQL: `expose.classMethods.{query,mutations}` and `expose.instanceMethods.{query,mutations}`, each `{ type, args, before?, after? }`. `type` may be a string model reference (`"Task"`) or a list (`"Task[]"`), or a concrete GraphQL type. |
+| `expose` | Declares which methods surface to GraphQL: `expose.classMethods.{query,mutations}` and `expose.instanceMethods.{query,mutations}`, each an `ExposedMethod`: `{ type?, args?, before?, after?, fields?, include?, input?, output?, orderBy?, where? }`. `type` may be a string model reference (`"Task"`) or a list (`"Task[]"`), or a concrete GraphQL type. See [Exposed methods](#exposed-methods). |
 | `classMethods` / `instanceMethods` | The implementations behind `expose` (in the Sequelize adapter these are placed under `options.classMethods` / `options.instanceMethods`). |
 | `before` / `after` | gqlize-level transforms discriminated by the `Events` enum (see §8). |
 | `hooks` | Sequelize-style lifecycle `HookMap`. |
@@ -316,6 +316,57 @@ export default {
   },
 } as Definition;
 ```
+
+### Exposed methods
+
+An entry under `expose` is an `ExposedMethod` (`packages/utilize/src/types/index.ts`). Beyond
+the schema shape (`type`, `args`) and the hooks (`before`, `after`) every target understands,
+an entry may declare what the method *needs loaded* and how it *shapes the query it is selected
+in*. Those keys are read by `packages/utilize/src/exposed-methods.ts` — GraphQL-free, so
+gqlize, ormize and every adapter agree on what a declaration means:
+
+| Key | Shape | Read by | Effect |
+| --- | --- | --- | --- |
+| `fields` | `string[]` \| `"*"` | `methodProjection` | Columns unioned into the projection when the method is selected. `"*"` drops narrowing for that query. |
+| `include` | `DeclaredIncludeMap` (`{ [relName]: Partial<IncludeDescriptor> }`) | `methodProjection` | Relations merged into the include plan. `target`/`associationType` are filled from the live association by `normalizeDeclaredInclude` (`packages/gqlize/src/manager.ts`). |
+| `input` | `(params, ctx) => params` | `methodOptionHooks` | Carried on `Selection.optionHooks` and run against the built query options. |
+| `output` | `(value, ctx) => any` | `create-complex-fields.ts` | Produces the field value; makes the implementation optional. |
+| `orderBy` | `string[]` \| `(direction, ctx) => OrderEntry[]` | `computedOrderableFields`, `expandOrderBy` | Contributes `<name>ASC`/`<name>DESC` to the model's orderBy enum; expanded to real ordering at query time. |
+| `where` | `string` \| `{ type?, operators?, resolve }` | `computedWhereFields`, `computedWhereOperators`, `whereOperatorsFor` | Contributes a nested operator object to the model's `where`, resolved as a custom where-operator. |
+
+Rules the surface holds to:
+
+- **Push-down only.** `orderBy` and `where` must yield query fragments. Nothing is sorted or
+  filtered in memory afterwards: post-filtering would break `first`/`last` and cursor offsets
+  and desync `total`, and fetch-all-then-filter is a DoS vector on exactly the models that
+  invite it.
+- **Permission-gated contributions.** `computedOrderableFields` and `computedWhereFields` both
+  filter through `permission.queryInstanceMethods` — sortability and filterability each leak a
+  denied field's value.
+- **Declared `fields` are server-side.** They load columns the client's selection set could
+  never reach. The definition author wrote both sides, so it is their call; it is documented
+  rather than discovered.
+- **Ordering.** `fields`/`include` merge into the projection first, then `definition.before`,
+  then each selected method's `input` in declaration order — `input` sees the final options and
+  gets the last word. `output` then produces the value and `after` post-hooks it.
+- **Aliases.** The same method selected twice with different args runs `input` once per
+  selection occurrence and `output` once per row per occurrence.
+- **Collisions.** `assertNoExposedMethodCollisions`, called from `create-model-type.ts` (the one
+  point that sees both the model's columns and its `expose` block), throws when an exposed
+  instance method's name is a column, or when a name appears in both `instanceMethods.query` and
+  `instanceMethods.mutations` — both targets resolve to the same implementation namespace.
+- **No schema-shape change.** `exposeProjection` (`packages/gqlize/src/graphql/snapshot/fingerprint.ts`)
+  is unchanged by these keys, so existing schema snapshots stay valid.
+
+`expose.instanceMethods.mutations` is the write-side target: pre-commit transforms, surfaced as
+the mutation's `apply` argument (§5) and run by `applyInstanceTransforms`
+(`packages/ormize/src/manager.ts`) after `definition.before` and immediately before the adapter
+persists. On create the transform's `this` is the pending values object; on update it is the
+live row, wrapped in a recording proxy so direct writes (`this.name = …`) are captured and
+persisted alongside a returned partial — the Sequelize adapter's update path persists the values
+map, not the row's own mutations. Transforms run **inside the mutation's transaction**, so a
+throw rolls the whole mutation back, nested relationship writes included; they must not reach
+outside it. Gated by `permission.mutationInstanceMethods`.
 
 ### Typed definitions (opt-in typesystem)
 
@@ -384,13 +435,20 @@ generated: `options.subscriptions` is accepted and ignored (the generator is com
   `resolveSingleRelationship`; `hasMany`/`belongsToMany` → nested Relay connections via
   `resolveManyRelationship`. Gated by `permission.relationship`.
 - `create-complex-fields.ts` — exposed instance-method query fields. Gated by
-  `permission.queryInstanceMethods`.
+  `permission.queryInstanceMethods`. A field's `output` (if declared) produces the value,
+  otherwise the `definition.instanceMethods` implementation is invoked with `this` bound to the
+  row; `after` post-hooks either. The builder also records the selection so the method's
+  `fields`/`include`/`input` declarations reach the query (see
+  [Query resolution & eager loading](#query-resolution--eager-loading)).
 
 ### Mutation inputs & deep writes
 
 `create-mutation-input.ts` generates `{Def}RequiredInput` (create), `{Def}OptionalInput`
 (update), `{Def}UpdateInput` / `{Def}SelectInput` (`where`/`limit`/`input`), and delete filter
-inputs. The top-level model mutation exposes `create` / `update` / `delete` / **`select`**. For each
+inputs. The top-level model mutation exposes `create` / `update` / `delete` / **`select`**, plus
+**`apply`** (`create-mutation-model.ts`) when the model exposes instance-method transforms — an
+input object with one field per `expose.instanceMethods.mutations` entry, typed by that entry's
+`args` (or `Boolean` when it declares none), gated by `permission.mutationInstanceMethods`. For each
 association it also emits nested sub-fields, enabling deep writes, applied by
 `processRelationshipMutation` (`packages/ormize/src/manager.ts`) via the Sequelize association
 accessors (recursion depends on the graphql patch, see §12). The sub-fields per association type:
@@ -493,6 +551,13 @@ the query through the adapter. Key properties:
 - **Count-only.** When a connection selects `total` but not `edges`/rows, the `findAll` is
   skipped and a `count` runs instead — firing `beforeCount` and the gqlize-level `afterCount`
   hook. See §8.
+- **Exposed-method declarations.** A selected instance-method query field widens the query
+  before it runs: its `fields` are unioned into the projection (or narrowing is dropped for
+  `fields: "*"`) and its `include` merges into the include tree. Its `input` hook is carried on
+  `Selection.optionHooks` and applied to the built options after `definition.before`, in
+  declaration order. On a backend without an inline count, a hook that narrows the row set has
+  its `where`/`include` copied onto the count options too, so `total` stays in sync. See
+  [Exposed methods](#exposed-methods).
 - **Opt-out.** Set `options.autoInclude = false` on a `Definition` to disable root-level eager
   resolution for that model and fall back to per-relation resolution.
 
@@ -543,7 +608,8 @@ corresponding schema element.
 | `field(defName, fieldName, options)` | Individual output fields. |
 | `relationship(defName, relName, targetName, options)` | Relationship fields. |
 | `queryClassMethods` / `mutationClassMethods` | Exposed class methods. |
-| `queryInstanceMethods` | Exposed instance-method query fields. |
+| `queryInstanceMethods` | Exposed instance-method query fields — and, with them, the `orderBy` enum values and `where` fields those methods contribute (sortability and filterability each leak a denied field's value). |
+| `mutationInstanceMethods` | Exposed instance-method transforms, i.e. the fields of a mutation's `apply` argument. |
 | `queryExtension` / `mutationExtension` (fieldName, options) | `options.extend.*` fields. The first argument is the extend field key, not a model name. |
 
 A shared `options.permission.options` value is threaded into every callback.
@@ -642,7 +708,9 @@ contract groups into:
 - **Introspection:** `getModel`, `getFields` (→ `DefinitionField`), `getAssociations`
   (→ `Association`), `getPrimaryKeyNameForModel`, `getValueFromInstance`.
 - **Type mapping:** `getTypeMapper`, `getDefaultListArgs`, `getOrderByGraphQLType`,
-  `getFilterGraphQLType`.
+  `getFilterGraphQLType`. The host passed to these carries an optional
+  `computedOrderableFields(defName, permission?)` so an adapter can fold exposed methods'
+  `orderBy` declarations into the orderBy enum without knowing what an exposed method is.
 - **Relationships:** `createRelationship`, `createFunctionForFind`,
   `resolveManyRelationship`, `resolveSingleRelationship`.
 - **Querying:** `processListArgsToOptions`, `findAll`, `count`, `hasInlineCountFeature`,
@@ -657,8 +725,13 @@ contract groups into:
   `foreignKey`/`foreignTarget`, and `autoPopulated`.
 - Filtering: `createQueryType` (from `@azerothian/graphql-types`) builds the `where` input;
   `processFilterArgument` → `replaceWhereOperators` (`utils/where-ops.ts`) maps GraphQL
-  operator names to Sequelize `Op.*`, and custom `definition.whereOperators` are resolved.
-- `getOrderByGraphQLType` builds a `{Def}OrderBy` enum (`fieldASC` / `fieldDESC`);
+  operator names to Sequelize `Op.*`, and custom operators are resolved. Every read of a
+  definition's operators on a query path goes through `whereOperatorsFor`, which folds the
+  definition's own `whereOperators` together with the ones its exposed methods' `where`
+  declarations imply — at include depth as well as at the root.
+- `getOrderByGraphQLType` builds a `{Def}OrderBy` enum (`fieldASC` / `fieldDESC`), including
+  the computed entries from `computedOrderableFields`, which `expandOrderBy` turns back into
+  real column ordering at query time;
   `getIncludeGraphQLType` builds recursive nested-include input for eager-loaded joins.
 - Inline count via `COUNT(*) OVER()` on postgres/mssql/sqlite.
 - `type-mapper.ts` maps Sequelize DataTypes → GraphQL types.

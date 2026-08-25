@@ -28,6 +28,7 @@ import type {
   SequelizeOrder,
   SequelizeOrderPrefix,
 } from "./types/query";
+import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 
 /**
  * What the option builders reach into. Structural, so `SequelizeAdapter`
@@ -150,7 +151,10 @@ export async function processIncludeStatement(
         const rel = host.getAssociation(defName, relName);
         const TargetModel = modelOf(host, rel.target);
         const targetDefName = TargetModel.definition.name as string;
-        const { whereOperators } = TargetModel.definition;
+        // The target's own operators *plus* the ones its computed filters imply —
+        // a `where` declared by an exposed method has to expand at include depth
+        // exactly as it does at the root.
+        const whereOperators = whereOperatorsFor(TargetModel.definition);
         const orderAssocPrefix = { model: TargetModel, as: relName };
         // A `separate` include runs as its own batched root query, so its
         // ordering/limit/offset live on the include entry itself rather than

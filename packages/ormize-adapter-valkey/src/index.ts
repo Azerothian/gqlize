@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothian/utilize/exposed-methods";
 import pluralize from "pluralize";
 import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
 import {globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
@@ -145,6 +146,9 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   queryConfigFor = (defName: string, _definition?: Definition, permission?: Permission) =>
     createQueryConfig(this.model(defName), permission);
   orderableFields = (defName: string) => Object.keys(this.model(defName).fields);
+  /** Computed sorts are declared on the definition; the shared builder stays definition-blind. */
+  computedOrderableFields = (defName: string, permission?: Permission) =>
+    computedOrderableFieldsFor(this.model(defName).definition, defName, permission !== undefined ? permission : this._buildPermission);
   relationshipsOf = (defName: string) => this.model(defName).relationships || [];
   /** A target that is not one of this adapter's models cannot be eager-loaded here. */
   targetOf = (modelName: string) => (this.getModel(modelName)
