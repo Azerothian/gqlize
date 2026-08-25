@@ -881,8 +881,10 @@ field to `apply`. See [§8 Permissions](#8-permissions).
 
 ## 8. Permissions
 
-Pass a `permission` object as the second argument to `createSchema`. Each key is a predicate
-returning a boolean; returning falsy removes the corresponding element from the schema.
+Pass a `permission` object as the second argument to `createSchema`. Each key below is a predicate
+returning a boolean; returning falsy removes the corresponding element from the schema. The one
+exception is `scope`, which returns a filter rather than a decision and runs per request rather than
+per schema — see [Row-level scope](#row-level-scope-permissionscope) at the end of this section.
 
 ```ts
 const schema = await createSchema(db, {
@@ -933,6 +935,176 @@ const permission = createRoleBasedPermissions("anyone", {
 });
 const schema = await createSchema(db, { permission });
 ```
+
+### Row-level scope (`permission.scope`)
+
+Every key above answers *does this surface exist*, at schema-build time, with a boolean. `scope`
+answers the other question — *which rows* — and it is the only key consulted **per request** rather
+than once per schema. That is why it is not in the list above, and why it may be `async`: resolving
+group membership is a lookup.
+
+```ts
+const schema = await createSchema(db, {
+  permission: {
+    scope: (defName, operation, options, context) => {
+      if (defName !== "Task") {
+        return undefined;                          // no opinion — this model is unscoped
+      }
+      const user = context.user;
+      if (!user) {
+        return false;                              // deny outright
+      }
+      if (operation === "create") {
+        return { set: { ownerId: user.id } };      // force a value, there is no `where` to filter
+      }
+      return { where: { ownerId: { eq: user.id } } };
+    },
+  },
+});
+```
+
+`operation` is `"read" | "create" | "update" | "delete"`. `options` is the shared
+`permission.options` bag, fixed for the life of the schema; `context` is the per-request context —
+the GraphQL context under gqlize, `{req}` under nestize, the activity context under temporalize.
+
+**Return values.** The two falsy-looking ones mean opposite things, which is the sharpest edge in
+the feature:
+
+| Return | Meaning |
+| --- | --- |
+| `undefined` | No opinion, so **no restriction** — matching every other key, where an absent predicate allows. |
+| `false` | Deny. Reads return nothing; writes follow `onScopeMiss`. |
+| `{ownerId: {eq: "u1"}}` | A bare filter in the caller's `where` vocabulary, AND-ed into the operation's filter. |
+| `{where, set, native}` | The long form: `where` filters, `set` forces field values on a create or update, `native` is an adapter-native escape hatch (below). |
+
+A returned filter is not a boolean, which is why `scope` never travels through the same `isAllowed`
+helper the other keys use — `!!filter` is `true`, and a scope coerced that way evaporates into an
+unrestricted query.
+
+**Fail-closed, asymmetrically.** An **absent** `scope` key means unscoped. This key postdates every
+deployment that does not set it, and denying every row on their behalf would be the wrong direction
+of surprise. A **present** predicate that throws is a **deny** — a configured predicate failing is
+not a reason to widen the query. The exception is `ScopeConfigurationError`, which is rethrown: a
+scope that cannot be *expressed* (an `or` on an adapter with no way to AND two native filters, a
+`like` bound into a raw-SQL `:scope…` parameter) is a configuration bug, and reporting it as an empty
+page is how it goes unnoticed for a year.
+
+**Where it applies.** Every read funnels through one chokepoint, so a single predicate covers the
+root list, `total`, `node(id:)`, relationship fields (eager-loaded and lazy alike), nestize's
+list/one/count and temporalize's `findAll` / `findOne` / `findByPk` / `count`. Writes are scoped in
+four places, because a read scope alone is a false sense of security — a caller who cannot *see* a
+row can still `update(where: {id: X})` it:
+
+| Write | How |
+| --- | --- |
+| `create` | `set` forces the scope's values, applied after `definition.override`, so the client cannot supply them. |
+| `update` | `where` narrows what is matched, and `set` is re-imposed on what is written. |
+| `delete` | `where` narrows what is matched. |
+| `select` | The relationship sub-mutation path — it writes no field of its own but reaches rows through a `where`, so a layer that scoped only update and delete would leave it open. |
+
+The eight nested relationship verbs inherit through the same two helpers those paths use. A write
+that would move a row *out* of scope is re-checked after the fact and refused.
+
+**`onScopeMiss`.** By default a write the scope denies outright reports the same nothing an unscoped
+write reports for a row that does not exist:
+
+```ts
+const schema = await createSchema(db, { permission: { scope }, onScopeMiss: "throw" });
+```
+
+`"empty"` (the default) keeps the two indistinguishable, since a distinguishable refusal is itself a
+read of the scoped-out row. `"throw"` trades that for a loud one, which is the better call where the
+callers are internal.
+
+**What a scope does not hide.** Listed rather than left silent, so a reviewer can see they were
+priced in rather than missed. A scope filters rows; it does not make a scoped-out row's *existence*
+unobservable, and these channels remain:
+
+- a create whose unique-constraint violation proves a row with that key already exists;
+- a foreign-key violation from an `add` / `set` verb naming a scoped-out row;
+- `onScopeMiss: "throw"`, which is opt-in for exactly this reason;
+- timing.
+
+Closing those needs something other than a `where`. The two that are cheap to close: leave
+`onScopeMiss` at `"empty"`, and think twice before putting a unique constraint on a caller-chosen
+value of a scoped model.
+
+**Surfaces the engine cannot reach.** A class method, an instance method, an `options.extend.query`
+/ `.mutation` field or a raw-SQL class method runs your code holding the model directly, so there is
+no filter for the engine to merge into and no hook underneath that knows a request is happening.
+When a `scope` is configured, every one of them must declare itself or the build reports it — route
+the work back through the orm (best, and needs nothing here), or say which of the other two it is:
+
+```ts
+import { scopeAware, unscoped } from "@azerothian/utilize/gate";
+
+options: {
+  classMethods: {
+    // Applies the scope itself. The engine hands it `context.scopeFor(defName, operation)`
+    // and cannot verify it was used — which is why the claim has to be explicit and greppable.
+    recentFor: scopeAware(async function(args, context) {
+      const scope = await context.scopeFor("Task", "read");
+      // …
+    }),
+    // An admission, sitting in the diff next to the code it excuses.
+    systemTotals: unscoped(async function() { /* … */ }),
+  },
+}
+```
+
+Raw SQL gets the sharpest form, because a statement is text by the time it reaches the driver and
+cannot be rewritten. The engine binds the resolved scope into named parameters the query has to
+reserve, and a raw method on a scoped model whose text never mentions one **does not build**:
+
+```ts
+classMethods: {
+  overdue: {
+    query: `SELECT * FROM "Task"
+             WHERE "due" < NOW()
+               AND (:scopeOwnerId IS NULL OR "ownerId" = :scopeOwnerId)`,
+  },
+}
+```
+
+`:scopeOwnerId` binds whatever the scope pins `ownerId` to, and `null` where it pins nothing — which
+is what the permissive `:scopeOwnerId IS NULL OR` half is for. Omit that half and the query returns
+nothing, because `= NULL` matches no row; failing in that direction is deliberate. A parameter can
+carry an equality and nothing else, so a scope whose filter needs `or`, `not`, `in` or `like` raises
+a `ScopeConfigurationError` rather than binding half of itself.
+
+**`native`.** `{native: …}` is merged in the adapter's own filter vocabulary rather than the portable
+one, which makes it **adapter-locking**: a definition that later changes backend, or a model reached
+across a cross-adapter relationship, silently loses what the escape hatch was expressing. Reach for
+it only where the portable `where` genuinely cannot say what you mean.
+
+**Role-based sugar.** `createRoleBasedPermissions` compiles `scope` from the same rules tree, with
+`own` / `group` / `tenant` / `none` leaves and an optional per-operation split:
+
+```ts
+const permission = createRoleBasedPermissions("member", {
+  member: {
+    query: "allow",
+    model: { Task: "allow", Project: "allow", Tag: "allow" },
+    scope: {
+      Task:    { own: "ownerId" },                         // filters reads, forces creates
+      Project: { read: { group: "groupId" }, write: "deny" },
+      Tag:     "none",                                     // explicitly unscoped
+    },
+  },
+}, { principal: (context) => context.user });
+```
+
+`own` compares a field to the principal's `id`, `tenant` to its `tenantId`, `group` to a *list* on
+it (`groupIds`); the long form `{own: {field: "ownerId", from: "userId"}}` spells both sides out.
+`any` and `all` combine leaves. `read` / `write` split the operations, and an explicit `update`
+beats the `write` it falls under.
+
+Two things are deliberately unlike the rest of the rules tree. `defaultDeny` does **not** apply to
+`scope`, and `"none"` has to be written out, because an absent `scope` already means unscoped —
+without an explicit spelling, "this role sees everything" and "nobody has configured this yet" would
+be the same tree. And a `group` leaf denies when the principal belongs to no groups rather than
+compiling to `{in: []}`, which is a deny that reads like a bug; a principal the reader cannot find
+at all is likewise a deny.
 
 ---
 
