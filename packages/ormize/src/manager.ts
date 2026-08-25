@@ -11,12 +11,12 @@ import { ScopeDeniedError, applyScopeWhere, inheritScopeMemo, scopeFor, scopeInc
 import type { ScopeMissBehaviour } from "./scope";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
-import { OrmAdapter, AdapterRow, AdapterQueryOptions, DataTypeDescriptor, NativeDataType,
+import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, NativeDataType,
   RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs, OrderEntry } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { InstanceRow, MutationApply, MutationFilter, MutationHost, MutationInput,
   MutationInputTree, ResolveOptions } from "./types/engine";
-import { addProxyAccessor, btmGetter, createProxyFunction, joinScope, writeAccessors } from "./cross-adapter";
+import { addProxyAccessor, btmGetter, createProxyFunction, joinScope, requestFrom, writeAccessors } from "./cross-adapter";
 import { applyRelationshipMutations } from "./relationship-mutations";
 import Events from "./events";
 import OrmizeTransaction from "./transaction";
@@ -236,6 +236,37 @@ export default class Ormize<
         target.where = adapter.andFilterStatements(target.where, native);
       }
     }
+  }
+  /**
+   * A model's scope for one operation, in its adapter's vocabulary, ANDed onto
+   * `where`. Backs {@link AdapterRoutingHost.scopedWhere}; see it for why the
+   * cross-adapter accessors need the native shape rather than the portable one.
+   */
+  private scopeNativeWhere = async(
+    defName: string, operation: ScopeOperation, context: RequestContext,
+    where: AdapterWhere | undefined, options: AdapterQueryOptions | undefined,
+  ): Promise<AdapterWhere | undefined | false> => {
+    const resolved = await this.resolveRowScope(defName, operation, context);
+    if (resolved === false) {
+      return false;
+    }
+    if (!resolved?.where) {
+      return where;
+    }
+    const adapter = this.getModelAdapter(defName);
+    const native = await adapter.processFilterArgument(
+      resolved.where, whereOperatorsFor(this.getDefinition(defName)), options || {},
+    );
+    if (!where) {
+      return native;
+    }
+    if (!adapter.andFilterStatements) {
+      throw new Error(
+        `Adapter '${adapter.adapterName}' cannot scope a cross-adapter relationship on '${defName}': ` +
+        "it does not implement andFilterStatements, and a row-level scope has to be ANDed onto the join filter.",
+      );
+    }
+    return adapter.andFilterStatements(where, native);
   }
   addHook = (hookName: string, hook: HookFunction) => {
     (this.globalHooks[hookName] as HookFunction[]).push(hook);
@@ -806,14 +837,19 @@ export default class Ormize<
       // callback.
       const defName = def.name;
       const adaptOptions = (options: AdapterQueryOptions | undefined) => this.optionsForAdapter(defName, rel.model, options);
+      // F5. The proxy runs the target's find directly, so the target's read scope
+      // has to travel with it — the accessor is an ordinary instance method and
+      // anything holding a source row can call it.
+      const scopedWhere = (options: AdapterQueryOptions | undefined) =>
+        this.scopeNativeWhere(rel.model, "read", requestFrom(options), options?.where, options);
       // The proxy reads its join value off `this`, which is a *source* instance —
       // so the read goes through the source adapter, not the target's. `belongsTo`
       // keeps the key on the source and points at the target's `targetKey`; the
       // other two keep it on each target and point back at the source's `sourceKey`,
       // differing only in whether one row or many come back.
       const proxy = rel.type === "belongsTo"
-        ? createProxyFunction(sourceAdapter, foreignKey, targetKey, true, findFunc, adaptOptions)
-        : createProxyFunction(sourceAdapter, sourceKey, foreignKey, rel.type === "hasOne", findFunc, adaptOptions);
+        ? createProxyFunction(sourceAdapter, foreignKey, targetKey, true, findFunc, adaptOptions, scopedWhere)
+        : createProxyFunction(sourceAdapter, sourceKey, foreignKey, rel.type === "hasOne", findFunc, adaptOptions, scopedWhere);
       addProxyAccessor(sourceAdapter, def.name, modelClass, funcName, proxy);
     }
     for (const [accessor, func] of Object.entries(writeAccessors(this.host, association, sourceAdapter, targetAdapter))) {
@@ -907,13 +943,14 @@ export default class Ormize<
     processRelationshipMutation: (defName, source, input, context, selection) => this.processRelationshipMutation(defName, source, input, context, selection),
     resolveScope: (defName, operation, context) => this.resolveRowScope(defName, operation, context),
     scopeMiss: (defName, operation) => scopeMiss(defName, operation, this.onScopeMiss),
+    scopedWhere: (defName, operation, context, where, options) => this.scopeNativeWhere(defName, operation, context, where, options),
   };
   /**
    * @deprecated Kept for the published surface; prefer the free
    * `createProxyFunction` in `./cross-adapter`, which this forwards to.
    */
-  createProxyFunction(adapter: OrmAdapter, sourceKey: string, filterKey: string, singular: boolean, findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((options: AdapterQueryOptions) => Promise<AdapterRow>), adaptOptions?: (options: AdapterQueryOptions | undefined) => Promise<AdapterQueryOptions | undefined>)  {
-    return createProxyFunction(adapter, sourceKey, filterKey, singular, findFunc, adaptOptions);
+  createProxyFunction(adapter: OrmAdapter, sourceKey: string, filterKey: string, singular: boolean, findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((options: AdapterQueryOptions) => Promise<AdapterRow>), adaptOptions?: (options: AdapterQueryOptions | undefined) => Promise<AdapterQueryOptions | undefined>, scopedWhere?: (options: AdapterQueryOptions | undefined) => Promise<AdapterWhere | undefined | false>)  {
+    return createProxyFunction(adapter, sourceKey, filterKey, singular, findFunc, adaptOptions, scopedWhere);
   }
   getValueFromInstance = (defName: string, data: AdapterRow, keyName: string): unknown => {
     if (!data) {

@@ -7,7 +7,7 @@
 // from.
 
 import type {
-  AdapterQueryOptions, AdapterRow, Association, Definition, OrmAdapter,
+  AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, OrmAdapter,
   PortableWhere, RequestContext, Selection,
 } from "@azerothian/utilize/types/index";
 import type { ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
@@ -93,6 +93,25 @@ export type MutationInputTree = { [name: string]: unknown };
 export interface AdapterRoutingHost {
   getModelAdapter(modelName: string): OrmAdapter;
   optionsForAdapter<T extends AdapterQueryOptions | undefined>(fromDefName: string, toDefName: string, options: T): Promise<T>;
+  /** `permission.scope` for one model and operation, memoised for the request. */
+  resolveScope(defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope>;
+  /** Throw or stay quiet when a scope denies a write outright, per `onScopeMiss`. */
+  scopeMiss(defName: string, operation: ScopeOperation): void;
+  /**
+   * A model's scope for one operation, translated into *its own* adapter's
+   * vocabulary and ANDed onto `where`. `false` when the scope denies outright:
+   * there is no adapter-native "match nothing" to hand back, so the caller
+   * short-circuits instead.
+   *
+   * The cross-adapter accessors reach past `resolveFindAll` by design — they run
+   * one query on each of two datastores — so they need the filter already in the
+   * shape the adapter they are about to call expects, which only the manager can
+   * build (it owns the definitions and the `whereOperators` derived from them).
+   */
+  scopedWhere(
+    defName: string, operation: ScopeOperation, context: RequestContext,
+    where: AdapterWhere | undefined, options: AdapterQueryOptions | undefined,
+  ): Promise<AdapterWhere | undefined | false>;
 }
 
 /** {@link AdapterRoutingHost} plus what the relationship-mutation verbs re-enter. */
@@ -104,8 +123,4 @@ export interface MutationHost extends AdapterRoutingHost {
   processCreate(defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
   processDelete(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]>;
   processRelationshipMutation(defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, selection?: Selection): Promise<AdapterRow>;
-  /** `permission.scope` for one model and operation, memoised for the request. */
-  resolveScope(defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope>;
-  /** Throw or stay quiet when a scope denies a write outright, per `onScopeMiss`. */
-  scopeMiss(defName: string, operation: ScopeOperation): void;
 }

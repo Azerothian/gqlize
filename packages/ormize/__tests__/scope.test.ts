@@ -617,3 +617,200 @@ describe("ormize - row-level scope, relationship reads (F4)", () => {
     expect(folder).toBeNull();
   });
 });
+
+// Two sqlite adapters is all "cross-adapter" means to the engine: the two ends
+// have different `OrmAdapter` instances, so there is no association to delegate
+// to and ormize resolves the pair itself. `Vault` lives on one, `File` and `Tag`
+// on the other, so every relationship below takes the proxy path.
+async function buildCross(options: {
+  scope?: ScopePredicate;
+  onScopeMiss?: "empty" | "throw";
+} = {}) {
+  const permission: Permission | undefined = options.scope ? { scope: options.scope } : undefined;
+  const db = new Database({ permission, onScopeMiss: options.onScopeMiss });
+  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite2");
+  await db.addDefinition({
+    name: "Vault",
+    define: { title: { type: Sequelize.STRING, allowNull: true } },
+    options: { timestamps: false, tableName: "vaults" },
+    relationships: [
+      { type: "hasMany", model: "File", name: "files", options: { foreignKey: "vaultId" } },
+      { type: "belongsToMany", model: "Tag", name: "tags", options: { foreignKey: "vaultId" } },
+    ],
+  }, "sqlite");
+  await db.addDefinition({
+    name: "File",
+    define: {
+      name: { type: Sequelize.STRING, allowNull: false },
+      ownerId: { type: Sequelize.INTEGER, allowNull: true },
+      vaultId: { type: Sequelize.INTEGER, allowNull: true },
+    },
+    options: { timestamps: false, tableName: "files" },
+    relationships: [
+      { type: "belongsTo", model: "Vault", name: "vault", options: { foreignKey: "vaultId" } },
+    ],
+  }, "sqlite2");
+  await db.addDefinition({
+    name: "Tag",
+    define: { label: { type: Sequelize.STRING, allowNull: false } },
+    options: { timestamps: false, tableName: "tags" },
+  }, "sqlite2");
+  await db.initialise();
+  await db.sync();
+  return db;
+}
+
+type Cross = Awaited<ReturnType<typeof buildCross>>;
+
+/** A vault holding one owned and one unowned file, plus one tag linked to it. */
+async function seedCross(db: Cross) {
+  const vault = await db.models.Vault.create({ title: "v" });
+  await db.models.File.bulkCreate([
+    { name: "mine", ownerId: 1, vaultId: vault.id },
+    { name: "theirs", ownerId: 2, vaultId: vault.id },
+  ]);
+  const tag = await db.models.Tag.create({ label: "t" });
+  return { vault, tag };
+}
+
+const scopeModel = (name: string, fn: ScopePredicate): ScopePredicate =>
+  (defName, operation, options, context) =>
+    (defName === name ? fn(defName, operation, options, context) : undefined);
+
+const named = (rows: unknown) => (rows as NamedRow[]).map((r) => r.name).sort();
+
+describe("ormize - row-level scope, cross-adapter proxies (F5)", () => {
+  it("scopes the collection proxy accessor", async () => {
+    const db = await buildCross({ scope: scopeModel("File", ownedBy(1)) });
+    const { vault } = await seedCross(db);
+    // `getFiles` runs the *target's* `findAll` directly, on the target's own
+    // adapter. Nothing upstream has scoped it, and any code holding a vault row
+    // can call it.
+    expect(named(await vault.getFiles(ctx(1)))).toEqual(["mine"]);
+  });
+
+  it("returns nothing from the collection proxy when the target denies reads", async () => {
+    const db = await buildCross({ scope: scopeModel("File", () => false) });
+    const { vault } = await seedCross(db);
+    expect(await vault.getFiles(ctx(1))).toEqual([]);
+  });
+
+  it("scopes the singular proxy accessor", async () => {
+    const db = await buildCross({
+      scope: scopeModel("Vault", () => ({ where: { title: { eq: "elsewhere" } } })),
+    });
+    await seedCross(db);
+    const file = await db.models.File.findOne({ where: { name: "mine" } });
+    expect(await file.getVault(ctx(1))).toBeFalsy();
+  });
+
+  it("returns nothing from the singular proxy when the target denies reads", async () => {
+    const db = await buildCross({ scope: scopeModel("Vault", () => false) });
+    await seedCross(db);
+    const file = await db.models.File.findOne({ where: { name: "mine" } });
+    expect(await file.getVault(ctx(1))).toBeNull();
+  });
+
+  it("scopes the engine's cross-adapter relationship read", async () => {
+    const db = await buildCross({ scope: scopeModel("File", ownedBy(1)) });
+    const { vault } = await seedCross(db);
+    const { total, models } = await db.resolveManyRelationship(
+      "File", db.getAssociations("Vault").files, vault, {}, ctx(1),
+    );
+    expect(named(models)).toEqual(["mine"]);
+    expect(total).toEqual(1);
+  });
+
+  it("scopes the belongs-to-many through-model read", async () => {
+    const db = await buildCross({
+      // Reads only: a scope that denied every operation would refuse the link
+      // below as well, and the test would pass without the read ever being
+      // scoped at all.
+      scope: scopeModel("TagVault", (_d, operation) => (operation === "read" ? false : undefined)),
+    });
+    const { vault, tag } = await seedCross(db);
+    await vault.addTag(tag);
+    // The join row exists and the target is unscoped, but the *edge* is not
+    // this principal's to see — and an unscoped join read leaks the link even
+    // when both ends of it are scoped out.
+    expect(await vault.getTags(ctx(1))).toEqual([]);
+  });
+
+  it("scopes the belongs-to-many target read", async () => {
+    const db = await buildCross({
+      scope: scopeModel("Tag", () => ({ where: { label: { eq: "other" } } })),
+    });
+    const { vault, tag } = await seedCross(db);
+    await vault.addTag(tag);
+    expect(await vault.getTags(ctx(1))).toEqual([]);
+  });
+
+  it("refuses a proxy write to a row the scope denies outright", async () => {
+    const db = await buildCross({
+      scope: scopeModel("File", (_d, operation) => (operation === "update" ? false : undefined)),
+    });
+    const { vault } = await seedCross(db);
+    const loose = await db.models.File.create({ name: "loose", ownerId: 2, vaultId: null });
+    await vault.addFile(loose, ctx(1));
+    const after = await db.models.File.findOne({ where: { name: "loose" } });
+    expect(after.vaultId).toBeNull();
+  });
+
+  it("refuses a proxy write to a row outside a filter-shaped scope", async () => {
+    const db = await buildCross({ scope: scopeModel("File", ownedBy(1)) });
+    const { vault } = await seedCross(db);
+    const mine = await db.models.File.create({ name: "loose-mine", ownerId: 1, vaultId: null });
+    const theirs = await db.models.File.create({ name: "loose-theirs", ownerId: 2, vaultId: null });
+    // An instance write has no filter to narrow, so the scope is checked and the
+    // write refused — per row, so one refused member of a batch does not take
+    // the rest of the batch with it.
+    await vault.addFiles([mine, theirs], ctx(1));
+    const rows = await db.models.File.findAll({ where: { vaultId: vault.id } });
+    expect(named(rows)).toEqual(["loose-mine", "mine", "theirs"]);
+  });
+
+  it("throws on a refused proxy write under onScopeMiss: throw", async () => {
+    const db = await buildCross({
+      scope: scopeModel("File", (_d, operation) => (operation === "update" ? false : undefined)),
+      onScopeMiss: "throw",
+    });
+    const { vault } = await seedCross(db);
+    const loose = await db.models.File.create({ name: "loose", ownerId: 2, vaultId: null });
+    await expect(vault.addFile(loose, ctx(1))).rejects.toThrow(/scope/i);
+  });
+
+  it("refuses a belongs-to proxy write, which writes the source row", async () => {
+    const db = await buildCross({
+      scope: scopeModel("File", (_d, operation) => (operation === "update" ? false : undefined)),
+    });
+    const { vault } = await seedCross(db);
+    const loose = await db.models.File.create({ name: "loose", ownerId: 2, vaultId: null });
+    // `setVault` points a key that lives on the *file*, so it is the file's
+    // update scope that decides — not the vault's.
+    await loose.setVault(vault, ctx(1));
+    const after = await db.models.File.findOne({ where: { name: "loose" } });
+    expect(after.vaultId).toBeNull();
+  });
+
+  it("scopes the join rows a belongs-to-many unlink deletes", async () => {
+    const db = await buildCross({
+      scope: scopeModel("TagVault", (_d, operation) => (operation === "delete" ? false : undefined)),
+    });
+    const { vault, tag } = await seedCross(db);
+    await vault.addTag(tag);
+    await vault.removeTag(tag, ctx(1));
+    // Unlinking deletes by filter, so the scope merges in rather than being
+    // checked — and a denied one leaves the edge where it was.
+    expect(await vault.getTags(ctx(1))).toHaveLength(1);
+  });
+
+  it("refuses to create a join row the through model's scope denies", async () => {
+    const db = await buildCross({
+      scope: scopeModel("TagVault", (_d, operation) => (operation === "create" ? false : undefined)),
+    });
+    const { vault, tag } = await seedCross(db);
+    await vault.addTag(tag, ctx(1));
+    expect(await vault.getTags(ctx(1))).toEqual([]);
+  });
+});

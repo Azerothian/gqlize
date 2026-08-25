@@ -11,9 +11,73 @@
 // reachable on its own and the manager keeps only the wiring that calls them.
 
 import type {
-  AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Model, OrmAdapter,
+  AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Model, OrmAdapter, RequestContext,
 } from "@azerothian/utilize/types/index";
+import type { ScopeOperation } from "@azerothian/utilize/gate";
 import type { AdapterRoutingHost, InstanceRow, MutationInput } from "./types/engine";
+
+/**
+ * The request an accessor was called for.
+ *
+ * These functions are installed as ordinary instance methods, so they are
+ * reached two ways: the engine calls them with the options bag it builds (which
+ * carries the context behind `getGraphQLArgs`), and userland calls them off a
+ * row it is holding, with whatever it likes — including nothing. A row-level
+ * scope has to be resolved either way, and the second case is why this returns
+ * the bag itself rather than giving up: a predicate handed a context with no
+ * principal on it fails closed, which is the answer an accessor called with no
+ * request deserves.
+ */
+export function requestFrom(options: AdapterQueryOptions | undefined): RequestContext {
+  const bag = options as { getGraphQLArgs?: () => { context: RequestContext } } | undefined;
+  if (typeof bag?.getGraphQLArgs === "function") {
+    return bag.getGraphQLArgs().context;
+  }
+  return options as RequestContext;
+}
+
+/**
+ * May this principal write a row it is already holding?
+ *
+ * The cross-adapter write accessors re-point a foreign key on an *instance*
+ * (`adapter.update(row, …)`), so unlike every other write path there is no
+ * filter for a scope to narrow. The scope is therefore checked and the write
+ * refused: an outright deny short-circuits, and a filter-shaped one is settled
+ * by asking the target's own adapter whether the row is still reachable under
+ * it — one query, and only when a scope is actually configured.
+ *
+ * Reaching a row is a read whatever happens next, so the read scope is ANDed on
+ * top of the operation's own.
+ */
+async function writable(
+  host: AdapterRoutingHost, defName: string, adapter: OrmAdapter, row: AdapterRow,
+  operation: ScopeOperation, options: AdapterQueryOptions | undefined,
+): Promise<boolean> {
+  const request = requestFrom(options);
+  let where = await host.scopedWhere(defName, "read", request, undefined, options);
+  if (where !== false) {
+    where = await host.scopedWhere(defName, operation, request, where, options);
+  }
+  if (where === false) {
+    host.scopeMiss(defName, operation);
+    return false;
+  }
+  if (where === undefined) {
+    return true;
+  }
+  const [pk] = adapter.getPrimaryKeyNameForModel(defName);
+  const value = adapter.getValueFromInstance(row, pk);
+  const [found] = await adapter.findAll(defName, {
+    ...(options?.transaction !== undefined ? {transaction: options.transaction} : {}),
+    where: filterMerger(host, defName)(pk, value, true, where),
+    limit: 1,
+  });
+  if (!found) {
+    host.scopeMiss(defName, operation);
+    return false;
+  }
+  return true;
+}
 
 /** `mergeFilterStatement` on an adapter, with the error the missing case deserves. */
 export function filterMerger(host: AdapterRoutingHost, defName: string) {
@@ -40,8 +104,19 @@ export async function btmKeys(host: AdapterRoutingHost, association: Association
   }
   const throughAdapter = host.getModelAdapter(throughName);
   const opts = await host.optionsForAdapter(association.source, throughName, options);
+  // F5. The join model is a model like any other, and a scope on it is what says
+  // which *edges* a principal may see. Left unscoped, the pair of keys leaks the
+  // existence of a link even when both ends of it are scoped out.
+  const where = await host.scopedWhere(
+    throughName, "read", requestFrom(options),
+    filterMerger(host, throughName)(association.foreignKey, sourceValue, true, undefined),
+    opts,
+  );
+  if (where === false) {
+    return [];
+  }
   const edges = await throughAdapter.findAll(throughName, {
-    where: filterMerger(host, throughName)(association.foreignKey, sourceValue, true, undefined),
+    where,
     ...(opts?.transaction !== undefined ? {transaction: opts.transaction} : {}),
   });
   const keys: unknown[] = [];
@@ -71,10 +146,18 @@ export function btmGetter(host: AdapterRoutingHost, association: Association) {
       return [];
     }
     const opts = (await host.optionsForAdapter(association.source, association.target, options)) || {};
-    return targetAdapter.findAll(association.target, {
-      ...opts,
-      where: filterMerger(host, association.target)(association.targetKey, keys, true, opts.where),
-    });
+    // F5. This accessor is installed on the source model and runs the target's
+    // `findAll` directly, so nothing upstream has scoped it — anything holding a
+    // row can call it.
+    const where = await host.scopedWhere(
+      association.target, "read", requestFrom(options),
+      filterMerger(host, association.target)(association.targetKey, keys, true, opts.where),
+      opts,
+    );
+    if (where === false) {
+      return [];
+    }
+    return targetAdapter.findAll(association.target, {...opts, where});
   };
 }
 
@@ -124,10 +207,18 @@ export function writeAccessors(host: AdapterRoutingHost, association: Associatio
   if (association.associationType === "belongsTo") {
     // The key lives on the source: pointing it elsewhere is a write to `this`.
     const set = async function(this: InstanceRow, target: AdapterRow, options?: AdapterQueryOptions) {
+      // The row being written is `this`, so it is the *source's* update scope
+      // that decides — pointing a key elsewhere is a write to the source row.
+      if (!await writable(host, association.source, sourceAdapter, this, "update", options)) {
+        return undefined;
+      }
       const value = target ? targetAdapter.getValueFromInstance(target, targetKey) : null;
       return sourceAdapter.update(this, {[foreignKey]: value}, options as AdapterQueryOptions);
     };
     const clear = async function(this: InstanceRow, _target?: AdapterRow, options?: AdapterQueryOptions) {
+      if (!await writable(host, association.source, sourceAdapter, this, "update", options)) {
+        return undefined;
+      }
       return sourceAdapter.update(this, {[foreignKey]: null}, options as AdapterQueryOptions);
     };
     return {
@@ -147,6 +238,12 @@ export function writeAccessors(host: AdapterRoutingHost, association: Associatio
     const fk = value(this);
     const opts = await forTarget(options);
     for (const target of list(targets)) {
+      // Each target row is written in its own right, so each is checked in its
+      // own right: one out-of-scope member of a batch is skipped rather than
+      // taking the rest of the batch down with it.
+      if (!await writable(host, association.target, targetAdapter, target, "update", opts)) {
+        continue;
+      }
       await targetAdapter.update(target, {[foreignKey]: fk}, opts as AdapterQueryOptions);
     }
   };
@@ -164,9 +261,13 @@ export function writeAccessors(host: AdapterRoutingHost, association: Associatio
       const current = await this[accessors.get](options);
       const opts = await forTarget(options);
       for (const existing of list(current)) {
-        if (!nextKeys.has(targetAdapter.getValueFromInstance(existing, targetKey))) {
-          await targetAdapter.update(existing, {[foreignKey]: null}, opts as AdapterQueryOptions);
+        if (nextKeys.has(targetAdapter.getValueFromInstance(existing, targetKey))) {
+          continue;
         }
+        if (!await writable(host, association.target, targetAdapter, existing, "update", opts)) {
+          continue;
+        }
+        await targetAdapter.update(existing, {[foreignKey]: null}, opts as AdapterQueryOptions);
       }
       return link.call(this, next, options);
     },
@@ -199,6 +300,15 @@ function btmWriteAccessors(host: AdapterRoutingHost, association: Association, s
     return opts?.transaction !== undefined ? {transaction: opts.transaction} : {};
   };
   const link = async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
+    // A join row is created, so it is the *through* model's create scope that
+    // decides whether this principal may make the link at all. The existence
+    // probe below stays unscoped deliberately: it is an internal uniqueness
+    // check, and scoping it would turn a link the principal cannot see into a
+    // duplicate-key error.
+    if (await host.resolveScope(throughName, "create", requestFrom(options)) === false) {
+      host.scopeMiss(throughName, "create");
+      return;
+    }
     const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
     // `through` carries attribute values for the join row itself (the columns a
     // join table has beyond its two keys).
@@ -217,7 +327,18 @@ function btmWriteAccessors(host: AdapterRoutingHost, association: Association, s
   };
   const unlinkWhere = async(where: AdapterWhere, options: AdapterQueryOptions | undefined) => {
     const opts = await forThrough(options);
-    await host.getModelAdapter(throughName).getDeleteFunction(throughName, undefined)(where, opts, (r) => r, (r) => r);
+    // Unlinking deletes join rows by filter, so unlike the instance writes above
+    // the scope merges straight in and the delete simply matches fewer rows.
+    const request = requestFrom(options);
+    let scoped = await host.scopedWhere(throughName, "read", request, where, opts);
+    if (scoped !== false) {
+      scoped = await host.scopedWhere(throughName, "delete", request, scoped, opts);
+    }
+    if (scoped === false) {
+      host.scopeMiss(throughName, "delete");
+      return;
+    }
+    await host.getModelAdapter(throughName).getDeleteFunction(throughName, undefined)(scoped as AdapterWhere, opts, (r) => r, (r) => r);
   };
   const unlink = async function(this: InstanceRow, targets: AdapterRow | AdapterRow[], options?: AdapterQueryOptions) {
     const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
@@ -273,6 +394,7 @@ export function createProxyFunction(
   singular: boolean,
   findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((options: AdapterQueryOptions) => Promise<AdapterRow>),
   adaptOptions?: (options: AdapterQueryOptions | undefined) => Promise<AdapterQueryOptions | undefined>,
+  scopedWhere?: (options: AdapterQueryOptions | undefined) => Promise<AdapterWhere | undefined | false>,
 ) {
   return async function(this: InstanceRow, options?: AdapterQueryOptions) {
     // The join key — whatever column `sourceKey` names, so its type belongs to
@@ -281,7 +403,18 @@ export function createProxyFunction(
     const keyValue = adapter.getValueFromInstance(this, sourceKey) as string;
     // The find runs on the *target's* adapter while `options` were built for the
     // source's, so any transaction handle in them has to be swapped first.
-    const opts = adaptOptions ? await adaptOptions(options) : options;
+    let opts = adaptOptions ? await adaptOptions(options) : options;
+    if (scopedWhere) {
+      // F5. `findFunc` merges the join key into `options.where` itself, so the
+      // target's scope goes in the same place and comes out ANDed with it.
+      const where = await scopedWhere(opts);
+      if (where === false) {
+        return singular ? null : [];
+      }
+      if (where !== undefined) {
+        opts = {...(opts || {}), where};
+      }
+    }
     return findFunc(keyValue, filterKey, singular)
       .call(this, opts as AdapterQueryOptions);
   };
