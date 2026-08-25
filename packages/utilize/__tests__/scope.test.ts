@@ -391,7 +391,7 @@ describe("scope - F11: filter validation runs on caller input only", () => {
   });
 });
 
-describe("utilize - binding a scope into raw SQL (\u00a712)", () => {
+describe("utilize - binding a scope into raw SQL (§12)", () => {
   const bind = (query: string, resolved: Parameters<typeof bindScopeParameters>[2], args: string[] = []) =>
     bindScopeParameters(query, args, resolved, "Doc's raw SQL");
 
@@ -420,7 +420,7 @@ describe("utilize - binding a scope into raw SQL (\u00a712)", () => {
 
   it("binds null where the scope says nothing at all", () => {
     // Which the documented `(:scopeOwnerId IS NULL OR o = :scopeOwnerId)` reads
-    // as unconstrained \u2014 and an author who omits that permissive half gets no
+    // as unconstrained — and an author who omits that permissive half gets no
     // rows rather than every row, which is the direction to fail in.
     expect(bind("o = :scopeOwnerId", undefined)).toEqual({ scopeOwnerId: null });
     expect(bind("o = :scopeOwnerId", { where: {} })).toEqual({ scopeOwnerId: null });
@@ -444,7 +444,7 @@ describe("utilize - binding a scope into raw SQL (\u00a712)", () => {
 
   it("refuses to bind a scope the parameters cannot carry", () => {
     // Each of these would otherwise bind *part* of the scope and hand back rows
-    // that look filtered. A stack trace is the only honest answer \u2014 the same
+    // that look filtered. A stack trace is the only honest answer — the same
     // reasoning `ScopeConfigurationError` exists for.
     expect(() => bind("o = :scopeOwnerId", { where: { ownerId: { in: ["u1", "u2"] } } }))
       .toThrow(ScopeConfigurationError);

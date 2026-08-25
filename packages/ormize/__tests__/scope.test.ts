@@ -981,18 +981,18 @@ describe("ormize - row-level scope, writes that move a row out (F6)", () => {
   });
 });
 
-describe("ormize - row-level scope, the adapter hooks (\u00a713)", () => {
+describe("ormize - row-level scope, the adapter hooks (§13)", () => {
   // Decision 8, belt and braces. Everything above this point merges the scope
   // into a query the *engine* is building. These tests reach the model the way
-  // the surfaces \u00a712 is about reach it \u2014 a class method, an extend field, a
-  // row someone is holding \u2014 where there is no engine chokepoint in the path at
+  // the surfaces §12 is about reach it — a class method, an extend field, a
+  // row someone is holding — where there is no engine chokepoint in the path at
   // all, and the only thing left between the caller and the table is the
   // adapter's own hooks.
   //
   // `getGraphQLArgs` is what makes such a call answerable: it is the channel the
   // guide already documents for `beforeFind`, and it carries the request a
   // predicate needs. A query without one is a query with no principal to ask
-  // about, and is deliberately left alone \u2014 see the test that pins it.
+  // about, and is deliberately left alone — see the test that pins it.
   const asRequest = (id: number) => ({
     getGraphQLArgs: () => ({ context: ctx(id), info: undefined, source: undefined }),
   });
@@ -1012,7 +1012,7 @@ describe("ormize - row-level scope, the adapter hooks (\u00a713)", () => {
     expect(await db.models.Doc.count(asRequest(1))).toEqual(2);
   });
 
-  it("returns nothing \u2014 not everything \u2014 when the scope denies a query outright", async () => {
+  it("returns nothing — not everything — when the scope denies a query outright", async () => {
     const db = await buildOrm({ scope: () => false });
     await seed(db);
     // The hook is handed a query that is already going to run: cancelling it is
@@ -1025,8 +1025,8 @@ describe("ormize - row-level scope, the adapter hooks (\u00a713)", () => {
     await seed(db);
     // Holding the model directly is a documented feature, used throughout this
     // repo's own fixtures, and there is no principal in such a call to ask a
-    // predicate about. \u00a712 covers this surface by refusing to *build* a scoped
-    // model that userland can reach unscoped \u2014 not by failing every call here.
+    // predicate about. §12 covers this surface by refusing to *build* a scoped
+    // model that userland can reach unscoped — not by failing every call here.
     expect(await db.models.Doc.count({})).toEqual(3);
   });
 
@@ -1052,7 +1052,7 @@ describe("ormize - row-level scope, the adapter hooks (\u00a713)", () => {
     const theirs = await db.models.Doc.findOne({ where: { name: "theirs" } });
     // An instance write has no filter to narrow and no empty page to hand back:
     // `save()` either happens or it does not. So this refuses loudly whatever
-    // `onScopeMiss` says \u2014 the quiet alternative is not silence, it is letting
+    // `onScopeMiss` says — the quiet alternative is not silence, it is letting
     // the write through.
     await expect(theirs.update({ name: "taken" }, asRequest(1)))
       .rejects.toBeInstanceOf(ScopeDeniedError);
@@ -1131,7 +1131,7 @@ describe("ormize - row-level scope, the adapter hooks (\u00a713)", () => {
       scope: ownedBy(1),
       hooks: {
         beforeFind: (options: { where?: unknown }) => {
-          // The hook owns `where` and overwrites whatever was there \u2014 exactly
+          // The hook owns `where` and overwrites whatever was there — exactly
           // what a deployment that did row filtering the old way looks like.
           options.where = {};
           return options;
@@ -1187,10 +1187,10 @@ describe("ormize - row-level scope, the adapter hooks (\u00a713)", () => {
   });
 });
 
-describe("ormize - row-level scope, the surfaces the engine cannot reach (\u00a712)", () => {
+describe("ormize - row-level scope, the surfaces the engine cannot reach (§12)", () => {
   // A class method, an instance method or a raw query runs userland code holding
-  // the model directly: no query for the engine to own, and \u2014 on an adapter with
-  // no hook layer \u2014 nothing underneath that knows a request is happening. The
+  // the model directly: no query for the engine to own, and — on an adapter with
+  // no hook layer — nothing underneath that knows a request is happening. The
   // scope does not apply there. These pin that the build says so.
   const warned = () => jest.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -1267,7 +1267,7 @@ describe("ormize - row-level scope, the surfaces the engine cannot reach (\u00a7
       },
     });
     await db.resolveClassMethod("Doc", "tally", {}, ctx(1));
-    // The engine cannot verify the method applied it \u2014 that is exactly why the
+    // The engine cannot verify the method applied it — that is exactly why the
     // claim has to be explicit. What it can do is make sure the filter is there
     // to apply, from the same memo every other call site reads.
     expect(seen).toEqual({ where: { ownerId: { eq: 1 } } });
@@ -1293,7 +1293,7 @@ describe("ormize - row-level scope, the surfaces the engine cannot reach (\u00a7
   });
 });
 
-describe("ormize - row-level scope, raw SQL (\u00a712)", () => {
+describe("ormize - row-level scope, raw SQL (§12)", () => {
   // The sharpest case, because a SQL descriptor is not code the engine can hand
   // anything to. A named parameter is the only lever it has, so the presence of
   // one *is* the opt-in and the build can check for it in the text.
@@ -1335,7 +1335,7 @@ describe("ormize - row-level scope, raw SQL (\u00a712)", () => {
       scope: ownedBy(1),
       classMethods: { recent: Object.assign(sql("SELECT * FROM docs"), { scopeAware: true }) },
     })).rejects.toThrow(/never references a ':scope/);
-    // Not a judgement about how deeply the backend enforces \u2014 the claim and the
+    // Not a judgement about how deeply the backend enforces — the claim and the
     // query are three lines apart and disagree, which is wrong on every adapter.
     warn.mockRestore();
   });
@@ -1351,10 +1351,10 @@ describe("ormize - row-level scope, raw SQL (\u00a712)", () => {
   });
 });
 
-describe("ormize - row-level scope through a raw SQL class method (\u00a712)", () => {
+describe("ormize - row-level scope through a raw SQL class method (§12)", () => {
   // The end of the road for a scope: by the time a statement reaches the driver
   // it is text, so there is nothing left to rewrite. A reserved named parameter
-  // is the only lever, which is why \u00a712's audit refuses to build a scoped model
+  // is the only lever, which is why §12's audit refuses to build a scoped model
   // whose raw query does not pull it.
   const OWNED = "SELECT name FROM docs WHERE (:scopeOwnerId IS NULL OR ownerId = :scopeOwnerId) ORDER BY name";
   const owned = (args: string[] = []) => ({ type: "query", query: OWNED, args });
@@ -1415,8 +1415,8 @@ describe("ormize - row-level scope through a raw SQL class method (\u00a712)", (
   });
 });
 
-describe("ormize - row-level scope, the instance-level backstop (\u00a712)", () => {
-  // `beforeQuery` fires once per statement, after the SQL is built \u2014 so it
+describe("ormize - row-level scope, the instance-level backstop (§12)", () => {
+  // `beforeQuery` fires once per statement, after the SQL is built — so it
   // refuses rather than rewrites. What it catches is the one thing the model
   // hooks cannot see: a statement that reached the driver bound to a model
   // without passing any of them, which in practice is a hand-written

@@ -256,14 +256,14 @@ export default class Ormize<
    * §12 for `options.extend.query` / `.mutation`, called by the schema builder.
    *
    * It lives here rather than in gqlize because of decision 2: `scope` is a
-   * resolution-time key, and nothing under gqlize—s schema builder may read
+   * resolution-time key, and nothing under gqlize's schema builder may read
    * one. So gqlize hands over the field map and is told whether the build may
    * proceed, without ever learning why.
    *
    * Every registered adapter has to enforce for this to be a warning, not just
    * the ones with scoped models. An extend field holds the orm and can read any
    * model on it, so "is there a runtime backstop under this surface" only has a
-   * reassuring answer when it has one everywhere— and a deployment that
+   * reassuring answer when it has one everywhere — and a deployment that
    * mixes sequelize with valkey has a surface reaching a model with none.
    */
   auditExtendSurfaces = (target: "query" | "mutation", extendFields: {[name: string]: unknown} | undefined) => {

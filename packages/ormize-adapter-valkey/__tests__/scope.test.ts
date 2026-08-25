@@ -68,7 +68,7 @@ beforeAll(async () => { client = await makeClient(); });
 afterAll(async () => { await shutdown(); });
 beforeEach(async () => { await flush(client); });
 
-describe("valkey adapter \u2014 row-level scope, reads", () => {
+describe("valkey adapter — row-level scope, reads", () => {
   it("narrows the root list and the total together", async () => {
     const { orm, adapter } = await buildOrm(ownedBy("u1"));
     await seed(adapter);
@@ -87,7 +87,7 @@ describe("valkey adapter \u2014 row-level scope, reads", () => {
     expect(total).toEqual(3);
   });
 
-  it("returns an empty page \u2014 not every row \u2014 when the scope denies outright", async () => {
+  it("returns an empty page — not every row — when the scope denies outright", async () => {
     const { orm, adapter } = await buildOrm(() => false);
     await seed(adapter);
     const { total, models } = await orm.resolveFindAll("Doc", null, {}, ctx("u1"));
@@ -101,8 +101,8 @@ describe("valkey adapter \u2014 row-level scope, reads", () => {
     );
     await seed(adapter);
     // Neither clause is index-resolvable, so both land in the residual the
-    // adapter refines in memory. Carrying that residual as one flat object \u2014
-    // issue #44 \u2014 kept whichever branch was merged last and silently dropped
+    // adapter refines in memory. Carrying that residual as one flat object —
+    // issue #44 — kept whichever branch was merged last and silently dropped
     // the other, which under a scope is a row-level bypass rather than a wrong
     // answer. Each `and` branch names `ownerId` because the adapter refuses a
     // branch with no indexed field at all.
@@ -127,7 +127,7 @@ describe("valkey adapter \u2014 row-level scope, reads", () => {
   });
 });
 
-describe("valkey adapter \u2014 row-level scope, writes", () => {
+describe("valkey adapter — row-level scope, writes", () => {
   it("narrows a bulk update to the rows the caller owns", async () => {
     const { orm, adapter } = await buildOrm(ownedBy("u1"));
     await seed(adapter);
@@ -150,7 +150,7 @@ describe("valkey adapter \u2014 row-level scope, writes", () => {
     const { orm, adapter } = await buildOrm(ownedBy("u1"));
     await seed(adapter);
     const [theirs] = await adapter.findAll("Doc", { where: { ownerId: { eq: "u2" } } }) as { id: string }[];
-    // `select` writes no field of its own, so it reads like a query \u2014 but it
+    // `select` writes no field of its own, so it reads like a query — but it
     // applies relationship sub-mutations to everything its filter matches, which
     // makes it a write with a `where`. A layer that scoped only update and
     // delete would leave this one open.
@@ -185,12 +185,12 @@ describe("valkey adapter \u2014 row-level scope, writes", () => {
   });
 });
 
-describe("valkey - row-level scope, the surfaces the engine cannot reach (\u00a712)", () => {
+describe("valkey - row-level scope, the surfaces the engine cannot reach (§12)", () => {
   // Decision 7 and decision 9 are the same rule read against different backends,
   // and this is the half that cannot be tested on sequelize. There a class
-  // method that ignores the scope still has \u00a713's model hooks underneath it, so
-  // the build warns. Here there is nothing underneath at all \u2014 the engine merge
-  // is the only enforcement this adapter has ever had \u2014 so the same method is a
+  // method that ignores the scope still has §13's model hooks underneath it, so
+  // the build warns. Here there is nothing underneath at all — the engine merge
+  // is the only enforcement this adapter has ever had — so the same method is a
   // hole, and the build refuses.
   async function buildWithMethods(classMethods: {[name: string]: unknown}) {
     const orm = new Ormize({ permission: { scope: ownedBy("u1") } });
@@ -216,9 +216,9 @@ describe("valkey - row-level scope, the surfaces the engine cannot reach (\u00a7
   });
 });
 
-describe("valkey - row-level scope, the extend surface (\u00a712)", () => {
+describe("valkey - row-level scope, the extend surface (§12)", () => {
   // `options.extend.query` is a gqlize surface, but the audit behind it is an
-  // ormize method \u2014 decision 2 keeps the schema builder from reading a
+  // ormize method — decision 2 keeps the schema builder from reading a
   // resolution-time key, so it hands over the field map and is told whether the
   // build may proceed. Which makes this the layer the rule is testable at, and
   // the only one where a backend with no hook layer can be put underneath it.
@@ -246,7 +246,7 @@ describe("valkey - row-level scope, the extend surface (\u00a712)", () => {
     // The rule is *every* adapter, not the ones with scoped models. An extend
     // field holds the orm and can read anything on it, so a deployment mixing an
     // adapter with a hook layer and one without has a surface that reaches a
-    // model with nothing underneath it \u2014 and a warning there would be a warning
+    // model with nothing underneath it — and a warning there would be a warning
     // about the wrong half.
     const orm = await buildOrm();
     orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
