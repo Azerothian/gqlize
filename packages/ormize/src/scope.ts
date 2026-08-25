@@ -9,6 +9,7 @@
 // permission bag is also read by gqlize at schema build, where none of this
 // applies.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   mergeScopeWhere, resolveScope,
   type Permission, type PortableWhere, type ResolvedScope, type ScopeOperation,
@@ -54,6 +55,61 @@ export class ScopeEscapeError extends Error {
     this.defName = defName;
     this.operation = operation;
   }
+}
+
+/**
+ * Marks an options bag as ormize's own traffic, exempt from the adapter-side
+ * hooks in `./scope-hooks`.
+ *
+ * A `Symbol`, and deliberately not a string key: `args` reach the engine as
+ * JSON, so any string a caller could guess is a string a caller could *send*,
+ * and this one turns enforcement off. A symbol is unforgeable from outside the
+ * module that owns it — which is why the module that owns it is this one and
+ * not the hooks themselves.
+ *
+ * Used only for queries ormize issues *about* the scope — the re-reads in
+ * {@link applyScopeWhere}'s callers that check whether a row is still reachable.
+ * Reads and writes the engine has already scoped are **not** marked: the
+ * adapter hook re-imposing the same filter costs one redundant `and`, and
+ * paying it is what keeps deleting either half of decision 8 a test failure
+ * rather than a hole.
+ */
+const SYSTEM_QUERY = Symbol("ormize.systemQuery");
+
+/** Exempt an options bag from the adapter-side scope hooks. See {@link SYSTEM_QUERY}. */
+export function markSystemQuery<T>(options: T): T {
+  if (options && typeof options === "object") {
+    Object.defineProperty(options, SYSTEM_QUERY, {
+      value: true, enumerable: false, writable: false, configurable: true,
+    });
+  }
+  return options;
+}
+
+/** Whether an options bag carries {@link SYSTEM_QUERY}. */
+export function isSystemQuery(options: unknown): boolean {
+  return Boolean(options) && typeof options === "object"
+    && (options as { [SYSTEM_QUERY]?: boolean })[SYSTEM_QUERY] === true;
+}
+
+/**
+ * Set for exactly as long as a scope predicate is running.
+ *
+ * "Which groups is this principal in?" is answered with a query, and a query
+ * fires `beforeFind`, which resolves the scope — the same scope, still
+ * resolving. The memo holds the *promise*, so the second resolution would await
+ * the first and neither would ever settle: a deadlock, not a slow request.
+ *
+ * `AsyncLocalStorage` rather than a flag on the manager because the guard has to
+ * cover exactly the async context the predicate runs in. A counter would be
+ * turned on for every request that merely overlapped it — which is enforcement
+ * silently disabled under concurrency, the worst shape this bug could take.
+ */
+const RESOLVING = new AsyncLocalStorage<true>();
+
+/** Whether the caller is running inside a scope predicate. See {@link RESOLVING}. */
+export function resolvingScope(): boolean {
+  return RESOLVING.getStore() === true;
 }
 
 /**
@@ -174,9 +230,22 @@ export function scopeFor(
   if (typeof permission?.scope !== "function") {
     return Promise.resolve(undefined);
   }
+  if (resolvingScope()) {
+    // A query the predicate itself issues runs unscoped — the system context
+    // every permission layer needs to answer "who is this principal" without
+    // first knowing the answer.
+    //
+    // Ahead of the memo, and that placement is the whole guard: the memo holds
+    // the *promise*, so a predicate whose lookup re-enters here for the same
+    // triple would await the promise it is itself producing. Not a slow request,
+    // a permanently hung one. §13 names this the re-entrancy risk; this is where
+    // it is answered, and the hooks in `./scope-hooks` only mirror it so they can
+    // stand aside before doing any adapter work.
+    return Promise.resolve(undefined);
+  }
   const memo = memoFor(context);
   if (!memo) {
-    return resolveScope(permission, defName, operation, context);
+    return RESOLVING.run(true, () => resolveScope(permission, defName, operation, context));
   }
   // NUL-separated: a principal id may contain anything, and a separator it
   // could itself contain would let two different triples collapse onto one
@@ -189,7 +258,7 @@ export function scopeFor(
   }
   // The *promise* is memoised, not the value: two sibling resolvers reaching
   // this concurrently must share one predicate call, not race to start two.
-  const pending = resolveScope(permission, defName, operation, context);
+  const pending = RESOLVING.run(true, () => resolveScope(permission, defName, operation, context));
   memo.set(key, pending);
   return pending;
 }

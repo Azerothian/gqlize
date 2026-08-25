@@ -4,6 +4,7 @@ import { describe, it, expect, jest } from "@jest/globals";
 import Sequelize from "sequelize";
 import Events from "../src/events";
 import type { Permission, ScopePredicate } from "@azerothian/utilize/gate";
+import type { HookMap } from "../src/types";
 import { ScopeDeniedError, ScopeEscapeError } from "../src/scope";
 
 // One flat model. `ownerId` is an ordinary column rather than a relationship's
@@ -14,6 +15,7 @@ async function buildOrm(options: {
   scope?: ScopePredicate;
   onScopeMiss?: "empty" | "throw";
   before?: (req: BeforeRequest) => unknown;
+  hooks?: HookMap;
 } = {}) {
   const permission: Permission | undefined = options.scope ? { scope: options.scope } : undefined;
   const db = new Database({
@@ -32,6 +34,7 @@ async function buildOrm(options: {
     },
     options: { timestamps: false, tableName: "docs" },
     before: options.before,
+    hooks: options.hooks,
   });
   await db.initialise();
   await db.sync();
@@ -969,5 +972,211 @@ describe("ormize - row-level scope, writes that move a row out (F6)", () => {
       where: { name: { eq: "mine" } },
     }, ctx(1))).rejects.toBeInstanceOf(ScopeEscapeError);
     expect(await docsIn(db, f1)).toEqual(["mine", "theirs"]);
+  });
+});
+
+describe("ormize - row-level scope, the adapter hooks (\u00a713)", () => {
+  // Decision 8, belt and braces. Everything above this point merges the scope
+  // into a query the *engine* is building. These tests reach the model the way
+  // the surfaces \u00a712 is about reach it \u2014 a class method, an extend field, a
+  // row someone is holding \u2014 where there is no engine chokepoint in the path at
+  // all, and the only thing left between the caller and the table is the
+  // adapter's own hooks.
+  //
+  // `getGraphQLArgs` is what makes such a call answerable: it is the channel the
+  // guide already documents for `beforeFind`, and it carries the request a
+  // predicate needs. A query without one is a query with no principal to ask
+  // about, and is deliberately left alone \u2014 see the test that pins it.
+  const asRequest = (id: number) => ({
+    getGraphQLArgs: () => ({ context: ctx(id), info: undefined, source: undefined }),
+  });
+
+  it("scopes a query issued straight off the model", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    const rows = await db.models.Doc.findAll(asRequest(1)) as NamedRow[];
+    expect(rows.map((r) => r.name).sort()).toEqual(["mine-1", "mine-2"]);
+  });
+
+  it("scopes a count issued straight off the model", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    // `count` does not go through `findAll`, so `beforeFind` never fires for it.
+    // Its own hook is why the number and the rows agree.
+    expect(await db.models.Doc.count(asRequest(1))).toEqual(2);
+  });
+
+  it("returns nothing \u2014 not everything \u2014 when the scope denies a query outright", async () => {
+    const db = await buildOrm({ scope: () => false });
+    await seed(db);
+    // The hook is handed a query that is already going to run: cancelling it is
+    // not on offer, so the denial has to be said in the filter's own vocabulary.
+    expect(await db.models.Doc.findAll(asRequest(1))).toEqual([]);
+  });
+
+  it("stands aside for a query that carries no request", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    // Holding the model directly is a documented feature, used throughout this
+    // repo's own fixtures, and there is no principal in such a call to ask a
+    // predicate about. \u00a712 covers this surface by refusing to *build* a scoped
+    // model that userland can reach unscoped \u2014 not by failing every call here.
+    expect(await db.models.Doc.count({})).toEqual(3);
+  });
+
+  it("scopes a bulk update issued straight off the model", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    await db.models.Doc.update({ name: "renamed" }, { where: {}, ...asRequest(1) });
+    const rows = await db.models.Doc.findAll({}) as NamedRow[];
+    expect(rows.map((r) => r.name).sort()).toEqual(["renamed", "renamed", "theirs"]);
+  });
+
+  it("scopes a bulk destroy issued straight off the model", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    await db.models.Doc.destroy({ where: {}, ...asRequest(1) });
+    const rows = await db.models.Doc.findAll({}) as NamedRow[];
+    expect(rows.map((r) => r.name)).toEqual(["theirs"]);
+  });
+
+  it("refuses an instance update the principal may not write", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    const theirs = await db.models.Doc.findOne({ where: { name: "theirs" } });
+    // An instance write has no filter to narrow and no empty page to hand back:
+    // `save()` either happens or it does not. So this refuses loudly whatever
+    // `onScopeMiss` says \u2014 the quiet alternative is not silence, it is letting
+    // the write through.
+    await expect(theirs.update({ name: "taken" }, asRequest(1)))
+      .rejects.toBeInstanceOf(ScopeDeniedError);
+    await theirs.reload();
+    expect(theirs.name).toEqual("theirs");
+  });
+
+  it("refuses an instance destroy the principal may not write", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    const theirs = await db.models.Doc.findOne({ where: { name: "theirs" } });
+    await expect(theirs.destroy(asRequest(1))).rejects.toBeInstanceOf(ScopeDeniedError);
+    expect(await db.models.Doc.count({})).toEqual(3);
+  });
+
+  it("leaves an instance write the principal may make alone", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    await seed(db);
+    const mine = await db.models.Doc.findOne({ where: { name: "mine-1" } });
+    await mine.update({ name: "renamed" }, asRequest(1));
+    await mine.reload();
+    expect(mine.name).toEqual("renamed");
+  });
+
+  it("forces a create's `set` on a row inserted straight off the model", async () => {
+    const db = await buildOrm({ scope: () => ({ where: { ownerId: { eq: 1 } }, set: { ownerId: 1 } }) });
+    const row = await db.models.Doc.create({ name: "fresh" }, asRequest(1)) as OwnedRow;
+    expect(row.ownerId).toEqual(1);
+  });
+
+  it("refuses a create whose value disagrees with the scope's `set`", async () => {
+    const db = await buildOrm({ scope: () => ({ where: { ownerId: { eq: 1 } }, set: { ownerId: 1 } }) });
+    // Writing the safe value anyway is the tempting implementation, and it turns
+    // a forged request into a successful mutation nothing downstream can see.
+    await expect(db.models.Doc.create({ name: "forged", ownerId: 2 }, asRequest(1)))
+      .rejects.toBeInstanceOf(ScopeDeniedError);
+    expect(await db.models.Doc.count({})).toEqual(0);
+  });
+
+  it("refuses a create outright when the scope denies", async () => {
+    const db = await buildOrm({ scope: () => false });
+    await expect(db.models.Doc.create({ name: "fresh" }, asRequest(1)))
+      .rejects.toBeInstanceOf(ScopeDeniedError);
+    expect(await db.models.Doc.count({})).toEqual(0);
+  });
+
+  it("scopes an eagerly-included relationship (F4)", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(1)) });
+    await seedFolder(db, true);
+    const [folder] = await db.models.Folder.findAll({
+      include: [{ model: db.models.Doc, as: "docs" }],
+      ...asRequest(1),
+    }) as { docs: NamedRow[] }[];
+    // A child loaded by its parent's query has no resolver of its own and no
+    // filter of its own to merge into. The include descriptor is the only place
+    // a scope can reach it.
+    expect(folder.docs.map((d) => d.name)).toEqual(["mine"]);
+  });
+
+  it("does not let a scoped include become a filter on its parent", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(3)) });
+    await seedFolder(db, true);
+    const folders = await db.models.Folder.findAll({
+      include: [{ model: db.models.Doc, as: "docs" }],
+      ...asRequest(3),
+    }) as { docs: NamedRow[] }[];
+    // Decision 6. Sequelize infers requiredness from the presence of a `where`,
+    // so an injected filter left unmarked turns the LEFT JOIN into an INNER one
+    // and the parent disappears along with its children.
+    expect(folders).toHaveLength(1);
+    expect(folders[0].docs).toEqual([]);
+  });
+
+  it("cannot be displaced by a definition hook that rewrites `where`", async () => {
+    const db = await buildOrm({
+      scope: ownedBy(1),
+      hooks: {
+        beforeFind: (options: { where?: unknown }) => {
+          // The hook owns `where` and overwrites whatever was there \u2014 exactly
+          // what a deployment that did row filtering the old way looks like.
+          options.where = {};
+          return options;
+        },
+      },
+    });
+    await seed(db);
+    const { total, models } = await db.resolveFindAll("Doc", null, {}, ctx(1));
+    expect((models as NamedRow[]).map((m) => m.name).sort()).toEqual(["mine-1", "mine-2"]);
+    expect(total).toEqual(2);
+  });
+
+  it("cannot be displaced by a global hook either", async () => {
+    const db = await buildOrm({ scope: ownedBy(1) });
+    // Global hooks run after definition hooks, so "last registered wins" would
+    // put this one on top. The enforcement is not registered here at all: it
+    // lives in a map nothing can push onto, which is what makes "last" a
+    // property of the code rather than of the order someone called `addHook` in.
+    db.addHook("beforeFind", (_defName: string, options: { where?: unknown }) => {
+      options.where = {};
+      return options;
+    });
+    await seed(db);
+    const { total } = await db.resolveFindAll("Doc", null, {}, ctx(1));
+    expect(total).toEqual(2);
+  });
+
+  it("resolves a scope whose predicate runs a query of its own", async () => {
+    const orm: { db?: Orm } = {};
+    let calls = 0;
+    let seenByPredicate = -1;
+    const scope: ScopePredicate = async(defName, operation, _options, context) => {
+      if (defName !== "Doc" || operation !== "read" || !orm.db) {
+        return undefined;
+      }
+      calls += 1;
+      // The shape every real membership lookup takes: the predicate asks a
+      // question, and answering it fires the very hook that is waiting on this
+      // predicate. The memo holds the *promise*, so an unguarded re-entry would
+      // await the promise it is itself producing and never return.
+      const { models } = await orm.db.resolveFindAll("Doc", null, {}, context);
+      seenByPredicate = (models as unknown[]).length;
+      return { where: { ownerId: { eq: 1 } } };
+    };
+    orm.db = await buildOrm({ scope });
+    await seed(orm.db);
+    const { total } = await orm.db.resolveFindAll("Doc", null, {}, ctx(1));
+    expect(calls).toEqual(1);
+    // Unscoped, and necessarily so: a query a predicate issues cannot be asked
+    // to satisfy the scope that predicate is in the middle of deciding.
+    expect(seenByPredicate).toEqual(3);
+    expect(total).toEqual(2);
   });
 });

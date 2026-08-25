@@ -7,8 +7,10 @@ import waterfall from "@azerothian/utilize/utils/waterfall";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
-import { ScopeDeniedError, ScopeEscapeError, applyScopeWhere, inheritScopeMemo, scopeFor, scopeIncludePlan, scopeMiss } from "./scope";
+import { ScopeDeniedError, ScopeEscapeError, applyScopeWhere, inheritScopeMemo, markSystemQuery, scopeFor, scopeIncludePlan, scopeMiss } from "./scope";
 import type { ScopeMissBehaviour } from "./scope";
+import { buildScopeHooks } from "./scope-hooks";
+import type { ScopeHook } from "./scope-hooks";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, NativeDataType,
@@ -161,6 +163,15 @@ export default class Ormize<
    */
   private permission: Permission | undefined;
   private onScopeMiss: ScopeMissBehaviour;
+  /**
+   * The row-level scope, re-imposed on the adapter's own model hooks (§13).
+   *
+   * Held apart from `globalHooks` on purpose. Hook ordering is load-bearing —
+   * `createHook` runs definition hooks, then global ones, then these — and a map
+   * nothing can register into is what makes "last" a property of the code rather
+   * than of the order a deployment happened to call `addHook` in.
+   */
+  private scopeHooks: {[hookName: string]: ScopeHook};
   /** Vestigial: initialised empty and never written. */
   globalKeys: {[name: string]: unknown};
   hooks: {[defName: string]: HookMap};
@@ -186,6 +197,11 @@ export default class Ormize<
     this.defaultAdapter = undefined;
     this.permission = options.permission;
     this.onScopeMiss = options.onScopeMiss || "empty";
+    // Built unconditionally: whether a scope is configured is asked at call
+    // time, so a `setPermission` after `initialise()` reaches the models that
+    // already exist. Field initialisers have all run by here, so `this.host`
+    // is the same object the cross-adapter and mutation modules were handed.
+    this.scopeHooks = buildScopeHooks(this.host);
   }
   /**
    * Supply (or replace) the permission bag after construction.
@@ -343,11 +359,11 @@ export default class Ormize<
     const adapter = this.getModelAdapter(defName);
     const [pk] = adapter.getPrimaryKeyNameForModel(defName);
     const ids = rows.map((r) => adapter.getValueFromInstance(r, pk));
-    const found = await adapter.findAll(defName, {
+    const found = await adapter.findAll(defName, markSystemQuery({
       ...(options?.transaction !== undefined ? {transaction: options.transaction} : {}),
       where: filterMerger(this.host, defName)(pk, ids, true, where),
       limit: ids.length,
-    });
+    }));
     if (found.length < ids.length) {
       throw new ScopeEscapeError(defName, operation);
     }
@@ -586,6 +602,14 @@ export default class Ormize<
             }, v);
           }
         }
+      }
+      // §13, and structurally last: not registered through `globalHooks`, so no
+      // hook a deployment adds — before or after `initialise()`, at either
+      // level — can run after this one or replace it. A definition hook that
+      // rewrites `where` is answered here rather than trusted.
+      const enforce = this.scopeHooks[hookName];
+      if (enforce && typeof this.permission?.scope === "function") {
+        v = await enforce(def.name as string, v, ...args);
       }
       return v;
     };

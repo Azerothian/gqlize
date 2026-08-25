@@ -14,6 +14,7 @@ import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Model, OrmAdapter, RequestContext,
 } from "@azerothian/utilize/types/index";
 import type { ScopeOperation } from "@azerothian/utilize/gate";
+import { markSystemQuery } from "./scope";
 import type { AdapterRoutingHost, InstanceRow, MutationInput } from "./types/engine";
 
 /**
@@ -49,7 +50,7 @@ export function requestFrom(options: AdapterQueryOptions | undefined): RequestCo
  * Reaching a row is a read whatever happens next, so the read scope is ANDed on
  * top of the operation's own.
  */
-async function writable(
+export async function writable(
   host: AdapterRoutingHost, defName: string, adapter: OrmAdapter, row: AdapterRow,
   operation: ScopeOperation, options: AdapterQueryOptions | undefined,
 ): Promise<boolean> {
@@ -67,11 +68,13 @@ async function writable(
   }
   const [pk] = adapter.getPrimaryKeyNameForModel(defName);
   const value = adapter.getValueFromInstance(row, pk);
-  const [found] = await adapter.findAll(defName, {
+  // Marked: this query *is* the scope check, so the adapter-side hooks must
+  // stand aside rather than run it again on the way in.
+  const [found] = await adapter.findAll(defName, markSystemQuery({
     ...(options?.transaction !== undefined ? {transaction: options.transaction} : {}),
     where: filterMerger(host, defName)(pk, value, true, where),
     limit: 1,
-  });
+  }));
   if (!found) {
     host.scopeMiss(defName, operation);
     return false;
