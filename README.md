@@ -77,7 +77,7 @@ domain on an in-memory SQLite ormize instance and can be started from the repo r
 ## Prerequisites
 
 - **Node.js** ≥ 24
-- **pnpm** 9 (`corepack enable` will pick up the pinned version in `package.json`)
+- **pnpm** 11 (`corepack enable` will pick up the version pinned in `package.json`; a standalone `npm i -g pnpm@11` works too)
 - **Bun** (optional) — supported at runtime via a `bun` export condition (see below)
 
 ## Getting started

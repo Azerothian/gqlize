@@ -33,12 +33,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+      # Installs pnpm (version read from `packageManager` in package.json) and
+      # Node in one step. `install: false` keeps the explicit --frozen-lockfile
+      # install below, so a stale lockfile fails the build instead of being
+      # quietly reconciled.
+      - uses: pnpm/setup@v2
         with:
-          node-version: 24
-          cache: pnpm
+          runtime: node@24
+          cache: true
+          install: false
 
       - name: Install
         run: pnpm install --frozen-lockfile
