@@ -81,6 +81,7 @@ export class ValkeyModel {
         // onto `description` — so honour both and prefer the one
         // `DefinitionField` documents.
         description: src.description ?? src.comment,
+        deprecated: src.deprecated,
         // Authored GraphQL args and field resolver, consumed by gqlize's
         // `createBasicFields`. Dropping them here made both keys inert on this
         // adapter (issue #20).

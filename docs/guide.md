@@ -225,6 +225,93 @@ Notes:
 - Adding or removing either key changes the artifact's `models` fingerprint, so `gqlize check`
   will report the artifact stale and it needs a rebuild.
 
+### Deprecating fields
+
+Renaming or retiring a column is otherwise a hard breaking change with no warning path.
+`@deprecated` is that path: clients keep working, their tooling flags the field, and you get to
+remove it later.
+
+Write the reason on the declaration itself:
+
+```ts
+{
+  name: "Post",
+  define: {
+    title:    { type: Sequelize.STRING },
+    subtitle: { type: Sequelize.STRING, deprecated: "use `title`" },
+  },
+  expose: {
+    classMethods: { query: { legacySearch: { type: "Post[]", deprecated: "use `Post(where:)`" } } },
+  },
+}
+```
+
+…or in a central `deprecations` map, which mirrors `comments` and **wins** over the declaration:
+
+```ts
+{
+  name: "Post",
+  relationships: [{ type: "hasMany", model: "Comment", name: "comments", options: {...} }],
+  deprecations: {
+    fields: {
+      subtitle: "use `title`",
+      comments: "use `Comment(where: { postId: ... })`",   // a relationship has no `deprecated` slot
+    },
+    classMethods:    { legacySearch: "use `Post(where:)`" },   // class-method query fields
+    instanceMethods: { trimTitle:    "the server trims on write now" },  // `apply` transforms
+  },
+}
+```
+
+The map is the only way to deprecate a declaration you did not author — a relationship, an
+inherited column — which is why it takes precedence.
+
+The three groups mirror `comments` exactly, and land where `comments` lands:
+
+| Group | Marks |
+| --- | --- |
+| `fields` | columns, relationships, and instance-method **query** fields |
+| `classMethods` | class-method query fields (`QueryClassMethods.Post.<name>`) |
+| `instanceMethods` | the `apply` input field for each instance-method **transform** |
+
+Note the asymmetry in the first two rows: an instance-method *query* field deprecates through
+`fields`, because that is where its description comes from too. `instanceMethods` is reserved for
+the pre-commit transforms surfaced on the model's `apply` input.
+
+Deprecate a whole model with a top-level `deprecated`. GraphQL cannot deprecate an object type, so
+the mark lands on the two fields that lead to it, `QueryModels.Post` and `MutationModels.Post`:
+
+```ts
+{ name: "Post", deprecated: "merged into Article", define: {...} }
+```
+
+What gets marked:
+
+```graphql
+type Post {
+  subtitle: String @deprecated(reason: "use `title`")
+  comments(...): CommentHasManyCommentsList @deprecated(reason: "use `Comment(where: { postId: ... })`")
+}
+
+enum PostOrderBy {
+  subtitleASC  @deprecated(reason: "use `title`")   # both halves of the pair —
+  subtitleDESC @deprecated(reason: "use `title`")   # a deprecated column should not stay sortable
+}
+
+input PostOptionalInput {
+  subtitle: String @deprecated(reason: "use `title`")
+}
+```
+
+**One asymmetry to expect.** GraphQL rejects `@deprecated` on a *required* input field — a client
+cannot stop sending a value it is obliged to send — so a deprecated `NOT NULL` column shows the
+reason on `PostOptionalInput` (update) but not on `PostRequiredInput` (create). That is the spec's
+rule, not gqlize's.
+
+An empty string is treated as "not deprecated" rather than printed as `@deprecated(reason: "")`.
+Deprecation is schema shape, so it changes the artifact fingerprint: `gqlize check` will report an
+existing artifact stale and it needs a rebuild.
+
 ### Typed models (TypeScript, opt-in)
 
 `db.models.<Name>` is `any` by default. To get strongly-typed models, declare the instance
@@ -289,6 +376,40 @@ Dump the generated SDL to inspect the type/argument names:
 import { printSchema } from "graphql";
 console.log(printSchema(await createSchema(db)));
 ```
+
+### Build-time validation (`options.validate`)
+
+`createSchema` ends by running graphql's own `validateSchema` and throwing if the result is not a
+valid schema. This matters more than it sounds. graphql validates lazily — once per *execution*,
+cached on the schema — and returns the same error list for every operation, so one malformed field
+does not fail only the query that selects it:
+
+```
+# before: a bad field in options.root, and every unrelated query dies at request time
+{ "errors": [{ "message": "Subscription.subjectChanged field type must be Output Type but got: undefined." }] }
+```
+
+Now that is an error from `createSchema`, naming the coordinate *and* pointing at the likely cause:
+
+```
+Error: gqlize: the generated schema is not a valid GraphQL schema:
+  - Subscription.subjectChanged field type must be Output Type but got: undefined.
+Most often this is a type written into `options.root`, `options.extend` or a definition's
+`override` / `expose` block. Pass `validate: false` to skip this check.
+```
+
+graphql's own error objects stay reachable on `error.errors`. `materializeSchema` and `loadSchema`
+run the same check, where it matters more still — an artifact is loaded at boot, so an invalid one
+would otherwise get as far as serving traffic.
+
+The check walks the whole type map. If you build many permission profiles per process and would
+rather pay for it once in CI, turn it off at runtime:
+
+```ts
+const schema = await createSchema(db, { validate: false });
+```
+
+`gqlize build` and `gqlize check` construct a schema the same way, so they are the strict form.
 
 ---
 
@@ -395,6 +516,39 @@ query {
 }
 ```
 
+The generated shape, for a model `Post`:
+
+```graphql
+type PostList {
+  pageInfo: PageInfo!
+  total: Int
+  edges: [PostEdge!]!
+}
+
+type PostEdge {
+  node: Post
+  cursor: String!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+```
+
+The non-null marks are what the Relay Connections spec requires (`pageInfo` and both page flags),
+plus `edges` and `cursor`, which gqlize's resolver always populates. **This changes what client
+codegen generates for you**: Relay, graphql-codegen and Apollo's `relayStylePagination` previously
+emitted `pageInfo` as optional and both flags as `boolean | null`, forcing null checks against
+values the server has no way to produce. Those checks are now dead code, and TypeScript will say so.
+
+`total` and `edges.node` stay nullable on purpose — `total` is a separate COUNT that gqlize may skip
+when nothing selects it, and a row can be deleted between the page query and the per-edge node
+resolve. Every field above was nullable in 6.x; see
+[the migration note](migration-6-to-7.md#relay-connection-fields-are-non-null).
+
 ### Filtering (`where`)
 
 Every list/relationship field takes a `where` argument. Per field you supply operators:
@@ -467,6 +621,11 @@ query { models { Post(first: 10) { edges { cursor node { id } } pageInfo { endCu
 # page 2 — pass the previous page's cursor
 query { models { Post(first: 10, after: "eyJpZCI6..." ) { edges { cursor node { id } } } } }
 ```
+
+`cursor` is `String!` and `pageInfo` is `PageInfo!` with `hasNextPage` / `hasPreviousPage` both
+`Boolean!`, so a paging loop needs no null checks on the values it drives off. `startCursor` and
+`endCursor` are still nullable — an empty page has no first or last edge to name — so guard the
+"is there another page" decision on `hasNextPage`, not on the cursor being present.
 
 ### Relationships & eager loading
 

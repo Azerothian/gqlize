@@ -167,6 +167,15 @@ The resulting `schema` is a standard `graphql` `GraphQLSchema` and is executed w
 stock `graphql()` executor. A `schema.$sql2gql = { types }` property is attached for
 introspection of the generated types.
 
+**Validation is the last step of both `createSchema` and `materializeSchema`.** graphql validates a
+schema lazily — once per *execution*, cached on the schema — and returns the same error list for
+every operation, so a single malformed field (typically one written into `options.root`,
+`options.extend` or an `override`) does not fail only the query that selects it: it fails *every*
+query, at request time, with a message naming the coordinate but not the code that produced it.
+`assertSchemaValid` (`graphql/utils/validate-schema.ts`) runs `validateSchema` at the end of the
+build instead, and throws a `gqlize:`-prefixed error listing graphql's own messages with the
+original errors kept on `error.errors`. Pass `options.validate: false` to skip it — see §11.
+
 ### Schema artifacts (`@azerothian/gqlize/snapshot`)
 
 Step 5 can be split in two: build the schema once ahead of time, and rebuild an executable schema
@@ -269,13 +278,15 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | --- | --- |
 | `name` | Unique model name (required). |
 | `datasource` | Optional adapter name; defaults to the manager's default adapter. |
-| `define` | Field map. Each value is a `DefinitionField`: `type`, `allowNull`, `primaryKey`, `foreignKey`, `unique`, `defaultValue`, `values` (enum), `validate`, `description`, `comment`, plus `args` and `resolve` (per-field GraphQL arguments and a field resolver — see [guide: Field arguments & field resolvers](guide.md#field-arguments--field-resolvers)), `writable` (opt a pk/fk back into mutation input) and `ignoreGlobalKey`. |
+| `define` | Field map. Each value is a `DefinitionField`: `type`, `allowNull`, `primaryKey`, `foreignKey`, `unique`, `defaultValue`, `values` (enum), `validate`, `description`, `comment`, `deprecated` (the `@deprecated` reason for the generated field), plus `args` and `resolve` (per-field GraphQL arguments and a field resolver — see [guide: Field arguments & field resolvers](guide.md#field-arguments--field-resolvers)), `writable` (opt a pk/fk back into mutation input) and `ignoreGlobalKey`. |
 | `override` | Per-field custom GraphQL type plus `input`/`output` transform functions (e.g. storing JSON in a string column but exposing a typed object). |
 | `ignoreFields` | Columns to exclude from the generated type. |
 | `relationships` | Array of `Relationship`: `{ model, name, type, options }` where `type ∈ hasOne | belongsTo | hasMany | belongsToMany` and `options` carries `as`, `foreignKey`, `sourceKey`, `through`, `constraints`. `name`, a known `type` and a `model` naming an already-defined target are all validated at wiring time, before either the same-adapter or cross-adapter branch runs, and each throws naming the relationship. Cross-adapter key columns are re-checked in a post-pass at the end of `initialise()` (see §3). |
 | `whereOperators` / `whereOperatorTypes` | Custom filter operators (async functions returning a where fragment) and their GraphQL input types. |
 | `expose` | Declares which methods surface to GraphQL: `expose.classMethods.{query,mutations}` and `expose.instanceMethods.{query,mutations}`, each an `ExposedMethod`: `{ type?, args?, before?, after?, fields?, include?, input?, output?, orderBy?, where? }`. `type` may be a string model reference (`"Task"`) or a list (`"Task[]"`), or a concrete GraphQL type. See [Exposed methods](#exposed-methods). |
 | `classMethods` / `instanceMethods` | The implementations behind `expose` (in the Sequelize adapter these are placed under `options.classMethods` / `options.instanceMethods`). |
+| `deprecated` | Model-level `@deprecated` reason. GraphQL cannot deprecate an object type, so the mark lands on the two fields that lead to the model: `QueryModels.<Name>` and `MutationModels.<Name>`. |
+| `deprecations` | Central deprecation map, mirroring `comments`: `deprecations.{fields,classMethods,instanceMethods}[key] = reason`. Wins over a `deprecated` written on the declaration itself, which is what lets a definition deprecate something it did not author — a relationship, an inherited column. See [Deprecation](#deprecation). |
 | `before` / `after` | gqlize-level transforms discriminated by the `Events` enum (see §8). |
 | `hooks` | Sequelize-style lifecycle `HookMap`. |
 | `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
@@ -463,6 +474,38 @@ generated: `options.subscriptions` is accepted and ignored (the generator is com
   `fields`/`include`/`input` declarations reach the query (see
   [Query resolution & eager loading](#query-resolution--eager-loading)).
 
+### Deprecation
+
+`@deprecated` needs no directive support in the IR — graphql-js models `deprecationReason` natively
+on fields, arguments, input fields and enum values, so it survives `printSchema`, introspection and
+the artifact round-trip for free.
+
+A reason can be written in two places, and `deprecationFor` (`packages/utilize/src/utils/deprecation.ts`)
+is the single point that resolves between them: the central `definition.deprecations` map wins over a
+`deprecated` written on the declaration itself. That is the same precedence `comments.fields` already
+uses over a field's own `description`, and for the same reason — a definition can only deprecate a
+declaration it did not author (a relationship, an inherited column) through the map. An empty string
+is treated as "not deprecated" rather than emitted as `@deprecated(reason: "")`.
+
+Where a reason lands:
+
+| Written as | Marks |
+| --- | --- |
+| `define.<field>.deprecated`, `deprecations.fields.<field>` | the column's output field (including global-id and `override` fields), its mutation-input field, and **both** halves of its `orderBy` enum pair — a deprecated column should not stay silently sortable |
+| `deprecations.fields.<relationship>` | the relationship field, single-object or connection |
+| `deprecations.fields.<method>`, `expose.instanceMethods.query.<method>.deprecated` | the instance-method query field (which takes its description from `comments.fields` too) |
+| `deprecations.classMethods.<method>`, `expose.classMethods.query.<method>.deprecated` | the class-method query field |
+| `deprecations.instanceMethods.<method>`, `expose.instanceMethods.mutations.<method>.deprecated` | that transform's field on the model's `GQLT{Def}InstanceMutations` (`apply`) input — the same set `comments.instanceMethods` describes |
+| `definition.deprecated` | `QueryModels.<Name>` and `MutationModels.<Name>` — GraphQL has no way to deprecate an object type |
+
+One asymmetry is the spec's, not gqlize's: **graphql rejects `@deprecated` on a required input field**,
+since a client cannot stop sending a value it is obliged to send. A deprecated `NOT NULL` column
+therefore shows the reason on `{Def}OptionalInput` (update) and not on `{Def}RequiredInput` (create).
+
+Deprecation is schema shape: it prints into the SDL, so artifacts carry it and no rebuild is needed to
+see it. It is also part of the `models` fingerprint, so adding or changing a reason makes an existing
+artifact stale and `gqlize check` reports it.
+
 ### Mutation inputs & deep writes
 
 `create-mutation-input.ts` generates `{Def}RequiredInput` (create), `{Def}OptionalInput`
@@ -592,13 +635,37 @@ implications in §8.
 ## 6. Relay Connections & Global IDs
 
 List and relationship fields use a **custom connection shape** built by
-`create-list-object.ts`:
+`create-list-object.ts`. For a model `Item` it prints as:
 
-```
-{ pageInfo, total, edges: [{ node, cursor }] }
+```graphql
+type ItemList {
+  pageInfo: PageInfo!
+  total: Int
+  edges: [ItemEdge!]!
+}
+
+type ItemEdge {
+  node: Item
+  cursor: String!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
 ```
 
-with cursor args `after`, `first`, `before`, `last`, `orderBy`, merged with the adapter's
+The non-null marks are the Relay Connections spec's (`pageInfo`, `hasNextPage`, `hasPreviousPage`)
+plus two gqlize adds for the same reason: `resolvers/connection.ts` always returns an `edges` array
+and mints every edge's `cursor` itself, so a client null-checking them was checking for a value the
+server has no way to produce. `total` stays nullable because it is a separate COUNT the include
+builder may legitimately skip, and `edges.node` stays nullable because the row is fetched a page at
+a time and resolved per edge — it can go away in between. Every field above was nullable in 6.x; see
+[the migration note](migration-6-to-7.md#relay-connection-fields-are-non-null).
+
+They come with cursor args `after`, `first`, `before`, `last`, `orderBy`, merged with the adapter's
 default list args (`where` filter + `include`). Cursors are index-based and carry the name of
 the connection that minted them, so a cursor is rejected by any other connection, whose index
 would mean something else entirely. This differs from stock `graphql-relay` connections in that
@@ -912,6 +979,13 @@ each with its own subpath export:
     program over `src/types` + `__tests__/types` that backs its `@ts-expect-error` assertions.
     `tsconfig.test.json` excludes `__tests__/types` there, since a file cannot satisfy
     `@ts-expect-error` under two different strictness settings at once.
+- **Schema validation:** `createSchema` and `materializeSchema` both end by running graphql's own
+  `validateSchema` and throwing on failure (see §3). It walks the whole type map, so a host that
+  builds many permission profiles per process can pay for it once in CI and pass
+  `options.validate: false` at runtime — `gqlize build` and `gqlize check` construct a schema the
+  same way and so are the strict form. The escape hatch exists for cost, not for shipping an
+  invalid schema: an invalid one fails every operation at request time regardless, which is what
+  the check exists to move forward.
 - **Runtime:** Node.js ≥ 24.
 - **Binary:** `@azerothian/gqlize` ships a `gqlize` command. `scripts/prepare-package.ts` sets
   `bin: { gqlize: "./cjs/cli/index.js" }` — the CJS build, because it runs on every supported Node
@@ -945,19 +1019,58 @@ this patch** for nested mutations to behave correctly.
 
 ## 13. Known Gaps / Roadmap
 
-The following are recorded in package READMEs as *not yet implemented* and are listed here
-for completeness — they do not describe current behavior:
+This section mirrors `packages/gqlize/README.md` `## TODO`. Nothing below describes current
+behaviour.
+
+**Not yet implemented**
 
 - Validate submitted definitions against JSON Schema v7.
-- Reimplement subscriptions.
+- Reimplement subscriptions. `options.root.subscription` is applied to a schema whose generated
+  types are not yet reachable, which is [gqlize#54](https://github.com/Azerothian/gqlize/issues/54).
+  The artifact half is missing too: `snapshot/reachability.ts` seeds only the query and mutation
+  roots and `snapshot/ir.ts` has no `subscription` field, so a type reachable *only* from a
+  subscription root could never be carried by an artifact. Any real subscription work has to fix
+  both ends.
+- **Schema directives.** There are no `directives` / `astNode` references in any `src` and no
+  directive slot on any IR node, so a directive a user attaches to an `options.extend` or
+  `options.root` type is silently dropped by `snapshotSchema`. Note `@deprecated` (§5) does *not*
+  need this — graphql-js models it natively. Anything else does, and the IR is the gating work: a
+  per-node `directives` slot, a directive-definition table on the artifact, and an
+  executable-behaviour registry mirroring `createScalarRegistry`.
+- **User-declared interfaces and unions.** `create-model-type.ts` only ever returns
+  `[nodeInterface]`, and there is no union anywhere in the tree. The IR already carries
+  `interfaces` on its object and interface nodes, so again only the generator lacks a way to
+  declare "these models share an interface" / "this field returns one of these models". The
+  natural home for single-table inheritance and polymorphic associations.
+- **`@oneOf` input objects.** `InputObjectIR` already carries `isOneOf` and nothing sets it. The
+  obvious candidate does *not* fit: the relationship mutation input's
+  `create`/`update`/`add`/`set`/`remove`/`delete`/`restore`/`select` keys are legitimately
+  combinable in one mutation. A genuine fit would be a new "look this row up by exactly one of id
+  or unique key" input — a feature, not a conversion.
 - Middleware/caching options.
 - Additional adapters (Elasticsearch, HTTP GraphQL Relay).
-- CI/CD for deployment; expanded documentation and unit-test coverage.
+- Cross-adapter **writes**, and batching of cross-adapter reads by foreign key.
 
-Partially addressed since the READMEs were written (see §5): root-level eager loading now
-generates a combined `where`/`include` from the selection set, and cross-adapter relationships
-are read as separate root queries. Remaining here: a fully typed where/filter object for the
-Sequelize adapter, cross-adapter **writes**, and batching of cross-adapter reads by foreign key.
+**Closed since the READMEs were written** (recorded so the list stops re-growing): root-level eager
+loading generates a combined `where`/`include` from the selection set and cross-adapter
+relationships are read as separate root queries (§5); gqlize-level `before`/`after` hooks ship
+(§8); the typed where/filter object for the Sequelize adapter ships — `getFilterGraphQLType`
+(`packages/graphql-types/src/adapter-args.ts`) → `createQueryType`
+(`packages/graphql-types/src/query.ts`) generates a `GQLTQuery<Model>Where` input with a per-field
+operator sub-object, `and`/`or` combinators, isolated operators and per-field operator allow-lists;
+CI/CD runs on GitHub Actions (§11).
+
+**Deliberately out of scope** — recorded because *why* something is absent is worth as much as what
+is:
+
+- `@defer` / `@stream` and query cost/depth limiting are execution- and validation-layer concerns
+  owned by the host server. One caveat worth writing down: a `@stream`ed field still goes through
+  `build-include-from-selection.ts`, which builds its eager-load tree from the whole selection set
+  — so streaming would over-fetch rather than break.
+- Federation: no trace in the tree, and out of scope unless asked for.
+- DataLoader-style batching is largely moot for same-adapter reads, since the selection-set-driven
+  `include` builder (`ormize/src/manager.ts`) collapses the N+1 in SQL. The live gap is the
+  cross-adapter batching listed above, which is an ormize concern rather than a gqlize one.
 
 ---
 

@@ -741,18 +741,18 @@ type QueryModels {
 
 type ParentList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for Parent"""
-  edges: [ParentEdge]
+  edges: [ParentEdge!]!
 }
 
 type PageInfo {
-  hasNextPage: Boolean
-  hasPreviousPage: Boolean
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
   startCursor: String
   endCursor: String
 }
@@ -760,7 +760,7 @@ type PageInfo {
 """Parent edge"""
 type ParentEdge {
   node: Parent
-  cursor: String
+  cursor: String!
 }
 
 type Parent implements Node {
@@ -807,19 +807,19 @@ scalar GQLTDate
 
 type ChildHasManyChildrenList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for ChildHasManyChildren"""
-  edges: [ChildHasManyChildrenEdge]
+  edges: [ChildHasManyChildrenEdge!]!
 }
 
 """ChildHasManyChildren edge"""
 type ChildHasManyChildrenEdge {
   node: Child
-  cursor: String
+  cursor: String!
 }
 
 type Child implements Node {
@@ -1173,36 +1173,36 @@ input GQLTParentIncludechildrenObject {
 
 type ChildList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for Child"""
-  edges: [ChildEdge]
+  edges: [ChildEdge!]!
 }
 
 """Child edge"""
 type ChildEdge {
   node: Child
-  cursor: String
+  cursor: String!
 }
 
 type TaskList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for Task"""
-  edges: [TaskEdge]
+  edges: [TaskEdge!]!
 }
 
 """Task edge"""
 type TaskEdge {
   node: Task
-  cursor: String
+  cursor: String!
 }
 
 type Task implements Node {
@@ -1290,19 +1290,19 @@ type TaskOptions {
 
 type TaskItemHasManyItemsList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for TaskItemHasManyItems"""
-  edges: [TaskItemHasManyItemsEdge]
+  edges: [TaskItemHasManyItemsEdge!]!
 }
 
 """TaskItemHasManyItems edge"""
 type TaskItemHasManyItemsEdge {
   node: TaskItem
-  cursor: String
+  cursor: String!
 }
 
 type TaskItem implements Node {
@@ -2273,53 +2273,53 @@ type Item implements Node {
 
 type ItemHasManyChildrenList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for ItemHasManyChildren"""
-  edges: [ItemHasManyChildrenEdge]
+  edges: [ItemHasManyChildrenEdge!]!
 }
 
 """ItemHasManyChildren edge"""
 type ItemHasManyChildrenEdge {
   node: Item
-  cursor: String
+  cursor: String!
 }
 
 type TaskBelongsToManyBtmTasksList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for TaskBelongsToManyBtmTasks"""
-  edges: [TaskBelongsToManyBtmTasksEdge]
+  edges: [TaskBelongsToManyBtmTasksEdge!]!
 }
 
 """TaskBelongsToManyBtmTasks edge"""
 type TaskBelongsToManyBtmTasksEdge {
   node: Task
-  cursor: String
+  cursor: String!
 }
 
 type ItemBelongsToManyBtmItemsList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for ItemBelongsToManyBtmItems"""
-  edges: [ItemBelongsToManyBtmItemsEdge]
+  edges: [ItemBelongsToManyBtmItemsEdge!]!
 }
 
 """ItemBelongsToManyBtmItems edge"""
 type ItemBelongsToManyBtmItemsEdge {
   node: Item
-  cursor: String
+  cursor: String!
 }
 
 input TestInstanceMethodInput {
@@ -2328,36 +2328,36 @@ input TestInstanceMethodInput {
 
 type TaskItemList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for TaskItem"""
-  edges: [TaskItemEdge]
+  edges: [TaskItemEdge!]!
 }
 
 """TaskItem edge"""
 type TaskItemEdge {
   node: TaskItem
-  cursor: String
+  cursor: String!
 }
 
 type ItemList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for Item"""
-  edges: [ItemEdge]
+  edges: [ItemEdge!]!
 }
 
 """Item edge"""
 type ItemEdge {
   node: Item
-  cursor: String
+  cursor: String!
 }
 
 type QueryClassMethods {
@@ -4306,18 +4306,18 @@ type QueryModels {
 
 type ChildList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for Child"""
-  edges: [ChildEdge]
+  edges: [ChildEdge!]!
 }
 
 type PageInfo {
-  hasNextPage: Boolean
-  hasPreviousPage: Boolean
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
   startCursor: String
   endCursor: String
 }
@@ -4325,7 +4325,7 @@ type PageInfo {
 """Child edge"""
 type ChildEdge {
   node: Child
-  cursor: String
+  cursor: String!
 }
 
 type Child implements Node {
@@ -4516,19 +4516,19 @@ input GQLTQueryChildWhereparentId {
 
 type TaskList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for Task"""
-  edges: [TaskEdge]
+  edges: [TaskEdge!]!
 }
 
 """Task edge"""
 type TaskEdge {
   node: Task
-  cursor: String
+  cursor: String!
 }
 
 type Task implements Node {
@@ -4698,19 +4698,19 @@ type Item implements Node {
 
 type ItemHasManyChildrenList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for ItemHasManyChildren"""
-  edges: [ItemHasManyChildrenEdge]
+  edges: [ItemHasManyChildrenEdge!]!
 }
 
 """ItemHasManyChildren edge"""
 type ItemHasManyChildrenEdge {
   node: Item
-  cursor: String
+  cursor: String!
 }
 
 enum ItemOrderBy {
@@ -5327,36 +5327,36 @@ input GQLTItemIncludebtmTasksObject {
 
 type TaskBelongsToManyBtmTasksList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for TaskBelongsToManyBtmTasks"""
-  edges: [TaskBelongsToManyBtmTasksEdge]
+  edges: [TaskBelongsToManyBtmTasksEdge!]!
 }
 
 """TaskBelongsToManyBtmTasks edge"""
 type TaskBelongsToManyBtmTasksEdge {
   node: Task
-  cursor: String
+  cursor: String!
 }
 
 type ItemBelongsToManyBtmItemsList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for ItemBelongsToManyBtmItems"""
-  edges: [ItemBelongsToManyBtmItemsEdge]
+  edges: [ItemBelongsToManyBtmItemsEdge!]!
 }
 
 """ItemBelongsToManyBtmItems edge"""
 type ItemBelongsToManyBtmItemsEdge {
   node: Item
-  cursor: String
+  cursor: String!
 }
 
 input TestInstanceMethodInput {
@@ -5365,19 +5365,19 @@ input TestInstanceMethodInput {
 
 type TaskItemList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for TaskItem"""
-  edges: [TaskItemEdge]
+  edges: [TaskItemEdge!]!
 }
 
 """TaskItem edge"""
 type TaskItemEdge {
   node: TaskItem
-  cursor: String
+  cursor: String!
 }
 
 type TaskItem implements Node {
@@ -5583,19 +5583,19 @@ input GQLTTaskItemIncludetaskObject {
 
 type ItemList {
   """Pager object for cursor based operations"""
-  pageInfo: PageInfo
+  pageInfo: PageInfo!
 
   """Total amount of records available"""
   total: Int
 
   """List of edges for Item"""
-  edges: [ItemEdge]
+  edges: [ItemEdge!]!
 }
 
 """Item edge"""
 type ItemEdge {
   node: Item
-  cursor: String
+  cursor: String!
 }
 
 type QueryClassMethods {

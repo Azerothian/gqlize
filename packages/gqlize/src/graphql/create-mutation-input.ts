@@ -6,7 +6,7 @@ import type { GraphQLInputFieldConfig, GraphQLInputFieldConfigMap, GraphQLInputT
 import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
-import { isInputFieldWritable, isMutationAllowed } from "@azerothian/utilize";
+import { deprecationFor, isInputFieldWritable, isMutationAllowed } from "@azerothian/utilize";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
@@ -63,6 +63,13 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
     }
     const field = defFields[fieldName];
     const comment = (definition.comments?.fields || {})[fieldName] || field.description;
+    // A *required* input field cannot carry `@deprecated` — graphql rejects the
+    // schema outright, because a client has no way to stop sending a value it is
+    // obliged to send. So the reason is attached only on the branches that leave
+    // the field nullable, which for a NOT NULL column means it shows on the
+    // update input (`forceOptional`) and not on the create input. That asymmetry
+    // is the spec's, not ours.
+    const deprecationReason = deprecationFor(definition, "fields", fieldName, field.deprecated);
     if (definition.override) {
       const overrideFieldDefinition = definition.override[fieldName];
 
@@ -99,6 +106,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
           fields[fieldName] = {
             type: inputType,
             description: comment,
+            deprecationReason,
           };
         }
       }
@@ -108,6 +116,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         fields[fieldName] = {
           type: GraphQLID,
           description: comment || `This a primary key for ${defName}`,
+          deprecationReason,
         };
       } else {
         // The adapter's type mapper serves both output and input positions and is
@@ -115,10 +124,11 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         // is what asks for the input side, and graphql rejects an output-only type
         // when the input object is built.
         const type = instance.getGraphQLInputType(defName, `${fieldName}${forceOptional ? "Optional" : "Required"}`, field.type) as GraphQLInputType;
-        const t = field.allowNull || field.autoPopulated || forceOptional ? type : new GraphQLNonNull(type as GraphQLNullableInputType);
+        const required = !(field.allowNull || field.autoPopulated || forceOptional);
         fields[fieldName] = {
-          type: t,
+          type: required ? new GraphQLNonNull(type as GraphQLNullableInputType) : type,
           description: comment,
+          deprecationReason: required ? undefined : deprecationReason,
         };
       }
     }

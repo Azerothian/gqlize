@@ -3,6 +3,7 @@ import pageInfo from "./objects/page-info";
 import {
   GraphQLObjectType,
   GraphQLList,
+  GraphQLNonNull,
   GraphQLInt,
   GraphQLString,
   GraphQLBoolean,
@@ -33,27 +34,38 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
       name: `${name}List`,
       fields() {
         return {
+          // Non-null per the Relay Connections spec. `resolvers/connection.ts`
+          // always returns a `pageInfo` and always an `edges` array, and it
+          // mints every edge's cursor itself, so none of these three can be
+          // null in practice — only in the types a client generates from them.
           pageInfo: {
-            type: pageInfo,
+            type: new GraphQLNonNull(pageInfo),
             description: "Pager object for cursor based operations",
           },
+          // `total` stays nullable: it is a separate COUNT that
+          // `build-include-from-selection.ts` may legitimately skip.
           total: {
             type: GraphQLInt,
             description: "Total amount of records available",
           },
           edges: {
-            type: new GraphQLList(new GraphQLObjectType({
+            type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({
               name: `${name}Edge`,
               fields: {
+                // `node` stays nullable. The connection resolver drops edges
+                // whose node an OUTPUT hook rejected, so it is non-null today,
+                // but the value is fetched a page at a time and resolved per
+                // edge — the row can go away in between, and a null node is a
+                // better answer there than a null page.
                 node: {
                   type: targetType,
                 },
                 cursor: {
-                  type: GraphQLString,
+                  type: new GraphQLNonNull(GraphQLString),
                 },
               },
               description: `${name} edge`,
-            })),
+            })))),
             description: `List of edges for ${name}`,
           },
         };

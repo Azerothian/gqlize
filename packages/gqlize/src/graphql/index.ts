@@ -9,7 +9,7 @@ import {
 import createNodeInterface from "./utils/create-node-interface";
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import { PERMISSION_KEYS, isModelAllowed, isMutationAllowed, unknownPermissionKeys } from "@azerothian/utilize";
+import { PERMISSION_KEYS, isModelAllowed, isMutationAllowed, modelDeprecation, unknownPermissionKeys } from "@azerothian/utilize";
 import createModelType from "./create-model-type";
 import createListObject from "./create-list-object";
 import createClassMethods from "./create-class-methods";
@@ -18,6 +18,7 @@ import createMutationInput from "./create-mutation-input";
 import createSchemaCache from "./create-schema-cache";
 import computeVisibleModels from "./utils/visible-models";
 import pruneModelTypes from "./utils/model-types";
+import assertSchemaValid from "./utils/validate-schema";
 import GQLManager from '../manager';
 import { GqlFieldMap, GqlizeOptions, GqlizeAdapter, SchemaCache, SchemaHatch } from '../types';
 import { bindField } from "./resolvers/bind";
@@ -88,10 +89,16 @@ export function createListObjects(instance: GQLManager, schemaCache: SchemaCache
           return o;
         }
       }
-      o[defName] = createListObject(instance, schemaCache, defName, schemaCache.types[defName], {
+      const listObject = createListObject(instance, schemaCache, defName, schemaCache.types[defName], {
         source: "findAll",
         defName,
       }, "", "", undefined, undefined, options);
+      // GraphQL cannot deprecate an object type, so `definition.deprecated`
+      // lands on the fields that lead to the model — this one and the model's
+      // mutation field. Copied rather than marked in place: `createListObject`
+      // memoises on `schemaCache.lists`.
+      const reason = modelDeprecation(instance.getDefinition(defName));
+      o[defName] = reason ? {...listObject, deprecationReason: reason} : listObject;
     }
     return o;
   };
@@ -117,7 +124,8 @@ function createMutationModels(instance: GQLManager, options: GqlizeOptions, sche
         // Every input the mutation would have accepted can be denied away — a
         // field with no arguments could not mutate anything, so drop it.
         if (Object.keys(mutationModel.args).length > 0) {
-          o[defName] = mutationModel;
+          const reason = modelDeprecation(instance.getDefinition(defName));
+          o[defName] = reason ? {...mutationModel, deprecationReason: reason} : mutationModel;
         }
       }
     }
@@ -317,6 +325,12 @@ export async function createSchema(dbInstance: GQLManager, options: GqlizeOption
   (schema as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql = {
     types: modelTypes,
   };
+  // Last, so the error names a finished schema rather than a half-built one. An
+  // invalid schema does not fail only the query that touches it — graphql
+  // returns the same error for every operation — so this must not be left to
+  // request time. See `options.validate`.
+  assertSchemaValid(schema, "build", options.validate);
+
   // Lets `snapshotSchema(schema)` fingerprint the definitions later without the
   // caller threading the orm back in. Off the hot path — a WeakMap set, no hashing.
   recordBuild(schema, dbInstance, options);
