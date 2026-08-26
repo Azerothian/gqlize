@@ -10,13 +10,14 @@ import {
   type GraphQLSchema,
   type GraphQLType,
 } from "graphql";
+import Sequelize from "sequelize";
 import {describe, it, expect} from "@jest/globals";
 
 import {createInstance} from "../helper";
 import {createSchema} from "../../src";
 import {materializeSchema, snapshotSchema} from "../../src/snapshot";
 import type {MaterializeOptions} from "../../src/graphql/snapshot/materialize";
-import type {GqlizeOptions, SchemaHatch} from "../../src/types";
+import type {Definition, GqlizeOptions, SchemaHatch} from "../../src/types";
 
 /** `$sql2gql` hangs off the schema instance rather than the type system. */
 type BuiltSchema = GraphQLSchema & {$sql2gql?: SchemaHatch};
@@ -55,8 +56,8 @@ function fieldOrder(schema: GraphQLSchema) {
   return out;
 }
 
-async function roundtrip(options: GqlizeOptions & MaterializeOptions = {}) {
-  const instance = await createInstance();
+async function roundtrip(options: GqlizeOptions & MaterializeOptions = {}, extraDefinitions: Definition[] = []) {
+  const instance = await createInstance(extraDefinitions);
   const live = await createSchema(instance, options);
   // through JSON, so this proves the *artifact* works, not the object graph
   const artifact = JSON.parse(JSON.stringify(snapshotSchema(live)));
@@ -88,6 +89,35 @@ describe("snapshot round-trip", () => {
       .toEqual(printSchema(lexicographicSortSchema(live)));
     expect(enumTable(rebuilt)).toEqual(enumTable(live));
     expect(fieldOrder(rebuilt)).toEqual(fieldOrder(live));
+  });
+
+  it("reproduces a profile whose restrictions leave a model unreachable", async() => {
+    // Issue #52. Denying both the query list field and the mutation entry makes
+    // `Loner` an island — built, but referred to by nothing, so `new GraphQLSchema`
+    // never walks it into the type map. The build must not record a model type
+    // the schema does not publish, or the artifact is inconsistent at birth and
+    // no rebuild can fix it.
+    const {live, rebuilt, artifact} = await roundtrip({
+      permission: {
+        query: (defName: string) => defName !== "Loner",
+        mutation: (defName: string) => defName !== "Loner",
+      },
+    }, [{name: "Loner", define: {name: {type: Sequelize.STRING}}, relationships: []}]);
+
+    expect(printSchema(lexicographicSortSchema(rebuilt)))
+      .toEqual(printSchema(lexicographicSortSchema(live)));
+    expect(enumTable(rebuilt)).toEqual(enumTable(live));
+    expect(fieldOrder(rebuilt)).toEqual(fieldOrder(live));
+
+    expect(artifact.ledger.modelTypes).not.toContain("Loner");
+    expect(artifact.ledger.modelTypes).not.toContain("Loner[]");
+    // the ledger and the escape hatch are one key set, on both schemas
+    expect(Object.keys((live as BuiltSchema).$sql2gql!.types)).toEqual(artifact.ledger.modelTypes);
+    expect(Object.keys((rebuilt as BuiltSchema).$sql2gql!.types)).toEqual(artifact.ledger.modelTypes);
+
+    // and the artifact is a fixpoint: snapshotting the rebuilt schema gives back
+    // the same artifact, so nothing is lost or invented on the way through.
+    expect(JSON.parse(JSON.stringify(snapshotSchema(rebuilt)))).toEqual(artifact);
   });
 
   it("reproduces an extend + root profile", async() => {

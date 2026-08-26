@@ -1,10 +1,13 @@
-import {GraphQLSchema, GraphQLString, isObjectType} from "graphql";
+import {graphql, GraphQLSchema, GraphQLString, isObjectType} from "graphql";
 import Sequelize from "sequelize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import {Ormize} from "@azerothian/ormize";
 import {describe, it, expect} from "@jest/globals";
 
 import {createSchema} from "../../src";
+import {defaultIdCodec} from "../../src/codecs/id";
+import {GQLIZE_EXT} from "../../src/graphql/resolvers/types";
+import type {GqlizeBuildLedger} from "../../src/graphql/snapshot/ledger";
 import {materializeSchema, snapshotSchema} from "../../src/snapshot";
 import type {ScalarTypeIR, SchemaSnapshot} from "../../src/graphql/snapshot/ir";
 import type {Definition, GqlizeOptions, ModelTypeHatch, SchemaHatch} from "../../src/types";
@@ -144,34 +147,110 @@ describe("a broken artifact refuses to boot", () => {
   });
 });
 
-describe("a model no root field reaches", () => {
-  it("still round-trips, because the artifact carries it deliberately", async() => {
-    // `permission.query` denies its list field, so nothing in the schema refers
-    // to `Loner` — but the build still records it as a model type, and the
-    // artifact has to carry the type itself or the loader cannot rebuild the map
-    // `node(id:)` reads. This is the case the guard above must not reject.
-    const loner = [{name: "Loner", define: {name: {type: Sequelize.STRING}}, relationships: []}];
+/** The `Loner` fixture: no relationships, so only the roots can reach it. */
+const LONER: Definition[] = [
+  {name: "Loner", define: {name: {type: Sequelize.STRING}}, relationships: []},
+];
+
+/** The per-model fields hanging off a root's `models` container. */
+function modelContainer(schema: GraphQLSchema, root: "query" | "mutation") {
+  const rootType = root === "query" ? schema.getQueryType() : schema.getMutationType();
+  if (!rootType) {
+    throw new Error(`Expected the schema to have a ${root} type`);
+  }
+  const container = rootType.getFields().models;
+  if (!container || !isObjectType(container.type)) {
+    throw new Error(`Expected the ${root} root's "models" field to be an object type`);
+  }
+  return container.type.getFields();
+}
+
+describe("a model reachable only through the mutation root", () => {
+  it("still round-trips, because the mutation field refers to it", async() => {
+    // `permission.query` denies the list field, but the mutation container's
+    // `Loner` field is typed off the same model type, so the schema does publish
+    // it and the artifact has to carry it. This is the case the guards above
+    // must not reject.
     const options = {permission: {query: (defName: string) => defName !== "Loner"}};
 
     const snapshot: SchemaSnapshot = JSON.parse(JSON.stringify(
-      snapshotSchema(await createSchema(await orm(loner), options)),
+      snapshotSchema(await createSchema(await orm(LONER), options)),
     ));
     expect(snapshot.ledger.modelTypes).toEqual(expect.arrayContaining(["Loner", "Loner[]"]));
     expect(snapshot.types.some((t) => t.name === "Loner")).toBe(true);
 
-    const schema = await materializeSchema(snapshot, await orm(loner), options);
+    const schema = await materializeSchema(snapshot, await orm(LONER), options);
     const hatch = (schema as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql;
     expect(hatch?.types.Loner).toBeDefined();
-    // Nothing reaches it: `models` is the only route to a model's list field.
-    const queryType = schema.getQueryType();
-    if (!queryType) {
-      throw new Error("Expected the materialized schema to have a query type");
+    // The mutation root is what keeps it alive — the query container is the only
+    // route to a model's list field, and that one is denied.
+    expect(Object.keys(modelContainer(schema, "mutation"))).toContain("Loner");
+    expect(Object.keys(modelContainer(schema, "query"))).toEqual(["Parent", "Child"]);
+  });
+});
+
+describe("a model nothing in the schema reaches", () => {
+  // Issue #52. Deny the list field *and* the mutation entry and `Loner` becomes
+  // an island: the build still puts it in `schemaCache.types`, but no root
+  // reaches it, so it is not in `schema.getTypeMap()` and the reachability walk
+  // cannot put it in the artifact either. Recording a model type the schema does
+  // not publish makes the artifact inconsistent at birth — which is why the
+  // "rebuild it" the guard above suggests never helped.
+  const options = {
+    permission: {
+      query: (defName: string) => defName !== "Loner",
+      mutation: (defName: string) => defName !== "Loner",
+    },
+  };
+
+  it("is left out of the live build's model map", async() => {
+    const live = await createSchema(await orm(LONER), options);
+    const ledger = live.extensions[GQLIZE_EXT] as GqlizeBuildLedger;
+
+    expect(live.getType("Loner")).toBeUndefined();
+    expect(ledger.modelTypes).not.toContain("Loner");
+    expect(ledger.modelTypes).not.toContain("Loner[]");
+    expect(ledger.modelTypes).toEqual(
+      expect.arrayContaining(["Parent", "Parent[]", "Child", "Child[]"]),
+    );
+    // The invariant the fix establishes: the ledger and the escape hatch are one
+    // key set, and every key names a type the schema publishes.
+    const hatch = (live as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql;
+    expect(Object.keys(hatch!.types)).toEqual(ledger.modelTypes);
+  });
+
+  it("is left out of the artifact, which then loads", async() => {
+    const snapshot: SchemaSnapshot = JSON.parse(JSON.stringify(
+      snapshotSchema(await createSchema(await orm(LONER), options)),
+    ));
+    expect(snapshot.types.some((t) => t.name === "Loner")).toBe(false);
+    expect(snapshot.ledger.modelTypes).not.toContain("Loner");
+    expect(snapshot.ledger.modelTypes).not.toContain("Loner[]");
+
+    const schema = await materializeSchema(snapshot, await orm(LONER), options);
+    const hatch = (schema as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql;
+    expect(schema.getType("Loner")).toBeUndefined();
+    expect(hatch?.types.Loner).toBeUndefined();
+    expect(Object.keys(hatch!.types)).toEqual(snapshot.ledger.modelTypes);
+    expect(Object.keys(modelContainer(schema, "query"))).toEqual(["Parent", "Child"]);
+  });
+
+  it("resolves node(id:) to null on both schemas, exactly as it did before", async() => {
+    // The one thing dropping the entry could have changed, and it does not:
+    // `id-fetcher` re-checks `permission.query` per request, and being an island
+    // *requires* that predicate to have denied the model — so the lookup was
+    // already refused before the node type mapper was ever consulted.
+    const globalId = defaultIdCodec.encode({type: "Loner", id: "1", defName: "Loner", fieldName: "id"});
+    const source = `query { node(id: "${globalId}") { id } }`;
+    const live = await createSchema(await orm(LONER), options);
+    const snapshot: SchemaSnapshot = JSON.parse(JSON.stringify(snapshotSchema(live)));
+    const rebuilt = await materializeSchema(snapshot, await orm(LONER), options);
+
+    for (const schema of [live, rebuilt]) {
+      const result = await graphql({schema, source});
+      expect(result.errors).toBeUndefined();
+      expect(result.data).toEqual({node: null});
     }
-    const modelsField = queryType.getFields().models;
-    if (!("getFields" in modelsField.type)) {
-      throw new Error("Expected `models` field's type to expose getFields()");
-    }
-    expect(Object.keys(modelsField.type.getFields())).toEqual(["Parent", "Child"]);
   });
 });
 

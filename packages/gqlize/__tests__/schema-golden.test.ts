@@ -56,6 +56,12 @@ describe("golden schema", () => {
     for (const name of Object.keys(ledger.externalTypes)) {
       expect(schema.getType(name)).toBeDefined();
     }
+    // the same for model types, `Name[]` list wrappers unwrapped — the invariant
+    // the artifact depends on: a name the schema does not publish is one the
+    // materializer will reject as corruption.
+    for (const name of ledger.modelTypes) {
+      expect(schema.getType(name.endsWith("[]") ? name.slice(0, -2) : name)).toBeDefined();
+    }
   });
 
   it("restrictive permission profile", async() => {

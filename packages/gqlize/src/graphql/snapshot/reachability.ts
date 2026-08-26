@@ -58,6 +58,10 @@ export function findNodeInterfaceName(schema: GraphQLSchema): string | undefined
  *
  * `extend` fields are skipped: they are arbitrary user configs supplied to
  * `createSchema`, and are merged again at load from the same options object.
+ * This makes the walk's reach narrower than `schema.getTypeMap()` — a type only
+ * an extend field refers to is in the map but not in the artifact — which is why
+ * the snapshotter prunes `ledger.modelTypes` against the result of this walk
+ * rather than against the type map.
  *
  * The walk runs off an explicit stack rather than recursing. A schema whose
  * models chain model-to-model a few hundred deep is one `createSchema` builds

@@ -426,9 +426,9 @@ export async function materializeSchema(
     );
   }
 
-  // Reproduce `schemaCache.types` exactly — including the `${defName}[]` list
-  // entries and the `undefined` holes left by permission-denied models. `node(id:)`
-  // and `__resolveType` break silently if this key set differs.
+  // Reproduce the live build's model map exactly — the `${defName}[]` list
+  // entries included. `node(id:)` and `__resolveType` break silently if this key
+  // set differs, so the ledger records it rather than having it re-derived here.
   const modelTypes = rebuildModelTypes(ledger.modelTypes || [], typeMap);
   nodeTypeMapper.mapTypes(modelTypes);
 
@@ -618,13 +618,13 @@ function rebuildModelTypes(names: string[], typeMap: Map<string, GraphQLNamedTyp
       out[name] = new GraphQLList(base);
     } else {
       const type = typeMap.get(name);
-      // Every model type the build recorded is in the artifact, including the
-      // ones no root field reaches — `reachability` seeds them deliberately. A
-      // permission-denied model leaves no entry here at all rather than an
-      // `undefined` hole: `createModelTypes` returns the accumulator untouched
-      // before anything can write one. So a name with nothing behind it is
-      // corruption, and admitting it would only defer the failure by one line,
-      // to `nodeTypeMapper.mapTypes`, as an opaque TypeError.
+      // The snapshotter records a model type only when the artifact carries the
+      // type itself (`snapshot.ts`, via `pruneModelTypes`), and a denied model
+      // leaves no entry at all rather than an `undefined` hole. So a name with
+      // nothing behind it is corruption — hand-edited, half-migrated, or written
+      // by a version that recorded models the schema never published — and
+      // admitting it would only defer the failure by one line, to
+      // `nodeTypeMapper.mapTypes`, as an opaque TypeError.
       if (!type) {
         throw new Error(
           `gqlize: the artifact lists relay model type "${name}" but it is not in the schema — ` +

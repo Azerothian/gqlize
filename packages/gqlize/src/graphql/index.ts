@@ -17,6 +17,7 @@ import createMutationModel from "./create-mutation-model";
 import createMutationInput from "./create-mutation-input";
 import createSchemaCache from "./create-schema-cache";
 import computeVisibleModels from "./utils/visible-models";
+import pruneModelTypes from "./utils/model-types";
 import GQLManager from '../manager';
 import { GqlFieldMap, GqlizeOptions, GqlizeAdapter, SchemaCache, SchemaHatch } from '../types';
 import { bindField } from "./resolvers/bind";
@@ -263,17 +264,17 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     });
   }
 
-  // Record the exact key set handed to the mapper rather than re-deriving it
-  // later — `node(id:)` and `__resolveType` break silently if it differs.
-  ledger.modelTypes = Object.keys(schemaCache.types);
-  nodeTypeMapper.mapTypes(schemaCache.types);
-
   if (!rootSchema.query) {
     throw new Error("GraphQLSchema requires query to be set. Are your permissions settings to aggressive?");
   }
+  // The model map and `ledger.modelTypes` are deliberately *not* recorded here.
+  // Which of these types the schema publishes is only knowable once
+  // `new GraphQLSchema` has walked the roots, so `createSchema` prunes and
+  // records them after construction.
   return {
     types: schemaCache.types,
     ledger,
+    nodeTypeMapper,
     root: Object.assign(rootSchema, {...root})
   };
 }
@@ -301,8 +302,20 @@ export async function createSchema(dbInstance: GQLManager, options: GqlizeOption
     );
   }
 
+  // Now that the schema exists, drop the model types nothing in it refers to.
+  // A model can pass every permission gate and still be published nowhere — deny
+  // its query list field and its mutation entry and no root reaches it — and
+  // recording such a name would make the artifact inconsistent at birth. The
+  // ledger, the escape hatch and the relay node map all take the pruned set, so
+  // they stay the one key set `node(id:)` and `__resolveType` agree on.
+  const modelTypes = pruneModelTypes(schemaObjects.types, (name) => !!schema.getType(name));
+  // The same object the schema's `extensions[GQLIZE_EXT]` holds, so this is
+  // visible through the built schema.
+  schemaObjects.ledger.modelTypes = Object.keys(modelTypes);
+  schemaObjects.nodeTypeMapper.mapTypes(modelTypes);
+
   (schema as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql = {
-    types: schemaObjects.types,
+    types: modelTypes,
   };
   // Lets `snapshotSchema(schema)` fingerprint the definitions later without the
   // caller threading the orm back in. Off the hot path — a WeakMap set, no hashing.

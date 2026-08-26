@@ -45,10 +45,11 @@ export default class NodeTypeMapper {
   }
 
   /**
-   * `undefined` is in the parameter type because the artifact path's type map
-   * carries it — not because a hole is acceptable. Its callers throw on one
-   * first, and reading `.type` off it here is the documented second line of
-   * defence.
+   * Both callers now hand over a map pruned to the types their schema publishes
+   * — `createSchema` against `getTypeMap()`, the materializer against the types
+   * it just built — so a hole should never arrive. `undefined` stays in the
+   * parameter type because `SchemaHatch` still admits it; throwing is the
+   * callers' job, and skipping the entry here is the second line of defence.
    */
   mapTypes(types: {[key: string]: NodeTypeEntry | GraphQLType | undefined}) {
     Object.keys(types).forEach((k) => {

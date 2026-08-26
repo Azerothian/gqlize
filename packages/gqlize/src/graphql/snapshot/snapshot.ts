@@ -20,6 +20,7 @@ import {
 } from "graphql";
 
 import { GQLIZE_EXT } from "../resolvers/types";
+import pruneModelTypes from "../utils/model-types";
 import { readBinding } from "../resolvers/bind";
 import { getBuild } from "./build-registry";
 import { fingerprintDefinitions } from "./fingerprint";
@@ -91,10 +92,23 @@ export function snapshotSchema(schema: GraphQLSchema, opts: SnapshotOptions = {}
       mutation: [...(buildLedger.extendFields?.mutation || [])],
     },
     scalars: { ...buildLedger.scalars },
+    modelTypes: [...(buildLedger.modelTypes || [])],
   };
 
   const { types } = collectSnapshotTypes(schema, ledger);
-  const modelTypes = new Set(ledger.modelTypes || []);
+
+  // `createSchema` already prunes against `getTypeMap()`, but this accepts any
+  // gqlize-built schema, and the walk's own reach is narrower than the type map:
+  // it skips `extend`-bound fields, so a model type only an extend field refers
+  // to has no IR entry to be rebuilt from. Record only what the artifact carries
+  // — a name with nothing behind it is what the loader calls corruption, and no
+  // rebuild could ever fix it.
+  const present = new Set(types.map((type) => type.name));
+  ledger.modelTypes = Object.keys(pruneModelTypes(
+    Object.fromEntries((ledger.modelTypes || []).map((name) => [name, true])),
+    (name) => present.has(name),
+  ));
+  const modelTypes = new Set(ledger.modelTypes);
 
   const ir: NamedTypeIR[] = types.map((type) => encodeNamedType(type, registry, ledger, modelTypes));
 
