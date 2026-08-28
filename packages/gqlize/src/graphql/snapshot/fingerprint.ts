@@ -146,6 +146,8 @@ function modelProjection(instance: GqlizeBinding) {
       name: def.name ?? defName,
       comment: def.comment,
       comments: def.comments,
+      deprecated: def.deprecated,
+      deprecations: def.deprecations,
       ignoreFields: [...(def.ignoreFields || [])].sort(),
       fields: Object.keys(fields).sort().map((key) =>
         fieldProjection(instance, defName, key, fields[key])),
@@ -187,6 +189,7 @@ function fieldProjection(instance: GqlizeBinding, defName: string, key: string, 
     foreignKey: field.foreignKey === true,
     foreignTarget: field.foreignTarget,
     description: field.description,
+    deprecated: field.deprecated,
     args: field.args ? Object.keys(field.args).sort() : undefined,
     hasResolve: typeof field.resolve === "function",
   };

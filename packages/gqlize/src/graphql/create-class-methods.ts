@@ -8,6 +8,7 @@ import {
 } from "graphql";
 
 import { capitalize } from "@azerothian/utilize/utils/word";
+import { deprecationFor } from "@azerothian/utilize";
 import GQLManager from '../manager';
 import { Definitions, GqlFieldMap, GqlizeOptions, SchemaCache, Definition } from '../types';
 import type { ExposedMethods } from "@azerothian/utilize/types/index";
@@ -58,7 +59,7 @@ export function createClassMethodFields(instance: GQLManager, defName: string, d
         }
       }
     }
-    const {type, args} = query[methodName];
+    const {type, args, deprecated} = query[methodName];
     // `ExposedMethod.type` is `unknown`: a definition author supplies either a
     // name to look up or a live GraphQL type, and only the string case is
     // checkable here. Anything else is rejected by graphql when the type builds.
@@ -98,6 +99,7 @@ export function createClassMethodFields(instance: GQLManager, defName: string, d
       type: outputType,
       args: newArgs,
       description: (definition.comments?.classMethods || {})[methodName],
+      deprecationReason: deprecationFor(definition, "classMethods", methodName, deprecated),
     }, {
       kind: "classMethod",
       defName,

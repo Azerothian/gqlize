@@ -18,6 +18,7 @@ cleanly — that section is where working code breaks.
    - [Filter, order and include input types are permission-gated](#filter-order-and-include-input-types-are-permission-gated)
    - [`node(id)` goes through the authorized path](#nodeid-goes-through-the-authorized-path)
    - [Relay `pageInfo` is derived from the window's absolute position](#relay-pageinfo-is-derived-from-the-windows-absolute-position)
+   - [Relay connection fields are non-null](#relay-connection-fields-are-non-null)
    - [Mutations run in a transaction](#mutations-run-in-a-transaction)
    - [`createListObject` takes a data-source descriptor, not a resolver](#createlistobject-takes-a-data-source-descriptor-not-a-resolver)
    - [Role-based permissions now gate `extend` fields and mutation inputs](#role-based-permissions-now-gate-extend-fields-and-mutation-inputs)
@@ -250,6 +251,58 @@ the full result set, rather than inferred from the size of the fetched batch. Fo
 > **Known issue:** backward pagination (`last` / `before`) still returns the wrong rows at the data
 > layer. This is a pre-existing adapter bug that predates 7.0 and is **not** fixed in this release.
 > Prefer forward pagination.
+
+### Relay connection fields are non-null
+
+**This changes the SDL, and therefore the types your client codegen produces.** Five connection
+fields that were nullable in 6.x are now non-null:
+
+```diff
+ type PostList {
+-  pageInfo: PageInfo
++  pageInfo: PageInfo!
+   total: Int
+-  edges: [PostEdge]
++  edges: [PostEdge!]!
+ }
+
+ type PostEdge {
+   node: Post
+-  cursor: String
++  cursor: String!
+ }
+
+ type PageInfo {
+-  hasNextPage: Boolean
+-  hasPreviousPage: Boolean
++  hasNextPage: Boolean!
++  hasPreviousPage: Boolean!
+   startCursor: String
+   endCursor: String
+ }
+```
+
+The first three are what the [Relay Connections spec](https://relay.dev/graphql/connections.htm)
+requires. The other two are the same argument applied consistently: `resolvers/connection.ts` has
+always returned an `edges` array and minted every edge's `cursor` itself, so the nullable spelling
+only ever bought clients a null check they could not trigger.
+
+`total` and `edges.node` deliberately stay nullable — `total` is a separate COUNT the include
+builder may skip, and a row can be deleted between the page query and the per-edge node resolve.
+
+**What you need to do:**
+
+- **Rebuild your artifacts.** A pre-generated `schema.json` from 6.x carries the old shape.
+  `gqlize check` will report it stale; `gqlize build` regenerates it.
+- **Re-run client codegen.** Relay, graphql-codegen and Apollo's `relayStylePagination` will emit
+  narrower types. Nothing breaks at runtime — the server never sent null for these — but null
+  checks and `?.` on `pageInfo`, `edges`, `cursor`, `hasNextPage` and `hasPreviousPage` become
+  dead code, and a strict TypeScript setup will flag them.
+- **Nothing to change server-side.** No resolver, hook or permission behaviour changed.
+
+If you generate a client from the *server's* SDL rather than your own copy, and a hand-written
+schema of yours declares a field returning one of these types, note that non-null is the stricter
+position: a schema that was valid against the 6.x shape stays valid against this one.
 
 ### Mutations run in a transaction
 
@@ -597,6 +650,17 @@ Not required for migration, but this is what the split bought:
   artifact, and `loadSchema(path, orm, options)` rebuilds an executable `GraphQLSchema` from it plus
   a live ormize instance. `gqlize check` fails CI when the artifact no longer matches the
   definitions. See the [gqlize README](../packages/gqlize/README.md#pre-generated-schema-artifacts).
+- **`@deprecated`** — a `deprecated` reason on a column, an exposed method or a whole definition,
+  or a central `deprecations` map for declarations you did not author (relationships, inherited
+  columns). It reaches the output field, the mutation input, both halves of the `orderBy` enum pair
+  and the model's root fields, and survives the artifact round-trip. 6.x had no way to deprecate
+  anything, so renaming a column was a hard break with no warning path. See
+  [guide: Deprecating fields](guide.md#deprecating-fields).
+- **Build-time schema validation** — `createSchema` and `materializeSchema` now run graphql's
+  `validateSchema` and throw on failure, so an invalid `options.root` / `options.extend` /
+  `override` type is an error where it was written instead of an error on *every* query at request
+  time. `options.validate: false` opts out. See
+  [guide: Build-time validation](guide.md#build-time-validation-optionsvalidate).
 
 ## 6. Checklist
 
@@ -614,6 +678,9 @@ Not required for migration, but this is what the split bought:
 - [ ] The graphql patch applied if you rely on ordered nested mutations.
 - [ ] `createRoleBasedPermissions` rules audited for `extend` root fields and mutation inputs, which
       are now denied under `defaultDeny` instead of passing through.
+- [ ] Schema artifacts rebuilt and client codegen re-run for the non-null connection fields.
+- [ ] The build checked against the new schema validation — a schema that was quietly invalid in
+      6.x now throws from `createSchema`.
 - [ ] Any `subscription`, `mutationUpdateAll`, `mutationDeleteAll` rules keys removed — they gated
       nothing in 6.x and now warn.
 - [ ] Hand-written `permission` bags checked against the build-time unknown-key warning.

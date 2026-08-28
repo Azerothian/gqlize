@@ -35,6 +35,7 @@ import createNodeInterface from "../utils/create-node-interface";
 import { applyExtendFields } from "../extend";
 import { describeRef, resolveExternalType } from "../external-types";
 import { enrichDuplicateTypeError } from "../utils/duplicate-types";
+import assertSchemaValid from "../utils/validate-schema";
 import { collectLiveTypes, collectLiveTypesFromFields, type LiveType } from "./live-types";
 import { bindField, readBinding } from "../resolvers/bind";
 import { GQLIZE_EXT, type BindingContext } from "../resolvers/types";
@@ -467,6 +468,10 @@ export async function materializeSchema(
 
   (schema as GraphQLSchema & {$sql2gql?: SchemaHatch}).$sql2gql = {types: modelTypes};
   attachTypeHatches(snapshot, typeMap, configs);
+  // The same gate the live builder runs. It matters more here: an artifact is
+  // loaded at boot, and an invalid one would otherwise get as far as serving
+  // traffic before the first query reported it.
+  assertSchemaValid(schema, "artifact", options.validate);
   // Same bookkeeping the live builder does, so a materialized schema can be
   // re-snapshotted (round-trip tests, `gqlize check`) without losing its fingerprint.
   recordBuild(schema, instance, options);

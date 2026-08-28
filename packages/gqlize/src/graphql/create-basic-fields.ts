@@ -14,7 +14,7 @@ import type { GraphQLNullableOutputType, GraphQLObjectTypeConfig, GraphQLOutputT
 //   connectionArgs,
 // } from "graphql-relay";
 import { globalIdFieldConfig } from "./utils/global-id-field";
-import { isFieldAllowed } from "@azerothian/utilize";
+import { deprecationFor, isFieldAllowed } from "@azerothian/utilize";
 import GQLManager from '../manager';
 import { AdapterRow, Definition, GqlFieldMap, GqlizeOptions, RequestContext, SchemaCache } from '../types';
 import { bindField } from "./resolvers/bind";
@@ -46,7 +46,10 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
           } else {
             globalKeyName = fieldDef.foreignTarget;
           }
-          f[key] = bindField(globalIdFieldConfig(fieldDef.allowNull), {
+          f[key] = bindField({
+            ...globalIdFieldConfig(fieldDef.allowNull),
+            deprecationReason: deprecationFor(definition, "fields", key, fieldDef.deprecated),
+          }, {
             kind: "globalId",
             defName,
             fieldName: key,
@@ -73,6 +76,7 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
           const config = {
             type: fieldDef.allowNull ? type : new GraphQLNonNull(type as GraphQLNullableOutputType),
             description: ((definition.comments || {}).fields || {})[key] || fieldDef.description,
+            deprecationReason: deprecationFor(definition, "fields", key, fieldDef.deprecated),
             args: fieldDef.args,
           };
           // Only fields the user actually gave a resolver get a binding; the
@@ -109,6 +113,10 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
           const config = {
             // description: overrideFieldDefinition.description || fieldDefinition.description,
             type,
+            // An override replaces the column's *type*, not its identity — the
+            // field is still `fieldName` on this model, so it deprecates through
+            // the same key as any other field.
+            deprecationReason: deprecationFor(definition, "fields", fieldName, fieldDefinition.deprecated),
           };
           f[fieldName] = typeof overrideFieldDefinition.output === "function"
             ? bindField(config, {kind: "overrideOutput", defName, fieldName}, bindingContext)

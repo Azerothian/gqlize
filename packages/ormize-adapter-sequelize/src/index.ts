@@ -70,6 +70,8 @@ type OrmizeColumnOptions = ModelAttributeColumnOptions & {
   resolve?: DefinitionFieldMeta["resolve"];
   /** The GraphQL field description; `comment` is the Sequelize-native spelling. */
   description?: string;
+  /** The `@deprecated` reason for the generated field. Meaningless to Sequelize. */
+  deprecated?: string;
 };
 
 /**
@@ -395,6 +397,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           // database; `description` is what `DefinitionField` documents, so it
           // is honoured too and wins. Same precedence as the valkey adapter.
           description: attr.description ?? attr.comment,
+          deprecated: attr.deprecated,
           defaultValue: attr.defaultValue,
           foreignKey,
           foreignTarget,

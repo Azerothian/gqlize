@@ -2,6 +2,7 @@ import {GraphQLBoolean, GraphQLInputObjectType, GraphQLList, type GraphQLFieldCo
 import { isMutationInstanceMethodAllowed } from "@azerothian/utilize/gate";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import { capitalize } from "@azerothian/utilize/utils/word";
+import { deprecationFor } from "@azerothian/utilize/utils/deprecation";
 import GQLManager from '../manager';
 import { GqlizeOptions, SchemaCache } from '../types';
 import { bindField } from "./resolvers/bind";
@@ -26,11 +27,16 @@ export function createInstanceMutationsInput(
     if (!isMutationInstanceMethodAllowed(options.permission, defName, methodName)) {
       continue;
     }
-    const { args } = methods[methodName];
+    const { args, deprecated } = methods[methodName];
     const description = (definition.comments?.instanceMethods || {})[methodName];
+    // `comments.instanceMethods` names these `apply` input fields rather than the
+    // instance-method *query* fields (which read `comments.fields`), so
+    // `deprecations.instanceMethods` is the group that mirrors it. Every field
+    // built here is nullable, so `@deprecated` is legal on all of them.
+    const deprecationReason = deprecationFor(definition, "instanceMethods", methodName, deprecated);
     const argNames = Object.keys(args || {});
     if (argNames.length === 0) {
-      fields[methodName] = { type: GraphQLBoolean, description };
+      fields[methodName] = { type: GraphQLBoolean, description, deprecationReason };
       continue;
     }
     // Transform args are passed through verbatim, so their types are whatever
@@ -48,6 +54,7 @@ export function createInstanceMutationsInput(
     });
     fields[methodName] = {
       description,
+      deprecationReason,
       type: new GraphQLInputObjectType({
         name: `GQLT${defName}Apply${capitalize(methodName)}`,
         fields: () => args as GraphQLInputFieldConfigMap,

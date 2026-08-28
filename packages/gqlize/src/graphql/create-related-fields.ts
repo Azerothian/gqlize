@@ -1,7 +1,7 @@
 import createListObject from "./create-list-object";
 // import { fromCursor, toCursor } from "./objects/cursor";
 import {capitalize} from "@azerothian/utilize/utils/word";
-import { isRelationshipAllowed } from "@azerothian/utilize";
+import { deprecationFor, isRelationshipAllowed } from "@azerothian/utilize";
 import { SchemaCache, GqlFieldMap, GqlizeOptions, Definition, Association } from '../types';
 import GQLManager from '../manager';
 import { GraphQLBoolean, type GraphQLOutputType } from "graphql";
@@ -62,6 +62,7 @@ export default function createRelatedFieldsFunc(
               f[relName] = bindField({
                 type: targetObject,
                 description: ((definition.comments || {}).fields || {})[relName],
+                deprecationReason: deprecationFor(definition, "fields", relName),
                 args: {
                   required: {
                     type: GraphQLBoolean,
@@ -82,7 +83,12 @@ export default function createRelatedFieldsFunc(
               // as a field with no config and fails the whole build.
               const many = createManyObject(instance, schemaCache, defName, targetDef, targetObject, "", association, (definition.comments?.fields || {})[relName], options);
               if (many) {
-                f[relName] = many;
+                // `createManyObject` hands back the *cached* connection field
+                // config (`schemaCache.lists`), which more than one parent can
+                // share — copy before marking rather than deprecating every
+                // other use of the same connection.
+                const reason = deprecationFor(definition, "fields", relName);
+                f[relName] = reason ? {...many, deprecationReason: reason} : many;
               }
               break;
             }

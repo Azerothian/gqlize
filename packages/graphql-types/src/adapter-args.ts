@@ -8,6 +8,7 @@ import {
 } from "graphql";
 import { isFieldAllowed, isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
 import { computedWhereFields } from "@azerothian/utilize/exposed-methods";
+import { deprecationFor } from "@azerothian/utilize/utils/deprecation";
 import type { Definition, OrderEntry, Permission } from "@azerothian/utilize/types/index";
 import createQueryType, { type QueryTypeConfig } from "./query";
 import { GraphQLString, type GraphQLInputType } from "graphql";
@@ -157,21 +158,31 @@ export function getOrderByGraphQLType(
     const perm = effective(host, permission);
     // Only permission-allowed fields are orderable — a denied field must not be
     // sortable, which is another way to leak its value.
-    const values: {[enumValueName: string]: {value: OrderEntry}} = {};
+    const values: {[enumValueName: string]: {value: OrderEntry, deprecationReason?: string}} = {};
+    // Resolved the same way `withComputedFilters` resolves it — this layer has no
+    // definition of its own, and `targetOf` is the one handle it is given.
+    const definition = host.targetOf(defName)?.definition;
     for (const fieldName of host.orderableFields(defName)) {
       if (!isFieldAllowed(perm, defName, fieldName)) {
         continue;
       }
-      values[`${fieldName}ASC`] = { value: [fieldName, "ASC"] };
-      values[`${fieldName}DESC`] = { value: [fieldName, "DESC"] };
+      // A deprecated column should not stay silently sortable: both halves of
+      // its pair carry the same reason, so a client sorting by it is told.
+      const deprecationReason = deprecationFor(definition, "fields", fieldName, (definition?.define || {})[fieldName]?.deprecated);
+      values[`${fieldName}ASC`] = { value: [fieldName, "ASC"], deprecationReason };
+      values[`${fieldName}DESC`] = { value: [fieldName, "DESC"], deprecationReason };
     }
     // A computed sort contributes the same pair, carrying the *method's* name as
     // the column. The engine expands it to the real ordering at query time
     // (`expandOrderBy`), which keeps the enum value stable across a declaration
     // change and so keeps a materialized schema snapshot valid.
     for (const methodName of (host.computedOrderableFields?.(defName, perm) || [])) {
-      values[`${methodName}ASC`] = { value: [methodName, "ASC"] };
-      values[`${methodName}DESC`] = { value: [methodName, "DESC"] };
+      const deprecationReason = deprecationFor(
+        definition, "fields", methodName,
+        definition?.expose?.instanceMethods?.query?.[methodName]?.deprecated,
+      );
+      values[`${methodName}ASC`] = { value: [methodName, "ASC"], deprecationReason };
+      values[`${methodName}DESC`] = { value: [methodName, "DESC"], deprecationReason };
     }
     if (Object.keys(values).length > 0) {
       host.setMetaObj(defName, "orderByType", new GraphQLList(new GraphQLEnumType({

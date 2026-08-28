@@ -40,8 +40,11 @@ MIT
 - Relational GraphQL Schema generator
 - Supports Query and Mutations
 - Fine grained permission control on which fields, models that you can query, mutate (Create, Update, Delete) directly via graphql
-- multi data source compatible,
-- Planned: cross adapter relationships e.g. `Sequelize[postgres]:Task:items[hasMany]->Sequelize[sqlite]:Item`
+- multi data source compatible, including cross adapter relationships e.g. `Sequelize[postgres]:Task:items[hasMany]->Sequelize[sqlite]:Item`
+- Relay-compliant connections: `pageInfo: PageInfo!`, `edges: [XEdge!]!`, index-based cursors bound to the connection that minted them
+- `@deprecated` on columns, relationships, exposed methods, mutation inputs, `orderBy` enum values and whole models
+- The built schema is validated at build time, so an invalid `extend` / `root` / `override` type is an error where it was written rather than on every query at request time
+- Pre-generated schema artifacts (`gqlize build` / `check` / `print`) with staleness fingerprinting
 
 ## Caveats
 
@@ -529,32 +532,29 @@ is worse than one that stops. What each means:
 
 ## TODO
 
-- Use TravisCI for deployments
-
-Documentation
-- Install/Setup
-- Model Definitions
-- Adapter API
-- Example Project
-- Everything 
-
 Functional
 - validate submitted definitions via JSON Schema v7
-- reimplement subscriptions
-- before, after event hooks
-- Implement cross adapter relationships
+- reimplement subscriptions (see [gqlize#54](https://github.com/Azerothian/gqlize/issues/54) — the
+  artifact half is missing too: reachability seeds only the query and mutation roots)
+- schema directives: nothing in the IR carries them, so a directive on a user-authored `extend` /
+  `root` type is dropped by `snapshotSchema`
+- user-declared interfaces and unions (only the Relay `Node` interface is generated today)
+- `@oneOf` input objects
 - add middleware options to allow for caching of items?
-
-Unit Tests
-- test add/remove from relationships
-- test where operators
-- test multiple enums
-- test paging
-- More Unit tests
+- cross adapter **writes**, and batching of cross adapter reads by foreign key
 
 Adapters
 - add elasticsearch adapter
 - add http graphql relay adapter
+
+Deliberately out of scope
+- `@defer` / `@stream` and query cost/depth limiting — execution- and validation-layer concerns
+  owned by the host server. One caveat: a `@stream`ed field still goes through
+  `build-include-from-selection.ts`, which builds its eager-load tree from the whole selection set,
+  so streaming would over-fetch rather than break.
+- Federation.
+- DataLoader-style batching for same-adapter reads — the selection-set-driven `include` builder
+  already collapses the N+1 in SQL.
 
 ## Contributers
 

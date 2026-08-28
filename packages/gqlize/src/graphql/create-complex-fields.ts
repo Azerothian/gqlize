@@ -2,6 +2,7 @@ import { Definition, GqlizeOptions, SchemaCache } from "../types";
 import GQLManager from '../manager';
 import { bindField } from "./resolvers/bind";
 import { recordExternalType } from "./snapshot/ledger";
+import { deprecationFor } from "@azerothian/utilize";
 import type { GraphQLOutputType } from "graphql";
 
 
@@ -20,7 +21,7 @@ export default function createComplexFieldsFunc(
       if (definition.expose?.instanceMethods?.query) {
         const instanceMethods = definition.expose.instanceMethods.query;
         Object.keys(instanceMethods).forEach((methodName) => {
-          const {type, args} = instanceMethods[methodName];
+          const {type, args, deprecated} = instanceMethods[methodName];
           // A `string` names a model whose type is in the cache; anything else is
           // the built output type itself. The slot is `unknown` because the layer
           // that declares it is graphql-free — see `utils/authored-type`.
@@ -65,6 +66,10 @@ export default function createComplexFieldsFunc(
             type: targetType,
             args,
             description: (definition.comments?.fields || {})[methodName],
+            // Instance-method query fields take their description from
+            // `comments.fields` rather than `comments.instanceMethods` (which
+            // names the `apply` transforms) — deprecation follows the same key.
+            deprecationReason: deprecationFor(definition, "fields", methodName, deprecated),
           }, {kind: "instanceMethod", defName, methodName}, {instance, options});
         });
       }

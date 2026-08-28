@@ -607,6 +607,21 @@ export type GqlizeOptions = {
   /** The caller's subscription config. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- consumed only by the GraphQL layer that understands it; naming it here would mean depending on graphql.
   subscriptions?: any
+  /**
+   * Whether the built schema is checked with graphql's own `validateSchema`
+   * before it is handed back. Default: `true`.
+   *
+   * An invalid schema is not inert. graphql validates once per *execution* and
+   * returns the same error for every operation, so a single bad field — most
+   * often one written into `options.root` or `options.extend` — fails queries
+   * that have nothing to do with it, at request time, from a stack that does not
+   * name the mistake. Validating at build time turns that into one error at the
+   * point the schema was assembled.
+   *
+   * Set false only to skip the type-map walk (a host building many permission
+   * profiles per process may prefer to pay it once in CI, via `gqlize check`).
+   */
+  validate?: boolean
 }
 
 export type Association = {
@@ -696,6 +711,8 @@ export type DefinitionFieldMeta = {
   resolve?: DefinitionHook;
   args?: FieldArgsConfig;
   comment?: string;
+  /** See {@link DefinitionField.deprecated}. Carried through by the adapter. */
+  deprecated?: string;
   defaultValue?: FieldValue;
 }
 
@@ -728,6 +745,13 @@ export type DefinitionField = {
   resolve?: DefinitionHook;
   args?: FieldArgsConfig;
   comment?: string;
+  /**
+   * Marks the generated field `@deprecated`, with this string as the reason.
+   * The central {@link Definition.deprecations} map wins over this when both
+   * name the same field, mirroring how `comments.fields` wins over
+   * {@link DefinitionField.description}.
+   */
+  deprecated?: string;
   defaultValue?: FieldValue;
   values?: string[];
   validate?: FieldValidators;
@@ -852,6 +876,14 @@ export type ExposedMethod = {
   orderBy?: ExposedMethodOrderBy;
   /** Contribute a normal nested operator object to the model's `where` input. */
   where?: ExposedMethodWhere;
+  /**
+   * Marks the field this method generates `@deprecated`, with this string as the
+   * reason. Overridden by the matching entry in {@link Definition.deprecations}.
+   * For `instanceMethods.mutations` — pre-commit transforms surfaced as fields of
+   * the model's `apply` input rather than as query fields — it marks that input
+   * field, which is where `comments.instanceMethods` puts the description too.
+   */
+  deprecated?: string;
 };
 
 /** A map of exposed methods, keyed by method name. */
@@ -877,8 +909,21 @@ export type Definition = {
   }; 
   /** Field names excluded from every generated type. */
   ignoreFields?: string[];
+  /**
+   * Deprecates the model as a whole: the root query list field and the root
+   * mutation field for this model are both generated `@deprecated` with this
+   * reason. GraphQL cannot deprecate an object type itself, so the mark lands
+   * on the fields that lead to it.
+   */
+  deprecated?: string;
   /** Descriptions to attach to generated fields, keyed by the thing they describe. */
   comments?: DefinitionComments;
+  /**
+   * Deprecation reasons for generated fields, keyed exactly as
+   * {@link Definition.comments} is. A reason here wins over the `deprecated`
+   * written on the field or exposed method itself.
+   */
+  deprecations?: DefinitionDeprecations;
   relationships?: Relationship[];
   whereOperators?: WhereOperators;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- each value is the GraphQL input type an operator's argument accepts; a graphql-free package cannot name `GraphQLInputType`, and the schema builder that reads this can.
@@ -937,6 +982,24 @@ export interface DefinitionOptions {
 
 /** See {@link Definition.comments}. */
 export type DefinitionComments = {
+  fields?: { [fieldName: string]: string };
+  classMethods?: { [methodName: string]: string };
+  /**
+   * Deprecates the `apply` input field for each instance-method *transform* —
+   * the same set `comments.instanceMethods` describes. An instance-method
+   * *query* field deprecates through `fields`, since that is where its
+   * description comes from too.
+   */
+  instanceMethods?: { [methodName: string]: string };
+}
+
+/**
+ * See {@link Definition.deprecations}. Deliberately the same shape as
+ * {@link DefinitionComments}: `fields` covers columns, overrides and
+ * relationship names alike, because that is the one namespace generated output
+ * fields share.
+ */
+export type DefinitionDeprecations = {
   fields?: { [fieldName: string]: string };
   classMethods?: { [methodName: string]: string };
   instanceMethods?: { [methodName: string]: string };
