@@ -4,7 +4,7 @@
 // on its own — `processListArgsToOptions` was one 120-line function doing all
 // four.
 
-import type { Sequelize } from "sequelize";
+import { Op, type Sequelize } from "sequelize";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import unique from "@azerothian/utilize/utils/unique";
 import { clampPageSize } from "@azerothian/utilize/utils/page-size";
@@ -15,6 +15,7 @@ import type {
   AdapterWhere,
   Association,
   DefinitionFieldMeta,
+  DeletedFilter,
   IncludeMap,
   OrderEntry,
   WhereOperators,
@@ -47,6 +48,43 @@ export interface QueryOptionsHost {
     whereOperators: WhereOperators | undefined,
     options: AdapterQueryOptions,
   ): Promise<AdapterWhere>;
+  /**
+   * The model's soft-delete column, or `undefined` when it does not soft-delete.
+   * Both halves of that question are answered here rather than by reading
+   * `options.paranoid` from this layer, because the two can disagree \u2014 see
+   * {@link SequelizeModelClass._timestampAttributes}.
+   */
+  deletedAtColumn(modelName: string): string | undefined;
+  /** AND two already-processed filters together. */
+  andFilterStatements(a: AdapterWhere | undefined, b: AdapterWhere | undefined): AdapterWhere | undefined;
+}
+
+/**
+ * The overlay one query node needs to honour its `deleted` value, or `undefined`
+ * when there is nothing to do \u2014 the node excludes deleted rows (the default),
+ * or the model does not soft-delete at all and so has no implicit filter to lift.
+ *
+ * `paranoid: false` is what removes Sequelize's own `deletedAt IS NULL`; `ONLY`
+ * then puts the opposite condition back explicitly, which is why it needs the
+ * real column name rather than a hard-coded `"deletedAt"`.
+ */
+export function deletedOverlay(
+  host: QueryOptionsHost,
+  defName: string,
+  deleted: DeletedFilter | undefined,
+  where: AdapterWhere | undefined,
+): { paranoid: false; where?: AdapterWhere } | undefined {
+  if (!deleted || deleted === "EXCLUDE") {
+    return undefined;
+  }
+  const column = host.deletedAtColumn(defName);
+  if (!column) {
+    return undefined;
+  }
+  if (deleted === "INCLUDE") {
+    return { paranoid: false };
+  }
+  return { paranoid: false, where: host.andFilterStatements(where, { [column]: { [Op.ne]: null } }) };
 }
 
 /**
@@ -174,6 +212,18 @@ export async function processIncludeStatement(
           as: relName,
           where: await host.processFilterArgument(inc.where || {}, whereOperators, options),
         } as SequelizeInclude;
+        // Per include node: a root `paranoid: false` does not reach an
+        // eager-loaded join, so a parent fetched with deleted rows included
+        // still gets only live children unless this entry says otherwise.
+        // Applied before the branches below so the JOIN branch's manual
+        // `beforeFind` sees the same `where` the query will run with.
+        const incDeleted = deletedOverlay(host, targetDefName, inc.deleted, retVal.where);
+        if (incDeleted) {
+          retVal.paranoid = false;
+          if (incDeleted.where !== undefined) {
+            retVal.where = incDeleted.where;
+          }
+        }
         if (separate) {
           retVal.separate = true;
           if ((inc.orderBy || []).length > 0) {
@@ -268,17 +318,23 @@ export async function processListArgsToOptions(
   // and must win. `attributes` in particular is the permission-filtered column
   // list (plus the inline-count expression), so a caller-supplied one silently
   // overriding it would widen the query and drop the count.
+  // The root node's own soft-delete overlay. Each include carried its own in
+  // `processIncludeStatement`; this covers the main query and, so that `total`
+  // and `edges` cannot disagree, the separate count.
+  const deleted = deletedOverlay(host, defName, args.deleted, where);
+  const rootWhere = deleted && deleted.where !== undefined ? deleted.where : where;
+  const paranoid = deleted ? { paranoid: false } : {};
   return {
-    getOptions: Object.assign({}, defaultOptions, {
+    getOptions: Object.assign({}, defaultOptions, paranoid, {
       order,
-      where,
+      where: rootWhere,
       limit,
       offset,
       include,
       attributes: unique(attributes),
     }),
     countOptions: !host.hasInlineCountFeature()
-      ? Object.assign({}, defaultOptions, { where, attributes, include })
+      ? Object.assign({}, defaultOptions, paranoid, { where: rootWhere, attributes, include })
       : undefined,
   };
 }

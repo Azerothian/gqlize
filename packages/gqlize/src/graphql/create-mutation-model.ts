@@ -70,7 +70,7 @@ export function createInstanceMutationsInput(
   });
 }
 
-export default function createMutationModel(instance: GQLManager, defName: string, schemaCache: SchemaCache, create: boolean, update: boolean, del: boolean, options: GqlizeOptions = {}) {
+export default function createMutationModel(instance: GQLManager, defName: string, schemaCache: SchemaCache, create: boolean, update: boolean, del: boolean, restore: boolean, options: GqlizeOptions = {}) {
 
   const input = schemaCache.mutationInputs[defName];
   const inp: GraphQLFieldConfigArgumentMap = {};
@@ -100,6 +100,16 @@ export default function createMutationModel(instance: GQLManager, defName: strin
     inp.delete = {
       type: input.delete,
       description: `This will delete a new element for ${defName}`,
+    };
+  }
+  // Restore reuses the delete filter type rather than minting a second identical
+  // `[filterType]`: both say "the rows to act on", and one type keeps the schema
+  // (and its snapshot) smaller. The caller already gated `restore` on the model
+  // actually soft-deleting — there is nothing to undo otherwise.
+  if (restore && input.delete) {
+    inp.restore = {
+      type: input.delete,
+      description: `This will restore soft-deleted elements for ${defName}`,
     };
   }
   // Transforms reshape data on its way to a write, so they are only meaningful

@@ -119,8 +119,13 @@ function createMutationModels(instance: GQLManager, options: GqlizeOptions, sche
       const updateResult = isMutationAllowed(options.permission, defName, "update");
       const deleteResult = isMutationAllowed(options.permission, defName, "delete");
       const createResult = isMutationAllowed(options.permission, defName, "create");
-      if (createResult || updateResult || deleteResult) {
-        const mutationModel = createMutationModel(instance, defName, schemaCache, createResult, updateResult, deleteResult, options);
+      // Restore needs both halves: the permission, and a model that actually soft
+      // deletes. On a hard-deleting model there is no row left to bring back, so
+      // the argument would be a lie in the schema.
+      const restoreResult = isMutationAllowed(options.permission, defName, "restore")
+        && Boolean(instance.softDeletes(defName));
+      if (createResult || updateResult || deleteResult || restoreResult) {
+        const mutationModel = createMutationModel(instance, defName, schemaCache, createResult, updateResult, deleteResult, restoreResult, options);
         // Every input the mutation would have accepted can be denied away — a
         // field with no arguments could not mutate anything, so drop it.
         if (Object.keys(mutationModel.args).length > 0) {

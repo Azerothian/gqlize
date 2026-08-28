@@ -46,10 +46,23 @@ export type Permission = {
   options?: PermissionContext;
   model?: (defName: string, options?: PermissionContext) => boolean;
   query?: (defName: string, options?: PermissionContext) => boolean;
+  /**
+   * Gates the `deleted` argument on a soft-deleting model's list fields —
+   * i.e. whether a caller may see soft-deleted rows at all. Only consulted
+   * for a model whose adapter reports `softDeletes`; on every other model
+   * there is no argument for it to gate.
+   */
+  queryDeleted?: (defName: string, options?: PermissionContext) => boolean;
   mutation?: (defName: string, options?: PermissionContext) => boolean;
   mutationCreate?: (defName: string, options?: PermissionContext) => boolean;
   mutationUpdate?: (defName: string, options?: PermissionContext) => boolean;
   mutationDelete?: (defName: string, options?: PermissionContext) => boolean;
+  /**
+   * Gates the root `restore` mutation, which undeletes soft-deleted rows.
+   * Like {@link Permission.queryDeleted}, only consulted for a model whose
+   * adapter reports `softDeletes`.
+   */
+  mutationRestore?: (defName: string, options?: PermissionContext) => boolean;
   mutationCreateInput?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
   mutationUpdateInput?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
   field?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
@@ -74,8 +87,11 @@ export type Permission = {
   scope?: ScopePredicate;
 };
 
-/** Mutation kinds that map to `mutationCreate` / `mutationUpdate` / `mutationDelete`. */
-export type MutationKind = "create" | "update" | "delete";
+/**
+ * Mutation kinds that map to `mutationCreate` / `mutationUpdate` /
+ * `mutationDelete` / `mutationRestore`.
+ */
+export type MutationKind = "create" | "update" | "delete" | "restore";
 
 /**
  * Call a permission predicate; an absent (non-function) predicate is allow
@@ -156,6 +172,17 @@ export function isMutationInstanceMethodAllowed(permission: Permission | undefin
   return isAllowed(permission?.mutationInstanceMethods, model, method, permission?.options);
 }
 
+/**
+ * Whether a caller may see soft-deleted rows at all (`permission.queryDeleted`).
+ *
+ * A denied caller gets a schema with no `deleted` argument on the model's list
+ * fields, so a query naming it fails validation rather than being silently
+ * downgraded to the live-rows-only reading.
+ */
+export function isQueryDeletedAllowed(permission: Permission | undefined, model: string): boolean {
+  return isAllowed(permission?.queryDeleted, model, permission?.options);
+}
+
 /** Whether an exposed class method is reachable, on either target. */
 export function isClassMethodAllowed(
   permission: Permission | undefined, model: string, method: string, target: "query" | "mutations",
@@ -172,12 +199,14 @@ function mutationPredicate(permission: Permission | undefined, kind: MutationKin
       return permission?.mutationUpdate;
     case "delete":
       return permission?.mutationDelete;
+    case "restore":
+      return permission?.mutationRestore;
     default:
       return undefined;
   }
 }
 
-/** Whether a create/update/delete mutation is exposed for a model. */
+/** Whether a create/update/delete/restore mutation is exposed for a model. */
 export function isMutationAllowed(permission: Permission | undefined, model: string, kind: MutationKind): boolean {
   return isAllowed(mutationPredicate(permission, kind), model, permission?.options);
 }
@@ -252,10 +281,12 @@ export const BUILD_TIME_PERMISSION_KEYS = [
   "options",
   "model",
   "query",
+  "queryDeleted",
   "mutation",
   "mutationCreate",
   "mutationUpdate",
   "mutationDelete",
+  "mutationRestore",
   "mutationCreateInput",
   "mutationUpdateInput",
   "field",

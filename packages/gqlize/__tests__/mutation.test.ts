@@ -436,7 +436,8 @@ describe("mutations", () => {
     }`;
     const result = await graphql({schema, source: mutation});
     validateResult(result);
-    expect(resultData<{models: {Task: TaskDeleteRow[]}}>(result).models.Task).toHaveLength(1);
+    // Both rows the filter named come back, not just the last one.
+    expect(resultData<{models: {Task: TaskDeleteRow[]}}>(result).models.Task).toHaveLength(2);
     const queryResults = await graphql({schema, source:`{
       models {
         Task {

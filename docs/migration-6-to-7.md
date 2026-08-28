@@ -27,6 +27,7 @@ cleanly — that section is where working code breaks.
    - [The adapter contract is typed, and `setBuildPermission` is part of it](#the-adapter-contract-is-typed-and-setbuildpermission-is-part-of-it)
    - [Adapter list and relationship methods take a request object](#adapter-list-and-relationship-methods-take-a-request-object)
    - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
+   - [Multi-row mutations return every affected row](#multi-row-mutations-return-every-affected-row)
    - [Unreferenced exports removed](#unreferenced-exports-removed)
 4. [The graphql patch](#4-the-graphql-patch)
 5. [New in 7.x](#5-new-in-7x)
@@ -578,6 +579,22 @@ now accepts any `GraphQLType`, wrappers included, rather than only named types �
 since the bucket only ever holds an input object or a list of one; callers apply
 `GraphQLNonNull` themselves.
 
+### Multi-row mutations return every affected row
+
+`update`, `delete`, `select` and `restore` take a filter, so one argument can match many rows.
+They now return all of them; previously the returned list held only the **last** row the filter
+matched, and an empty match returned `[null]` rather than `[]`.
+
+```graphql
+mutation { models { Post(delete: { title: { in: ["a", "b"] } }) { id } } }
+# now:      { "Post": [{"id": "…a"}, {"id": "…b"}] }
+# before:   { "Post": [{"id": "…b"}] }
+```
+
+The rows written were always correct — only the mutation's own return value was truncated. Code
+that read `data.models.Post[0]` after a single-row filter is unaffected; code that counted the
+returned array, or that tested for `[null]` to detect "nothing matched", needs updating.
+
 ### Unreferenced exports removed
 
 Eight exports had no consumer inside the repo and none documented outside it. They are gone in 7.x.
@@ -656,6 +673,14 @@ Not required for migration, but this is what the split bought:
   and the model's root fields, and survives the artifact round-trip. 6.x had no way to deprecate
   anything, so renaming a column was a hard break with no warning path. See
   [guide: Deprecating fields](guide.md#deprecating-fields).
+- **Soft delete (`paranoid`)** — a paranoid model's list fields take a
+  `deleted: EXCLUDE | INCLUDE | ONLY` argument (root and nested alike, plus the `include` input),
+  and its mutation field takes `restore`. Paranoid itself is enabled per model with
+  `options: {paranoid: true}` or for every model at once with the Sequelize adapter's
+  `defaultModel`, which a definition's own `options` override. Two new build-time permission keys
+  gate the pair: `queryDeleted` and `mutationRestore`. In 6.x a soft-deleted row was unreachable
+  through GraphQL by any means and there was no root-level restore. See
+  [guide: Soft delete](guide.md#soft-delete-paranoid).
 - **Build-time schema validation** — `createSchema` and `materializeSchema` now run graphql's
   `validateSchema` and throw on failure, so an invalid `options.root` / `options.extend` /
   `override` type is an error where it was written instead of an error on *every* query at request
@@ -683,6 +708,8 @@ Not required for migration, but this is what the split bought:
       6.x now throws from `createSchema`.
 - [ ] Any `subscription`, `mutationUpdateAll`, `mutationDeleteAll` rules keys removed — they gated
       nothing in 6.x and now warn.
+- [ ] Callers that read the return value of a multi-row `update` / `delete` / `select` audited —
+      the list now holds every affected row, and an empty match is `[]` rather than `[null]`.
 - [ ] Hand-written `permission` bags checked against the build-time unknown-key warning.
 - [ ] Third-party adapters recompiled against the typed `OrmAdapter` / `GqlizeAdapter`, and
       `setBuildPermission` implemented if their filter/order/include builders gate on a permission

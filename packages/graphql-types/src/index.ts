@@ -6,6 +6,7 @@ export { default as UploadType } from "./upload";
 export { default as createQueryType } from "./query";
 export type { QueryTypeConfig } from "./query";
 export {
+  GQLTDeletedFilter,
   getDefaultListArgs,
   getFilterGraphQLType,
   getIncludeGraphQLType,

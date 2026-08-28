@@ -12,6 +12,7 @@ Every example below is drawn from the behaviour exercised in the test suite
 2. [Quick start](#2-quick-start)
 3. [Defining models](#3-defining-models)
    - [Field arguments & field resolvers](#field-arguments--field-resolvers)
+   - [Soft delete (`paranoid`)](#soft-delete-paranoid)
    - [Typed models (TypeScript, opt-in)](#typed-models-typescript-opt-in)
 4. [Serving the schema](#4-serving-the-schema)
 5. [Pre-generated schema artifacts](#5-pre-generated-schema-artifacts)
@@ -22,12 +23,14 @@ Every example below is drawn from the behaviour exercised in the test suite
    - [Pagination (cursors)](#pagination-cursors)
    - [Relationships & eager loading](#relationships--eager-loading)
    - [Count-only (`total`)](#count-only-total)
+   - [Soft-deleted rows (`deleted`)](#soft-deleted-rows-deleted)
    - [Global IDs & `node`](#global-ids--node)
    - [Custom ID & cursor formats](#custom-id--cursor-formats)
    - [Class & instance methods](#class--instance-methods)
      - [The declarative keys](#the-declarative-keys)
 7. [Mutations](#7-mutations)
    - [Create / update / delete](#create--update--delete)
+   - [Restoring soft-deleted rows](#restoring-soft-deleted-rows)
    - [Nested relationship writes](#nested-relationship-writes)
    - [Class-method mutations](#class-method-mutations)
    - [Instance-method transforms (`apply`)](#instance-method-transforms-apply)
@@ -311,6 +314,61 @@ rule, not gqlize's.
 An empty string is treated as "not deprecated" rather than printed as `@deprecated(reason: "")`.
 Deprecation is schema shape, so it changes the artifact fingerprint: `gqlize check` will report an
 existing artifact stale and it needs a rebuild.
+
+### Soft delete (`paranoid`)
+
+A **paranoid** model is never really deleted: `delete` stamps a `deletedAt` column instead of
+removing the row, and every read filters the stamped rows out. Nothing else about the model
+changes — this is Sequelize's `paranoid` option, passed straight through.
+
+Turn it on for **one model** in its `options`:
+
+```ts
+db.addDefinition({
+  name: "Comment",
+  define: { body: { type: Sequelize.STRING, allowNull: false } },
+  options: { paranoid: true },
+});
+```
+
+Turn it on for **every model** with the Sequelize adapter's `defaultModel`, which supplies the
+options each definition starts from:
+
+```ts
+db.registerAdapter(
+  new SequelizeAdapter(
+    { defaultModel: { timestamps: true, paranoid: true } },
+    { dialect: "sqlite" },
+  ),
+  "sqlite",
+);
+```
+
+A definition's own `options` are merged **over** `defaultModel`, so a single model opts back out
+without disturbing the rest:
+
+```ts
+db.addDefinition({
+  name: "AuditLog",
+  define: { line: { type: Sequelize.STRING } },
+  options: { paranoid: false },   // hard deletes, even under the global default above
+});
+```
+
+`defaultModel` is per adapter, so a setup registering several Sequelize adapters sets it on each
+one. Its field-level counterpart is `defaultAttr`, merged the same way under every column's
+definition.
+
+> `paranoid: true` needs `timestamps` — the flag is only meaningful because `deletedAt` exists.
+> Sequelize accepts `{paranoid: true, timestamps: false}` and then defines no such column, so
+> deletes are permanent while the model claims otherwise. gqlize warns on `console.warn` when a
+> definition resolves that way, and treats the model as not soft-deleting: no `deleted` argument
+> and no `restore`. Generated `belongsToMany` join tables are pinned to `paranoid: false` for the
+> same reason, so a global default cannot land them in that state.
+
+What soft delete adds to the schema is covered under
+[Soft-deleted rows (`deleted`)](#soft-deleted-rows-deleted) and
+[Restoring soft-deleted rows](#restoring-soft-deleted-rows).
 
 ### Typed models (TypeScript, opt-in)
 
@@ -689,6 +747,55 @@ query { models { Post { edges { node { title comments { total } } } } } }   # pe
 query { models { Comment { total } } }                                       # top-level count
 ```
 
+### Soft-deleted rows (`deleted`)
+
+Every list field on a [paranoid](#soft-delete-paranoid) model takes a `deleted` argument:
+
+| Value | Rows returned |
+| --- | --- |
+| `EXCLUDE` | live rows only — the default, and what you get by omitting the argument |
+| `INCLUDE` | live and soft-deleted rows together |
+| `ONLY` | soft-deleted rows on their own — a trash view |
+
+```graphql
+# everything, deleted or not
+query { models { Comment(deleted: INCLUDE) { total edges { node { id body deletedAt } } } } }
+
+# the trash: what was deleted, newest first
+query { models { Comment(deleted: ONLY, orderBy: [deletedAtDESC], first: 20) {
+  total edges { node { id body deletedAt } } } } }
+```
+
+`total` follows the same filter as `edges`, so a connection never counts one set of rows and
+returns another.
+
+The argument applies to **one query node**, not to the request. A nested connection keeps its own
+setting, so a parent asking for deleted rows still gets live children unless the child asks too:
+
+```graphql
+query { models { Post(deleted: INCLUDE) { edges { node {
+  title
+  comments(deleted: ONLY) { total edges { node { body } } }   # deleted comments of every post
+} } } } }
+```
+
+The same field is available inside an explicit `include`:
+
+```graphql
+query { models { Post(include: [{ comments: { deleted: INCLUDE, separate: true } }]) {
+  edges { node { comments { total edges { node { body } } } } } } } }
+```
+
+`deletedAt` is an ordinary column once paranoid is on, so it can be selected, filtered in `where`,
+and named in `orderBy` like any other field.
+
+Two things soft delete does *not* reach: `node(id:)` never resolves a deleted row, and
+`belongsTo` / `hasOne` fields have no `deleted` argument — a deleted single-relation target reads
+as `null`. `update` and `delete` also skip deleted rows; restore first, then write.
+
+The argument is gated by the `queryDeleted` permission, and is absent from the schema entirely for
+a caller who is denied it — see [Permissions](#8-permissions).
+
 ### Global IDs & `node`
 
 Primary/foreign keys are Relay global IDs — by default the base64 of `Type:id`. Fetch any object
@@ -969,6 +1076,25 @@ Delete with a variable (the delete arg type is `[GQLTQuery{Model}Where]`):
 mutation ($where: [GQLTQueryPostWhere]) { models { Post(delete: $where) { id } } }
 ```
 
+### Restoring soft-deleted rows
+
+A [paranoid](#soft-delete-paranoid) model also gets a `restore` argument, which clears `deletedAt`
+on the rows a filter names and returns them. It takes the same filter type as `delete`
+(`[GQLTQuery{Model}Where]`):
+
+```graphql
+mutation { models { Comment(restore: { body: { eq: "oops" } }) { id body } } }
+mutation ($where: [GQLTQueryCommentWhere]) { models { Comment(restore: $where) { id } } }
+```
+
+The filter matches against soft-deleted rows only, so restoring something that was never deleted
+is a no-op returning an empty list. Restore counts as an **update** throughout: `permission.scope`
+gates it with the `update` operation, the `beforeRestore` / `beforeBulkRestore` hooks are scoped
+as updates, and `after` receives `Events.MUTATION_UPDATE`.
+
+`restore` is gated by the `mutationRestore` permission, and appears only on models that actually
+soft delete.
+
 ### Nested relationship writes
 
 A relationship field inside a create/update `input` accepts operations that vary by association
@@ -1154,8 +1280,10 @@ const schema = await createSchema(db, {
     mutationCreate: (modelName) => true,
     mutationUpdate: (modelName) => true,
     mutationDelete: (modelName) => true,
+    mutationRestore: (modelName) => true,                       // hide `restore` on a paranoid model
     mutationCreateInput: (modelName, fieldName) => true,        // hide a create-input field
     mutationUpdateInput: (modelName, fieldName) => true,
+    queryDeleted: (modelName) => true,                          // hide the `deleted` argument
     relationship: (modelName, relName, targetName) => true,
     queryClassMethods:    (modelName, methodName) => true,
     mutationClassMethods: (modelName, methodName) => true,

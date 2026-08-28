@@ -618,6 +618,13 @@ mutation {
 }
 ```
 
+A **paranoid** model — `options: {paranoid: true}`, or every model at once via the Sequelize
+adapter's `defaultModel` — soft deletes instead: `delete` stamps `deletedAt`, reads skip the
+stamped rows, and two new surfaces appear. A `deleted: EXCLUDE | INCLUDE | ONLY` argument on every
+list field (root and nested) reads deleted rows back, and a root `restore` argument taking the
+same filter as `delete` puts them back. Both are permission-gated (`queryDeleted`,
+`mutationRestore`). See [guide: Soft delete](../../docs/guide.md#soft-delete-paranoid).
+
 Relationship mutations support `create`, `update`, `delete`, `add`, `set`, `remove`, `restore`, and
 `select`. **`select`** finds existing records by filter and runs further relationship mutations on
 them **without modifying the found records themselves** — it's available top-level (a sibling of

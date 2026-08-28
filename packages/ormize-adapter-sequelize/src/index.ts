@@ -97,9 +97,28 @@ type NativeAssociationInternals = NativeAssociation & {
  * argument.
  */
 export type SequelizeAdapterOptions = {
-  /** Attributes merged under every definition's own `define` map. */
+  /**
+   * Attributes merged *under* every definition's own `define` map, so a
+   * definition that declares the same column name wins. A shared audit column
+   * (`tenantId`) belongs here rather than being repeated on every model.
+   */
   defaultAttr?: ModelAttributes;
-  /** Model options merged under every definition's own `options`. */
+  /**
+   * Model options merged *under* every definition's own `options`, so a
+   * definition's own value wins and one can opt out of the default outright.
+   * The merge order is what makes "all or some" expressible with one setting:
+   *
+   * ```ts
+   * new SequelizeAdapter({defaultModel: {timestamps: true, paranoid: true}}, {dialect: "sqlite"})
+   * // every model soft deletes…
+   * db.addDefinition({name: "AuditLog", define: {…}, options: {paranoid: false}});
+   * // …except this one.
+   * ```
+   *
+   * Per-adapter, so a multi-adapter setup sets it on each Sequelize adapter it
+   * registers. Note that `paranoid` needs `timestamps` — see the warning
+   * `createModel` emits when the two disagree.
+   */
   defaultModel?: ModelOptions;
   /** Skip the window-function row count even on a dialect that supports it. */
   disableInlineCount?: boolean;
@@ -163,6 +182,7 @@ import {
   type AdapterQueryOptions,
   type AdapterRelationshipRequest,
   type AdapterRelationshipPage,
+  type AdapterRestoreFunction,
   type AdapterRow,
   type AdapterUpdateFunction,
   type AdapterTransaction,
@@ -172,6 +192,7 @@ import {
   type DataTypeDescriptor,
   type Definition,
   type DefinitionFieldMeta,
+  type DeletedFilter,
   type HookMap,
   type IncludeDescriptor,
   type IncludeMap,
@@ -196,6 +217,7 @@ import type {
 } from "./types/query";
 import {
   INLINE_COUNT_EXPRESSION,
+  deletedOverlay,
   processIncludeStatement,
   processListArgsToOptions,
   type QueryOptionsHost,
@@ -579,6 +601,19 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     const defName = newDef.name;
     this.warnReservedFieldNames(defName, newDef.define);
+    // Sequelize accepts `{paranoid: true, timestamps: false}`, reports
+    // `options.paranoid === true` for it, and then defines no `deletedAt` column
+    // — deletes from such a model are hard, silently. Easy to reach by accident
+    // now that `defaultModel` can turn paranoid on for every model at once.
+    if (newDef.options?.paranoid && newDef.options?.timestamps === false) {
+      // `console.warn`, not the package's `debug`-based logger: `debug` is
+      // silent unless `DEBUG` is set, which would make a silently-hard delete an
+      // invisible event — the exact thing this check exists to surface.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Model "${defName}": options.paranoid is set but timestamps are off, so there is no deletedAt column — deletes will be permanent. Enable timestamps, or drop paranoid.`,
+      );
+    }
     this.sequelize.define(
       defName,
       this.resolveAttributeTypes(Object.assign({}, defaultAttr, newDef.define)),
@@ -887,6 +922,28 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     const model = this.getModel(modelName) as SequelizeModelClass | undefined;
     return model ? {name: model.name, definition: model.definition} : undefined;
   };
+  /**
+   * The model's soft-delete column, or `undefined` when it does not soft-delete.
+   *
+   * Both halves are checked, and that is not belt-and-braces: Sequelize accepts
+   * `{paranoid: true, timestamps: false}`, reports `options.paranoid === true`
+   * for it, and then defines no `deletedAt` column at all \u2014 deletes from such a
+   * model are hard. Trusting `options.paranoid` alone would put a `deleted`
+   * argument and a `restore` mutation on a table that has neither, and leave the
+   * `ONLY` filter naming `undefined` as a column.
+   *
+   * The column name is read rather than assumed because it is renameable
+   * (`{deletedAt: "archivedAt"}`).
+   */
+  deletedAtColumn = (defName: string): string | undefined => {
+    const model = this.getModel(defName) as SequelizeModelClass | undefined;
+    if (!model?.options.paranoid) {
+      return undefined;
+    }
+    return model._timestampAttributes?.deletedAt;
+  };
+  /** Whether this model soft-deletes \u2014 see {@link deletedAtColumn}. */
+  softDeletes = (defName: string): boolean => this.deletedAtColumn(defName) !== undefined;
   /** An include is a JOIN, and a model may be joined more than once per query. */
   readonly includeIsList = true;
 
@@ -1095,6 +1152,43 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       return results;
     };
   };
+  /**
+   * The mirror of {@link getDeleteFunction} for a paranoid model.
+   *
+   * The find runs with `paranoid: false` \u2014 otherwise it could not see the rows
+   * it is meant to bring back \u2014 and is narrowed to rows that are actually soft
+   * deleted, so restoring an already-live row is a no-op rather than a touch.
+   * That is the same narrowing the relationship-level `restore` sub-mutation
+   * already does.
+   */
+  getRestoreFunction = (defName: string, whereOperators: WhereOperators | undefined): AdapterRestoreFunction => {
+    const Model = this.sequelize.models[defName];
+    const column = this.deletedAtColumn(defName);
+    return async (where, options, before, after) => {
+      if (!column) {
+        throw new Error(`restore is not available for ${defName}: the model does not soft delete`);
+      }
+      const items = await Model.findAll({
+        ...options,
+        paranoid: false,
+        where: {
+          [Op.and]: [
+            await this.processFilterArgument(where, whereOperators, options),
+            { [column]: { [Op.ne]: null } },
+          ],
+        },
+      });
+      // Serially, and awaited, for the same reason the deletes above are: an
+      // array of un-awaited promises let callers run before the writes landed.
+      const results: AdapterRow[] = [];
+      for (const item of items) {
+        const beforeRestore = (await before(item)) as SequelizeRow;
+        await beforeRestore.restore(options);
+        results.push(await after(beforeRestore));
+      }
+      return results;
+    };
+  };
   mergeFilterStatement(
     fieldName: string,
     value: unknown,
@@ -1139,21 +1233,31 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     relationship: Association,
     source: SequelizeRow,
     where: AdapterWhere,
-    options: AdapterQueryOptions
+    options: AdapterQueryOptions,
+    deleted?: DeletedFilter,
   ): Promise<number> => {
+    // Both branches build their own options bag from scratch, so the soft-delete
+    // overlay has to be applied to each of them explicitly. Miss it and a nested
+    // connection reports a `total` counting live rows only while its `edges`
+    // return deleted ones.
+    const overlay = deletedOverlay(this, relationship.target, deleted, where);
+    const countWhere = overlay && overlay.where !== undefined ? overlay.where : where;
+    const paranoid = overlay ? { paranoid: false } : {};
     if (relationship.associationType === "hasMany") {
       const TargetModel = this.sequelize.models[relationship.target];
-      const countWhere = Object.assign({}, where, {
+      const filter = Object.assign({}, countWhere, {
         [relationship.foreignKey]: source.get(relationship.sourceKey),
       });
       // `getGraphQLArgs` is this project's own addition to the options bag — the
       // hooks read it off `options`; Sequelize itself ignores it.
-      return TargetModel.count({
-        where: countWhere,
+      return TargetModel.count(Object.assign({
+        where: filter,
         getGraphQLArgs: options?.getGraphQLArgs,
-      } as AdapterQueryOptions);
+      }, paranoid) as AdapterQueryOptions);
     }
-    return rowFields(source)[relationship.accessors.count]({ where, getGraphQLArgs: options?.getGraphQLArgs });
+    return rowFields(source)[relationship.accessors.count](
+      Object.assign({ where: countWhere, getGraphQLArgs: options?.getGraphQLArgs }, paranoid),
+    );
   };
   resolveManyRelationship = async (
     defName: string,
@@ -1169,7 +1273,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (countOnly && !(fields[relationship.name] !== undefined && fields[relationship.name] !== null)) {
       // Only `total` requested: run a count instead of fetching rows.
       const where = await this.processFilterArgument(args.where || {}, whereOperators, options);
-      const total = await this.countRelationship(relationship, source, where, options);
+      const total = await this.countRelationship(relationship, source, where, options, args.deleted);
       return { total, models: [] };
     }
     if (fields[relationship.name] !== undefined && fields[relationship.name] !== null) {
@@ -1183,7 +1287,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       if (args && (args.first != null || args.last != null)) {
         try {
           const where = await this.processFilterArgument(args.where || {}, whereOperators, options);
-          total = await this.countRelationship(relationship, source, where, options);
+          total = await this.countRelationship(relationship, source, where, options, args.deleted);
         } catch (e) {
           // Fall back to the already-loaded page length, but surface the error —
           // silently returning a plausible-but-wrong count hides real defects

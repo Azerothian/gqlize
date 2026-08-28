@@ -10,6 +10,7 @@ import type {
 } from "sequelize";
 import type {
   AdapterWhere,
+  DeletedFilter,
   IncludeMap,
   Relationship,
   RequestContext,
@@ -30,6 +31,18 @@ import type { SequelizeDefinition } from "./index";
 export type SequelizeModelClass = ModelCtor<Model> & {
   definition: SequelizeDefinition;
   relationships: { [relName: string]: SequelizeRelationship };
+  /**
+   * The resolved timestamp column names. Sequelize computes these at `define`
+   * time and does not declare them publicly, but they are the only place the
+   * *actual* soft-delete column name lives: `deletedAt` is renameable
+   * (`{deletedAt: "archivedAt"}`), so `options.paranoid` tells you that a model
+   * soft deletes and this tells you through which column.
+   *
+   * Optional because it is empty when the model has no timestamps at all \u2014 which
+   * is also how `{paranoid: true, timestamps: false}`, a combination Sequelize
+   * accepts and then silently ignores, is detected.
+   */
+  _timestampAttributes?: { createdAt?: string; updatedAt?: string; deletedAt?: string };
 };
 
 /**
@@ -66,6 +79,8 @@ export type ListArgs = {
   orderBy?: SequelizeOrder[];
   where?: AdapterWhere;
   include?: IncludeMap[];
+  /** How this query treats soft-deleted rows; absent reads as `EXCLUDE`. */
+  deleted?: DeletedFilter;
   [arg: string]: unknown;
 };
 

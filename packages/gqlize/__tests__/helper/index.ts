@@ -4,13 +4,14 @@ import { Ormize as Database } from "@azerothian/ormize";
 import TaskModel from "./models/task";
 import TaskItemModel from "./models/task-item";
 import Item from "./models/item";
+import MemoModel from "./models/memo";
 import Sequelize from "sequelize";
 import { createAdapterForDialect, registerTeardown } from "./dialect";
 import type {Definition} from "../../src/types";
 
 /**
  * `extraDefinitions` exists so a test can exercise a definition shape without
- * editing the shared models — `schema-golden.test.ts` pins the SDL these five
+ * editing the shared models — `schema-golden.test.ts` pins the SDL these six
  * produce, and any edit to them churns that snapshot for unrelated reasons.
  */
 export async function createInstance(extraDefinitions: Definition[] = []) {
@@ -60,6 +61,7 @@ export async function createInstance(extraDefinitions: Definition[] = []) {
   await db.addDefinition(TaskModel);
   await db.addDefinition(TaskItemModel);
   await db.addDefinition(Item);
+  await db.addDefinition(MemoModel);
   for (const definition of extraDefinitions) {
     await db.addDefinition(definition);
   }

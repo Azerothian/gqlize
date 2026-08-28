@@ -1,6 +1,7 @@
 import {
   GraphQLInterfaceType,
   GraphQLObjectType,
+  type GraphQLEnumType,
   GraphQLString,
   getNamedType,
   isEnumType,
@@ -72,6 +73,28 @@ describe("snapshot round-trip", () => {
     expect(printSchema(rebuilt)).toEqual(printSchema(live));
     expect(enumTable(rebuilt)).toEqual(enumTable(live));
     expect(fieldOrder(rebuilt)).toEqual(fieldOrder(live));
+  });
+
+  it("carries the soft-delete enum and its arguments across", async() => {
+    // `GQLTDeletedFilter` is a module-level singleton shared by every paranoid
+    // model's list field and include input, so it is the one enum whose identity
+    // the IR could plausibly lose track of — the broad comparisons above would
+    // still pass if it were rebuilt as several look-alike copies.
+    const {live, rebuilt} = await roundtrip();
+
+    const filter = rebuilt.getType("GQLTDeletedFilter");
+    expect(isEnumType(filter)).toEqual(true);
+    expect((filter as GraphQLEnumType).getValues().map((v) => v.name)).toEqual(["EXCLUDE", "INCLUDE", "ONLY"]);
+
+    const argType = (schema: GraphQLSchema) => {
+      const models = getNamedType(schema.getQueryType()!.getFields().models.type) as GraphQLObjectType;
+      return models.getFields().Memo.args.find((a) => a.name === "deleted")?.type;
+    };
+    expect(argType(rebuilt)).toBeDefined();
+    // The same instance for every field that names it, in the rebuilt schema as
+    // in the live one — not a per-field clone that merely prints identically.
+    expect(argType(rebuilt)).toBe(filter);
+    expect(String(argType(rebuilt))).toEqual(String(argType(live)));
   });
 
   it("reproduces a restrictive permission profile", async() => {
