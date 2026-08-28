@@ -53,6 +53,10 @@ const QUERY_HOOKS: {[hookName: string]: ScopeOperation} = {
 const INSTANCE_HOOKS: {[hookName: string]: ScopeOperation} = {
   beforeUpdate: "update",
   beforeDestroy: "delete",
+  // A restore is scoped as an update, matching `VERB_OPERATIONS.restore` and the
+  // `beforeBulkRestore` entry in QUERY_HOOKS above. Without it a paranoid model
+  // has a second write verb with only one of the two enforcement layers.
+  beforeRestore: "update",
 };
 
 /** Sequelize's include entries, seen through the members this file reads. */

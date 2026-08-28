@@ -1098,7 +1098,12 @@ export default class Ormize<
           [join.foreignKey]: {type: this.keyType(join.source, join.sourceKey), allowNull: true, index: true, writable: true},
           [join.otherKey]: {type: this.keyType(join.target, join.targetKey), allowNull: true, index: true, writable: true},
         },
-        options: {timestamps: false},
+        // `paranoid: false` explicitly, not by omission: an adapter-level
+        // default (Sequelize's `defaultModel`) would otherwise reach this
+        // generated table, and `{paranoid: true, timestamps: false}` is a
+        // combination Sequelize accepts and then silently ignores — leaving a
+        // model that claims to soft delete and does not.
+        options: {timestamps: false, paranoid: false},
         relationships: [],
       }, adapterName);
     }
@@ -1479,11 +1484,15 @@ export default class Ormize<
     // Count-only: the connection selects `total` but not `edges`/rows — skip the
     // findAll and run a count (fires beforeCount natively + afterCount manually).
     if (selection?.countOnly) {
-      const countOnlyOptions = countOptions || {
-        where: getOptions.where,
+      // Derive the count bag by *removing* the keys that mean nothing to a count,
+      // rather than whitelisting the few that do. A whitelist silently drops any
+      // adapter-specific key that decides which rows match — Sequelize's
+      // `paranoid` is one — and then `total` answers from a different row set
+      // than `edges` would have returned.
+      const {limit: _l, offset: _o, order: _ord, attributes: _a, ...countable} = getOptions;
+      const countOnlyOptions = countOptions || Object.assign({}, countable, {
         include: (getOptions.include || []).filter((i: {required?: boolean, separate?: boolean}) => i.required && !i.separate),
-        getGraphQLArgs: getOptions.getGraphQLArgs,
-      };
+      });
       let total = await adapter.count(defName, countOnlyOptions);
       total = await this.runHook(defName, "afterCount", total, countOnlyOptions);
       return { total, models: [] };
@@ -1914,6 +1923,50 @@ export default class Ormize<
       };
       const after = (model: AdapterRow) => model;
       return processDelete(where, createResolveContext(context, selection, source), before, after);
+    });
+  }
+  /**
+   * Undelete soft-deleted rows. The mirror of {@link processDelete}, but scoped
+   * as an **update**: a restore changes a row that is already there rather than
+   * removing one, which is the same reading `VERB_OPERATIONS.restore` and the
+   * `beforeRestore` hook mapping already take.
+   *
+   * Only available on a model whose adapter soft-deletes \u2014 there is nothing for
+   * it to undo otherwise, and gqlize does not generate the mutation at all.
+   */
+  processRestore = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+    return this.mutationEntry(defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
+      if (!adapter.getRestoreFunction) {
+        throw new Error(`restore is not supported by the adapter backing ${defName}`);
+      }
+      const processRestore = adapter.getRestoreFunction(defName, whereOperatorsFor(definition));
+      const scoped = await this.scopedWriteWhere(defName, "update", context, translateFilter(args, globalKeys, idTargets));
+      if (scoped === false) {
+        scopeMiss(defName, "update", this.onScopeMiss);
+        return [];
+      }
+      const where = scoped as MutationFilter;
+      const before = (model: AdapterRow) => {
+        if (!definition.before) {
+          return model;
+        }
+        // `Events.MUTATION_UPDATE` rather than an event of its own: a new member
+        // is a surface change every exhaustive hook has to learn, and treating a
+        // restore as an update is already this codebase's position everywhere
+        // else it has had to choose.
+        return definition.before({
+          params: model, args, context, info: selection?.raw,
+          model, modelDefinition: definition,
+          type: Events.MUTATION_UPDATE,
+        });
+      };
+      const after = (model: AdapterRow) => model;
+      const results = await processRestore(where, createResolveContext(context, selection, source), before, after);
+      // The same re-check `processUpdate` makes, for the same reason: the filter
+      // decided which rows could be written, this decides whether the write left
+      // them where it found them.
+      await this.assertRowsInScope(defName, "update", context, results, createResolveContext(context, selection, source));
+      return results;
     });
   }
 

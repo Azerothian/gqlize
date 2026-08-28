@@ -74,6 +74,20 @@ exports[`golden schema default profile: enum internal values 1`] = `
       ],
     ],
   ],
+  "GQLTDeletedFilter": [
+    [
+      "EXCLUDE",
+      "EXCLUDE",
+    ],
+    [
+      "INCLUDE",
+      "INCLUDE",
+    ],
+    [
+      "ONLY",
+      "ONLY",
+    ],
+  ],
   "ItemOrderBy": [
     [
       "idASC",
@@ -184,6 +198,92 @@ exports[`golden schema default profile: enum internal values 1`] = `
       "belongsToIdDESC",
       [
         "belongsToId",
+        "DESC",
+      ],
+    ],
+  ],
+  "MemoOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "bodyASC",
+      [
+        "body",
+        "ASC",
+      ],
+    ],
+    [
+      "bodyDESC",
+      [
+        "body",
+        "DESC",
+      ],
+    ],
+    [
+      "parentIdASC",
+      [
+        "parentId",
+        "ASC",
+      ],
+    ],
+    [
+      "parentIdDESC",
+      [
+        "parentId",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+    [
+      "deletedAtASC",
+      [
+        "deletedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "deletedAtDESC",
+      [
+        "deletedAt",
         "DESC",
       ],
     ],
@@ -737,6 +837,40 @@ type QueryModels {
     where: GQLTQueryItemWhere
     include: [GQLTItemIncludeObject]
   ): ItemList
+  Memo(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [MemoOrderBy]
+    where: GQLTQueryMemoWhere
+    include: [GQLTMemoIncludeObject]
+
+    """
+    Whether soft-deleted rows are excluded (the default), included, or returned on their own
+    """
+    deleted: GQLTDeletedFilter
+  ): MemoList
 }
 
 type ParentList {
@@ -2360,6 +2494,338 @@ type ItemEdge {
   cursor: String!
 }
 
+type MemoList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo!
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Memo"""
+  edges: [MemoEdge!]!
+}
+
+"""Memo edge"""
+type MemoEdge {
+  node: Memo
+  cursor: String!
+}
+
+"""memo comment"""
+type Memo implements Node {
+  """The ID of an object"""
+  id: ID!
+  body: String!
+
+  """The ID of an object"""
+  parentId: ID
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+  deletedAt: GQLTDate!
+  replies(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [MemoOrderBy]
+    where: GQLTQueryMemoWhere
+    include: [GQLTMemoIncludeObject]
+
+    """
+    Whether soft-deleted rows are excluded (the default), included, or returned on their own
+    """
+    deleted: GQLTDeletedFilter
+  ): MemoHasManyRepliesList
+  parent(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Memo
+}
+
+type MemoHasManyRepliesList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo!
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for MemoHasManyReplies"""
+  edges: [MemoHasManyRepliesEdge!]!
+}
+
+"""MemoHasManyReplies edge"""
+type MemoHasManyRepliesEdge {
+  node: Memo
+  cursor: String!
+}
+
+enum MemoOrderBy {
+  idASC
+  idDESC
+  bodyASC
+  bodyDESC
+  parentIdASC
+  parentIdDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+  deletedAtASC
+  deletedAtDESC
+}
+
+input GQLTQueryMemoWhere {
+  id: GQLTQueryMemoWhereid
+  body: GQLTQueryMemoWherebody
+  parentId: GQLTQueryMemoWhereparentId
+  createdAt: GQLTQueryMemoWherecreatedAt
+  updatedAt: GQLTQueryMemoWhereupdatedAt
+  deletedAt: GQLTQueryMemoWheredeletedAt
+  or: [GQLTQueryMemoWhere]
+  and: [GQLTQueryMemoWhere]
+  any: [GQLTQueryMemoWhere]
+  all: [GQLTQueryMemoWhere]
+}
+
+input GQLTQueryMemoWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryMemoWherebody {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryMemoWhereparentId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryMemoWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryMemoWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryMemoWheredeletedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTMemoIncludeObject {
+  replies: GQLTMemoIncluderepliesObject
+  parent: GQLTMemoIncludeparentObject
+}
+
+input GQLTMemoIncluderepliesObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryMemoWhere
+
+  """
+  Whether soft-deleted rows are excluded (the default), included, or returned on their own
+  """
+  deleted: GQLTDeletedFilter
+  orderBy: [MemoOrderBy]
+  include: [GQLTMemoIncludeObject]
+}
+
+"""How soft-deleted rows are treated by a read"""
+enum GQLTDeletedFilter {
+  """Only live rows (the default)"""
+  EXCLUDE
+
+  """Live and soft-deleted rows together"""
+  INCLUDE
+
+  """Only soft-deleted rows — a trash view"""
+  ONLY
+}
+
+input GQLTMemoIncludeparentObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryMemoWhere
+
+  """
+  Whether soft-deleted rows are excluded (the default), included, or returned on their own
+  """
+  deleted: GQLTDeletedFilter
+  orderBy: [MemoOrderBy]
+  include: [GQLTMemoIncludeObject]
+}
+
 type QueryClassMethods {
   Task: TaskQueryClassMethods
   TaskItem: TaskItemQueryClassMethods
@@ -2470,6 +2936,24 @@ type MutationModels {
     """This will delete a new element for Item"""
     delete: [GQLTQueryItemWhere]
   ): [Item]
+  Memo(
+    """This will create a new element for Memo"""
+    create: [MemoRequiredInput]
+
+    """This will update a new element for Memo"""
+    update: [MemoUpdateInput]
+
+    """
+    This will find elements for Memo and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [MemoSelectInput]
+
+    """This will delete a new element for Memo"""
+    delete: [GQLTQueryMemoWhere]
+
+    """This will restore soft-deleted elements for Memo"""
+    restore: [GQLTQueryMemoWhere]
+  ): [Memo]
 }
 
 """"""
@@ -3569,6 +4053,193 @@ input ItemSelectInput {
   input: ItemOptionalInput
 }
 
+""""""
+input MemoRequiredInput {
+  body: String!
+
+  """This a primary key for Memo"""
+  parentId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+  deletedAt: GQLTDate
+
+  """This is the mutation object for MemoRepliesHasMany"""
+  replies: MemoRepliesHasManyInput
+
+  """This is the mutation object for MemoParentBelongsTo"""
+  parent: MemoParentBelongsToInput
+}
+
+""""""
+input MemoRepliesHasManyInput {
+  """This will create a new element with a relationship to the current Memo"""
+  create: [MemoRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Memo
+  """
+  update: [MemoRepliesUpdate]
+
+  """
+  This will add any matching elements with a relationship to the current Memo
+  """
+  add: [GQLTQueryMemoWhere]
+
+  """
+  This will replace the entire replies set with the matching existing elements
+  """
+  set: [GQLTQueryMemoWhere]
+
+  """
+  This will remove the relationship from any matching elements from the current Memo
+  """
+  remove: [GQLTQueryMemoWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Memo
+  """
+  delete: [GQLTQueryMemoWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Memo
+  """
+  restore: [GQLTQueryMemoWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [MemoRepliesSelect]
+}
+
+""""""
+input MemoRepliesUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryMemoWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoOptionalInput {
+  body: String
+
+  """This a primary key for Memo"""
+  parentId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+  deletedAt: GQLTDate
+
+  """This is the mutation object for MemoRepliesHasMany"""
+  replies: MemoRepliesHasManyInput
+
+  """This is the mutation object for MemoParentBelongsTo"""
+  parent: MemoParentBelongsToInput
+}
+
+""""""
+input MemoParentBelongsToInput {
+  """This will create a new element with a relationship to the current Memo"""
+  create: MemoRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Memo
+  """
+  update: MemoParentUpdate
+
+  """This will associate an existing matching element with the current Memo"""
+  set: GQLTQueryMemoWhere
+
+  """When true, this will disassociate the current parent from the Memo"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Memo
+  """
+  delete: GQLTQueryMemoWhere
+
+  """This will restore the soft-deleted parent related to the current Memo"""
+  restore: GQLTQueryMemoWhere
+
+  """
+  This will find the matching related parent and run relationship mutations on it without modifying the element itself
+  """
+  select: MemoParentSelect
+}
+
+""""""
+input MemoParentUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryMemoWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoParentSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryMemoWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoRepliesSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryMemoWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryMemoWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryMemoWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: MemoOptionalInput
+}
+
 type MutationClassMethods {
   Task: TaskMutationsClassMethods
   TaskItem: TaskItemMutationsClassMethods
@@ -3741,6 +4412,20 @@ exports[`golden schema restrictive permission profile: enum internal values 1`] 
       ],
     ],
   ],
+  "GQLTDeletedFilter": [
+    [
+      "EXCLUDE",
+      "EXCLUDE",
+    ],
+    [
+      "INCLUDE",
+      "INCLUDE",
+    ],
+    [
+      "ONLY",
+      "ONLY",
+    ],
+  ],
   "ItemOrderBy": [
     [
       "idASC",
@@ -3851,6 +4536,92 @@ exports[`golden schema restrictive permission profile: enum internal values 1`] 
       "belongsToIdDESC",
       [
         "belongsToId",
+        "DESC",
+      ],
+    ],
+  ],
+  "MemoOrderBy": [
+    [
+      "idASC",
+      [
+        "id",
+        "ASC",
+      ],
+    ],
+    [
+      "idDESC",
+      [
+        "id",
+        "DESC",
+      ],
+    ],
+    [
+      "bodyASC",
+      [
+        "body",
+        "ASC",
+      ],
+    ],
+    [
+      "bodyDESC",
+      [
+        "body",
+        "DESC",
+      ],
+    ],
+    [
+      "parentIdASC",
+      [
+        "parentId",
+        "ASC",
+      ],
+    ],
+    [
+      "parentIdDESC",
+      [
+        "parentId",
+        "DESC",
+      ],
+    ],
+    [
+      "createdAtASC",
+      [
+        "createdAt",
+        "ASC",
+      ],
+    ],
+    [
+      "createdAtDESC",
+      [
+        "createdAt",
+        "DESC",
+      ],
+    ],
+    [
+      "updatedAtASC",
+      [
+        "updatedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "updatedAtDESC",
+      [
+        "updatedAt",
+        "DESC",
+      ],
+    ],
+    [
+      "deletedAtASC",
+      [
+        "deletedAt",
+        "ASC",
+      ],
+    ],
+    [
+      "deletedAtDESC",
+      [
+        "deletedAt",
         "DESC",
       ],
     ],
@@ -4302,6 +5073,40 @@ type QueryModels {
     where: GQLTQueryItemWhere
     include: [GQLTItemIncludeObject]
   ): ItemList
+  Memo(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [MemoOrderBy]
+    where: GQLTQueryMemoWhere
+    include: [GQLTMemoIncludeObject]
+
+    """
+    Whether soft-deleted rows are excluded (the default), included, or returned on their own
+    """
+    deleted: GQLTDeletedFilter
+  ): MemoList
 }
 
 type ChildList {
@@ -5598,6 +6403,338 @@ type ItemEdge {
   cursor: String!
 }
 
+type MemoList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo!
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Memo"""
+  edges: [MemoEdge!]!
+}
+
+"""Memo edge"""
+type MemoEdge {
+  node: Memo
+  cursor: String!
+}
+
+"""memo comment"""
+type Memo implements Node {
+  """The ID of an object"""
+  id: ID!
+  body: String!
+
+  """The ID of an object"""
+  parentId: ID
+  createdAt: GQLTDate!
+  updatedAt: GQLTDate!
+  deletedAt: GQLTDate!
+  replies(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided the results will be the first \${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first \${amount} of records from provided cursor, if a cursor is not provided  the results will be the last \${amount} of records.
+    """
+    last: Int
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [MemoOrderBy]
+    where: GQLTQueryMemoWhere
+    include: [GQLTMemoIncludeObject]
+
+    """
+    Whether soft-deleted rows are excluded (the default), included, or returned on their own
+    """
+    deleted: GQLTDeletedFilter
+  ): MemoHasManyRepliesList
+  parent(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Memo
+}
+
+type MemoHasManyRepliesList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo!
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for MemoHasManyReplies"""
+  edges: [MemoHasManyRepliesEdge!]!
+}
+
+"""MemoHasManyReplies edge"""
+type MemoHasManyRepliesEdge {
+  node: Memo
+  cursor: String!
+}
+
+enum MemoOrderBy {
+  idASC
+  idDESC
+  bodyASC
+  bodyDESC
+  parentIdASC
+  parentIdDESC
+  createdAtASC
+  createdAtDESC
+  updatedAtASC
+  updatedAtDESC
+  deletedAtASC
+  deletedAtDESC
+}
+
+input GQLTQueryMemoWhere {
+  id: GQLTQueryMemoWhereid
+  body: GQLTQueryMemoWherebody
+  parentId: GQLTQueryMemoWhereparentId
+  createdAt: GQLTQueryMemoWherecreatedAt
+  updatedAt: GQLTQueryMemoWhereupdatedAt
+  deletedAt: GQLTQueryMemoWheredeletedAt
+  or: [GQLTQueryMemoWhere]
+  and: [GQLTQueryMemoWhere]
+  any: [GQLTQueryMemoWhere]
+  all: [GQLTQueryMemoWhere]
+}
+
+input GQLTQueryMemoWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryMemoWherebody {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  contains: [String]
+  contained: [String]
+  between: [String]
+  notBetween: [String]
+  overlap: [String]
+  adjacent: [String]
+  strictLeft: [String]
+  strictRight: [String]
+  noExtendRight: [String]
+  noExtendLeft: [String]
+}
+
+input GQLTQueryMemoWhereparentId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  contains: [ID]
+  contained: [ID]
+  between: [ID]
+  notBetween: [ID]
+  overlap: [ID]
+  adjacent: [ID]
+  strictLeft: [ID]
+  strictRight: [ID]
+  noExtendRight: [ID]
+  noExtendLeft: [ID]
+}
+
+input GQLTQueryMemoWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryMemoWhereupdatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTQueryMemoWheredeletedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  contains: [GQLTDate]
+  contained: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+  overlap: [GQLTDate]
+  adjacent: [GQLTDate]
+  strictLeft: [GQLTDate]
+  strictRight: [GQLTDate]
+  noExtendRight: [GQLTDate]
+  noExtendLeft: [GQLTDate]
+}
+
+input GQLTMemoIncludeObject {
+  replies: GQLTMemoIncluderepliesObject
+  parent: GQLTMemoIncludeparentObject
+}
+
+input GQLTMemoIncluderepliesObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryMemoWhere
+
+  """
+  Whether soft-deleted rows are excluded (the default), included, or returned on their own
+  """
+  deleted: GQLTDeletedFilter
+  orderBy: [MemoOrderBy]
+  include: [GQLTMemoIncludeObject]
+}
+
+"""How soft-deleted rows are treated by a read"""
+enum GQLTDeletedFilter {
+  """Only live rows (the default)"""
+  EXCLUDE
+
+  """Live and soft-deleted rows together"""
+  INCLUDE
+
+  """Only soft-deleted rows — a trash view"""
+  ONLY
+}
+
+input GQLTMemoIncludeparentObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryMemoWhere
+
+  """
+  Whether soft-deleted rows are excluded (the default), included, or returned on their own
+  """
+  deleted: GQLTDeletedFilter
+  orderBy: [MemoOrderBy]
+  include: [GQLTMemoIncludeObject]
+}
+
 type QueryClassMethods {
   Task: TaskQueryClassMethods
   TaskItem: TaskItemQueryClassMethods
@@ -5673,6 +6810,24 @@ type MutationModels {
     """This will delete a new element for Item"""
     delete: [GQLTQueryItemWhere]
   ): [Item]
+  Memo(
+    """This will create a new element for Memo"""
+    create: [MemoRequiredInput]
+
+    """This will update a new element for Memo"""
+    update: [MemoUpdateInput]
+
+    """
+    This will find elements for Memo and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [MemoSelectInput]
+
+    """This will delete a new element for Memo"""
+    delete: [GQLTQueryMemoWhere]
+
+    """This will restore soft-deleted elements for Memo"""
+    restore: [GQLTQueryMemoWhere]
+  ): [Memo]
 }
 
 """"""
@@ -6537,6 +7692,193 @@ input ItemSelectInput {
   Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
   """
   input: ItemOptionalInput
+}
+
+""""""
+input MemoRequiredInput {
+  body: String!
+
+  """This a primary key for Memo"""
+  parentId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+  deletedAt: GQLTDate
+
+  """This is the mutation object for MemoRepliesHasMany"""
+  replies: MemoRepliesHasManyInput
+
+  """This is the mutation object for MemoParentBelongsTo"""
+  parent: MemoParentBelongsToInput
+}
+
+""""""
+input MemoRepliesHasManyInput {
+  """This will create a new element with a relationship to the current Memo"""
+  create: [MemoRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Memo
+  """
+  update: [MemoRepliesUpdate]
+
+  """
+  This will add any matching elements with a relationship to the current Memo
+  """
+  add: [GQLTQueryMemoWhere]
+
+  """
+  This will replace the entire replies set with the matching existing elements
+  """
+  set: [GQLTQueryMemoWhere]
+
+  """
+  This will remove the relationship from any matching elements from the current Memo
+  """
+  remove: [GQLTQueryMemoWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Memo
+  """
+  delete: [GQLTQueryMemoWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Memo
+  """
+  restore: [GQLTQueryMemoWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [MemoRepliesSelect]
+}
+
+""""""
+input MemoRepliesUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryMemoWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoOptionalInput {
+  body: String
+
+  """This a primary key for Memo"""
+  parentId: ID
+  createdAt: GQLTDate
+  updatedAt: GQLTDate
+  deletedAt: GQLTDate
+
+  """This is the mutation object for MemoRepliesHasMany"""
+  replies: MemoRepliesHasManyInput
+
+  """This is the mutation object for MemoParentBelongsTo"""
+  parent: MemoParentBelongsToInput
+}
+
+""""""
+input MemoParentBelongsToInput {
+  """This will create a new element with a relationship to the current Memo"""
+  create: MemoRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Memo
+  """
+  update: MemoParentUpdate
+
+  """This will associate an existing matching element with the current Memo"""
+  set: GQLTQueryMemoWhere
+
+  """When true, this will disassociate the current parent from the Memo"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Memo
+  """
+  delete: GQLTQueryMemoWhere
+
+  """This will restore the soft-deleted parent related to the current Memo"""
+  restore: GQLTQueryMemoWhere
+
+  """
+  This will find the matching related parent and run relationship mutations on it without modifying the element itself
+  """
+  select: MemoParentSelect
+}
+
+""""""
+input MemoParentUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryMemoWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoParentSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryMemoWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoRepliesSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryMemoWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryMemoWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: MemoOptionalInput
+}
+
+""""""
+input MemoSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryMemoWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of \${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: MemoOptionalInput
 }
 
 type MutationClassMethods {

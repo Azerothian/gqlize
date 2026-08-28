@@ -149,10 +149,10 @@ describe("gqlize - row-level scope through the schema", () => {
     const result = await run(`mutation {
       models { Doc(update: {where: {id: {eq: "${id}"}}, input: {name: "stolen"}}) { id name } }
     }`, "u1");
-    // `[null]` rather than `[]` is gqlize's ordinary shape for an update that
-    // matched nothing — a bogus id on an unscoped schema returns the same. The
+    // An empty list is gqlize's ordinary shape for an update that matched
+    // nothing — a bogus id on an unscoped schema returns the same. The
     // load-bearing assertion is the next one: the row itself was not touched.
-    expect(result.data.models.Doc).toEqual([null]);
+    expect(result.data.models.Doc).toEqual([]);
     const after = await run("query { models { Doc { edges { node { name } } } } }", "u2");
     expect(after.data.models.Doc.edges.map((e) => e.node.name)).toEqual(["theirs"]);
   });

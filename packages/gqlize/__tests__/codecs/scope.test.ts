@@ -191,7 +191,7 @@ describe("codecs + scope - a scope's raw ids never reach the codec", () => {
     const result = await ask(schema, `mutation {
       models { Note(update: {where: {id: {eq: "${otherNoteId}"}}, input: {body: "stolen"}}) { id } }
     }`);
-    expect(result.data.models.Note).toEqual([null]);
+    expect(result.data.models.Note).toEqual([]);
     const after = await ask(schema, `query { models { Note { edges { node { body } } } } }`);
     expect(after.data.models.Note.edges.map((e) => e.node.body)).toContain("out of scope");
   });
@@ -252,7 +252,7 @@ describe("codecs + scope - a caller's opaque ids are still decoded", () => {
     const result = await ask(schema, `mutation {
       models { Note(update: {where: {docId: {eq: "${forged}"}}, input: {body: "stolen"}}) { id } }
     }`);
-    expect(result.data.models.Note).toEqual([null]);
+    expect(result.data.models.Note).toEqual([]);
     const after = await ask(schema, `query { models { Note { edges { node { body } } } } }`);
     expect(after.data.models.Note.edges.map((e) => e.node.body)).toEqual(["edited", "b"]);
   });

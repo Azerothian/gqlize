@@ -104,6 +104,16 @@ export default class GqlizeBinding {
     return adapter.getDefaultListArgs(defName, definition, permission);
   }
 
+  /**
+   * Whether a model soft-deletes. `false` for an adapter that has no soft delete
+   * at all (the member is optional on the contract), which is what keeps the
+   * `deleted` argument and the `restore` mutation out of those schemas.
+   */
+  softDeletes = (defName: string): boolean => {
+    const adapter = this.getModelAdapter(defName);
+    return Boolean(adapter.softDeletes?.(defName));
+  }
+
   getOrderByGraphQLType = (defName: string, permission?: Permission) => {
     const adapter = this.getModelAdapter(defName);
     return adapter.getOrderByGraphQLType(defName, permission);
@@ -362,6 +372,9 @@ export default class GqlizeBinding {
   }
   processDelete = (defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processDelete(defName, source, args, context, this.buildSelection(defName, info));
+  }
+  processRestore = (defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, info: GraphQLResolveInfo) => {
+    return this.orm.processRestore(defName, source, args, context, this.buildSelection(defName, info));
   }
 }
 

@@ -6,7 +6,7 @@ import {
   type GraphQLFieldConfigArgumentMap,
   type GraphQLInputFieldConfigMap,
 } from "graphql";
-import { isFieldAllowed, isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
+import { isFieldAllowed, isModelAllowed, isQueryDeletedAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
 import { computedWhereFields } from "@azerothian/utilize/exposed-methods";
 import { deprecationFor } from "@azerothian/utilize/utils/deprecation";
 import type { Definition, OrderEntry, Permission } from "@azerothian/utilize/types/index";
@@ -74,6 +74,14 @@ export interface AdapterArgsHost {
    * is resolved by its own adapter as a separate query — so it is not includable.
    */
   targetOf(modelName: string): HostTarget | undefined;
+  /**
+   * Whether this model soft-deletes, mirroring `OrmAdapter.softDeletes`.
+   *
+   * Optional like {@link AdapterArgsHost.computedOrderableFields}: absent means
+   * the backend has no soft delete, so no `deleted` argument is generated
+   * anywhere. There would be nothing for one to select.
+   */
+  softDeletes?(defName: string): boolean;
   /**
    * Whether `include` is a list of include objects. True for a SQL adapter,
    * where an include is a JOIN and a model may be joined more than once; false
@@ -195,6 +203,45 @@ export function getOrderByGraphQLType(
 }
 
 /**
+ * How a read treats soft-deleted rows. One shared enum rather than one per
+ * model: the vocabulary is the same everywhere it appears, and a per-model copy
+ * would put N identical types in the schema for no gain.
+ *
+ * `EXCLUDE` is the default and is what a paranoid backend does unasked, so it is
+ * named rather than left implicit — a client can round-trip a variable through
+ * it without special-casing "unset".
+ */
+export const GQLTDeletedFilter = new GraphQLEnumType({
+  name: "GQLTDeletedFilter",
+  description: "How soft-deleted rows are treated by a read",
+  values: {
+    EXCLUDE: { value: "EXCLUDE", description: "Only live rows (the default)" },
+    INCLUDE: { value: "INCLUDE", description: "Live and soft-deleted rows together" },
+    ONLY: { value: "ONLY", description: "Only soft-deleted rows \u2014 a trash view" },
+  },
+});
+
+/**
+ * The `deleted` argument for one model, or `undefined` when the model does not
+ * soft-delete or the caller is not allowed to see deleted rows.
+ *
+ * Both halves matter: without the first there is no `deletedAt` for the argument
+ * to lift, and without the second a denied caller could read rows the model
+ * considers gone.
+ */
+function deletedArgFor(
+  host: AdapterArgsHost, defName: string, permission: Permission | undefined,
+): { type: GraphQLEnumType, description: string } | undefined {
+  if (!host.softDeletes?.(defName) || !isQueryDeletedAllowed(permission, defName)) {
+    return undefined;
+  }
+  return {
+    type: GQLTDeletedFilter,
+    description: "Whether soft-deleted rows are excluded (the default), included, or returned on their own",
+  };
+}
+
+/**
  * The `include` input for a model, or `undefined` when it has no includable
  * relationship — either because it declares none, or because every one of them
  * was filtered out below. An input object with no fields is an invalid GraphQL
@@ -232,6 +279,14 @@ export function getIncludeGraphQLType(
               separate: { type: GraphQLBoolean },
               where: { type: getFilterGraphQLType(host, target.name, target.definition, permission) },
             };
+            // Per include node, not once at the root: a backend's soft-delete
+            // filter does not propagate into an eager-loaded join, so each node
+            // has to say for itself. Evaluated against the *target* model \u2014 it
+            // is the target's rows this include selects.
+            const targetDeleted = deletedArgFor(host, target.name, perm);
+            if (targetDeleted) {
+              includeFields.deleted = targetDeleted;
+            }
             // A target whose orderable fields are all denied has no orderBy enum,
             // and a leaf target has no include type; expose each only when it exists.
             const targetOrderBy = getOrderByGraphQLType(host, target.name, permission);
@@ -269,6 +324,10 @@ export function getDefaultListArgs(
   };
   if (includeType) {
     args.include = { type: includeType };
+  }
+  const deleted = deletedArgFor(host, defName, effective(host, permission));
+  if (deleted) {
+    args.deleted = deleted;
   }
   return args;
 }

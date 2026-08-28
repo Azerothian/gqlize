@@ -3,7 +3,7 @@ import type { FieldNode, SelectionSetNode } from "graphql";
 import GQLManager from "../../manager";
 import { tryFromCursor } from "../objects/cursor";
 import { defaultCursorCodec } from "../../codecs/cursor";
-import type { AdapterWhere, Association, CursorCodec, GqlizeAdapter, IncludeDescriptor, IncludeMap, OrderEntry } from "../../types";
+import type { AdapterWhere, Association, CursorCodec, DeletedFilter, GqlizeAdapter, IncludeDescriptor, IncludeMap, OrderEntry } from "../../types";
 // The per-parent eager-load backstop. The same clamp the adapters apply to a
 // root query, applied again at the GraphQL layer: a nested `first`/`last` is
 // written straight onto the include descriptor and never passes back through
@@ -23,6 +23,7 @@ type IncludeFieldArgs = {
   separate?: unknown;
   where?: AdapterWhere;
   orderBy?: OrderEntry[];
+  deleted?: DeletedFilter;
   first?: unknown;
   last?: unknown;
   after?: unknown;
@@ -267,6 +268,12 @@ export function buildIncludeMapFromSelection(
     }
     if (fieldArgs.orderBy) {
       descriptor.orderBy = fieldArgs.orderBy;
+    }
+    // A nested connection's own `deleted` argument. Carried onto the descriptor
+    // because the eager-load is a join: a root-level soft-delete setting does not
+    // reach it, so each node has to say for itself.
+    if (fieldArgs.deleted) {
+      descriptor.deleted = fieldArgs.deleted;
     }
     if (collection) {
       const paginated =

@@ -449,7 +449,7 @@ Extra query fields may be injected via `options.extend.query`.
 
 | Field | Meaning |
 | --- | --- |
-| `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**. |
+| `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**; `restore` in addition on a soft-deleting model. |
 | `classMethods` | Per-model exposed **mutation** class methods (`MutationClassMethods`). |
 
 Extra mutation fields may be injected via `options.extend.mutation`. Subscriptions are not
@@ -473,6 +473,31 @@ generated: `options.subscriptions` is accepted and ignored (the generator is com
   row; `after` post-hooks either. The builder also records the selection so the method's
   `fields`/`include`/`input` declarations reach the query (see
   [Query resolution & eager loading](#query-resolution--eager-loading)).
+
+### Soft delete
+
+A model whose adapter reports `softDeletes(defName)` gains two schema elements, both optional and
+both gated:
+
+- a `deleted: GQLTDeletedFilter` argument (`EXCLUDE` | `INCLUDE` | `ONLY`, default `EXCLUDE`) on
+  every list field the model appears in, and a matching field on its entry in each parent's
+  `include` input, gated by `permission.queryDeleted`;
+- a `restore` argument on the model's mutation field, reusing the `delete` filter type
+  (`[GQLTQuery{Model}Where]`) rather than minting a second identical one, gated by
+  `permission.mutationRestore`.
+
+`GQLTDeletedFilter` is a single module-level enum in
+`packages/graphql-types/src/adapter-args.ts` shared by every model, so the schema carries one copy
+however many models soft delete.
+
+Both are **build-time** gates, so a denied caller's schema does not contain the element and a
+query naming it fails GraphQL validation rather than at resolution.
+
+`deleted` applies per query node. A backend's implicit "live rows only" predicate is attached to
+each fetch, join and count independently, so the value is carried onto the root options, every
+include entry, and both count paths (`countOptions` and the count-only bag) — otherwise `total`
+and `edges` answer from different row sets. Single-valued relationship fields
+(`belongsTo`/`hasOne`) and `node(id:)` are not covered (§13).
 
 ### Deprecation
 
@@ -725,9 +750,10 @@ than a decision, and it is consulted per request rather than per schema.
 | --- | --- |
 | `model(defName, options)` | Whether the model type is generated at all. |
 | `query(defName, options)` | The list query for a model. |
-| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` | Mutation operations. |
+| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. |
 | `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
+| `queryDeleted(defName, options)` | The `deleted` argument on a soft-deleting model's list fields and include input — i.e. whether this caller may read soft-deleted rows at all. Row-level visibility is still `scope`'s: a caller allowed deleted rows sees only the deleted rows inside their scope. |
 | `relationship(defName, relName, targetName, options)` | Relationship fields. |
 | `queryClassMethods` / `mutationClassMethods` | Exposed class methods. |
 | `queryInstanceMethods` | Exposed instance-method query fields — and, with them, the `orderBy` enum values and `where` fields those methods contribute (sortability and filterability each leak a denied field's value). |
@@ -895,7 +921,14 @@ contract groups into:
   `resolveManyRelationship`, `resolveSingleRelationship`.
 - **Querying:** `processListArgsToOptions`, `findAll`, `count`, `hasInlineCountFeature`,
   `getInlineCount`, `processFilterArgument`, `replaceIdInArgs`.
-- **Mutations:** `getCreateFunction`, `getUpdateFunction`, `getDeleteFunction`, `update`.
+- **Mutations:** `getCreateFunction`, `getUpdateFunction`, `getDeleteFunction`, `update`, and
+  optionally `getRestoreFunction`.
+- **Soft delete (optional):** `softDeletes(defName)` reports whether a model can answer for a
+  deleted row; `getRestoreFunction(defName, whereOperators)` clears the deletion. Both are
+  optional in the same way `computedOrderableFields` is — a backend without soft delete (valkey,
+  say) omits them, and gqlize then generates neither the `deleted` argument nor `restore`. The
+  same `softDeletes` also appears on the type-mapping host, which is where the `deleted` argument
+  is decided.
 
 ### Sequelize adapter highlights
 
@@ -921,6 +954,21 @@ contract groups into:
   the computed entries from `computedOrderableFields`, which `expandOrderBy` turns back into
   real column ordering at query time;
   `getIncludeGraphQLType` builds recursive nested-include input for eager-loaded joins.
+- Soft delete: `softDeletes` is derived from `deletedAtColumn`, which requires **both**
+  `model.options.paranoid` and a `_timestampAttributes.deletedAt` entry. `options.paranoid` alone
+  is not sufficient — Sequelize accepts `{paranoid: true, timestamps: false}`, reports
+  `paranoid === true` and defines no column, so deletes are hard while the model claims otherwise;
+  `createModel` warns when a definition resolves that way. Reading the column name from
+  `_timestampAttributes` rather than hard-coding `"deletedAt"` is what makes a renamed
+  `deletedAt` work, and it is undocumented Sequelize internals, so
+  `__tests__/paranoid.test.ts` carries a canary for it alongside the `define-model.test.ts` one.
+  `deletedOverlay` (`query-options.ts`) turns a `deleted` value into the `{paranoid, where}`
+  fragment applied at each query node.
+- `defaultModel` / `defaultAttr` (constructor options) are merged **under** each definition's own
+  `options` / each column's own definition — `Object.assign({}, defaultModel, def.options)`. That
+  order is what makes "every model soft-deletes, except this one" expressible without a second
+  switch, and it is why generated `belongsToMany` join models pin `paranoid: false` explicitly
+  rather than relying on inheriting it.
 - Inline count via `COUNT(*) OVER()` on postgres/mssql/sqlite.
 - `type-mapper.ts` maps Sequelize DataTypes → GraphQL types.
 
@@ -1047,6 +1095,11 @@ behaviour.
   `create`/`update`/`add`/`set`/`remove`/`delete`/`restore`/`select` keys are legitimately
   combinable in one mutation. A genuine fit would be a new "look this row up by exactly one of id
   or unique key" input — a feature, not a conversion.
+- **Soft delete on single-valued relationships and `node`.** `deleted` reaches list fields and
+  nested connections (§5); `belongsTo`/`hasOne` fields take only a `required` argument
+  (`create-related-fields.ts`), so a soft-deleted single-relation target reads as `null`, and
+  `node(id:)` does not resolve a deleted row. `update` and `delete` likewise keep their implicit
+  live-rows-only predicate — restore first, then write.
 - Middleware/caching options.
 - Additional adapters (Elasticsearch, HTTP GraphQL Relay).
 - Cross-adapter **writes**, and batching of cross-adapter reads by foreign key.

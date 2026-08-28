@@ -176,6 +176,31 @@ export type AdapterDeleteFunction = (
 ) => Promise<AdapterRow[]>;
 
 /**
+ * `getRestoreFunction(defName, whereOperators)` — undelete every soft-deleted
+ * row matching `where`, running `before`/`after` around each one.
+ *
+ * The mirror of {@link AdapterDeleteFunction}, and deliberately the same shape,
+ * so the engine drives both through one code path. Only an adapter whose
+ * backend soft-deletes provides it; see `OrmAdapter.softDeletes`.
+ */
+export type AdapterRestoreFunction = (
+  where: AdapterWhere,
+  options: AdapterQueryOptions,
+  before: (instance: AdapterRow) => Promise<AdapterRow> | AdapterRow,
+  after: (instance: AdapterRow) => Promise<AdapterRow> | AdapterRow,
+) => Promise<AdapterRow[]>;
+
+/**
+ * How a read treats soft-deleted rows: exclude them (the default, and what a
+ * paranoid backend does on its own), include them alongside live rows, or return
+ * only them — a trash view.
+ *
+ * Spelled as the GraphQL enum's value names because that is what arrives on the
+ * argument; the adapter that understands soft deletes translates it.
+ */
+export type DeletedFilter = "EXCLUDE" | "INCLUDE" | "ONLY";
+
+/**
  * An unmanaged, adapter-native transaction. `handle` is the token threaded onto
  * each operation's options (e.g. a Sequelize Transaction); `commit`/`rollback`
  * finalise it. Returned by `OrmAdapter.beginTransaction`.
@@ -284,6 +309,23 @@ export interface OrmAdapter {
   getCreateFunction(defName: string): AdapterCreateFunction;
   getUpdateFunction(defName: string, whereOperators: WhereOperators | undefined): AdapterUpdateFunction;
   getDeleteFunction(defName: string, whereOperators: WhereOperators | undefined): AdapterDeleteFunction;
+  /**
+   * Optional: whether this model soft-deletes — a delete marks the row rather
+   * than removing it, so deleted rows are still there to be read back or
+   * undeleted.
+   *
+   * Optional exactly as {@link OrmAdapter.mergeFilterStatement} is: absent means
+   * "this backend has no soft delete", and every `deleted` argument and root
+   * `restore` mutation is then simply not generated. An adapter that reports
+   * `true` must also provide {@link OrmAdapter.getRestoreFunction} and honour a
+   * `deleted` value on the list requests it is handed.
+   */
+  softDeletes?(defName: string): boolean;
+  /**
+   * Optional: the counterpart of {@link OrmAdapter.getDeleteFunction} for a model
+   * that soft-deletes. Required only for a model whose `softDeletes` is `true`.
+   */
+  getRestoreFunction?(defName: string, whereOperators: WhereOperators | undefined): AdapterRestoreFunction;
   /**
    * Optional: run a callback inside a transaction (auto-commit / auto-rollback).
    * When present, ormize wraps single-adapter multi-step mutations in it.
@@ -438,6 +480,13 @@ export interface IncludeDescriptor {
   limit?: number;
   offset?: number;
   separate?: boolean;
+  /**
+   * How this node treats soft-deleted rows. Carried per node rather than once at
+   * the root because a backend's soft-delete filter does not propagate into an
+   * eager-loaded join — a parent fetched with deleted rows included still gets
+   * only live children unless the include says otherwise.
+   */
+  deleted?: DeletedFilter;
   include?: IncludeMap[];
 }
 
