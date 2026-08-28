@@ -53,7 +53,12 @@ export type ExternalTypeRef =
  */
 export interface GqlizeBuildLedger {
   formatVersion: number;
-  /** exact input to `nodeTypeMapper.mapTypes` — recorded, not re-derived */
+  /**
+   * Exact input to `nodeTypeMapper.mapTypes` — recorded, not re-derived, and
+   * pruned to the model types the schema publishes. A model the permissions left
+   * unreachable is absent: the artifact carries no type for it, so recording the
+   * name would make the artifact inconsistent at birth.
+   */
   modelTypes: string[];
   externalTypes: Record<string, ExternalTypeRef>;
   /** extend keys that survived the build-time permission gate */

@@ -120,8 +120,11 @@ export type ModelTypeHatch = {
  * model type by name, with a `Name[]` entry per list wrapper. Documented in
  * `docs/specifications.md`.
  *
- * A key can hold `undefined` — a permission-denied model leaves a hole rather
- * than dropping the key, and the relay node mapper is fed this exact map.
+ * Only the model types the schema actually publishes: a model that passed the
+ * permission gates but that no root field reaches is dropped, key and all, so
+ * this map, `ledger.modelTypes` and the relay node mapper — which is fed this
+ * exact map — stay the same key set as the schema. The value type still admits
+ * `undefined` for callers holding an older map; nothing here writes one.
  */
 export type SchemaHatch = {
   types: { [name: string]: GraphQLType | undefined };

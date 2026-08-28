@@ -209,6 +209,13 @@ Two contracts are easy to get wrong and are therefore enforced rather than docum
   field must reference a *generated* type, use `extendFactory(types)` so it binds to the
   materialized instance rather than a stale one.
 
+An artifact records only the model types its schema actually publishes. A permission bag that
+denies both a model's query list field and its mutation entry leaves nothing in the schema
+referring to that model, so the artifact carries no type for it and `ledger.modelTypes` does not
+name it either — a restricted profile's artifact holds no trace of the models it hides. Relay
+`node(id:)` is unaffected: it re-checks `permission.query` per request, and a model reachable
+from nothing is one that predicate already denied.
+
 Staleness is detected by `fingerprintDefinitions`, which hashes models, fields, relationships,
 class methods, adapters, and the gqlize/graphql versions. It deliberately **excludes** the SQL
 dialect — building against sqlite in CI and serving postgres in production is a supported setup and
