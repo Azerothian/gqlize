@@ -233,6 +233,12 @@ export default class GqlizeBinding {
         logger("gqlize::manager").warn(`instance-method include declares "${defName}.${relName}", which is not a relationship — ignoring`);
         continue;
       }
+      // The spread copies this level only; a nested `.include` stays the
+      // definition's own object. That is safe rather than overlooked: the
+      // engine never writes on an include descriptor —
+      // `Ormize.expandComputedIncludeOrder` and `scopeIncludePlan` are both
+      // copy-on-write. Recursing here would need each level's target
+      // associations, which this function does not have.
       out[relName] = {
         ...declared[relName],
         target: declared[relName].target || association.target,

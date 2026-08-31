@@ -4,6 +4,7 @@ import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
 import {lowercase} from "@azerothian/utilize/utils/word";
 import waterfall from "@azerothian/utilize/utils/waterfall";
+import {copyDefinition} from "@azerothian/utilize/utils/copy-on-write";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
@@ -201,7 +202,13 @@ export default class Ormize<
     this.hooks = {};
     this.hookmap = {};
     this.globalHooks = [...hookList, ...sequelizeHookList].reduce((o, hookName) => {
-      o[hookName] = (options.globalHooks || {})[hookName] || [];
+      // Copied, not aliased, and normalised to an array. Two defects in one
+      // line: `addHook`/`unshiftHook` push onto these, so an aliased array made
+      // `orm.addHook(...)` write into the caller's `options.globalHooks` — two
+      // orms built from one options bag then shared a hook list. And `HookMap`
+      // permits a bare function, which `.push` cannot take at all.
+      const authored = (options.globalHooks || {})[hookName];
+      o[hookName] = Array.isArray(authored) ? [...authored] : authored ? [authored] : [];
       return o;
     }, {} as {[hookName: string]: HookFunction[] | HookFunction});
     this.cache = new Cache();
@@ -312,6 +319,11 @@ export default class Ormize<
     const native = await adapter.processFilterArgument(where, whereOperators, options);
     for (const target of targets) {
       if (target) {
+        // In place on purpose. These are the adapter's own options bags, built
+        // by `processListArgsToOptions` and about to be executed; re-imposing
+        // the scope *after* a `before` hook may have rewritten the filter is
+        // the whole job. A copy would have to be rebound by every caller, and
+        // a caller that forgot would run the query unscoped.
         target.where = adapter.andFilterStatements(target.where, native);
       }
     }
@@ -578,24 +590,33 @@ export default class Ormize<
       adapterName ? "from the adapterName argument"
         : def.datasource ? "from def.datasource"
           : "the default adapter");
-    this.defs[def.name] = def;
-    this.defsAdapters[def.name] = datasource
+    // The definition belongs to the caller; from here on the manager works on
+    // its own copy. A definition module is routinely imported once and built
+    // twice (two adapters, two permission profiles, an orm per test), and every
+    // consumer downstream of here — `getDefinition`, the hook closures, the
+    // adapter — would otherwise be handed the caller's object to write on.
+    // The adapters copy again at their own boundary, because `createModel` is
+    // public and gets called with no manager in front of it.
+    const owned = copyDefinition(def);
+    const defName = owned.name as string;
+    this.defs[defName] = owned;
+    this.defsAdapters[defName] = datasource
     
 
-    this.warnDefinitionInstanceHooks(def);
+    this.warnDefinitionInstanceHooks(owned);
 
     // Native Sequelize hooks are registered on the model; gqlize-only hooks
     // (e.g. afterCount) are composed for `runHook` but withheld from the adapter.
     const nativeHooks = hookList.reduce((o, hookName) => {
-      o[hookName] = this.createHook(hookName, def);
+      o[hookName] = this.createHook(hookName, owned);
       return o;
     }, {} as HookMap);
-    this.hooks[def.name] = gqlizeHookList.reduce((o, hookName) => {
-      o[hookName] = this.createHook(hookName, def);
+    this.hooks[defName] = gqlizeHookList.reduce((o, hookName) => {
+      o[hookName] = this.createHook(hookName, owned);
       return o;
     }, { ...nativeHooks });
 
-    (this.models as Record<string, unknown>)[def.name] = await adapter.createModel(def, nativeHooks);
+    (this.models as Record<string, unknown>)[defName] = await adapter.createModel(owned, nativeHooks);
   }
 
   /**
@@ -1307,11 +1328,15 @@ export default class Ormize<
     const options = createResolveContext(context, selection, source);
     const adapter = this.getModelAdapter(defName);
     const definition = this.getDefinition(defName);
-    const a = args;
+    // Copy-on-write from here: `args` is the caller's bag, and the scope merge
+    // and the order expansion both used to write onto it in place. Nothing
+    // downstream needs the caller to see the rewrite — everything that consumes
+    // it is handed `a` explicitly.
+    let a = args;
     if (rowScope?.where) {
-      a.where = applyScopeWhere(a.where as PortableWhere | undefined, rowScope);
+      a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, rowScope)};
     }
-    this.expandComputedOrder(defName, a, {context, info: selection?.raw});
+    a = this.expandComputedOrder(defName, a, {context, info: selection?.raw});
     const offset = cursorOffset(args);
     // Count-only: the nested connection selects `total` but not `edges`/rows — the
     // adapter runs a count instead of a findAll (fires beforeCount natively); fire
@@ -1349,6 +1374,9 @@ export default class Ormize<
       // with the options bag alone — so the scope goes there, already translated
       // into the backend's vocabulary. The eager branch ignores the bag entirely
       // and is covered upstream by the include plan.
+      //
+      // Written in place, and not a caller's object: `createResolveContext`
+      // builds a fresh bag on every call.
       options.where = await adapter.processFilterArgument(
         applyScopeWhere(options.where as PortableWhere | undefined, rowScope),
         whereOperatorsFor(this.getDefinition(defName)),
@@ -1374,19 +1402,40 @@ export default class Ormize<
    * in-memory post-sort (which would break `first`/`last`, cursor offsets and
    * `total`).
    */
-  private expandComputedOrder = (defName: string, a: FindAllArgs, ctx: {context?: unknown, info?: unknown}) => {
+  private expandComputedOrder = (defName: string, a: FindAllArgs, ctx: {context?: unknown, info?: unknown}): FindAllArgs => {
     const definition = this.getDefinition(defName);
-    const expanded = expandOrderBy(definition, a.orderBy as OrderEntry[] | undefined, ctx);
-    if (expanded !== a.orderBy) {
-      a.orderBy = expanded;
+    const orderBy = expandOrderBy(definition, a.orderBy as OrderEntry[] | undefined, ctx);
+    const include = this.expandComputedIncludeOrder(a.include as IncludeMap[] | IncludeMap | undefined, ctx);
+    if (orderBy === a.orderBy && include === a.include) {
+      return a;
     }
-    this.expandComputedIncludeOrder(a.include as IncludeMap[] | IncludeMap | undefined, ctx);
+    return {...a, orderBy, include};
   }
-  private expandComputedIncludeOrder = (include: IncludeMap[] | IncludeMap | undefined, ctx: {context?: unknown, info?: unknown}) => {
+  /**
+   * The same expansion, one level down and at every level below it.
+   *
+   * Returns a new plan rather than writing on the one it is given — the rule
+   * {@link scopeIncludePlan} already states, and for a sharper reason here. An
+   * include descriptor declared on a definition (`expose.instanceMethods.query.
+   * <m>.include`) reaches this method as the definition's *own* object: the
+   * merge path hands it through by identity when only one side declares a
+   * relation. Writing the expansion onto it rewrote the declaration itself, so
+   * the first request's ordering was frozen into the definition for the life of
+   * the process and a context-dependent `orderBy` never ran a second time.
+   *
+   * Copy-on-write, not copy: `expandOrderBy` returns its input unchanged when
+   * there is nothing to expand, so the steady state — every request that orders
+   * by a real column — allocates nothing on what is a per-parent-row path.
+   */
+  private expandComputedIncludeOrder = (
+    include: IncludeMap[] | IncludeMap | undefined,
+    ctx: {context?: unknown, info?: unknown},
+  ): IncludeMap[] | IncludeMap | undefined => {
     if (!include) {
-      return;
+      return include;
     }
-    for (const map of (Array.isArray(include) ? include : [include])) {
+    const expandMap = (map: IncludeMap): IncludeMap => {
+      let out: IncludeMap | undefined;
       for (const relName of Object.keys(map)) {
         const descriptor = map[relName];
         let targetDef: Definition | undefined;
@@ -1395,28 +1444,50 @@ export default class Ormize<
         } catch (e) {
           targetDef = undefined; // a target this engine does not own has nothing to expand against
         }
-        descriptor.orderBy = expandOrderBy(targetDef, descriptor.orderBy, ctx);
-        this.expandComputedIncludeOrder(descriptor.include, ctx);
+        const orderBy = expandOrderBy(targetDef, descriptor.orderBy, ctx);
+        const nested = this.expandComputedIncludeOrder(descriptor.include, ctx);
+        if (orderBy === descriptor.orderBy && nested === descriptor.include) {
+          continue;
+        }
+        out = out || {...map};
+        out[relName] = {...descriptor, orderBy, include: nested as IncludeMap[] | undefined};
       }
+      return out || map;
+    };
+    if (!Array.isArray(include)) {
+      return expandMap(include);
     }
+    let changed = false;
+    const mapped = include.map((map) => {
+      const expanded = expandMap(map);
+      changed = changed || expanded !== map;
+      return expanded;
+    });
+    return changed ? mapped : include;
   }
   resolveFindAll = async(defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection, scope?: {field: string, value: unknown}) => {
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
     const options = createResolveContext(context, selection, source);
-    const a = args;
+    // Copy-on-write from here: `args` is the caller's bag. Everything that
+    // consumes the rewritten form is handed `a` explicitly, so nothing needs the
+    // caller's object to change underneath it.
+    let a = args;
     const selectedFields = selection?.fields;
     // The eager-include plan is built by the caller (gqlize, from the GraphQL
     // selection set) and passed via `selection.include`; apply it when the args
     // don't already carry one.
     if (selection?.include && !a.include) {
-      a.include = selection.include;
+      a = {...a, include: selection.include};
     }
     // F4. An eagerly-loaded relationship is fetched by *this* query, so its own
     // resolver never gets a filter in edgeways — the include plan is the only
     // place its model's scope can be applied.
-    a.include = await scopeIncludePlan(a.include as IncludeMap[] | undefined, (targetName) => this.resolveRowScope(targetName, "read", context));
-    this.expandComputedOrder(defName, a, {context, info: selection?.raw});
+    const scopedInclude = await scopeIncludePlan(a.include as IncludeMap[] | undefined, (targetName) => this.resolveRowScope(targetName, "read", context));
+    if (scopedInclude !== a.include) {
+      a = {...a, include: scopedInclude};
+    }
+    a = this.expandComputedOrder(defName, a, {context, info: selection?.raw});
     // Row-level scope, merged while the filter is still in the caller's
     // vocabulary. That is also what gives the count the same filter, since
     // `processListArgsToOptions` derives `countOptions` from these args — a
@@ -1431,7 +1502,7 @@ export default class Ormize<
       return { total: 0, models: [] };
     }
     if (rowScope?.where) {
-      a.where = applyScopeWhere(a.where as PortableWhere | undefined, rowScope);
+      a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, rowScope)};
     }
     const offset = cursorOffset(args);
     const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, {
@@ -1779,6 +1850,11 @@ export default class Ormize<
         Object.assign(target, result);
       }
     }
+    // Both writes stay in place. `target` is either the recording proxy over the
+    // live row or the values bag itself, and the sequencing above depends on a
+    // later transform seeing what an earlier one wrote. `values` is never the
+    // caller's: `processInputs` reduces into a fresh object on both the create
+    // and the update path.
     return row === undefined ? values : Object.assign(values, written);
   }
 

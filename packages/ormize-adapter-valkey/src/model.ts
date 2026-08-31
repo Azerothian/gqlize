@@ -1,5 +1,6 @@
 import { DataType, DataTypeDescriptor, DataTypes } from "@azerothian/utilize/types/data-type";
 import type { Definition, DefinitionFieldMeta, Relationship } from "@azerothian/utilize/types/index";
+import { copyDefinition } from "@azerothian/utilize/utils/copy-on-write";
 import { resolveAttributeTypes } from "./data-type-mapper";
 
 /**
@@ -56,8 +57,13 @@ export class ValkeyModel {
     // it gets here; this covers a caller driving the adapter directly.
     if (!def.name) throw new Error("ValkeyModel: a definition must have a name");
     this.name = def.name;
-    this.definition = def;
-    this.relationships = def.relationships || [];
+    // Copied, not aliased. `createRelationship` stamps `__join` onto the entry
+    // it finds in `this.relationships`, and that array was the definition's own
+    // — so a `belongsToMany` left an adapter-private key behind on the caller's
+    // relationship for good. The read path (`getAssociations`) reads `__join`
+    // back off this same array, so stamping the copy is transparent to it.
+    this.definition = copyDefinition(def);
+    this.relationships = this.definition.relationships || [];
     // A model-level `ttl` is one of those adapter-native options, so it arrives
     // as `unknown` and is checked rather than assumed.
     const ttl = def.options?.ttl;

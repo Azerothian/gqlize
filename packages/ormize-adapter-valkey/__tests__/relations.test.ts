@@ -22,13 +22,15 @@ type Row = { [field: string]: any };
 // types, run against BOTH adapters:
 //   Author hasOne Profile, Author hasMany Post, Post belongsTo Author,
 //   Post belongsToMany Tag (through PostTag with a sortOrder column).
-// A fresh definition set per test — the Sequelize adapter mutates
-// `relationship.options.through.model` (string → model instance) at wiring time,
-// so a shared/reused array would corrupt subsequent builds.
+// One shared, reused definition set — deliberately, not a factory. Both adapters
+// and every test in this file build from these same objects, which is only safe
+// because neither adapter writes on a definition it is handed. That makes this
+// suite the end-to-end proof of that contract: see
+// `packages/ormize/__tests__/config-purity.test.ts` for the unit-level pins.
 // No explicit primary key → both adapters synthesize an auto-increment integer
 // `id` (Sequelize's default; Valkey via an INCR sequence). Foreign keys are
 // auto-created by the relationships (nullable), so set/remove can unlink.
-const makeDefs = (): Definition[] => [
+const defs: Definition[] = [
   {
     name: "Author",
     define: { name: { type: DataTypes.String, index: true } },
@@ -78,7 +80,7 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
     if (name === "valkey") await flush(client);
     orm = new Ormize();
     orm.registerAdapter(makeAdapter(), "db");
-    for (const d of makeDefs()) await orm.addDefinition(d);
+    for (const d of defs) await orm.addDefinition(d);
     await orm.initialise();
     await orm.sync();
   });

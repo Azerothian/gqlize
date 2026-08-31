@@ -17,7 +17,10 @@ export default class Cache {
   }
   merge = <T extends Record<string, unknown>>(key: string, value: T, timeout?: number): Record<string, unknown> => {
     const current = (this.store[key] as Record<string, unknown> | undefined) || {};
-    return this.set(key, Object.assign(current, value), timeout);
+    // A new object, not a write onto the stored one: whatever was `set` under
+    // this key belongs to whoever set it, and merging used to mutate their
+    // object rather than the cache's view of it.
+    return this.set(key, {...current, ...value}, timeout);
   }
   get = <T = unknown>(key: string, defaultValue?: T): T | undefined => {
     if (!this.store[key]) {
