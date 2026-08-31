@@ -1,18 +1,9 @@
 import {
-  // GraphQLSchema,
   GraphQLObjectType,
   GraphQLNonNull,
-  // GraphQLList,
 } from "graphql";
 import type { GraphQLNullableOutputType, GraphQLObjectTypeConfig, GraphQLOutputType } from "graphql";
 
-// import {
-//   fromGlobalId,
-//   connectionFromArray,
-//   nodeDefinitions,
-//   connectionDefinitions,
-//   connectionArgs,
-// } from "graphql-relay";
 import { globalIdFieldConfig } from "./utils/global-id-field";
 import { deprecationFor, isFieldAllowed } from "@azerothian/utilize";
 import GQLManager from '../manager';
@@ -124,9 +115,6 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
           return f;
         }, fields);
       }
-      // if(!fields.id) {
-      //   throw new Error("id needs to be supplied");
-      // }
 
       schemaCache.basicFields[defName] = fields;
     }

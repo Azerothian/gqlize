@@ -610,6 +610,22 @@ Each was either dead on arrival or superseded by something already exported alon
 | `DataType` (re-export) | `@azerothian/ormize-adapter-valkey` (`data-type-mapper`) | Import it from its home, `@azerothian/utilize/types/data-type`. |
 | `lowecase` | `@azerothian/utilize` (`utils/word`) | `lowercase` — `lowecase` was a misspelled alias kept for 6.x compatibility. |
 
+A later pass removed four more, on the same test — no consumer in the repo, none documented outside
+it:
+
+| Removed | Package / module | Replacement |
+|---|---|---|
+| `DeclarativeMethod` | `@azerothian/utilize` (`exposed-methods`) | None — a one-line `Pick<ExposedMethod, …>` no caller ever named. Spell the `Pick` inline, or use `ExposedMethod` itself, which is still exported from `types/index`. |
+| `Ormize.globalKeys` | `@azerothian/ormize` (`manager`) | None. Initialised to `{}` and never written, so nothing could have read anything from it. Not to be confused with the live `getGlobalKeys(defName)` **method**, which is unaffected. |
+| `Ormize.hookmap` | `@azerothian/ormize` (`manager`) | None — same: permanently `{}`. The neighbouring `hooks` field is live and stays. |
+| `Ormize.createProxyFunction` | `@azerothian/ormize` (`manager`) | The free `createProxyFunction` from `@azerothian/ormize/cross-adapter`, which the method forwarded to verbatim. It had carried an `@deprecated` marker saying so. |
+
+Two exports that look dead by the same measure are **deliberately kept**:
+`isClassMethodAllowed` (`@azerothian/utilize/gate`) is the only member of the `is*Allowed` family with
+no internal caller, and removing one member of a symmetric gate API to save a line would leave the
+surface lopsided for anyone composing their own permission checks. `CrudOp`
+(`@azerothian/temporalize`) is a convenience type derived from the very-much-used `CRUD_OPS`.
+
 Also removed: two empty `types/modules.d.ts` ambient-declaration files (`gqlize`, `ormize`) and the
 vendored lodash `_.property` port in `graphql-types`. Neither was importable as a public subpath.
 

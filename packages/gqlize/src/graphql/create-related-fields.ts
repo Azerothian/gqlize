@@ -1,5 +1,4 @@
 import createListObject from "./create-list-object";
-// import { fromCursor, toCursor } from "./objects/cursor";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { deprecationFor, isRelationshipAllowed } from "@azerothian/utilize";
 import { SchemaCache, GqlFieldMap, GqlizeOptions, Definition, Association } from '../types';
