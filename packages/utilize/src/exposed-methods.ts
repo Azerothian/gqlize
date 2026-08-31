@@ -86,10 +86,16 @@ function includesOf(methods: ExposedMethods, selectedFieldNames: string[]): Decl
  */
 function mergeMethodIncludes(a: DeclaredIncludeMap | undefined, b: DeclaredIncludeMap | undefined): DeclaredIncludeMap | undefined {
   if (!a) {
-    return b;
+    // A copy even with nothing to merge. Returning `b` handed the definition's
+    // own declared map out to the resolution path, which is how a per-request
+    // rewrite used to reach config. The descriptors *inside* are still shared —
+    // copying them here would fork one per selected method per request, and the
+    // engine's `expandComputedIncludeOrder` is copy-on-write, so it never
+    // writes on them.
+    return b ? { ...b } : undefined;
   }
   if (!b) {
-    return a;
+    return { ...a };
   }
   return { ...a, ...b };
 }

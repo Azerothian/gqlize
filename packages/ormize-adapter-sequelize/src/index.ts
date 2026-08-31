@@ -12,6 +12,7 @@ import {
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
 import { isFieldAllowed, scopeParametersIn, bindScopeParameters } from "@azerothian/utilize/gate";
+import { copyDefine, copyField, copyModelOptions } from "@azerothian/utilize/utils/copy-on-write";
 import type { ResolvedScope } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
@@ -274,7 +275,16 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // view of the constructor because the overload set cannot resolve one.
     const SequelizeCtor = Sequelize as unknown as new (...args: SequelizeConnection) => Sequelize;
     this.sequelize = new SequelizeCtor(...config);
-    this.options = adapterOptions;
+    // The caller's adapter options are theirs. `defaultAttr` matters most: it is
+    // spread into *every* model, so one shared descriptor object was normalised
+    // and stamped by each model in turn, the last one winning the `Model`
+    // back-reference. `resolveAttributeTypes` gives each model its own copy of
+    // the merged result; this stops the caller's originals being reachable at all.
+    this.options = {
+      ...adapterOptions,
+      ...(adapterOptions.defaultAttr ? { defaultAttr: copyDefine(adapterOptions.defaultAttr) } : {}),
+      ...(adapterOptions.defaultModel ? { defaultModel: copyModelOptions(adapterOptions.defaultModel) } : {}),
+    };
     this.startup = {
       drop: "",
       create: "",
@@ -504,10 +514,20 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         out[key] = this.toNativeType(attr);
       } else if (attr && typeof attr === "object") {
         // Object form: `field: { type: DataTypes.String, allowNull: false }`
+        //
+        // Always a copy, including the native-type branch that used to pass the
+        // descriptor straight through. `sequelize.define` hands these to
+        // `Model.init`, which rewrites `type`/`defaultValue`/`references.model`
+        // in place and then hangs `Model` (a *circular* back-reference),
+        // `fieldName`, `field` and `_modelAttribute` on every attribute. Passing
+        // the caller's object through made their definition unserializable and
+        // carried one build's state into the next.
         const { type } = attr as { type?: unknown };
-        out[key] = isOrmizeDataType(type)
-          ? Object.assign({}, attr, { type: this.toNativeType(type) })
-          : attr;
+        const copy = copyField(attr) as { type?: unknown };
+        if (isOrmizeDataType(type)) {
+          copy.type = this.toNativeType(type);
+        }
+        out[key] = copy;
       } else {
         out[key] = attr;
       }
@@ -591,8 +611,15 @@ export default class SequelizeAdapter implements GqlizeAdapter {
 
   createModel = async (def: SequelizeDefinition, hooks?: HookMap): Promise<SequelizeModelClass> => {
     const { defaultAttr, defaultModel } = this.options;
+    // `copyModelOptions` rather than a bare spread: the spread makes a new
+    // options object but leaves `options.indexes` pointing at the caller's array
+    // of the caller's objects, and sequelize writes on both — `_conformIndex`
+    // defaults `type`/`parser` onto each entry (and for a unique index sets
+    // `unique` and deletes `type`), then `nameIndex` stamps a `name` derived
+    // from the table name, so a definition reused against a second table
+    // carried the first one's index name.
     const newDef = Object.assign({}, def, {
-      options: Object.assign({}, defaultModel, def.options, {
+      options: Object.assign({}, copyModelOptions(defaultModel), copyModelOptions(def.options), {
         hooks,
       }),
     });
@@ -831,18 +858,34 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       model.relationships = {};
     }
     try {
-      // `through` may also be a bare model name, which Sequelize accepts as-is.
-      // Only the object form carries a `model` to resolve — the previous
-      // unguarded property read simply found `undefined` on the string.
-      if (typeof options.through === "object" && options.through?.model) {
-        (options.through as {model?: unknown}).model = this.sequelize.models[options.through.model];
-      }
-      const opts = Object.assign(
+      const opts: Record<string, unknown> = Object.assign(
         {
           as: name,
         },
         options
       );
+      // `through` may also be a bare model name, which Sequelize accepts as-is.
+      // Only the object form carries a `model` to resolve.
+      //
+      // Resolved into `opts`, never back into `options`: `options` is the
+      // caller's `rel.options`, handed here unchanged by the manager, and
+      // `Relationship["options"].through.model` is declared `string`. Writing
+      // the model class back over the name corrupted the definition for every
+      // later build and silently broke the three readers that correctly expect
+      // a name — `Ormize.resolveCrossAdapterJoin`, `Ormize.deriveOtherKey`, and
+      // the valkey adapter's own `deriveOtherKey`, which stopped matching and
+      // fell back to a guessed key.
+      //
+      // The object-form copy is unconditional: sequelize's association builders
+      // write back onto the options bag they are handed (`BelongsToMany`
+      // normalises `through` and writes `foreignKey`/`otherKey`), so a shallow
+      // `opts` is not deep enough at `through` even when there is no name to
+      // resolve.
+      if (typeof options.through === "object" && options.through) {
+        opts.through = options.through.model
+          ? { ...options.through, model: this.sequelize.models[options.through.model] }
+          : { ...options.through };
+      }
       // `type` names one of Sequelize's association builders (`belongsTo`,
       // `hasMany`, ...) and is called by name off the model class, so the lookup
       // is dynamic — see {@link staticsOf}. An unknown one is a definition error

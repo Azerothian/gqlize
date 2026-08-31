@@ -141,6 +141,12 @@ export function mergeIncludeMaps(a: IncludeMap = {}, b: IncludeMap = {}): Includ
   const out: IncludeMap = { ...a };
   for (const relName of Object.keys(b)) {
     if (!out[relName]) {
+      // By reference, deliberately. `b` is either the freshly built AST tree or
+      // a declared map whose descriptors may be a definition's own objects —
+      // safe either way because the engine never writes on a descriptor:
+      // `Ormize.expandComputedIncludeOrder` and `scopeIncludePlan` are both
+      // copy-on-write. Copying here would allocate the whole plan per request
+      // to defend against a write that no longer happens.
       out[relName] = b[relName];
       continue;
     }

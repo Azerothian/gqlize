@@ -187,6 +187,12 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       if (!request || !options) {
         return options;
       }
+      // In place, by contract, and deliberately not copy-on-write: this is a
+      // sequelize `beforeFind`-family hook, and sequelize executes the very
+      // object it hands in while later hooks re-read it — `runHooks` discards
+      // what a hook returns (see `Ormize.createInstanceHook`). Returning a copy
+      // here would leave the scope on the floor and run the query unscoped,
+      // which is the one failure this layer exists to prevent.
       const where = await scopedWhere(host, defName, operation, request.context, options.where, options);
       if (where === false) {
         // A read denied outright answers with an empty page, which is what a
