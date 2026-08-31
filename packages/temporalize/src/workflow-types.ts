@@ -83,12 +83,28 @@ export function instanceMethodActivityName(model: string, method: string): strin
  */
 export type ActivityRequest<T = {}> = { context: CallerContext } & T;
 
-/** Sort entry: `"name"` or `["name", "DESC"]`. */
-export type OrderEntry = string | [string, string];
+/**
+ * Sort entry: `"name"` or `["name", "DESC"]`.
+ *
+ * Named `SortEntry`, not `OrderEntry`. It used to be the latter, which collided
+ * with `@azerothian/utilize`'s `OrderEntry` — a different, non-assignable shape
+ * (`[column, direction]`, no bare string) exported from the barrel of a package
+ * this one depends on. Anyone importing both got two same-named types that do
+ * not substitute for each other.
+ *
+ * The shapes genuinely differ and should: the bare-string spelling is a
+ * convenience this public layer accepts, and the engine passes it through to the
+ * adapter untouched. So the fix is one name each, not one type.
+ *
+ * Restated rather than imported, deliberately — see the module header: this file
+ * is bundled into the workflow sandbox and must stay import-free. A `import type`
+ * would erase at compile time, but the rule is worth keeping simple.
+ */
+export type SortEntry = string | [string, string];
 
 export type FindArgs = {
   where?: WhereClause;
-  orderBy?: OrderEntry[];
+  orderBy?: SortEntry[];
   limit?: number;
   offset?: number;
 };

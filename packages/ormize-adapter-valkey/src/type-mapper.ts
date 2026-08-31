@@ -4,13 +4,13 @@ import {
   GraphQLFloat,
   GraphQLBoolean,
   GraphQLList,
-  GraphQLEnumType,
   type GraphQLInputType,
   type GraphQLOutputType,
 } from "graphql";
 import jsonType from "@azerothian/graphql-types/json";
 import dateType from "@azerothian/graphql-types/date";
 import uploadType from "@azerothian/graphql-types/upload";
+import { createEnumType } from "@azerothian/graphql-types/enum-type";
 import { DataType, DataTypeDescriptor } from "@azerothian/utilize/types/data-type";
 import type { NativeDataType } from "@azerothian/utilize/types/index";
 
@@ -46,13 +46,12 @@ export default function typeMapper(
     case DataType.Array:
       return new GraphQLList(typeMapper(desc.element, modelName, fieldName));
     case DataType.Enum:
-      return new GraphQLEnumType({
-        name: `${modelName || ""}${fieldName || ""}Enum`,
-        values: (desc.values || []).reduce((o: {[name: string]: {value: string}}, v: string) => {
-          o[v] = { value: v };
-          return o;
-        }, {}),
-      });
+      // Shared with the sequelize adapter — see
+      // `@azerothian/graphql-types/enum-type`. This used to name the type
+      // without capitalising and use each member verbatim as its GraphQL value
+      // name, so the same model produced a different type name on each backend
+      // and any member with a space, hyphen or leading digit threw here.
+      return createEnumType(modelName, fieldName, desc.values || []);
     default:
       // String / UUID / Decimal / BigInt / Unknown → String
       return GraphQLString;

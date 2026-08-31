@@ -14,7 +14,7 @@ import type {
   FindArgs,
   InstanceMethodArgs,
   MethodArgs,
-  OrderEntry,
+  SortEntry,
   PlainRow,
   PrimaryKeyValue,
   SelectArgs,
@@ -109,7 +109,7 @@ export function createActivities(
     // than `limit`/`offset`.
     const args: {
       where?: WhereClause;
-      orderBy?: OrderEntry[];
+      orderBy?: SortEntry[];
       first?: number;
       after?: { index: number };
     } = {};

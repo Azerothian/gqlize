@@ -175,7 +175,7 @@ import {
   type GraphQLInputType,
 } from "graphql";
 import {
-  isOrmizeDataType,
+  authoredDataType,
   type AdapterCreateFunction,
   type AdapterDeleteFunction,
   type AdapterListOptions,
@@ -509,9 +509,15 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     const out: AuthoredAttributes = {};
     for (const key of Object.keys(attributes)) {
       const attr = attributes[key];
-      if (isOrmizeDataType(attr)) {
-        // Shorthand form: `field: DataTypes.String`
-        out[key] = this.toNativeType(attr);
+      // Shorthand form: `field: DataTypes.String`, or the bare-constructor
+      // spelling `field: String`. `authoredDataType` is the shared table, so the
+      // set of spellings a definition may use is the same on every backend — the
+      // constructor form used to be accepted by the valkey adapter and passed
+      // through untouched here, where `sequelize.define` turned it into a
+      // `String` wrapper object and failed later, in DDL generation.
+      const shorthand = authoredDataType(attr);
+      if (shorthand) {
+        out[key] = this.toNativeType(shorthand);
       } else if (attr && typeof attr === "object") {
         // Object form: `field: { type: DataTypes.String, allowNull: false }`
         //
@@ -524,8 +530,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         // carried one build's state into the next.
         const { type } = attr as { type?: unknown };
         const copy = copyField(attr) as { type?: unknown };
-        if (isOrmizeDataType(type)) {
-          copy.type = this.toNativeType(type);
+        const authored = authoredDataType(type);
+        if (authored) {
+          copy.type = this.toNativeType(authored);
         }
         out[key] = copy;
       } else {
