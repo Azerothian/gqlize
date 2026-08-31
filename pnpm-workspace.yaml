@@ -38,3 +38,44 @@ allowBuilds:
   redis-memory-server: true # downloads the redis binary the valkey suites need
   sqlite3: true # native build, sequelize sqlite suites
   unrs-resolver: true # native binding behind the eslint import resolver
+
+# Single source of truth for the build/test toolchain versions. These were
+# pinned literally in every package — @swc/core, jest, tsx and typescript nine
+# times each — and kept in step by hand. A catalog makes drift impossible
+# rather than merely absent.
+#
+# devDependencies ONLY, deliberately. `scripts/build/prepare-package.ts` strips
+# devDependencies from the published manifest but does not resolve `catalog:`,
+# so a catalog reference in `dependencies` or `peerDependencies` would publish
+# verbatim and break installs. Anything that is also a runtime or peer dep is
+# excluded for that reason — and peer ranges are deliberately wider than the
+# dev pin beside them (graphql `^17.0.0` vs `17.0.2`), which a shared version
+# would silently narrow.
+catalog:
+  "@electric-sql/pglite": "^0.5.4"
+  "@electric-sql/pglite-socket": "^0.2.7"
+  "@jest/globals": "^30.4.1"
+  "@nestjs/platform-express": "^11.0.0"
+  "@nestjs/testing": "^11.0.0"
+  "@swc/cli": "^0.8.1"
+  "@swc/core": "^1.15.43"
+  "@swc/jest": "^0.2.39"
+  "@temporalio/testing": "^1.22.0"
+  "@types/debug": "^4.1.12"
+  "@types/jest": "^30.0.0"
+  "@types/node": "^26.1.1"
+  "@types/pluralize": "^0.0.33"
+  "@types/supertest": "^6.0.0"
+  "copyfiles": "^2.4.1"
+  "del": "^8.0.1"
+  "graphql-yoga": "^5.21.2"
+  "jest": "^30.4.2"
+  "npm-run-all2": "^9.0.2"
+  "pg": "^8.22.0"
+  "pg-hstore": "^2.3.4"
+  "redis-memory-server": "^0.12.1"
+  "sqlite3": "^6.0.1"
+  "supertest": "^7.0.0"
+  "tsx": "^4.19.4"
+  "typescript": "^7.0.2"
+  "uuid": "^14.0.1"
