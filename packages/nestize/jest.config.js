@@ -1,29 +1,19 @@
-const workspaceModuleNameMapper = require('../../scripts/jest/module-name-mapper');
+const { baseProject, coverage, conventions } = require('../../scripts/jest/base-config');
 
 /** @type {import('jest').Config} */
 module.exports = {
+  // The one package that compiles decorators — Nest's DI is built on them, so
+  // the metadata has to survive into the test build.
+  ...baseProject('nestize', {
+    jsc: {
+      parser: { syntax: 'typescript', tsx: true, decorators: true },
+      transform: { legacyDecorator: true, decoratorMetadata: true },
+      target: 'es2021',
+    },
+  }),
+  ...coverage,
+  ...conventions,
   verbose: true,
-  testEnvironment: 'node',
   // Suites share process-global sequelize/model registry state; run serially.
   maxWorkers: 1,
-  transform: {
-    '^.+\\.[tj]sx?$': ['@swc/jest', {
-      jsc: {
-        parser: { syntax: 'typescript', tsx: true, decorators: true },
-        transform: { legacyDecorator: true, decoratorMetadata: true },
-        target: 'es2021',
-      },
-      module: { type: 'commonjs' },
-    }],
-  },
-  moduleNameMapper: workspaceModuleNameMapper('nestize'),
-  collectCoverage: true,
-  // An allowlist, not a wildcard with exclusions: `build:src` copies the whole
-  // source tree into `publish/src`, so `**/*` counts every file twice for any
-  // run that follows a build — the second copy at 0%.
-  collectCoverageFrom: ["src/**/*.ts", "!src/**/*.d.ts"],
-  coverageReporters: ["text-summary", "lcov"],
-  testMatch: ['**/__tests__/**/*.test.[jt]s?(x)'],
-  testPathIgnorePatterns: ['/node_modules/', '/lib/', '/.yalc/', '/.devcontainer/'],
-  passWithNoTests: true,
 };

@@ -1,16 +1,10 @@
-const workspaceModuleNameMapper = require('../../scripts/jest/module-name-mapper');
+const { baseProject, coverage } = require('../../scripts/jest/base-config');
 
+// Only the resolution/compilation half is shared. Everything below — three
+// projects over one coverage report, the worker cap, the timeout — is this
+// package's own, which is why it does not spread `conventions` like the others.
 /** @type {import('jest').Config} */
-const base = {
-  testEnvironment: 'node',
-  transform: {
-    '^.+\\.[tj]sx?$': ['@swc/jest', {
-      jsc: { parser: { syntax: 'typescript', tsx: true }, target: 'es2022' },
-      module: { type: 'commonjs' },
-    }],
-  },
-  moduleNameMapper: workspaceModuleNameMapper('gqlize'),
-};
+const base = baseProject('gqlize');
 
 // Functional + DB-behaviour suites that exercise real adapter/DB behaviour and so
 // are worth running against Postgres too. Pure schema-builder unit tests
@@ -67,12 +61,7 @@ module.exports = {
   // silently ignored. This lived on the `postgres` project and did nothing;
   // suites timed out at 5000ms while the config claimed 30000.
   testTimeout: 30000,
-  collectCoverage: true,
-  // An allowlist, not a wildcard with exclusions: `build:src` copies the whole
-  // source tree into `publish/src`, so `**/*` counts every file twice for any
-  // run that follows a build — the second copy at 0%.
-  collectCoverageFrom: ["src/**/*.ts", "!src/**/*.d.ts"],
-  coverageReporters: ["text-summary", "lcov"],
+  ...coverage,
   coveragePathIgnorePatterns: ["/node_modules/"],
   projects: [
     {

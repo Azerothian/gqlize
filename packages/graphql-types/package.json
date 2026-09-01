@@ -26,9 +26,9 @@
     "build:readme": "cp ./README.md ./publish/README.md",
     "build:src": "copyfiles -u 1 \"src/**/*\" publish/src",
     "build:package": "tsx ../../scripts/build/prepare-package.ts",
-    "build:main": "swc src --out-dir publish/lib --out-file-extension mjs --strip-leading-paths -s --ignore \"**/*.d.ts\" && tsx ../../scripts/build/fix-esm-extensions.ts",
+    "build:main": "tsx ../../scripts/build/swc-build.ts esm && tsx ../../scripts/build/fix-esm-extensions.ts",
     "build:types": "tsc -p tsconfig.types.json --outDir publish/types",
-    "build:cjs": "swc src --out-dir publish/cjs --config-file=.swcrc-cjs --strip-leading-paths -s --ignore \"**/*.d.ts\""
+    "build:cjs": "tsx ../../scripts/build/swc-build.ts cjs"
   },
   "author": "VostroNet",
   "license": "MIT",
@@ -38,18 +38,18 @@
   },
   "devDependencies": {
     "@azerothian/utilize": "workspace:*",
-    "@jest/globals": "^30.4.1",
-    "@swc/cli": "^0.8.1",
-    "@swc/core": "^1.15.43",
-    "@swc/jest": "^0.2.39",
-    "@types/jest": "^30.0.0",
-    "@types/node": "^26.1.1",
-    "copyfiles": "^2.4.1",
+    "@jest/globals": "catalog:",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@swc/jest": "catalog:",
+    "@types/jest": "catalog:",
+    "@types/node": "catalog:",
+    "copyfiles": "catalog:",
     "graphql": "17.0.2",
-    "jest": "^30.4.2",
-    "npm-run-all2": "^9.0.2",
-    "tsx": "^4.19.4",
-    "typescript": "^7.0.2"
+    "jest": "catalog:",
+    "npm-run-all2": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
   },
   "peerDependencies": {
     "@azerothian/utilize": "^6.0.0",

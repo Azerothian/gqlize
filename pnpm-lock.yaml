@@ -4,6 +4,90 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@electric-sql/pglite':
+      specifier: ^0.5.4
+      version: 0.5.4
+    '@electric-sql/pglite-socket':
+      specifier: ^0.2.7
+      version: 0.2.7
+    '@jest/globals':
+      specifier: ^30.4.1
+      version: 30.4.1
+    '@nestjs/platform-express':
+      specifier: ^11.0.0
+      version: 11.1.28
+    '@nestjs/testing':
+      specifier: ^11.0.0
+      version: 11.1.28
+    '@swc/cli':
+      specifier: ^0.8.1
+      version: 0.8.1
+    '@swc/core':
+      specifier: ^1.15.43
+      version: 1.15.43
+    '@swc/jest':
+      specifier: ^0.2.39
+      version: 0.2.39
+    '@temporalio/testing':
+      specifier: ^1.22.0
+      version: 1.22.0
+    '@types/debug':
+      specifier: ^4.1.12
+      version: 4.1.13
+    '@types/jest':
+      specifier: ^30.0.0
+      version: 30.0.0
+    '@types/node':
+      specifier: ^26.1.1
+      version: 26.1.1
+    '@types/pluralize':
+      specifier: ^0.0.33
+      version: 0.0.33
+    '@types/supertest':
+      specifier: ^6.0.0
+      version: 6.0.3
+    copyfiles:
+      specifier: ^2.4.1
+      version: 2.4.1
+    del:
+      specifier: ^8.0.1
+      version: 8.0.1
+    graphql-yoga:
+      specifier: ^5.21.2
+      version: 5.21.2
+    jest:
+      specifier: ^30.4.2
+      version: 30.4.2
+    npm-run-all2:
+      specifier: ^9.0.2
+      version: 9.0.2
+    pg:
+      specifier: ^8.22.0
+      version: 8.22.0
+    pg-hstore:
+      specifier: ^2.3.4
+      version: 2.3.4
+    redis-memory-server:
+      specifier: ^0.12.1
+      version: 0.12.1
+    sqlite3:
+      specifier: ^6.0.1
+      version: 6.0.1
+    supertest:
+      specifier: ^7.0.0
+      version: 7.2.2
+    tsx:
+      specifier: ^4.19.4
+      version: 4.23.1
+    typescript:
+      specifier: ^7.0.2
+      version: 7.0.2
+    uuid:
+      specifier: ^14.0.1
+      version: 14.0.1
+
 overrides:
   graphql: 17.0.2
   unicorn-magic: 0.4.0
@@ -278,34 +362,34 @@ importers:
         version: 1.1.0
     devDependencies:
       '@electric-sql/pglite':
-        specifier: ^0.5.4
+        specifier: 'catalog:'
         version: 0.5.4
       '@electric-sql/pglite-socket':
-        specifier: ^0.2.7
+        specifier: 'catalog:'
         version: 0.2.7(@electric-sql/pglite-age@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_hashids@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_ivm@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_textsearch@0.0.6(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_uuidv7@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgtap@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgvector@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite@0.5.4)
       '@jest/globals':
-        specifier: ^30.4.1
+        specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
       '@swc/cli':
-        specifier: ^0.8.1
+        specifier: 'catalog:'
         version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
       '@swc/core':
-        specifier: ^1.15.43
+        specifier: 'catalog:'
         version: 1.15.43
       '@swc/jest':
-        specifier: ^0.2.39
+        specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
       '@types/jest':
-        specifier: ^30.0.0
+        specifier: 'catalog:'
         version: 30.0.0
       '@types/node':
-        specifier: ^26.1.1
+        specifier: 'catalog:'
         version: 26.1.1
       copyfiles:
-        specifier: ^2.4.1
+        specifier: 'catalog:'
         version: 2.4.1
       del:
-        specifier: ^8.0.1
+        specifier: 'catalog:'
         version: 8.0.1
       graphql:
         specifier: 17.0.2
@@ -314,34 +398,34 @@ importers:
         specifier: ^0.10.2
         version: 0.10.2(graphql@17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce))
       graphql-yoga:
-        specifier: ^5.21.2
+        specifier: 'catalog:'
         version: 5.21.2(graphql@17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce))
       jest:
-        specifier: ^30.4.2
+        specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       npm-run-all2:
-        specifier: ^9.0.2
+        specifier: 'catalog:'
         version: 9.0.2
       pg:
-        specifier: ^8.22.0
+        specifier: 'catalog:'
         version: 8.22.0
       pg-hstore:
-        specifier: ^2.3.4
+        specifier: 'catalog:'
         version: 2.3.4
       sequelize:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
       sqlite3:
-        specifier: ^6.0.1
+        specifier: 'catalog:'
         version: 6.0.1
       tsx:
-        specifier: ^4.19.4
+        specifier: 'catalog:'
         version: 4.23.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 'catalog:'
         version: 7.0.2
       uuid:
-        specifier: ^14.0.1
+        specifier: 'catalog:'
         version: 14.0.1
 
   packages/graphql-types:
@@ -350,40 +434,40 @@ importers:
         specifier: workspace:*
         version: link:../utilize
       '@jest/globals':
-        specifier: ^30.4.1
+        specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
       '@swc/cli':
-        specifier: ^0.8.1
+        specifier: 'catalog:'
         version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
       '@swc/core':
-        specifier: ^1.15.43
+        specifier: 'catalog:'
         version: 1.15.43
       '@swc/jest':
-        specifier: ^0.2.39
+        specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
       '@types/jest':
-        specifier: ^30.0.0
+        specifier: 'catalog:'
         version: 30.0.0
       '@types/node':
-        specifier: ^26.1.1
+        specifier: 'catalog:'
         version: 26.1.1
       copyfiles:
-        specifier: ^2.4.1
+        specifier: 'catalog:'
         version: 2.4.1
       graphql:
         specifier: 17.0.2
         version: 17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce)
       jest:
-        specifier: ^30.4.2
+        specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       npm-run-all2:
-        specifier: ^9.0.2
+        specifier: 'catalog:'
         version: 9.0.2
       tsx:
-        specifier: ^4.19.4
+        specifier: 'catalog:'
         version: 4.23.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 'catalog:'
         version: 7.0.2
 
   packages/nestize:
@@ -405,7 +489,7 @@ importers:
         specifier: workspace:*
         version: link:../ormize-zod4
       '@jest/globals':
-        specifier: ^30.4.1
+        specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
       '@nestjs/common':
         specifier: ^11.0.0
@@ -414,40 +498,40 @@ importers:
         specifier: ^11.0.0
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/platform-express@11.1.28)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/platform-express':
-        specifier: ^11.0.0
+        specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.1.28)(supports-color@8.1.1)
       '@nestjs/swagger':
         specifier: ^11.0.0
         version: 11.4.5(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.1.28)(reflect-metadata@0.2.2)
       '@nestjs/testing':
-        specifier: ^11.0.0
+        specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)
       '@swc/cli':
-        specifier: ^0.8.1
+        specifier: 'catalog:'
         version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
       '@swc/core':
-        specifier: ^1.15.43
+        specifier: 'catalog:'
         version: 1.15.43
       '@swc/jest':
-        specifier: ^0.2.39
+        specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
       '@types/jest':
-        specifier: ^30.0.0
+        specifier: 'catalog:'
         version: 30.0.0
       '@types/node':
-        specifier: ^26.1.1
+        specifier: 'catalog:'
         version: 26.1.1
       '@types/supertest':
-        specifier: ^6.0.0
+        specifier: 'catalog:'
         version: 6.0.3
       copyfiles:
-        specifier: ^2.4.1
+        specifier: 'catalog:'
         version: 2.4.1
       jest:
-        specifier: ^30.4.2
+        specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       npm-run-all2:
-        specifier: ^9.0.2
+        specifier: 'catalog:'
         version: 9.0.2
       reflect-metadata:
         specifier: ^0.2.0
@@ -459,16 +543,16 @@ importers:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
       sqlite3:
-        specifier: ^6.0.1
+        specifier: 'catalog:'
         version: 6.0.1
       supertest:
-        specifier: ^7.0.0
+        specifier: 'catalog:'
         version: 7.2.2(supports-color@8.1.1)
       tsx:
-        specifier: ^4.19.4
+        specifier: 'catalog:'
         version: 4.23.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 'catalog:'
         version: 7.0.2
 
   packages/ormize:
@@ -481,28 +565,28 @@ importers:
         version: 8.0.0
     devDependencies:
       '@jest/globals':
-        specifier: ^30.4.1
+        specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
       '@swc/cli':
-        specifier: ^0.8.1
+        specifier: 'catalog:'
         version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
       '@swc/core':
-        specifier: ^1.15.43
+        specifier: 'catalog:'
         version: 1.15.43
       '@swc/jest':
-        specifier: ^0.2.39
+        specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
       '@types/jest':
-        specifier: ^30.0.0
+        specifier: 'catalog:'
         version: 30.0.0
       '@types/node':
-        specifier: ^26.1.1
+        specifier: 'catalog:'
         version: 26.1.1
       '@types/pluralize':
-        specifier: ^0.0.33
+        specifier: 'catalog:'
         version: 0.0.33
       copyfiles:
-        specifier: ^2.4.1
+        specifier: 'catalog:'
         version: 2.4.1
       graphql:
         specifier: 17.0.2
@@ -511,22 +595,22 @@ importers:
         specifier: ^0.10.2
         version: 0.10.2(graphql@17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce))
       jest:
-        specifier: ^30.4.2
+        specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       npm-run-all2:
-        specifier: ^9.0.2
+        specifier: 'catalog:'
         version: 9.0.2
       sequelize:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
       sqlite3:
-        specifier: ^6.0.1
+        specifier: 'catalog:'
         version: 6.0.1
       tsx:
-        specifier: ^4.19.4
+        specifier: 'catalog:'
         version: 4.23.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 'catalog:'
         version: 7.0.2
 
   packages/ormize-adapter-sequelize:
@@ -545,28 +629,28 @@ importers:
         specifier: workspace:*
         version: link:../ormize
       '@jest/globals':
-        specifier: ^30.4.1
+        specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
       '@swc/cli':
-        specifier: ^0.8.1
+        specifier: 'catalog:'
         version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
       '@swc/core':
-        specifier: ^1.15.43
+        specifier: 'catalog:'
         version: 1.15.43
       '@swc/jest':
-        specifier: ^0.2.39
+        specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
       '@types/jest':
-        specifier: ^30.0.0
+        specifier: 'catalog:'
         version: 30.0.0
       '@types/node':
-        specifier: ^26.1.1
+        specifier: 'catalog:'
         version: 26.1.1
       copyfiles:
-        specifier: ^2.4.1
+        specifier: 'catalog:'
         version: 2.4.1
       del:
-        specifier: ^8.0.1
+        specifier: 'catalog:'
         version: 8.0.1
       graphql:
         specifier: 17.0.2
@@ -575,22 +659,22 @@ importers:
         specifier: ^0.10.2
         version: 0.10.2(graphql@17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce))
       jest:
-        specifier: ^30.4.2
+        specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       npm-run-all2:
-        specifier: ^9.0.2
+        specifier: 'catalog:'
         version: 9.0.2
       sequelize:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
       sqlite3:
-        specifier: ^6.0.1
+        specifier: 'catalog:'
         version: 6.0.1
       tsx:
-        specifier: ^4.19.4
+        specifier: 'catalog:'
         version: 4.23.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 'catalog:'
         version: 7.0.2
 
   packages/ormize-adapter-valkey:
@@ -612,25 +696,25 @@ importers:
         specifier: workspace:*
         version: link:../ormize-adapter-sequelize
       '@jest/globals':
-        specifier: ^30.4.1
+        specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
       '@swc/cli':
-        specifier: ^0.8.1
+        specifier: 'catalog:'
         version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
       '@swc/core':
-        specifier: ^1.15.43
+        specifier: 'catalog:'
         version: 1.15.43
       '@swc/jest':
-        specifier: ^0.2.39
+        specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
       '@types/jest':
-        specifier: ^30.0.0
+        specifier: 'catalog:'
         version: 30.0.0
       '@types/node':
-        specifier: ^26.1.1
+        specifier: 'catalog:'
         version: 26.1.1
       copyfiles:
-        specifier: ^2.4.1
+        specifier: 'catalog:'
         version: 2.4.1
       graphql:
         specifier: 17.0.2
@@ -642,25 +726,25 @@ importers:
         specifier: ^5.4.1
         version: 5.11.1(supports-color@8.1.1)
       jest:
-        specifier: ^30.4.2
+        specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       npm-run-all2:
-        specifier: ^9.0.2
+        specifier: 'catalog:'
         version: 9.0.2
       redis-memory-server:
-        specifier: ^0.12.1
+        specifier: 'catalog:'
         version: 0.12.1(supports-color@8.1.1)
       sequelize:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
       sqlite3:
-        specifier: ^6.0.1
+        specifier: 'catalog:'
         version: 6.0.1
       tsx:
-        specifier: ^4.19.4
+        specifier: 'catalog:'
         version: 4.23.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 'catalog:'
         version: 7.0.2
 
   packages/ormize-zod4:
@@ -679,43 +763,43 @@ importers:
         specifier: workspace:*
         version: link:../ormize-adapter-sequelize
       '@jest/globals':
-        specifier: ^30.4.1
+        specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
       '@swc/cli':
-        specifier: ^0.8.1
+        specifier: 'catalog:'
         version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
       '@swc/core':
-        specifier: ^1.15.43
+        specifier: 'catalog:'
         version: 1.15.43
       '@swc/jest':
-        specifier: ^0.2.39
+        specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
       '@types/jest':
-        specifier: ^30.0.0
+        specifier: 'catalog:'
         version: 30.0.0
       '@types/node':
-        specifier: ^26.1.1
+        specifier: 'catalog:'
         version: 26.1.1
       copyfiles:
-        specifier: ^2.4.1
+        specifier: 'catalog:'
         version: 2.4.1
       jest:
-        specifier: ^30.4.2
+        specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       npm-run-all2:
-        specifier: ^9.0.2
+        specifier: 'catalog:'
         version: 9.0.2
       sequelize:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
       sqlite3:
-        specifier: ^6.0.1
+        specifier: 'catalog:'
         version: 6.0.1
       tsx:
-        specifier: ^4.19.4
+        specifier: 'catalog:'
         version: 4.23.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 'catalog:'
         version: 7.0.2
 
   packages/temporalize:
@@ -734,16 +818,16 @@ importers:
         specifier: workspace:*
         version: link:../ormize-zod4
       '@jest/globals':
-        specifier: ^30.4.1
+        specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
       '@swc/cli':
-        specifier: ^0.8.1
+        specifier: 'catalog:'
         version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
       '@swc/core':
-        specifier: ^1.15.43
+        specifier: 'catalog:'
         version: 1.15.43
       '@swc/jest':
-        specifier: ^0.2.39
+        specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
       '@temporalio/activity':
         specifier: ^1.22.0
@@ -755,7 +839,7 @@ importers:
         specifier: ^1.22.0
         version: 1.22.0
       '@temporalio/testing':
-        specifier: ^1.22.0
+        specifier: 'catalog:'
         version: 1.22.0(esbuild@0.28.1)
       '@temporalio/worker':
         specifier: ^1.22.0
@@ -764,31 +848,31 @@ importers:
         specifier: ^1.22.0
         version: 1.22.0
       '@types/jest':
-        specifier: ^30.0.0
+        specifier: 'catalog:'
         version: 30.0.0
       '@types/node':
-        specifier: ^26.1.1
+        specifier: 'catalog:'
         version: 26.1.1
       copyfiles:
-        specifier: ^2.4.1
+        specifier: 'catalog:'
         version: 2.4.1
       jest:
-        specifier: ^30.4.2
+        specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       npm-run-all2:
-        specifier: ^9.0.2
+        specifier: 'catalog:'
         version: 9.0.2
       sequelize:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
       sqlite3:
-        specifier: ^6.0.1
+        specifier: 'catalog:'
         version: 6.0.1
       tsx:
-        specifier: ^4.19.4
+        specifier: 'catalog:'
         version: 4.23.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 'catalog:'
         version: 7.0.2
 
   packages/utilize:
@@ -804,43 +888,43 @@ importers:
         version: 8.0.0
     devDependencies:
       '@jest/globals':
-        specifier: ^30.4.1
+        specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
       '@swc/cli':
-        specifier: ^0.8.1
+        specifier: 'catalog:'
         version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
       '@swc/core':
-        specifier: ^1.15.43
+        specifier: 'catalog:'
         version: 1.15.43
       '@swc/jest':
-        specifier: ^0.2.39
+        specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
       '@types/debug':
-        specifier: ^4.1.12
+        specifier: 'catalog:'
         version: 4.1.13
       '@types/jest':
-        specifier: ^30.0.0
+        specifier: 'catalog:'
         version: 30.0.0
       '@types/node':
-        specifier: ^26.1.1
+        specifier: 'catalog:'
         version: 26.1.1
       '@types/pluralize':
-        specifier: ^0.0.33
+        specifier: 'catalog:'
         version: 0.0.33
       copyfiles:
-        specifier: ^2.4.1
+        specifier: 'catalog:'
         version: 2.4.1
       jest:
-        specifier: ^30.4.2
+        specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       npm-run-all2:
-        specifier: ^9.0.2
+        specifier: 'catalog:'
         version: 9.0.2
       tsx:
-        specifier: ^4.19.4
+        specifier: 'catalog:'
         version: 4.23.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 'catalog:'
         version: 7.0.2
 
   tools/lint:
@@ -5911,7 +5995,7 @@ snapshots:
   '@jest/console@30.4.1':
     dependencies:
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       chalk: 4.1.2
       jest-message-util: 30.4.1
       jest-util: 30.4.1
@@ -5925,7 +6009,7 @@ snapshots:
       '@jest/test-result': 30.4.1
       '@jest/transform': 30.4.1(supports-color@8.1.1)
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       ansi-escapes: 4.3.2
       chalk: 4.1.2
       ci-info: 4.4.0
@@ -5933,7 +6017,7 @@ snapshots:
       fast-json-stable-stringify: 2.1.0
       graceful-fs: 4.2.11
       jest-changed-files: 30.4.1
-      jest-config: 30.4.2(@types/node@26.1.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@5.9.3))
+      jest-config: 30.4.2(@types/node@24.13.3)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@5.9.3))
       jest-haste-map: 30.4.1
       jest-message-util: 30.4.1
       jest-regex-util: 30.4.0
@@ -5964,7 +6048,7 @@ snapshots:
       '@jest/test-result': 30.4.1
       '@jest/transform': 30.4.1(supports-color@8.1.1)
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       ansi-escapes: 4.3.2
       chalk: 4.1.2
       ci-info: 4.4.0
@@ -5972,7 +6056,7 @@ snapshots:
       fast-json-stable-stringify: 2.1.0
       graceful-fs: 4.2.11
       jest-changed-files: 30.4.1
-      jest-config: 30.4.2(@types/node@26.1.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
+      jest-config: 30.4.2(@types/node@24.13.3)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
       jest-haste-map: 30.4.1
       jest-message-util: 30.4.1
       jest-regex-util: 30.4.0
@@ -6004,7 +6088,7 @@ snapshots:
     dependencies:
       '@jest/fake-timers': 30.4.1
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       jest-mock: 30.4.1
 
   '@jest/expect-utils@30.4.1':
@@ -6022,7 +6106,7 @@ snapshots:
     dependencies:
       '@jest/types': 30.4.1
       '@sinonjs/fake-timers': 15.4.0
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       jest-message-util: 30.4.1
       jest-mock: 30.4.1
       jest-util: 30.4.1
@@ -6040,7 +6124,7 @@ snapshots:
 
   '@jest/pattern@30.4.0':
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       jest-regex-util: 30.4.0
 
   '@jest/reporters@30.4.1(node-notifier@10.0.1)(supports-color@8.1.1)':
@@ -6051,7 +6135,7 @@ snapshots:
       '@jest/transform': 30.4.1(supports-color@8.1.1)
       '@jest/types': 30.4.1
       '@jridgewell/trace-mapping': 0.3.31
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       chalk: 4.1.2
       collect-v8-coverage: 1.0.3
       exit-x: 0.2.2
@@ -6129,7 +6213,7 @@ snapshots:
       '@jest/schemas': 30.4.1
       '@types/istanbul-lib-coverage': 2.0.6
       '@types/istanbul-reports': 3.0.4
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       '@types/yargs': 17.0.35
       chalk: 4.1.2
 
@@ -6904,7 +6988,7 @@ snapshots:
     dependencies:
       '@types/cookiejar': 2.1.5
       '@types/methods': 1.1.4
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       form-data: 4.0.6
 
   '@types/supertest@6.0.3':
@@ -6922,7 +7006,7 @@ snapshots:
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
     optional: true
 
   '@typescript-eslint/eslint-plugin@8.67.0(@typescript-eslint/parser@8.67.0(eslint@10.9.0(supports-color@8.1.1))(supports-color@8.1.1)(typescript@5.9.3))(eslint@10.9.0(supports-color@8.1.1))(supports-color@8.1.1)(typescript@5.9.3)':
@@ -8545,7 +8629,7 @@ snapshots:
       '@jest/expect': 30.4.1(supports-color@8.1.1)
       '@jest/test-result': 30.4.1
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       chalk: 4.1.2
       co: 4.6.0
       dedent: 1.7.2
@@ -8607,6 +8691,71 @@ snapshots:
       - esbuild-register
       - supports-color
       - ts-node
+
+  jest-config@30.4.2(@types/node@24.13.3)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@5.9.3)):
+    dependencies:
+      '@babel/core': 7.29.7(supports-color@8.1.1)
+      '@jest/get-type': 30.1.0
+      '@jest/pattern': 30.4.0
+      '@jest/test-sequencer': 30.4.1
+      '@jest/types': 30.4.1
+      babel-jest: 30.4.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      chalk: 4.1.2
+      ci-info: 4.4.0
+      deepmerge: 4.3.1
+      glob: 10.5.0
+      graceful-fs: 4.2.11
+      jest-circus: 30.4.2(supports-color@8.1.1)
+      jest-docblock: 30.4.0
+      jest-environment-node: 30.4.1
+      jest-regex-util: 30.4.0
+      jest-resolve: 30.4.1
+      jest-runner: 30.4.2(supports-color@8.1.1)
+      jest-util: 30.4.1
+      jest-validate: 30.4.1
+      parse-json: 5.2.0
+      pretty-format: 30.4.1
+      slash: 3.0.0
+      strip-json-comments: 3.1.1
+    optionalDependencies:
+      '@types/node': 24.13.3
+      ts-node: 10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@5.9.3)
+    transitivePeerDependencies:
+      - babel-plugin-macros
+      - supports-color
+    optional: true
+
+  jest-config@30.4.2(@types/node@24.13.3)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2)):
+    dependencies:
+      '@babel/core': 7.29.7(supports-color@8.1.1)
+      '@jest/get-type': 30.1.0
+      '@jest/pattern': 30.4.0
+      '@jest/test-sequencer': 30.4.1
+      '@jest/types': 30.4.1
+      babel-jest: 30.4.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      chalk: 4.1.2
+      ci-info: 4.4.0
+      deepmerge: 4.3.1
+      glob: 10.5.0
+      graceful-fs: 4.2.11
+      jest-circus: 30.4.2(supports-color@8.1.1)
+      jest-docblock: 30.4.0
+      jest-environment-node: 30.4.1
+      jest-regex-util: 30.4.0
+      jest-resolve: 30.4.1
+      jest-runner: 30.4.2(supports-color@8.1.1)
+      jest-util: 30.4.1
+      jest-validate: 30.4.1
+      parse-json: 5.2.0
+      pretty-format: 30.4.1
+      slash: 3.0.0
+      strip-json-comments: 3.1.1
+    optionalDependencies:
+      '@types/node': 24.13.3
+      ts-node: 10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2)
+    transitivePeerDependencies:
+      - babel-plugin-macros
+      - supports-color
 
   jest-config@30.4.2(@types/node@26.1.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@5.9.3)):
     dependencies:
@@ -8697,7 +8846,7 @@ snapshots:
       '@jest/environment': 30.4.1
       '@jest/fake-timers': 30.4.1
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       jest-mock: 30.4.1
       jest-util: 30.4.1
       jest-validate: 30.4.1
@@ -8705,7 +8854,7 @@ snapshots:
   jest-haste-map@30.4.1:
     dependencies:
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       anymatch: 3.1.3
       fb-watchman: 2.0.2
       graceful-fs: 4.2.11
@@ -8745,7 +8894,7 @@ snapshots:
   jest-mock@30.4.1:
     dependencies:
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       jest-util: 30.4.1
 
   jest-pnp-resolver@1.2.3(jest-resolve@30.4.1):
@@ -8779,7 +8928,7 @@ snapshots:
       '@jest/test-result': 30.4.1
       '@jest/transform': 30.4.1(supports-color@8.1.1)
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       chalk: 4.1.2
       emittery: 0.13.1
       exit-x: 0.2.2
@@ -8808,7 +8957,7 @@ snapshots:
       '@jest/test-result': 30.4.1
       '@jest/transform': 30.4.1(supports-color@8.1.1)
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       chalk: 4.1.2
       cjs-module-lexer: 2.2.0
       collect-v8-coverage: 1.0.3
@@ -8855,7 +9004,7 @@ snapshots:
   jest-util@30.4.1:
     dependencies:
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       chalk: 4.1.2
       ci-info: 4.4.0
       graceful-fs: 4.2.11
@@ -8874,7 +9023,7 @@ snapshots:
     dependencies:
       '@jest/test-result': 30.4.1
       '@jest/types': 30.4.1
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       ansi-escapes: 4.3.2
       chalk: 4.1.2
       emittery: 0.13.1
@@ -8883,13 +9032,13 @@ snapshots:
 
   jest-worker@27.5.1:
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       merge-stream: 2.0.0
       supports-color: 8.1.1
 
   jest-worker@30.4.1:
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       '@ungap/structured-clone': 1.3.3
       jest-util: 30.4.1
       merge-stream: 2.0.0
@@ -9464,7 +9613,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.2
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
       long: 5.3.2
 
   proxy-addr@2.0.7:
@@ -10297,7 +10446,7 @@ snapshots:
 
   wkx@0.5.0:
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 24.13.3
 
   word-wrap@1.2.5: {}
 
