@@ -14,10 +14,6 @@ type ClassMethodFn = NonNullable<Definition["classMethods"]>[string];
 import { describe, expect, it } from "@jest/globals";
 import { GraphQLList } from "graphql";
 
-// import jsonType from "@vostro/graphql-types/lib/json";
-// import { SequelizeDefinition } from '../lib/types/index';
-// import { Association } from "@vostro/gqlize/lib/types";
-
 describe("tests", () => {
   it("adapter - getORM", () => {
     const adapter = new SequelizeAdapter({}, {
@@ -603,21 +599,6 @@ describe("tests", () => {
     expect(rels.children.name).toEqual("children");
     expect(rels.children.target).toEqual("Item");
     expect(rels.children.source).toEqual("Item");
-    // const childrenAssociation = rels.children.rel as Association
-    // expect(childrenAssociation.associationType).toEqual("hasMany");
-    // expect(childrenAssociation.foreignKey).toEqual("parentId");
-    // expect(childrenAssociation.sourceKey).toEqual("id");
-    // expect(childrenAssociation.accessors).toBeDefined();
-    // expect(childrenAssociation.accessors.add).toBeDefined();
-    // expect(childrenAssociation.accessors.addMultiple).toBeDefined();
-    // expect(childrenAssociation.accessors.count).toBeDefined();
-    // expect(childrenAssociation.accessors.create).toBeDefined();
-    // expect(childrenAssociation.accessors.get).toBeDefined();
-    // expect(childrenAssociation.accessors.hasAll).toBeDefined();
-    // expect(childrenAssociation.accessors.hasSingle).toBeDefined();
-    // expect(childrenAssociation.accessors.remove).toBeDefined();
-    // expect(childrenAssociation.accessors.removeMultiple).toBeDefined();
-    // expect(childrenAssociation.accessors.set).toBeDefined();
   });
 
 

@@ -34,7 +34,6 @@ describe("permissions", () => {
         },
       },
     });
-    // debugger; //eslint-disable-line
     const queryFields = (schema.getQueryType()?.getFields().models.type as GraphQLObjectType)?.getFields();
     expect(queryFields.Task).not.toBeDefined();
     return expect(queryFields.TaskItem).toBeDefined();

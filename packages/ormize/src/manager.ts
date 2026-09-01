@@ -29,6 +29,12 @@ import { store, getStore } from "./context";
 /** The relationship types ormize knows how to wire; `Relationship.type` is a widened string. */
 const relationshipTypes: string[] = Object.values(RelationshipType);
 
+/**
+ * The relationship types whose read accessor names one row rather than many —
+ * `getAuthor`, not `getAuthors`. Everything else pluralises.
+ */
+const SINGULAR_ACCESSOR = new Set<string>([RelationshipType.BelongsTo, RelationshipType.HasOne]);
+
 const hookList = [
   "beforeValidate",
   "afterValidate",
@@ -184,11 +190,7 @@ export default class Ormize<
    * `globalHooks` for the same reason `scopeHooks` is.
    */
   private scopeInstanceHooks: {[hookName: string]: (...args: unknown[]) => unknown};
-  /** Vestigial: initialised empty and never written. */
-  globalKeys: {[name: string]: unknown};
   hooks: {[defName: string]: HookMap};
-  /** Vestigial: initialised empty and never written. */
-  hookmap: {[name: string]: unknown};
   globalHooks: {[hookName: string]: HookFunction[] | HookFunction};
   cache:  Cache;
   defaultAdapter: string | undefined;
@@ -198,9 +200,7 @@ export default class Ormize<
     this.adapters = {};
     this.models = {} as TModels;
     this.relationships = {};
-    this.globalKeys = {};
     this.hooks = {};
-    this.hookmap = {};
     this.globalHooks = [...hookList, ...sequelizeHookList].reduce((o, hookName) => {
       // Copied, not aliased, and normalised to an array. Two defects in one
       // line: `addHook`/`unshiftHook` push onto these, so an aliased array made
@@ -1000,30 +1000,19 @@ export default class Ormize<
       this.relationships[def.name][rel.name].internal = true;
       //TODO: populate foreignKey/sourceKeys if not provided
       await sourceAdapter.createRelationship(def.name, rel.model, rel.name, rel.type, rel.options);
-      // if (!foreignKey) {
-      //   throw new Error("TODO: Add foreignKey detection from adapter");
-      // }
       return undefined;
 
     }
     this.relationships[def.name][rel.name].internal = false;
     const modelClass = sourceAdapter.getModel(def.name);
     const sourcePrimaryKeyName = sourceAdapter.getPrimaryKeyNameForModel(def.name)[0]; //TODO: check for edge case with multi primary key table
-    let funcName = `get${capitalize(rel.model)}`;
-    switch (rel.type) {
-      case "hasMany":
-        funcName = pluralize.plural(funcName);
-        break;
-      case "belongsTo":
-      case "hasOne":
-        funcName = pluralize.singular(funcName);
-        break;
-      case "belongsToMany":
-        funcName = pluralize.plural(funcName);
-        break;
-      default:
-        throw new Error(`Unknown relationship type ${rel.type}`);
-    }
+    // Singular for the -one variants, plural for the -many. `validateRelationship`
+    // above has already rejected any other type, so there is no fallback arm to
+    // write — the `default:` that used to be here was unreachable.
+    const base = `get${capitalize(rel.model)}`;
+    const funcName = SINGULAR_ACCESSOR.has(rel.type)
+      ? pluralize.singular(base)
+      : pluralize.plural(base);
     this.relationships[def.name][rel.name].funcName = funcName;
     if (!foreignKey) {
       throw new Error(`For cross adapter relationships you must define a foreign key ${def.name} (${rel.type}) ${rel.model}: ${rel.name}`);
@@ -1165,13 +1154,6 @@ export default class Ormize<
     scopedWhere: (defName, operation, context, where, options) => this.scopeNativeWhere(defName, operation, context, where, options),
     assertRowsInScope: (defName, operation, context, rows, options) => this.assertRowsInScope(defName, operation, context, rows, options),
   };
-  /**
-   * @deprecated Kept for the published surface; prefer the free
-   * `createProxyFunction` in `./cross-adapter`, which this forwards to.
-   */
-  createProxyFunction(adapter: OrmAdapter, sourceKey: string, filterKey: string, singular: boolean, findFunc: (keyValue: string, filterKey: string, singular: boolean) => ((options: AdapterQueryOptions) => Promise<AdapterRow>), adaptOptions?: (options: AdapterQueryOptions | undefined) => Promise<AdapterQueryOptions | undefined>, scopedWhere?: (options: AdapterQueryOptions | undefined) => Promise<AdapterWhere | undefined | false>)  {
-    return createProxyFunction(adapter, sourceKey, filterKey, singular, findFunc, adaptOptions, scopedWhere);
-  }
   getValueFromInstance = (defName: string, data: AdapterRow, keyName: string): unknown => {
     if (!data) {
       return undefined;
@@ -1438,12 +1420,10 @@ export default class Ormize<
       let out: IncludeMap | undefined;
       for (const relName of Object.keys(map)) {
         const descriptor = map[relName];
-        let targetDef: Definition | undefined;
-        try {
-          targetDef = this.getDefinition(descriptor.target);
-        } catch (e) {
-          targetDef = undefined; // a target this engine does not own has nothing to expand against
-        }
+        // Undefined for a target this engine does not own, which has nothing to
+        // expand against. `getDefinition` indexes and does not throw — the
+        // try/catch this replaces could never fire.
+        const targetDef = this.getDefinition(descriptor.target);
         const orderBy = expandOrderBy(targetDef, descriptor.orderBy, ctx);
         const nested = this.expandComputedIncludeOrder(descriptor.include, ctx);
         if (orderBy === descriptor.orderBy && nested === descriptor.include) {

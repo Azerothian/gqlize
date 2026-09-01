@@ -19,18 +19,12 @@ export type KeyId = string | number | bigint;
  * SHA-1 hashed.
  */
 export function encodeValue(value: unknown): string {
-  let s: string;
-  if (value === null || value === undefined) {
-    s = " null";
-  } else if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    s = String(value);
-  } else {
-    // An indexed/unique field's value is one of the scalars above by
-    // construction; this branch only runs for malformed input, and even then
-    // needs a stable (if opaque) segment rather than throwing.
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- see comment above
-    s = String(value);
-  }
+  // An indexed/unique field's value is a scalar by construction. Anything else is
+  // malformed input, and still needs a stable (if opaque) segment rather than a
+  // throw — which is why the scalar and non-scalar arms this replaces both read
+  // `String(value)` and could simply be one.
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string -- see comment above
+  const s = value == null ? " null" : String(value);
   if (s.length <= MAX_LITERAL && !/\s/.test(s)) {
     return s;
   }

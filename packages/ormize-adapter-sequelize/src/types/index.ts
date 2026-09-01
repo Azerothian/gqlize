@@ -19,9 +19,6 @@ export interface SequelizeDefinition extends Definition {
    */
   removeAttributes?: string[];
 
-  // classMethods?: {
-  //   [key: string]: any;// SqlClassMethod | ((args: any, context: any) => any);
-  // };
   // `instanceMethods` is inherited from `Definition` unchanged — Sequelize
   // installs whatever is authored there directly onto the model prototype
   // without narrowing it, so there is nothing Sequelize-specific to restate.

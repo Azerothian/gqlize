@@ -11,7 +11,6 @@ import { isQueryInstanceMethodAllowed, type Permission } from "./gate";
 import type {
   DeclaredIncludeMap,
   Definition,
-  ExposedMethod,
   ExposedMethodContext,
   ExposedMethods,
   OptionHook,
@@ -326,5 +325,3 @@ export function assertNoExposedMethodCollisions(
   }
 }
 
-/** Narrow a method entry to the declarative half, for callers that only need it. */
-export type DeclarativeMethod = Pick<ExposedMethod, "fields" | "include" | "input" | "output" | "orderBy" | "where">;
