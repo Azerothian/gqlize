@@ -1270,7 +1270,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // Both the eager-loaded value and the generated accessor are reached off the
     // instance by name — see {@link rowFields}.
     const fields = rowFields(source);
-    if (fields[relationship.name]) {
+    // `!== undefined`, not truthy. A relation that was eager-loaded and matched
+    // nothing is `null` on the instance, and a truthy test read that as "not
+    // loaded" and issued the accessor query anyway — which returned the same
+    // null after a wasted round trip, once per parent row. Absent means absent;
+    // `null` is an answer.
+    if (fields[relationship.name] !== undefined) {
       return fields[relationship.name];
     }
     return fields[relationship.accessors.get](options);
@@ -1328,11 +1333,25 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     if (fields[relationship.name] !== undefined && fields[relationship.name] !== null) {
       // Eager-loaded at the root level (JOIN or `separate:true`). The rows are
-      // already filtered/sorted/limited, so return them — but when a per-parent
+      // already filtered and sorted, so return them — but when a per-parent
       // limit was applied the loaded length is the page size, not the true total,
       // so fetch an accurate count (fires the child's beforeCount natively).
       const val = fields[relationship.name];
-      const models = Array.isArray(val) ? val : [val];
+      let models = Array.isArray(val) ? val : [val];
+      // ...and "already limited" holds only on the `separate` path, where the
+      // window went into SQL. A `required` relation keeps its INNER JOIN even
+      // when paginated — the join is what filters the parents, and a per-parent
+      // query cannot do that — so its window has to be applied here instead.
+      //
+      // Unconditional because it is a no-op whenever SQL already did the work:
+      // that page is at most `limit` rows starting at `offset`. Doing it only
+      // for the cases believed to need it is how the bound got lost in the
+      // first place.
+      const window = args.first != null ? args.first : args.last;
+      if (window != null && models.length > 0) {
+        const start = request.offset || 0;
+        models = models.slice(start, start + window);
+      }
       let total = models.length;
       if (args && (args.first != null || args.last != null)) {
         try {

@@ -289,9 +289,37 @@ export function buildIncludeMapFromSelection(
       // per-parent pagination, which a JOIN cannot express — or when explicitly
       // requested via the include arg. Otherwise the relation folds into the
       // parent query as a JOIN. Sequelize only supports `separate` on hasMany.
+      // Mirrors the adapter's own rule (`query-options.ts`): `required` wins
+      // over `separate`, because an INNER JOIN filters the parent rows and a
+      // separate query cannot. Computing it the same way here is what lets the
+      // guard below see the cases the adapter would refuse.
       descriptor.separate =
         association.associationType === "hasMany" &&
+        !descriptor.required &&
         (paginated || fieldArgs.separate === true);
+      // A per-parent limit can only be expressed by `separate`. Where that is
+      // not available — a `belongsToMany`, which Sequelize cannot fetch
+      // separately, or a `required` relation, where the INNER JOIN that filters
+      // the parents has to stay a JOIN — the relation is left out of the plan
+      // and resolved by its own per-parent query, which applies the limit
+      // correctly. §5: relations the parent query cannot express are "left to
+      // their own resolvers".
+      //
+      // Emitting the descriptor anyway is what this replaces, and it was worse
+      // than an extra query: the adapter applies `limit`/`offset` only on the
+      // `separate` branch, so the bound was dropped in silence and the JOIN
+      // returned every child row — with `hasNextPage: false`, telling the client
+      // it had seen everything. `first` is the only bound a client has on a
+      // nested connection, which is why it is clamped a few lines below.
+      //
+      // A `required` relation is the exception and stays in the plan: its INNER
+      // JOIN is what filters the parent rows, and that cannot be recovered by a
+      // per-parent query afterwards — dropping it would silently widen the
+      // parent set, which is a worse answer than over-reading children. The
+      // adapter applies the window to those rows once they are loaded.
+      if (paginated && !descriptor.separate && !descriptor.required) {
+        continue;
+      }
       if (fieldArgs.first != null || fieldArgs.last != null) {
         descriptor.limit = clampPageSize(fieldArgs.first != null ? fieldArgs.first : fieldArgs.last);
       } else if (descriptor.separate) {

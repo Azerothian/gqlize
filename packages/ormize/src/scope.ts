@@ -319,14 +319,25 @@ export async function scopeIncludePlan(
       scoped.include = await scopeIncludePlan(inc.include, readScopeFor);
       if (resolved?.where) {
         scoped.where = mergeScopeWhere(inc.where, resolved.where);
-        if (inc.required === undefined) {
-          // Decision 6, and not merely a preference: an adapter that infers
-          // requiredness from the presence of a `where` — Sequelize does — would
-          // read the injected filter as "INNER JOIN" and drop every parent whose
-          // children are all out of scope. A scope on a child must never become
-          // a filter on the parent.
-          scoped.required = false;
-        }
+        // Decision 6, and not merely a preference: an adapter that infers
+        // requiredness from the presence of a `where` — Sequelize does — would
+        // read the injected filter as "INNER JOIN" and drop every parent whose
+        // children are all out of scope. A scope on a child must never become a
+        // filter on the parent.
+        //
+        // Unconditional, and that is the point. This used to run only when
+        // `required` was `undefined`, which is a shape the include planner never
+        // produces — it always writes a defined boolean — so on the path that
+        // reaches this code the guard never fired. A caller asking for
+        // `required: true` on a scoped relation then had its parent list
+        // narrowed by rows it may not see, which reports their existence through
+        // their absence.
+        //
+        // `required: true` keeps its meaning, narrowed to what the caller is
+        // allowed to know: "parents having a matching child" among visible rows.
+        // The children are filtered by the scope either way; only the decision to
+        // discard the parent along with them is refused.
+        scoped.required = false;
       }
       mapped[relName] = scoped;
     }

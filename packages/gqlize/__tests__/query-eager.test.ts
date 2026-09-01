@@ -1,9 +1,8 @@
 import {graphql, GraphQLSchema} from "graphql";
 import {createInstance, resultData, validateResult} from "./helper";
+import {captureQueries} from "./helper/sql";
 import {createSchema} from "../src";
 import {describe, it, expect} from "@jest/globals";
-import {Ormize as Database} from "@azerothian/ormize";
-import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 
 // NOTE: the test TaskItem model validates `name` as alphanumeric, 8-50 chars.
 
@@ -30,25 +29,6 @@ async function run<T>(schema: GraphQLSchema, source: string, rootValue?: unknown
   const result = await graphql({schema, source, rootValue});
   validateResult(result);
   return resultData<T>(result);
-}
-
-// `sequelize`'s public types never declare `.options` on `Sequelize` even
-// though it is set in its constructor and read throughout the library — it is
-// simply absent from the `.d.ts`, not fenced off. `unknown` names the exact
-// shape this test depends on rather than opening the door to anything else.
-type SequelizeWithLogging = {options: {logging: (sql: string) => void}};
-
-function captureQueries(instance: Database) {
-  const queries: string[] = [];
-  const adapter = instance.getModelAdapter("Task");
-  if (!(adapter instanceof SequelizeAdapter)) {
-    throw new Error("Expected the Task adapter to be a SequelizeAdapter");
-  }
-  (adapter.sequelize as unknown as SequelizeWithLogging).options.logging = (sql) => queries.push(sql);
-  return {
-    queries,
-    selects: () => queries.filter((q) => /SELECT/i.test(q)),
-  };
 }
 
 describe("eager resolution (root-level include from selection)", () => {
