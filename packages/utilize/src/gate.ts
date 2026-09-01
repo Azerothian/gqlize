@@ -11,6 +11,7 @@
 //  - `options` from the permission object is passed as the trailing predicate arg
 //    (role/user context), mirroring gqlize call sites.
 
+import { lowercase } from "./utils/word";
 import type { RequestContext } from "./types/index";
 
 // Same channel, and the same reasoning, as `permissions.ts`: the `debug`-backed
@@ -650,8 +651,7 @@ export function scopeParametersIn(query: string | undefined, args?: string[]): s
 
 /** `"scopeOwnerId"` → `"ownerId"`; the empty `"scope"` names no field. */
 export function scopeFieldOf(parameter: string): string {
-  const rest = parameter.slice("scope".length);
-  return rest ? rest[0].toLowerCase() + rest.slice(1) : "";
+  return lowercase(parameter.slice("scope".length));
 }
 
 /**

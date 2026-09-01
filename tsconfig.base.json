@@ -42,7 +42,9 @@
       "@azerothian/nestize": ["./packages/nestize/src/index.ts"],
       "@azerothian/nestize/*": ["./packages/nestize/src/*"],
       "@azerothian/temporalize": ["./packages/temporalize/src/index.ts"],
-      "@azerothian/temporalize/*": ["./packages/temporalize/src/*"]
+      "@azerothian/temporalize/*": ["./packages/temporalize/src/*"],
+      "@azerothian/test-fixtures": ["./packages/test-fixtures/src/index.ts"],
+      "@azerothian/test-fixtures/*": ["./packages/test-fixtures/src/*"]
     }
   }
 }

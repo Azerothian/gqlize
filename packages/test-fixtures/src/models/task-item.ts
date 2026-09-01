@@ -1,0 +1,121 @@
+import Sequelize, {Op} from "sequelize";
+import { Definition } from "@azerothian/utilize/types/index";
+
+// Annotated rather than asserted — see the note in `../index.ts`.
+const taskItemDef: Definition = {
+  name: "TaskItem",
+  define: {
+    name: {
+      type: Sequelize.STRING,
+      allowNull: false,
+      validate: {
+        isAlphanumeric: {
+          msg: "Your task item name can only use letters and numbers",
+        },
+        len: {
+          args: [8, 50],
+          msg: "Your task item name must be between 8 and 50 characters",
+        },
+      },
+    },
+    // belongsTo Task FK, opted in to being client-writable so the mutation
+    // tests can set it directly (foreign keys are excluded from mutation input
+    // by default — mass-assignment guard).
+    taskId: {type: Sequelize.INTEGER, allowNull: true, writable: true},
+  },
+  relationships: [{
+    type: "belongsTo",
+    model: "Task",
+    name: "task",
+    options: {
+      foreignKey: "taskId",
+    },
+  }],
+  expose: {
+    instanceMethods: {
+      query: {
+        testInstanceMethodArray: {
+          type: "TaskItem[]",
+          args: {},
+        },
+        testInstanceMethodSingle: {
+          type: "TaskItem",
+          args: {},
+        },
+      },
+    },
+    classMethods: {
+      query: {
+        getTaskItemsArray: {
+          type: "TaskItem[]",
+          args: {},
+        },
+        getTaskItemsSingle: {
+          type: "TaskItem",
+          args: {},
+        },
+      },
+      mutations: {
+        getTaskItemsArray: {
+          type: "TaskItem[]",
+          args: {},
+        },
+        getTaskItemsSingle: {
+          type: "TaskItem",
+          args: {},
+        },
+      },
+    },
+  },
+  options: {
+    tableName: "task-items",
+    instanceMethods: {
+      testInstanceMethodArray(args, {instance}) {
+        return instance.models.TaskItem.findAll();
+      },
+      testInstanceMethodSingle(args, {instance}) {
+        return instance.models.TaskItem.findOne({where: {id: 1}});
+      },
+    },
+    classMethods: {
+      getTaskItemsArray(args, {instance}) {
+        return instance.models.TaskItem.findAll();
+      },
+      getTaskItemsSingle(args, {instance}) {
+        return instance.models.TaskItem.findOne({where: {id: 1}});
+      },
+    },
+    hooks: {
+      beforeFind(options = {}) {
+        if (options.getGraphQLArgs) {
+          const graphqlArgs = options.getGraphQLArgs();
+          if (graphqlArgs.info.rootValue) {
+            const {filterName} = graphqlArgs.info.rootValue;
+            if (filterName) {
+              options.where = {
+                name: {
+                  [Op.ne]: filterName,
+                },
+              };
+            }
+          }
+        }
+        return options;
+      },
+      beforeCreate(instance, options, cb) {
+        return undefined;
+      },
+      beforeUpdate(instance, options, cb) {
+        return undefined;
+      },
+      beforeDestroy(instance, options, cb) {
+        return undefined;
+      },
+    },
+    indexes: [
+      {unique: true, fields: ["name"]},
+    ],
+  },
+};
+
+export default taskItemDef;
