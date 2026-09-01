@@ -29,7 +29,6 @@ import {
   GraphQLString,
   GraphQLBoolean,
   GraphQLFloat,
-  GraphQLEnumType,
   GraphQLList,
   type GraphQLInputType,
   type GraphQLOutputType,
@@ -39,8 +38,7 @@ import type { NativeDataType } from "@azerothian/utilize/types/index";
 import jsonType from "@azerothian/graphql-types/json";
 import dateType from "@azerothian/graphql-types/date";
 import uploadType from "@azerothian/graphql-types/upload";
-
-import {capitalize} from "@azerothian/utilize/utils/word";
+import { createEnumType } from "@azerothian/graphql-types/enum-type";
 
 /**
  * The mapper `SequelizeAdapter.getTypeMapper` hands back. Returns a type that is
@@ -99,12 +97,6 @@ export function toGraphQL(
   } = sequelizeTypes;
 
   // Map of special characters
-  const specialCharsMap = new Map([
-    ["¼", "frac14"],
-    ["½", "frac12"],
-    ["¾", "frac34"],
-  ]);
-
   if (sequelizeType instanceof BOOLEAN) {
     return GraphQLBoolean;
   }
@@ -147,16 +139,9 @@ export function toGraphQL(
   }
 
   if (sequelizeType instanceof ENUM) {
-    const values = (sequelizeType.values || []).reduce((o: { [name: string]: { value: string } }, k: string) => {
-      o[sanitizeEnumValue(k)] = {
-        value: k,
-      };
-      return o;
-    }, {});
-    return new GraphQLEnumType({
-      name: `${capitalize(modelName)}${capitalize(fieldName)}Enum`,
-      values,
-    });
+    // Shared with the valkey adapter — see `@azerothian/graphql-types/enum-type`.
+    // The two used to name and sanitize independently, and disagreed.
+    return createEnumType(modelName, fieldName, sequelizeType.values || []);
   }
 
   if (sequelizeType instanceof VIRTUAL) {
@@ -181,15 +166,6 @@ export function toGraphQL(
       unmatched?.toSql?.()} to a GraphQL type`
   );
 
-  function sanitizeEnumValue(value: string) {
-    return value
-      .trim()
-      .replace(/([^_a-zA-Z0-9])/g, (_: string, p: string) => specialCharsMap.get(p) || " ")
-      .split(" ")
-      .map((v: string, i: number) => (i ? capitalize(v) : v))
-      .join("")
-      .replace(/(^\d)/, "_$1");
-  }
 }
 
 /**

@@ -80,3 +80,42 @@ export const DataTypes = {
   Enum: (...values: string[]): DataTypeDescriptor => desc(DataType.Enum, { values }),
   Array: (element: DataTypeDescriptor): DataTypeDescriptor => desc(DataType.Array, { element }),
 } as const;
+
+/**
+ * The abstract token a bare JavaScript constructor stands for, when a definition
+ * authors `field: String` rather than `field: DataTypes.String`.
+ *
+ * Backend-neutral by construction, and shared so that it stays that way. The
+ * valkey adapter accepted these and the sequelize adapter did not, so the same
+ * definition was portable on one backend and quietly broken on the other:
+ * sequelize passed the constructor through to `sequelize.define`, whose
+ * `normalizeDataType` does `new Type()` and produces a `String` wrapper object
+ * with no `.key` — not a valid DataType, and it fails late in DDL generation
+ * rather than at define time, where the mistake would be obvious.
+ *
+ * `Number` maps to `Int` rather than `Float`: JavaScript has one numeric type
+ * and no way to say which was meant, and a column silently widened to floating
+ * point loses precision on ids. An author who wants a float says so.
+ */
+export function constructorDataType(value: unknown): DataTypeDescriptor | undefined {
+  switch (value) {
+    case String: return DataTypes.String;
+    case Number: return DataTypes.Int;
+    case Boolean: return DataTypes.Boolean;
+    case Date: return DataTypes.Date;
+    case BigInt: return DataTypes.BigInt;
+    case Array: return DataTypes.Array(DataTypes.Unknown);
+    case Object: return DataTypes.JSON;
+    default: return undefined;
+  }
+}
+
+/**
+ * An authored field type as an abstract token, whatever spelling was used: an
+ * ormize token passes through, a bare constructor is translated, and anything
+ * else — a live backend type such as `Sequelize.STRING` — is not ours to
+ * classify and comes back `undefined` for the adapter to handle natively.
+ */
+export function authoredDataType(value: unknown): DataTypeDescriptor | undefined {
+  return isOrmizeDataType(value) ? value : constructorDataType(value);
+}

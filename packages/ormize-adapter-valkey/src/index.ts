@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothian/utilize/exposed-methods";
-import pluralize from "pluralize";
 import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
-import {capitalize, lowercase} from "@azerothian/utilize/utils/word";
+import {lowercase} from "@azerothian/utilize/utils/word";
 import type {
   AdapterListOptions, AdapterListRequest, AdapterQueryOptions, AdapterRelationshipRequest,
   AdapterRow, AdapterWhere, Association, Definition, HookMap, IdTranslation, Model,
@@ -91,11 +90,6 @@ type RegisteredModel = ValkeyModel & Model & {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above; matches OrmAdapter.addInstanceFunction's own permissive fn type
   __instanceMethods?: { [name: string]: (...args: any[]) => any };
 };
-
-/** Sequelize-style accessor name parts for a relation: capitalized name + singular. */
-function relNames(name: string): { nameCap: string; singCap: string } {
-  return { nameCap: capitalize(name), singCap: capitalize(pluralize.singular(name)) };
-}
 
 /**
  * Valkey/Redis backend adapter for ormize. Objects are typed JSON; retrieval is
@@ -543,17 +537,23 @@ export default class ValkeyAdapter implements GqlizeAdapter {
         continue;
       }
       const srcKey = assoc.sourceKey || pk;
-      const { nameCap, singCap } = relNames(rel);
+      // The shared table, not a local spelling. `getAssociations` already
+      // *reports* these names from `relationshipAccessors`; deriving them a
+      // second way here to *define* them meant two sources of truth for the same
+      // names in one file, which is exactly what that helper's docstring says
+      // must not happen — a cross-adapter relationship that looks up an accessor
+      // by the reported name finds nothing if the two ever drift.
+      const acc = relationshipAccessors(rel);
       if (type === "belongsTo") {
-        def(`get${nameCap}`, async (options: AdapterQueryOptions) => (record[fk] == null ? null : this.getById(target, record[fk], options)));
-        def(`set${nameCap}`, async (t: ValkeyRow, options: AdapterQueryOptions) => {
+        def(acc.get, async (options: AdapterQueryOptions) => (record[fk] == null ? null : this.getById(target, record[fk], options)));
+        def(acc.set, async (t: ValkeyRow, options: AdapterQueryOptions) => {
           const val = t ? t[tpk(target)] : null;
           record[fk] = val;
           return this.persistPatch(modelName, record[pk], { [fk]: val }, options);
         });
       } else if (type === "hasOne") {
-        def(`get${nameCap}`, async (options: AdapterQueryOptions) => (await this.findAll(target, { where: { [fk]: record[srcKey] }, limit: 1, transaction: options?.transaction }))[0] || null);
-        def(`set${nameCap}`, async (t: ValkeyRow, options: AdapterQueryOptions) => {
+        def(acc.get, async (options: AdapterQueryOptions) => (await this.findAll(target, { where: { [fk]: record[srcKey] }, limit: 1, transaction: options?.transaction }))[0] || null);
+        def(acc.set, async (t: ValkeyRow, options: AdapterQueryOptions) => {
           const current = await this.findAll(target, { where: { [fk]: record[srcKey] }, transaction: options?.transaction });
           for (const c of current) await this.persistPatch(target, c[tpk(target)], { [fk]: null }, options);
           if (t) await this.persistPatch(target, t[tpk(target)], { [fk]: record[srcKey] }, options);
@@ -616,12 +616,12 @@ export default class ValkeyAdapter implements GqlizeAdapter {
           }
           await add(recs, options);
         };
-        def([`add${singCap}`, `add${nameCap}`], add);
-        def([`remove${singCap}`, `remove${nameCap}`], remove);
-        def(`set${nameCap}`, set);
-        def(`get${nameCap}`, get);
-        def(`count${nameCap}`, async (options: AdapterQueryOptions) => (await get(options)).length);
-        def([`has${singCap}`, `has${nameCap}`], async (recs: ValkeyRow | ValkeyRow[], options: AdapterQueryOptions) => {
+        def([acc.add, acc.addMultiple], add);
+        def([acc.remove, acc.removeMultiple], remove);
+        def(acc.set, set);
+        def(acc.get, get);
+        def(acc.count, async (options: AdapterQueryOptions) => (await get(options)).length);
+        def([acc.hasSingle, acc.hasAll], async (recs: ValkeyRow | ValkeyRow[], options: AdapterQueryOptions) => {
           const cur = new Set((await get(options)).map((r: ValkeyRow) => r[tpk(target)]));
           return arr(recs).every((t: ValkeyRow) => cur.has(t[tpk(target)]));
         });

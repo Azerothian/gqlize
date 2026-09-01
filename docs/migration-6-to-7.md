@@ -28,6 +28,9 @@ cleanly — that section is where working code breaks.
    - [Adapter list and relationship methods take a request object](#adapter-list-and-relationship-methods-take-a-request-object)
    - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
    - [Multi-row mutations return every affected row](#multi-row-mutations-return-every-affected-row)
+   - [Adapters agree on enum type names and enum value names](#adapters-agree-on-enum-type-names-and-enum-value-names)
+   - [`field: String` works on every adapter](#field-string-works-on-every-adapter)
+   - [`OrderEntry` in temporalize is now `SortEntry`](#orderentry-in-temporalize-is-now-sortentry)
    - [Unreferenced exports removed](#unreferenced-exports-removed)
 4. [The graphql patch](#4-the-graphql-patch)
 5. [New in 7.x](#5-new-in-7x)
@@ -594,6 +597,65 @@ mutation { models { Post(delete: { title: { in: ["a", "b"] } }) { id } } }
 The rows written were always correct — only the mutation's own return value was truncated. Code
 that read `data.models.Post[0]` after a single-row filter is unaffected; code that counted the
 returned array, or that tested for `[null]` to detect "nothing matched", needs updating.
+
+### Adapters agree on enum type names and enum value names
+
+Enum handling had drifted between the two shipped adapters. The sequelize adapter capitalised the
+generated type name and sanitised each member into a legal GraphQL name; the valkey adapter did
+neither. Both now go through one implementation, `createEnumType` in `@azerothian/graphql-types`.
+
+Two consequences, both on the **valkey** adapter only — the sequelize adapter's output is unchanged.
+
+**Enum type names are now capitalised.** A model `Task` with an enum field `status` generated
+`TaskstatusEnum` and now generates `TaskStatusEnum`, matching what the sequelize adapter has always
+emitted. A persisted schema artifact built against the valkey adapter must be rebuilt, and a client
+that named the old type in a query or a generated-types file needs regenerating.
+
+**Enum members that are not legal GraphQL names now work instead of throwing.** GraphQL names must
+match `/^[_a-zA-Z][_a-zA-Z0-9]*$/`. A member such as `in-progress` or `2xl` was previously used
+verbatim as the enum value name, and graphql rejected it — with the throw landing not at
+`new GraphQLEnumType` (which builds its values lazily) but wherever something first materialised
+them, naming `assertEnumValueName` rather than the definition that declared the member. Such members
+are now sanitised the way the sequelize adapter has always sanitised them:
+
+| Declared member | GraphQL enum value name | Value sent to the backend |
+|---|---|---|
+| `in-progress` | `inProgress` | `in-progress` |
+| `2xl` | `_2xl` | `2xl` |
+| `done` | `done` | `done` |
+
+Only the schema-facing name changes; the value that reaches the database is the member exactly as
+declared. Two members that differ only in punctuation (`in-progress` and `in progress`) now raise a
+build-time error naming both, rather than silently collapsing into one value and leaving the loser
+unqueryable.
+
+### `field: String` works on every adapter
+
+A definition could author a field type as a bare JavaScript constructor — `type: String`,
+`type: Number`, `type: Boolean`, `type: Date`, `type: BigInt`, `type: Array`, `type: Object` — and
+the valkey adapter accepted it. The sequelize adapter did not: it recognised only `DataTypes.*`
+tokens, so the constructor reached `sequelize.define` untouched, where `normalizeDataType` turned
+`String` into a `String` **wrapper object** with no `.key`. That is not a valid Sequelize type, and
+it failed later during DDL generation rather than at define time.
+
+The mapping now lives in one place, `authoredDataType` in `@azerothian/utilize/types/data-type`, and
+both adapters consult it — so the same definition builds on both. `Number` maps to `Int`, not
+`Float`: JavaScript has a single numeric type and no way to say which was meant, and silently
+widening an id column to floating point loses precision. Author `DataTypes.Float` to say otherwise.
+
+This is additive on sequelize — nothing that worked before stops working.
+
+### `OrderEntry` in temporalize is now `SortEntry`
+
+`@azerothian/temporalize` exported `OrderEntry` (`string | [string, string]`), and
+`@azerothian/utilize` exports a different, non-assignable `OrderEntry` (`[column, direction]`, no
+bare-string form). Both are on their packages' public barrels and temporalize depends on utilize, so
+importing both gave you two same-named types that do not substitute for each other.
+
+The shapes differ for a good reason — the bare string is a convenience temporalize accepts and
+passes through untouched — so the fix is one name each, not one type. Rename any import of
+`OrderEntry` from `@azerothian/temporalize` to `SortEntry`. `@azerothian/utilize`'s `OrderEntry` is
+unchanged.
 
 ### Unreferenced exports removed
 

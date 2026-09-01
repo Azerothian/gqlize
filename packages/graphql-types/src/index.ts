@@ -13,6 +13,7 @@ export {
   getOrderByGraphQLType,
 } from "./adapter-args";
 export type { AdapterArgsHost, HostRelationship, HostTarget } from "./adapter-args";
+export { createEnumType, enumTypeName, sanitizeEnumValue } from "./enum-type";
 export {
   CORE_VALUE_FUNCS,
   REGEX_VALUE_FUNCS,

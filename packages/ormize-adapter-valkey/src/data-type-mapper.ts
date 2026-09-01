@@ -6,33 +6,24 @@
 import {
   DataTypeDescriptor,
   DataTypes,
+  authoredDataType,
   isOrmizeDataType,
 } from "@azerothian/utilize/types/data-type";
 import type { DefinitionField, DefinitionFields, NativeDataType } from "@azerothian/utilize/types/index";
 
-/** Normalize an authored field type (token or JS constructor) to a descriptor. */
+/**
+ * Normalize an authored field type (token or JS constructor) to a descriptor.
+ *
+ * The token/constructor table is shared — see `authoredDataType` in
+ * `@azerothian/utilize/types/data-type` — so that this adapter and the sequelize
+ * one admit exactly the same set of spellings. They did not, once.
+ *
+ * Anything unrecognised becomes `Unknown` rather than throwing: this backend
+ * stores typed JSON and can round-trip a value it cannot classify, which is what
+ * makes a definition written against another backend still loadable here.
+ */
 export function toDescriptor(t: unknown): DataTypeDescriptor {
-  if (isOrmizeDataType(t)) {
-    return t;
-  }
-  switch (t) {
-    case String:
-      return DataTypes.String;
-    case Number:
-      return DataTypes.Int;
-    case Boolean:
-      return DataTypes.Boolean;
-    case Date:
-      return DataTypes.Date;
-    case BigInt:
-      return DataTypes.BigInt;
-    case Array:
-      return DataTypes.Array(DataTypes.Unknown);
-    case Object:
-      return DataTypes.JSON;
-    default:
-      return DataTypes.Unknown;
-  }
+  return authoredDataType(t) || DataTypes.Unknown;
 }
 
 /** Read path: classify a stored native type — already a descriptor for Valkey. */
