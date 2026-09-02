@@ -1126,6 +1126,57 @@ describe("ormize - row-level scope, the adapter hooks (§13)", () => {
     expect(folders[0].docs).toEqual([]);
   });
 
+  it("scopes an include entry that arrived without a target (§13 backstop)", async () => {
+    // A client-supplied `include:` names a relation but carries no `target` —
+    // the generated include input type has no such field, and only the
+    // selection-derived plan fills one in. So §12's `scopeIncludePlan` asks
+    // `readScopeFor(undefined)`, which reaches the deployment's predicate with
+    // no model name and comes back with nothing to impose.
+    //
+    // This is the case §13 exists for. The adapter hook scopes native includes
+    // off the *model* on each entry rather than the portable descriptor, so the
+    // join is still filtered. Asserting `LOADED` as well as the rows is the
+    // whole point: without it this would pass just as happily if the relation
+    // had never been joined at all.
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(3)) });
+    await seedFolder(db, true);
+    const { models } = await db.resolveFindAll("Folder", null, {
+      include: [{ docs: { associationType: "hasMany" } }],
+    }, ctx(3));
+    const folder = models[0] as unknown as { docs?: NamedRow[] };
+    expect(folder.docs).toBeDefined();
+    expect(folder.docs).toEqual([]);
+  });
+
+  it("keeps `required: true` from filtering the parent through the engine's include plan too", async () => {
+    // The §12 twin of the test below. The same conditional guard existed in
+    // `scopeIncludePlan` (the engine's plan) and in `scopeIncludes` (the adapter
+    // hook), and neither fired for a defined `required` — so both are pinned.
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(3)) });
+    await seedFolder(db, true);
+    const { models } = await db.resolveFindAll("Folder", null, {
+      include: [{ docs: { target: "Doc", associationType: "hasMany", required: true } }],
+    }, ctx(3));
+    expect(models).toHaveLength(1);
+  });
+
+  it("does not let a scoped include filter its parent even when the caller asked for `required`", async () => {
+    // The guard above only fired when `required` was `undefined`, and the
+    // include planner always sets a defined boolean — so on the path that
+    // actually reaches this code it never fired at all. A caller writing
+    // `docs(required: true)` against a scoped child got the parent list
+    // silently narrowed by rows it is not allowed to see, which reports the
+    // existence of those rows through their absence.
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(3)) });
+    await seedFolder(db, true);
+    const folders = await db.models.Folder.findAll({
+      include: [{ model: db.models.Doc, as: "docs", required: true }],
+      ...asRequest(3),
+    }) as { docs: NamedRow[] }[];
+    expect(folders).toHaveLength(1);
+    expect(folders[0].docs).toEqual([]);
+  });
+
   it("cannot be displaced by a definition hook that rewrites `where`", async () => {
     const db = await buildOrm({
       scope: ownedBy(1),

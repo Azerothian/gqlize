@@ -633,7 +633,9 @@ the query through the adapter. Key properties:
   default a selected relation is a LEFT JOIN, so a nested `where` filters the child rows but not
   the parent; `required: true` promotes it to an INNER JOIN so parents without a matching related
   row are excluded. Equivalent to `required` on the explicit `include` argument (the two
-  OR-merge).
+  OR-merge). A row-level scope on the child overrides it back to a LEFT JOIN — see §12:
+  `required: true` means "has a matching child" among the rows the caller may see, and a
+  parent is never dropped because its children were filtered by a scope.
 - **Accurate totals.** When a per-parent limit is applied, the nested connection's `total` is
   fetched with a `count` (firing `beforeCount`) rather than reported as the page length. hasMany
   counts run against the target model with the foreign-key filter so `beforeCount` fires (the
@@ -650,6 +652,59 @@ the query through the adapter. Key properties:
   [Exposed methods](#exposed-methods).
 - **Opt-out.** Set `options.autoInclude = false` on a `Definition` to disable root-level eager
   resolution for that model and fall back to per-relation resolution.
+
+#### Conformance
+
+Validated against the code, with each row covered by a test in
+`packages/gqlize/__tests__/eager-conformance.test.ts` unless noted. "Declines" means the
+relation is deliberately left to its own resolver — a strategy, not a failure.
+
+| Claim | Verdict |
+|---|---|
+| Selection-driven; fragments and inline fragments expand | holds |
+| `belongsTo` / `hasOne` fold into the parent as one JOIN | holds |
+| `belongsToMany` unpaginated folds into the parent as one JOIN | holds |
+| `hasMany` unpaginated folds into the parent as one JOIN | holds |
+| `hasMany` paginated uses `separate` with a per-parent `limit` | holds |
+| **`belongsToMany` paginated** | **declines** — Sequelize cannot fetch a `belongsToMany` separately, so the relation is left out of the plan and its own resolver applies the limit in SQL. Previously it stayed a JOIN and the limit was discarded. |
+| **`hasMany` paginated *and* `required`** | **JOIN retained, window applied to the loaded rows.** `required` must stay an INNER JOIN because that is what filters the parents; the page is applied after loading. Over-reads children by design. |
+| `required` promotes a relation to INNER JOIN and filters parents | holds |
+| Merge, not override: `where` ANDs, `required` ORs | holds |
+| Accurate `total` under a per-parent limit | holds (an extra count per parent) |
+| Count-only (`total` without `edges`) skips the findAll | holds — `query-count.test.ts` |
+| Cross-adapter relations are left to their own resolvers | holds — `ormize-adapter-valkey/__tests__/cross-adapter.test.ts` |
+| Soft-delete `deleted:` carried per include node | holds — `paranoid.test.ts` |
+| A row-level scope never becomes a filter on the parent | holds — see the note below |
+| Child find hooks fire exactly once, JOIN or separate | holds — `query-count.test.ts` |
+| `options.autoInclude = false` disables root-level eager resolution | holds |
+| The planner's blanket catch still answers correctly | holds |
+
+Known limits, recorded because why something is absent is worth as much as what is:
+
+- **No eager plan is built below a fallback.** The relationship resolvers build their
+  `Selection` without an args bag, and the include block requires one — so the moment a
+  relation resolves per-relation (cross-adapter, count-only, scope-dropped,
+  `autoInclude: false`, or a paginated `belongsToMany`), its whole subtree is N+1. The
+  cross-adapter case is listed under known gaps; the general case is broader than that
+  entry suggests.
+- **Aliased relationship fields collapse.** The plan is keyed by field name, not alias, so
+  two aliases of one relation with different arguments produce a single descriptor
+  carrying the last one's arguments. `selectedMethods` already keeps one entry per
+  occurrence for exactly this reason.
+- **`@skip` / `@include` are not consulted** when flattening the selection, so a skipped
+  field is still planned and joined. Wasteful; and a `required: true` on a skipped field
+  still filters parents, which is a correctness issue rather than only waste.
+- **A client-supplied `include:` entry carries no `target`** — the generated include input
+  type has no such field. §12's plan therefore asks the scope predicate about `undefined`
+  and imposes nothing, and the same absence skips that entry's `afterFind` and its
+  computed-`orderBy` expansion. The **join is still scoped**, because §13 works off the
+  model on each native include rather than the portable descriptor; this is the backstop
+  doing its job, and `ormize/__tests__/scope.test.ts` pins it.
+- **`countOptions` carries the full include array without `distinct: true`**, so a
+  `hasMany` fan-out would inflate `total` on a dialect with no inline count. Latent only:
+  the inline-count expression covers postgres, mssql and sqlite.
+- **Eager children are not column-projected and nesting is not depth-limited.** An included
+  node selects every column, and depth is bounded only by what the client sends.
 
 This replaces the previous behaviour where an eager-loaded relation short-circuited the nested
 resolver — dropping the nested field's arguments and skipping its find hooks. See also the hook

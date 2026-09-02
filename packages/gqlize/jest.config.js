@@ -10,6 +10,7 @@ const base = baseProject('gqlize');
 // are worth running against Postgres too. Pure schema-builder unit tests
 // (graphql/create-*, manager) stay sqlite-only.
 const POSTGRES_SUITES = [
+  '<rootDir>/__tests__/eager-conformance.test.ts',
   '<rootDir>/__tests__/query.test.ts',
   '<rootDir>/__tests__/query-eager.test.ts',
   '<rootDir>/__tests__/query-count.test.ts',
@@ -28,6 +29,7 @@ const POSTGRES_SUITES = [
 // loader. Excludes `schema-golden` and `__tests__/snapshot/*` — those assert the
 // build path itself, and `__tests__/graphql/*` unit-test the builders directly.
 const ROUNDTRIP_SUITES = [
+  '<rootDir>/__tests__/eager-conformance.test.ts',
   '<rootDir>/__tests__/query.test.ts',
   '<rootDir>/__tests__/query-eager.test.ts',
   '<rootDir>/__tests__/query-count.test.ts',

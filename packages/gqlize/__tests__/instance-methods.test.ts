@@ -2,6 +2,7 @@ import {graphql, GraphQLEnumType, GraphQLInputObjectType, GraphQLObjectType} fro
 import {describe, it, expect} from "@jest/globals";
 
 import {createInstance, resultData, validateResult} from "./helper";
+import {captureQueries} from "./helper/sql";
 import {createSchema} from "../src";
 import PersonModel, {PetModel} from "./helper/models/person";
 import type {Definition} from "../src/types/index";
@@ -40,19 +41,6 @@ type Instance = Awaited<ReturnType<typeof createInstance>>;
  * declares it needs loaded, how it shapes the query, how it sorts and filters,
  * and — on the mutation side — how it transforms a row before it is committed.
  */
-
-function captureQueries(instance: Instance, defName = "Person") {
-  const queries: string[] = [];
-  // Only the Sequelize adapter carries a `sequelize`, and only these tests care.
-  const adapter = instance.getModelAdapter(defName) as unknown as {
-    sequelize: {options: {logging: (sql: string) => void}};
-  };
-  adapter.sequelize.options.logging = (sql: string) => queries.push(sql);
-  return {
-    queries,
-    selects: () => queries.filter((q) => /^Executing \(.*\): SELECT/i.test(q)),
-  };
-}
 
 async function people(instance: Instance) {
   const {Person} = instance.models;
@@ -115,7 +103,7 @@ describe("exposed instance methods — projection", () => {
     const instance = await personInstance();
     await people(instance);
     const schema = await createSchema(instance);
-    const cap = captureQueries(instance);
+    const cap = captureQueries(instance, "Person");
     const result = await graphql({schema, source: `{
       models { Person(where: {firstName: {eq: "Ada"}}) { edges { node { everything } } } }
     }`});
@@ -285,7 +273,7 @@ describe("exposed instance methods — ordering", () => {
     const instance = await personInstance();
     await people(instance);
     const schema = await createSchema(instance);
-    const cap = captureQueries(instance);
+    const cap = captureQueries(instance, "Person");
     const result = await graphql({schema, source: `{
       models { Person(orderBy: nameLengthASC) { edges { node { nameLength } } } }
     }`});

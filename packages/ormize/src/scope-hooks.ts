@@ -353,13 +353,18 @@ async function scopeIncludes(
     } else {
       continue;
     }
-    if (inc.required === undefined) {
-      // Decision 6, and not a preference: an adapter that infers requiredness
-      // from the presence of a `where` — Sequelize does — would read the
-      // injected filter as an INNER JOIN and drop every parent whose children
-      // are all out of scope. A scope on a child must never become a filter on
-      // the parent.
-      inc.required = false;
-    }
+    // Decision 6, and not a preference: an adapter that infers requiredness
+    // from the presence of a `where` — Sequelize does — would read the injected
+    // filter as an INNER JOIN and drop every parent whose children are all out
+    // of scope. A scope on a child must never become a filter on the parent.
+    //
+    // Unconditional, matching `scopeIncludePlan`'s copy of this rule. Running it
+    // only for an `undefined` `required` left the case that matters uncovered: a
+    // caller who asked for `required: true` on a scoped relation had its parent
+    // list narrowed by rows it may not see, which reports their existence
+    // through their absence. `required: true` keeps its meaning among visible
+    // rows; only discarding the parent along with its filtered children is
+    // refused.
+    inc.required = false;
   }
 }
