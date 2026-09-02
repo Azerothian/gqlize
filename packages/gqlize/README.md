@@ -129,6 +129,28 @@ graphql-js type construction, and the loader pays a `JSON.parse` and a staleness
 It does not remove the expensive step — it removes the *variable* one. What you get is a schema
 that is a reviewable build output: diffable in a PR, checkable in CI, identical on every boot.
 
+### What a request costs
+
+The numbers above are per *process*. Per *request*, the engine is not the thing to optimise, and
+that is also measured rather than assumed — `pnpm bench:resolve` reproduces it (20 models, 100 rows,
+200 iterations, sqlite):
+
+| query | p50 | p95 |
+|---|---:|---:|
+| scalar list (100 rows) | 1.79 ms | 2.77 ms |
+| scalar list + `total` | 1.60 ms | 2.44 ms |
+| single row | 1.29 ms | 1.67 ms |
+| filtered list | 1.23 ms | 1.76 ms |
+| ordered list | 1.91 ms | 2.32 ms |
+
+The split that matters: the same read as a bare `Model.findAll` is **1.47 ms** of that 1.78 ms. The
+database is **83%** of the request; the resolution engine, graphql execution and serialisation
+together are the other 17% — and that is the most favourable framing available, because sqlite runs
+in-process. A real database over a socket makes the engine's share smaller, not larger.
+
+So a change that made this entire repo's request path 20% faster would move a request by about 3%.
+Optimise your queries and your indexes; there is nothing here worth chasing on current evidence.
+
 Neither number is usually the boot's problem. At 1,000 models the same process spends ~240 ms
 loading modules and ~1.9 s in `initialise()`/`sync()`. If cold start is what you are actually
 chasing, [`NODE_COMPILE_CACHE`](https://nodejs.org/api/module.html) (Node ≥ 22.8, or
