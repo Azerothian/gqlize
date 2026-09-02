@@ -3,6 +3,7 @@ import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothi
 import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
+import {reciprocalOtherKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
 import {lowercase} from "@azerothian/utilize/utils/word";
 import type {
   AdapterListOptions, AdapterListRequest, AdapterQueryOptions, AdapterRelationshipRequest,
@@ -350,9 +351,12 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       if (target && fk) { target.ensureField(fk, { foreignKey: true, foreignTarget: defName, writable: true }); target.addIndex(fk); }
     } else if (relType === "belongsToMany") {
       // Model the through/join as a normal indexed record with two foreign keys.
-      const throughName = typeof options.through === "string" ? options.through : options.through?.model;
+      const throughName = throughModelName(options.through);
       const fkA = fk;
-      const fkB = options.otherKey || this.deriveOtherKey(targetModel, throughName, options.through) || `${lowercase(targetModel)}Id`;
+      const fkB = options.otherKey
+        || throughOtherKey(options.through)
+        || reciprocalOtherKey(this.models[targetModel]?.relationships, throughName)
+        || `${lowercase(targetModel)}Id`;
       if (throughName && fkA && fkB) {
         this.ensureJoinModel(throughName, fkA, fkB);
         const relObj = source.relationships.find((r) => r.name === relName);
@@ -361,22 +365,6 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     }
     return this.getAssociation(defName, relName);
   };
-
-  /**
-   * Find the reciprocal belongsToMany's foreign key (the "other" join key).
-   * `throughName` may be absent — a `belongsToMany` declared without a `through`
-   * has no join model to match a reciprocal against, and no key comes back.
-   */
-  private deriveOtherKey(targetModel: string, throughName: string | undefined, through: Relationship["options"]["through"]): string | undefined {
-    if (through && typeof through === "object" && through.otherKey) return through.otherKey;
-    const t = this.models[targetModel];
-    if (!t) return undefined;
-    const recip = (t.relationships || []).find((r) => {
-      const rt = typeof r.options?.through === "string" ? r.options.through : r.options?.through?.model;
-      return r.type === "belongsToMany" && rt === throughName;
-    });
-    return recip?.options?.foreignKey;
-  }
 
   /** Ensure a join model exists for a belongsToMany, with both FKs indexed. */
   private ensureJoinModel(throughName: string, fkA: string, fkB: string): void {

@@ -1,3 +1,4 @@
+import { createNameResolver, type NameResolver } from "@azerothian/utilize/utils/name-resolver";
 import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import type { Ormize } from "@azerothian/ormize";
@@ -15,11 +16,10 @@ import { NESTIZE_OPTIONS, ORMIZE, type NestizeOptions } from "./types";
 @Injectable()
 export class NestizeSchemaRegistry {
   private schemas!: GeneratedZodSchemas;
-  // Null-prototype map: the `:resource` URL segment is attacker-controlled, so a
-  // plain object would let keys like `constructor`/`__proto__`/`hasOwnProperty`
-  // resolve to inherited members instead of `undefined`, bypassing the
-  // unknown-resource 404 path.
-  private resourceMap: { [resource: string]: string } = Object.create(null);
+  // The `:resource` URL segment is attacker-controlled, so resolving it is a
+  // security control — see `createNameResolver`, which is shared with
+  // temporalize's equivalent because both must keep the same two properties.
+  private resources!: NameResolver;
 
   constructor(
     @Inject(ORMIZE) private readonly orm: Ormize,
@@ -27,21 +27,14 @@ export class NestizeSchemaRegistry {
   ) {
     this.schemas = generateZodSchemas(this.orm, { permission: this.options.permission });
     const defs = this.orm.getDefinitions() || {};
-    for (const name of Object.keys(defs)) {
-      if (!isModelAllowed(this.options.permission, name)) {
-        continue;
-      }
-      this.resourceMap[name.toLowerCase()] = name;
-      this.resourceMap[name] = name;
-    }
+    this.resources = createNameResolver(
+      Object.keys(defs).filter((name) => isModelAllowed(this.options.permission, name)),
+    );
   }
 
   /** Resolve a `:resource` segment to its definition name, or `undefined`. */
-  resolve(resource: string): string | undefined {
-    if (resource === undefined || resource === null) {
-      return undefined;
-    }
-    return this.resourceMap[resource] || this.resourceMap[String(resource).toLowerCase()];
+  resolve(resource: unknown): string | undefined {
+    return this.resources.resolve(resource);
   }
 
   /** All exposed model (definition) names. */

@@ -3,6 +3,7 @@ import pluralize from "pluralize";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
 import {lowercase} from "@azerothian/utilize/utils/word";
+import {reciprocalOtherKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {copyDefinition} from "@azerothian/utilize/utils/copy-on-write";
 import {capitalize} from "@azerothian/utilize/utils/word";
@@ -1072,11 +1073,11 @@ export default class Ormize<
    */
   private resolveCrossAdapterJoin(defName: string, rel: Relationship, keys: {foreignKey: string, sourceKey: string, targetKey: string}) {
     const {through} = rel.options || {};
-    const throughName = (typeof through === "string" ? through : through?.model)
+    const throughName = throughModelName(through)
       || [defName, rel.model].sort().join("");
     const otherKey = rel.options?.otherKey
-      || (typeof through === "object" ? through?.otherKey : undefined)
-      || this.deriveOtherKey(rel.model, throughName)
+      || throughOtherKey(through)
+      || reciprocalOtherKey(this.defs[rel.model]?.relationships, throughName)
       || `${lowercase(rel.model)}Id`;
     if (!this.defs[throughName] && !this._joinModels[throughName]) {
       this._joinModels[throughName] = {source: defName, target: rel.model, otherKey, ...keys};
@@ -1123,14 +1124,6 @@ export default class Ormize<
     const adapter = this.getModelAdapter(defName);
     const field = adapter.getFields(defName)[keyName];
     return field?.type ? adapter.mapDataType(field.type) : DataTypes.String;
-  }
-  /** The reciprocal `belongsToMany`'s foreign key — the join column pointing at the target. */
-  private deriveOtherKey(targetName: string, throughName: string): string | undefined {
-    const reciprocal = (this.defs[targetName]?.relationships || []).find((r: Relationship) => {
-      const t = typeof r.options?.through === "string" ? r.options.through : r.options?.through?.model;
-      return r.type === "belongsToMany" && t === throughName;
-    });
-    return reciprocal?.options?.foreignKey;
   }
   /**
    * The slice of this manager the cross-adapter and mutation modules are written

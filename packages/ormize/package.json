@@ -36,6 +36,7 @@
     "url": "https://github.com/azerothian/gqlize/issues"
   },
   "devDependencies": {
+    "@azerothian/test-fixtures": "workspace:*",
     "@jest/globals": "catalog:",
     "@swc/cli": "catalog:",
     "@swc/core": "catalog:",

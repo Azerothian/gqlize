@@ -1,3 +1,4 @@
+import { createNameResolver, type NameResolver } from "@azerothian/utilize/utils/name-resolver";
 import type { Ormize } from "@azerothian/ormize";
 import { generateZodSchemas } from "@azerothian/ormize-zod4";
 import type { ZodObjectMap } from "@azerothian/ormize-zod4";
@@ -19,26 +20,20 @@ export type SchemaSet = { entity: ZodObjectMap; create: ZodObjectMap; update: Zo
  * returning a freshly-constructed object on every call re-derives them each time.
  */
 export class TemporalizeRegistry {
-  // Null-prototype map: the model name arrives from workflow input, so a plain
-  // object would let keys like `constructor`/`__proto__`/`hasOwnProperty` resolve
-  // to inherited members instead of `undefined`, bypassing the unknown-model check.
-  private modelMap: { [key: string]: string } = Object.create(null);
+  // The model name arrives from workflow input, so resolving it is a security
+  // control — see `createNameResolver`, which is shared with nestize's
+  // equivalent because both must keep the same two properties.
+  private models: NameResolver;
   private byPermission = new WeakMap<object, SchemaSet>();
   private unscoped?: SchemaSet;
 
   constructor(private readonly orm: Ormize, private readonly options: TemporalizeOptions = {}) {
-    for (const name of listModels(orm, options)) {
-      this.modelMap[name] = name;
-      this.modelMap[name.toLowerCase()] = name;
-    }
+    this.models = createNameResolver(listModels(orm, options));
   }
 
   /** Resolve an untrusted model name to its definition name, or `undefined`. */
   resolve(model: unknown): string | undefined {
-    if (typeof model !== "string" || model === "") {
-      return undefined;
-    }
-    return this.modelMap[model] || this.modelMap[model.toLowerCase()];
+    return this.models.resolve(model);
   }
 
   /** All models temporalize generates activities for. */

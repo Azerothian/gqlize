@@ -13,6 +13,7 @@ import {
 import logger from "@azerothian/utilize/utils/logger";
 import { isFieldAllowed, scopeParametersIn, bindScopeParameters } from "@azerothian/utilize/gate";
 import { copyDefine, copyField, copyModelOptions } from "@azerothian/utilize/utils/copy-on-write";
+import { lowercase } from "@azerothian/utilize/utils/word";
 import type { ResolvedScope } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
@@ -471,9 +472,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           name: key,
           target: assoc.target.name,
           source: assoc.source.name,
-          associationType: `${associationType
-            .charAt(0)
-            .toLowerCase()}${associationType.slice(1)}`,
+          associationType: lowercase(associationType),
           foreignKey: assoc.foreignKey,
           // Sequelize defines these only on the association kinds that have one:
           // a `hasMany` carries a source key, a `belongsTo` a target key. An
@@ -1179,28 +1178,52 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       );
     };
   };
-  getDeleteFunction = (defName: string, whereOperators: WhereOperators | undefined): AdapterDeleteFunction => {
+  /**
+   * The shared body of {@link getDeleteFunction} and {@link getRestoreFunction}:
+   * find the matching rows, then run one Sequelize instance verb over each.
+   *
+   * Serially, and awaited — this is the load-bearing part, and the reason the two
+   * were worth merging rather than left as near-copies carrying the same warning
+   * twice. Returning the array of un-awaited promises previously let callers (and
+   * subsequent queries) run before the writes had landed, which was both a
+   * correctness bug and a flake.
+   *
+   * `buildFind` is a callback rather than an options overlay because the two
+   * verbs compose their find options in a different *order* — delete puts the
+   * caller's `options` last, restore puts them first — and quietly normalising
+   * that would change which side wins a key present in both.
+   */
+  private rowVerbFunction(
+    defName: string,
+    whereOperators: WhereOperators | undefined,
+    verb: "destroy" | "restore",
+    buildFind: (nativeWhere: AdapterWhere, options: AdapterQueryOptions) => AdapterQueryOptions,
+  ) {
     const Model = this.sequelize.models[defName];
-    return async (where, options, before, after) => {
-      const items = await Model.findAll({
-        where: await this.processFilterArgument(where, whereOperators, options),
-        ...options,
-      });
-      // Destroy serially and await each one before resolving — returning the array
-      // of un-awaited promises previously let callers (and subsequent queries) run
-      // before the deletes completed, which was both a correctness bug and a flake.
+    return async (
+      where: AdapterWhere,
+      options: AdapterQueryOptions,
+      before: (row: AdapterRow) => Promise<AdapterRow> | AdapterRow,
+      after: (row: AdapterRow) => Promise<AdapterRow> | AdapterRow,
+    ): Promise<AdapterRow[]> => {
+      const native = await this.processFilterArgument(where, whereOperators, options);
+      const items = await Model.findAll(buildFind(native, options) as object);
       const results: AdapterRow[] = [];
       for (const item of items) {
         // `before`/`after` are declared over the contract's opaque
         // {@link AdapterRow}, not this adapter's row: they are arrow-syntax
         // aliases, so a narrowed *return* would not survive the variance flip.
         // What comes back is still the row that went in.
-        const beforeDestroy = (await before(item)) as SequelizeRow;
-        await beforeDestroy.destroy(options);
-        results.push(await after(beforeDestroy));
+        const row = (await before(item)) as SequelizeRow;
+        await row[verb](options);
+        results.push(await after(row));
       }
       return results;
     };
+  }
+  getDeleteFunction = (defName: string, whereOperators: WhereOperators | undefined): AdapterDeleteFunction => {
+    return this.rowVerbFunction(defName, whereOperators, "destroy",
+      (native, options) => ({ where: native, ...options }));
   };
   /**
    * The mirror of {@link getDeleteFunction} for a paranoid model.
@@ -1212,32 +1235,20 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * already does.
    */
   getRestoreFunction = (defName: string, whereOperators: WhereOperators | undefined): AdapterRestoreFunction => {
-    const Model = this.sequelize.models[defName];
     const column = this.deletedAtColumn(defName);
-    return async (where, options, before, after) => {
+    const run = this.rowVerbFunction(defName, whereOperators, "restore", (native, options) => ({
+      ...options,
+      // `deletedOverlay(..., "ONLY", ...)` is exactly this narrowing, and is
+      // already what every read path uses — reusing it keeps one spelling of a
+      // security-adjacent filter rather than a second hand-rolled `Op.and`.
+      ...deletedOverlay(this, defName, "ONLY", native),
+    }));
+    return (async (where, options, before, after) => {
       if (!column) {
         throw new Error(`restore is not available for ${defName}: the model does not soft delete`);
       }
-      const items = await Model.findAll({
-        ...options,
-        paranoid: false,
-        where: {
-          [Op.and]: [
-            await this.processFilterArgument(where, whereOperators, options),
-            { [column]: { [Op.ne]: null } },
-          ],
-        },
-      });
-      // Serially, and awaited, for the same reason the deletes above are: an
-      // array of un-awaited promises let callers run before the writes landed.
-      const results: AdapterRow[] = [];
-      for (const item of items) {
-        const beforeRestore = (await before(item)) as SequelizeRow;
-        await beforeRestore.restore(options);
-        results.push(await after(beforeRestore));
-      }
-      return results;
-    };
+      return run(where, options, before, after);
+    });
   };
   mergeFilterStatement(
     fieldName: string,

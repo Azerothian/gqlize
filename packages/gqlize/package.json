@@ -40,6 +40,7 @@
     "url": "https://github.com/azerothian/gqlize/issues"
   },
   "devDependencies": {
+    "@azerothian/test-fixtures": "workspace:*",
     "@electric-sql/pglite": "catalog:",
     "@electric-sql/pglite-socket": "catalog:",
     "@jest/globals": "catalog:",

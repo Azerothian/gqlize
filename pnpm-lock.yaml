@@ -361,6 +361,9 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
     devDependencies:
+      '@azerothian/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
       '@electric-sql/pglite':
         specifier: 'catalog:'
         version: 0.5.4
@@ -564,6 +567,9 @@ importers:
         specifier: ^8.0.0
         version: 8.0.0
     devDependencies:
+      '@azerothian/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
       '@jest/globals':
         specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
@@ -871,6 +877,24 @@ importers:
       tsx:
         specifier: 'catalog:'
         version: 4.23.1
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
+  packages/test-fixtures:
+    devDependencies:
+      '@azerothian/utilize':
+        specifier: workspace:*
+        version: link:../utilize
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.1.1
+      graphql:
+        specifier: 17.0.2
+        version: 17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce)
+      sequelize:
+        specifier: ^6.37.7
+        version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
