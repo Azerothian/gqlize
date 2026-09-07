@@ -247,12 +247,14 @@ describe("codecs + scope - a caller's opaque ids are still decoded", () => {
     // #42's second bug: the type half used to be decoded and discarded, so a
     // `Note` id in a `docId` filter matched whatever `Doc` shared the raw key.
     // The targets map has to survive being threaded through the scoped call
-    // site, which is the only thing this asserts that the test above does not.
+    // site, which is the only thing this asserts that the test above does not —
+    // and since #65 the mismatch is raised rather than silently matching nothing.
     const forged = "NOT000001";
     const result = await ask(schema, `mutation {
       models { Note(update: {where: {docId: {eq: "${forged}"}}, input: {body: "stolen"}}) { id } }
     }`);
-    expect(result.data.models.Note).toEqual([]);
+    expect(result.errors?.[0]?.message).toEqual(
+      'gqlize: "Note.docId" expects a "Doc" id, but the id given is a "Note" id');
     const after = await ask(schema, `query { models { Note { edges { node { body } } } } }`);
     expect(after.data.models.Note.edges.map((e) => e.node.body)).toEqual(["edited", "b"]);
   });

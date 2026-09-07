@@ -246,6 +246,33 @@ rejected instead of being coerced.
 > **Watch for:** `node()` lookups that only worked because they skipped your permission config now
 > return `null`.
 
+### A foreign key that is also a primary key carries its *target's* global ID
+
+A join model's two foreign keys are its composite primary key — `belongsToMany` drops the model's
+own `id` to make them so — and a shared-primary-key 1:1 table has the same shape. 6.x and early 7.x
+typed those columns by `primaryKey` first, so `RoleUser.userId` was minted and demanded as a
+`RoleUser` id even though the value it holds is a `User` key: an id no client could produce from
+anywhere else in the schema. The rule is now simply "a foreign key is typed by what it points at".
+
+> **Watch for:** clients that round-tripped such a key through `node(id:)` — the id now names the
+> model it points at. Ids stored client-side across the upgrade need re-fetching. Filters and
+> mutation inputs are unaffected as long as the id came from this schema.
+
+### A cross-type global ID is an error, not an empty result
+
+Handing a global ID minted for one type to a field expecting another used to fail to decode; the
+opaque string was then compared literally and matched nothing. It now raises a `GraphQLError` with
+`extensions.code = "GLOBAL_ID_TYPE_MISMATCH"`, naming the field, the type expected and the type
+received. A raw primary key is still passed through untouched — that is a different case, and the
+one the `null` return from `IdCodec.decode` is for.
+
+Custom `IdCodec`s should **stop** returning `null` for a recognised id whose type does not match
+the `type` they were given: that answer is indistinguishable from "not one of mine", which is a
+passthrough. Decode it and report the type it carries; gqlize compares the two and raises. A codec
+declaring `carriesType: false` is exempt.
+
+> **Watch for:** clients or tests that relied on a forged id quietly returning zero rows.
+
 ### Relay `pageInfo` is derived from the window's absolute position
 
 `hasNextPage` / `hasPreviousPage` are now computed from the returned window's absolute offset within
@@ -782,6 +809,10 @@ Not required for migration, but this is what the split bought:
 - [ ] `createRoleBasedPermissions` rules audited for `extend` root fields and mutation inputs, which
       are now denied under `defaultDeny` instead of passing through.
 - [ ] Schema artifacts rebuilt and client codegen re-run for the non-null connection fields.
+- [ ] Join-model and shared-primary-key foreign keys re-checked — they now carry the target's global
+      ID, so ids persisted client-side across the upgrade need re-fetching.
+- [ ] Custom `IdCodec`s stripped of their own cross-type check, and any caller relying on a forged
+      id returning zero rows updated to expect `GLOBAL_ID_TYPE_MISMATCH`.
 - [ ] The build checked against the new schema validation — a schema that was quietly invalid in
       6.x now throws from `createSchema`.
 - [ ] Any `subscription`, `mutationUpdateAll`, `mutationDeleteAll` rules keys removed — they gated

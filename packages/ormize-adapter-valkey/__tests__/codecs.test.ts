@@ -77,7 +77,8 @@ describe("valkey adapter — id codecs", () => {
     expect(Thing.edges[0].node.ownerId).toEqual(toGlobalId("Owner", owner.id));
   });
 
-  // bug 2 in #42: the type half was decoded and discarded.
+  // bug 2 in #42: the type half was decoded and discarded. Since #65 the
+  // mismatch is raised rather than left to match nothing.
   it("refuses a global id minted for another type", async () => {
     const { orm, schema } = await build();
     const owner = (await orm.processCreate("Owner", null, { input: { label: "o" } }, {}, undefined))[0] as Row;
@@ -86,8 +87,8 @@ describe("valkey adapter — id codecs", () => {
     const r = await graphql({ schema, source:
       `query { models { Thing(where: { ownerId: { eq: "${toGlobalId("Thing", owner.id)}" } }) { total } } }`,
     }) as QueryResult;
-    expect(r.errors).toBeUndefined();
-    expect(data<ThingPage>(r).models.Thing.total).toBe(0);
+    expect(r.errors?.[0]?.message).toEqual(
+      'gqlize: "Thing.ownerId" expects a "Owner" id, but the id given is a "Thing" id');
   });
 
   it("uses a configured id codec on both sides of the wire", async () => {

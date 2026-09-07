@@ -20,10 +20,16 @@ export function globalKeysFromFields(fields: {
  * The same key set as {@link globalKeysFromFields}, but keyed by the type each
  * key points at rather than flattened to a list of names.
  *
- * A primary key targets its own model; a foreign key targets its
- * `foreignTarget`. A column marked `foreignKey` that no relationship ever wired
- * has no target to name, and the encoder falls back to the parent type's own
- * name in that case — this mirrors that fallback, so the pair round-trips.
+ * A foreign key targets its `foreignTarget`; everything else targets its own
+ * model. `foreignTarget` wins even when the column is *also* a primary key,
+ * which is the whole point of #65: `belongsToMany` drops a join model's own `id`
+ * and makes its two foreign keys the composite primary key, so testing
+ * `primaryKey` first typed `RoleUser.userId` as a `RoleUser` id rather than the
+ * `User` id it holds. The same is true of a shared-primary-key 1:1 table.
+ *
+ * A column marked `foreignKey` that no relationship ever wired has no target to
+ * name, and the encoder falls back to the parent type's own name in that case —
+ * this mirrors that fallback, so the pair round-trips.
  *
  * Kept beside `globalKeysFromFields` because they must not disagree: a key one
  * of them treats as global and the other does not is a value decoded on the way
@@ -34,7 +40,7 @@ export function globalKeyTargets(fields: {
 }, defName: string): {[fieldName: string]: string} {
   return globalKeysFromFields(fields).reduce((targets, key) => {
     const field = fields[key];
-    targets[key] = field.primaryKey ? defName : (field.foreignTarget || defName);
+    targets[key] = field.foreignTarget || defName;
     return targets;
   }, {} as {[fieldName: string]: string});
 }

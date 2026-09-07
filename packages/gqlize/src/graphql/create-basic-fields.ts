@@ -31,12 +31,12 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
       fields = fieldKeys.reduce((f, key) => {
         const fieldDef = modelFields[key];
         if (fieldDef.primaryKey || fieldDef.foreignKey) {
-          let globalKeyName;
-          if (fieldDef.primaryKey) {
-            globalKeyName = defName;
-          } else {
-            globalKeyName = fieldDef.foreignTarget;
-          }
+          // A foreign key is minted as the type it points at, even when the
+          // column is *also* a primary key — a join model's two keys are its
+          // composite primary key, and typing them as the join model was #65.
+          // Same rule as `globalKeyTargets`, which decodes them back; the two
+          // have to agree or an id round-trips into a value nothing matches.
+          const globalKeyName = fieldDef.foreignTarget || defName;
           f[key] = bindField({
             ...globalIdFieldConfig(fieldDef.allowNull),
             deprecationReason: deprecationFor(definition, "fields", key, fieldDef.deprecated),

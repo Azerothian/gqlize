@@ -178,6 +178,20 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
     expect(await tags()).toEqual(["t2", "t3"]);
   });
 
+  // #65: a through model's two keys are foreign keys to the two ends, and the id
+  // codec has to type them that way — the join model's own name is not something
+  // a client ever holds an id for. Neither adapter can read this off a
+  // `belongsTo` here (`PostTag` declares none), so both have to derive it from
+  // the belongsToMany that wired the join in the first place.
+  // (Asserted key by key rather than on the whole map: valkey gives the join
+  // model its own `id`, where sequelize's belongsToMany drops it in favour of the
+  // composite `(postId, tagId)`.)
+  it("belongsToMany — the through model's keys are typed by the ends they point at", () => {
+    const targets = orm.getGlobalKeyTargets("PostTag");
+    expect(targets.postId).toEqual("Post");
+    expect(targets.tagId).toEqual("Tag");
+  });
+
   it("transaction — commit persists a multi-record graph", async () => {
     await orm.transaction(async () => {
       await create("Author", { name: "eve", posts: { create: [{ title: "e1" }, { title: "e2" }] } });

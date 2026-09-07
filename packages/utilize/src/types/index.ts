@@ -554,7 +554,11 @@ export type IdCodec = {
    * what lets `fallbackCursorCodec`-style layering work for ids too.
    *
    * `type` is the expected target type when the caller knows it (pk: the model;
-   * fk: `foreignTarget`); a codec may use it to reject a cross-type id.
+   * fk: `foreignTarget`), passed as context only. A codec must **not** reject a
+   * cross-type id by returning `null` — that is indistinguishable from "not one
+   * of mine", which is a passthrough. gqlize compares the decoded type against
+   * `type` itself (`packages/gqlize/src/utils/decode-id.ts`) and raises a
+   * `GraphQLError`, because only that layer can name the offending field.
    */
   decode(ctx: {value: string; type?: string; defName?: string; fieldName?: string}):
     {type: string; id: string} | null;
