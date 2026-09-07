@@ -25,6 +25,10 @@ const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
  * bytes: `"deadbeef"` is valid base64, so it yields binary garbage rather than an
  * error, and `"42"` yields `{type: "", id: ""}`. A value that does not produce a
  * non-empty type *and* id is not one of ours, and the caller must leave it alone.
+ *
+ * It decides only whether the value is one of *its* ids, never whether the type
+ * it carries is the one the caller wanted; that comparison belongs to
+ * `decodeGlobalId`, which can name the field and raise.
  */
 export function relayIdCodec(): IdCodec {
   return {
@@ -33,7 +37,7 @@ export function relayIdCodec(): IdCodec {
     // the value is a primary or foreign key, so it is a string or a number in
     // every backend here.
     encode: ({type, id}) => toGlobalId(type, id),
-    decode: ({value, type}) => {
+    decode: ({value}) => {
       if (typeof value !== "string" || !BASE64.test(value)) {
         return null;
       }
@@ -42,12 +46,11 @@ export function relayIdCodec(): IdCodec {
         if (!decoded.type || !decoded.id) {
           return null;
         }
-        // An id minted for another model is not this key's id. Decoding it
-        // anyway would filter a `Post` foreign key on a `Task`'s primary key —
-        // a value that matches whatever unrelated row happens to share it.
-        if (type && decoded.type !== type) {
-          return null;
-        }
+        // `type` is deliberately not checked here. An id minted for another
+        // model is an error rather than a value to ignore, and only the caller
+        // knows which field it was handed to — `decodeGlobalId` compares the two
+        // and raises. Reporting it as `null` from in here would be
+        // indistinguishable from "not one of mine", which is a passthrough.
         return {type: decoded.type, id: decoded.id};
       } catch {
         return null;
@@ -73,7 +76,9 @@ export interface PrefixIdCodecOptions {
  *
  * The prefix *is* the type, so ids stay self-describing and `node(id:)` keeps
  * working. A value whose prefix is not in the map is not one of ours and decodes
- * to `null`, which is what leaves a raw key in a filter untouched.
+ * to `null`, which is what leaves a raw key in a filter untouched. A prefix that
+ * *is* in the map but names the wrong model still decodes — rejecting a
+ * cross-type id is `decodeGlobalId`'s job, not a codec's.
  */
 export function prefixIdCodec(options: PrefixIdCodecOptions): IdCodec {
   const {prefixes, pad = 0} = options;
@@ -94,7 +99,7 @@ export function prefixIdCodec(options: PrefixIdCodecOptions): IdCodec {
       const raw = `${id}`;
       return `${prefix}${pad > 0 ? raw.padStart(pad, "0") : raw}`;
     },
-    decode: ({value, type}) => {
+    decode: ({value}) => {
       if (typeof value !== "string") {
         return null;
       }
@@ -102,9 +107,7 @@ export function prefixIdCodec(options: PrefixIdCodecOptions): IdCodec {
       if (!match) {
         return null;
       }
-      if (type && match.typeName !== type) {
-        return null;
-      }
+      // Cross-type ids are the caller's to reject — see `relayIdCodec.decode`.
       let id = value.slice(match.prefix.length);
       if (id.length === 0) {
         return null;

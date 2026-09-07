@@ -103,14 +103,19 @@ export default function idFetcher(
       return null;
     }
 
-    // Pass the ORIGINAL global id as the pk filter value: resolveFindAll runs
-    // replaceIdInArgs, which decodes global ids on primary/foreign-key fields
-    // back to the raw value. `info` is intentionally omitted so the interface-
-    // level selection does not restrict which columns are loaded.
+    // Filter on the already-decoded raw key rather than handing the global id
+    // back for `resolveFindAll` -> `replaceIdInArgs` to decode a second time.
+    // A primary key that is *also* a foreign key — a join table's composite key,
+    // a shared-pk 1:1 table — is typed by what it points at, so that second
+    // decode would compare `RoleUser` against `User` and raise. No shipped codec
+    // re-decodes a raw key (relay rejects it on the base64 pre-filter, prefix on
+    // the prefix), so it reaches the datastore untouched. `info` is intentionally
+    // omitted so the interface-level selection does not restrict which columns
+    // are loaded.
     const { models } = await instance.resolveFindAll(
       type,
       null,
-      { where: { [pkName]: globalId }, first: 1 },
+      { where: { [pkName]: decoded.id }, first: 1 },
       context,
       undefined,
     );

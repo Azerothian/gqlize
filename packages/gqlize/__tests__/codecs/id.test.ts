@@ -30,12 +30,14 @@ describe("relayIdCodec", () => {
     expect(codec.decode({value: "deadbeef"})).toBeNull();
   });
 
-  // bug 2 in #42: the type half was decoded and thrown away.
-  it("refuses an id minted for a different type", () => {
+  // bug 2 in #42: the type half was decoded and thrown away. It is now reported
+  // rather than checked here — a codec's `null` means "not one of mine", which
+  // callers pass through, so folding a forged id into it made the two the same
+  // answer. `decodeGlobalId` compares the types and raises (#65).
+  it("reports the type it decoded rather than checking it", () => {
     const taskId = toGlobalId("Task", "1");
     expect(codec.decode({value: taskId, type: "Task"})).toEqual({type: "Task", id: "1"});
-    expect(codec.decode({value: taskId, type: "Post"})).toBeNull();
-    // no expected type = no check, as before
+    expect(codec.decode({value: taskId, type: "Post"})).toEqual({type: "Task", id: "1"});
     expect(codec.decode({value: taskId})).toEqual({type: "Task", id: "1"});
   });
 });
@@ -52,9 +54,9 @@ describe("prefixIdCodec", () => {
     expect(codec.decode({value: codec.encode(ctx("TaskItem", 7))})).toEqual({type: "TaskItem", id: "7"});
   });
 
-  it("type-checks like the relay codec", () => {
+  it("reports the type its prefix names, like the relay codec", () => {
     const id = codec.encode(ctx("Task", 1));
-    expect(codec.decode({value: id, type: "Item"})).toBeNull();
+    expect(codec.decode({value: id, type: "Item"})).toEqual({type: "Task", id: "1"});
     expect(codec.decode({value: id, type: "Task"})).toEqual({type: "Task", id: "1"});
   });
 

@@ -1,4 +1,5 @@
 import replaceIdDeep from "./utils/replace-id-deep";
+import { decodeGlobalId } from "./utils/decode-id";
 import { defaultIdCodec } from "./codecs/id";
 import { defaultCursorCodec } from "./codecs/cursor";
 import { globalKeyTargets } from "@azerothian/utilize/utils/global-keys";
@@ -275,6 +276,9 @@ export default class GqlizeBinding {
       translateFilter: (w, keys, targets) => replaceIdDeep(w, keys, info?.variableValues, {
         codec: this.idCodec,
         targets,
+        // Only context — but it is what names the model in a cross-type id error,
+        // so an empty one here would report `.userId` with nothing in front of it.
+        defName,
       }),
       /**
        * Guarded, unlike the `fromGlobalId(v).id` this replaces. That call does not
@@ -287,13 +291,13 @@ export default class GqlizeBinding {
         if (typeof v !== "string" && typeof v !== "number") {
           return v;
         }
-        const decoded = this.idCodec.decode({
-          value: `${v}`,
+        // Throws on an id minted for another type — see `decodeGlobalId`.
+        const decoded = decodeGlobalId(`${v}`, {
           type: fieldName ? idTargets?.[fieldName] : undefined,
           defName,
           fieldName,
-        });
-        return decoded ? decoded.id : v;
+        }, this.idCodec);
+        return decoded === null ? v : decoded;
       },
     };
     if (a && info && Array.isArray(info.fieldNodes)) {

@@ -1,5 +1,6 @@
 import { OKind, objVisit } from "@vostro/object-visit";
 import { defaultIdCodec } from "../codecs/id";
+import { decodeGlobalId } from "./decode-id";
 import type { IdTranslation } from "../types";
 
 /**
@@ -10,8 +11,10 @@ import type { IdTranslation } from "../types";
  * adapter needs them decoded before the filter reaches the datastore. Keeping one
  * copy is not just tidiness — the "is this actually one of our ids" guard was
  * fixed twice and missed once, which is exactly the failure a shared module
- * prevents. It now lives inside the codec, where it belongs: only the codec knows
- * what its own format looks like.
+ * prevents. Format recognition lives inside the codec, where it belongs — only
+ * the codec knows what its own format looks like — and the cross-type check sits
+ * one layer up in `decodeGlobalId`, which knows the model and field and can say
+ * so when it raises.
  */
 
 /**
@@ -72,14 +75,14 @@ export default function replaceIdDeep<W>(
         enter(node, key);
         if (tagged !== null && typeof node === "string") {
           const fieldName = tagged;
-          const decoded = codec.decode({
-            value: node,
+          // Throws on an id minted for another type — see `decodeGlobalId`.
+          const decoded = decodeGlobalId(node, {
             type: targets?.[fieldName],
             defName,
             fieldName,
-          });
-          if (decoded) {
-            return decoded.id;
+          }, codec);
+          if (decoded !== null) {
+            return decoded;
           }
         }
         return node;

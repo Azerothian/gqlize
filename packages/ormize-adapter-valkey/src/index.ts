@@ -358,7 +358,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
         || reciprocalOtherKey(this.models[targetModel]?.relationships, throughName)
         || `${lowercase(targetModel)}Id`;
       if (throughName && fkA && fkB) {
-        this.ensureJoinModel(throughName, fkA, fkB);
+        this.ensureJoinModel(throughName, fkA, defName, fkB, targetModel);
         const relObj = source.relationships.find((r) => r.name === relName);
         if (relObj) relObj.__join = { through: throughName, fkA, fkB };
       }
@@ -366,15 +366,27 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     return this.getAssociation(defName, relName);
   };
 
-  /** Ensure a join model exists for a belongsToMany, with both FKs indexed. */
-  private ensureJoinModel(throughName: string, fkA: string, fkB: string): void {
+  /**
+   * Ensure a join model exists for a belongsToMany, with both FKs indexed.
+   *
+   * Each key carries the model it points at: `fkA` at the relationship's source,
+   * `fkB` at its target. Without those the join model's keys have no
+   * `foreignTarget`, and `globalKeyTargets` falls back to the join model's own
+   * name — an id minted for the join table where the client holds one for either
+   * end (#65).
+   */
+  private ensureJoinModel(
+    throughName: string,
+    fkA: string, targetA: string,
+    fkB: string, targetB: string,
+  ): void {
     let jm = this.models[throughName];
     if (!jm) {
       jm = new ValkeyModel({ name: throughName, define: {}, options: {} });
       this.models[throughName] = jm;
     }
-    for (const fk of [fkA, fkB]) {
-      jm.ensureField(fk, { foreignKey: true, writable: true, index: true });
+    for (const [fk, foreignTarget] of [[fkA, targetA], [fkB, targetB]] as const) {
+      jm.ensureField(fk, { foreignKey: true, foreignTarget, writable: true, index: true });
       jm.addIndex(fk);
     }
   };

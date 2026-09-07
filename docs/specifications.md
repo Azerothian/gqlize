@@ -755,12 +755,17 @@ each connection carries a `total` count — backed on supported dialects by an i
 Primary-key and foreign-key fields are exposed as **global IDs**, carrying the type alongside
 the raw key. Global IDs are translated back to raw IDs across both queries and mutations by
 `replaceIdDeep` (`packages/gqlize/src/utils/replace-id-deep.ts`, re-exported to both adapters),
-which decodes a key **against the type that key points at** — a model's own name for a primary
-key, the relationship's `foreignTarget` for a foreign key (`globalKeyTargets`,
-`packages/utilize/src/utils/global-keys.ts`). A global ID minted for another type does not
-decode, and the undecoded value then matches nothing rather than filtering on the raw key
-underneath it. A shared node interface and type mapper resolve a global ID back to its concrete
-object type.
+which decodes a key **against the type that key points at** — the relationship's `foreignTarget`
+for a foreign key, the model's own name otherwise (`globalKeyTargets`,
+`packages/utilize/src/utils/global-keys.ts`). `foreignTarget` wins even where the column is
+*also* a primary key: `belongsToMany` drops a join model's own `id` and makes its two foreign
+keys the composite primary key, and a shared-primary-key 1:1 table does the same, so a rule that
+tested `primaryKey` first minted `RoleUser` ids for keys holding `Role` and `User` keys. A global
+ID minted for another type raises `GraphQLError` with `extensions.code =
+GLOBAL_ID_TYPE_MISMATCH`, naming the field, the type it expected and the type it was handed —
+it used to be left undecoded, which matched nothing and was indistinguishable from a filter that
+legitimately found nothing. A shared node interface and type mapper resolve a global ID back to
+its concrete object type.
 
 ### Codecs
 
@@ -780,6 +785,14 @@ the implementations live in gqlize because `relayIdCodec` delegates to `graphql-
 returns `null` for a value the codec does not recognise and never throws: one caller turns that
 `null` into `GraphQLError("Invalid cursor")` and another — the nested-relation offset planner —
 plans no offset, and a codec should not have to know which one it is inside.
+
+An `IdCodec` decides only whether a value is one of *its* ids; it never judges the type it
+carries. That comparison is `decodeGlobalId` (`packages/gqlize/src/utils/decode-id.ts`), the
+single caller of `IdCodec.decode` on the key paths, because `null` already means "not mine —
+pass it through" and folding a forged id into the same answer made the two indistinguishable.
+Only that layer knows the model and field, which is the difference between an empty result set
+and an error naming `RoleUser.userId`; an out-of-tree codec gets the check for free. A codec
+declaring `carriesType: false` is exempt — its ids name no model to disagree with.
 
 An `IdCodec` declaring `carriesType: false` cannot recover a type from an ID, so the root
 `node(id:)` field is omitted from the schema at build time with a warning rather than left in it

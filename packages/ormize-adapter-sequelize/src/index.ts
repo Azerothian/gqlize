@@ -1,6 +1,7 @@
 import {
   Model,
   ModelAttributeColumnOptions,
+  ModelAttributeColumnReferencesOptions,
   ModelAttributes,
   ModelCtor,
   ModelOptions,
@@ -378,6 +379,33 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   getTypeMapper = () => {
     return typeMapper;
   };
+  /**
+   * The model owning the table an attribute's `references` names, or undefined.
+   *
+   * `references.model` is a *table* name (or a `{tableName, schema}` pair), which
+   * is not the model name the id codec types keys with — sequelize pluralises by
+   * default, and `options.tableName` may be anything. Matching on
+   * `getTableName()` is the only mapping back that holds for both.
+   */
+  private modelNameForTable = (
+    references: string | ModelAttributeColumnReferencesOptions | undefined,
+  ) => {
+    // `references` admits a bare table name, and `references.model` a name, a
+    // model class or a `{tableName, schema}` pair.
+    const model = typeof references === "string" ? references : references?.model;
+    const table = typeof model === "string"
+      ? model
+      : (model as {tableName?: string} | undefined)?.tableName;
+    if (!table) {
+      return undefined;
+    }
+    // `getTableName()` answers with a `{tableName, schema, delimiter}` triple on a
+    // schema-qualified model and a bare string otherwise.
+    return Object.keys(this.sequelize.models).find((name) => {
+      const qualified = this.sequelize.models[name].getTableName();
+      return (typeof qualified === "string" ? qualified : qualified.tableName) === table;
+    });
+  };
   getFields = (modelName: string): { [fieldName: string]: DefinitionFieldMeta } => {
     const Model = this.sequelize.models[modelName];
     //TODO add filter for excluding or including fields
@@ -407,6 +435,15 @@ export default class SequelizeAdapter implements GqlizeAdapter {
             .map((assocKey) => {
               return Model.associations[assocKey].target.name;
             })[0];
+          // A `belongsToMany` through model that was not given its own
+          // `belongsTo` relationships has an empty `associations` map: sequelize
+          // builds the join model's two `BelongsTo`s with `new BelongsTo(...)`,
+          // which never registers them on the through model. The attribute still
+          // carries the table it references, so name the model that owns that
+          // table rather than failing to type the key at all (#65).
+          if (!foreignTarget) {
+            foreignTarget = this.modelNameForTable(attr.references);
+          }
           if (!foreignTarget) {
             //TODO: better error logging
             let message = `An error has occurred with relationships on model - ${modelName} - ${key}`;
