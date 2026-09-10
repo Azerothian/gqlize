@@ -25,6 +25,11 @@ const orm = new Ormize()
 await orm.initialise();
 await orm.sync();
 
+// `initialise()` is in-memory apart from replaying an adapter's raw DDL, and `sync()` is
+// the step that needs a database. To wire the models up without one — enough to generate a
+// GraphQL schema, not enough to query — stop at:
+//   await orm.initialise({ ddl: false });
+
 // CRUD via the underlying ORM models (typed when you use defineModel):
 await orm.models.Task.create({ name: "alpha" });
 const rows = await orm.models.Task.findAll();
@@ -34,7 +39,7 @@ const rows = await orm.models.Task.findAll();
 
 - **ormize** (this package): `Ormize` manager — `registerAdapter`, `define`/`addDefinition`,
   `models`, hooks (`addHook`/`createHook`/`runHook`), `getAssociations`, `getFields`,
-  `getGlobalKeys`, `initialise`/`sync`/`reset`, relationship wiring, and the definition typesystem
+  `getGlobalKeys`, `initialise(options?)`/`sync`/`reset`, relationship wiring, and the definition typesystem
   (`ITypedDefinition`, `IORModel`, …). No GraphQL.
 - **gqlize**: `createSchema(orm, options)` builds a `graphql` schema from an `ormize` instance —
   query/mutation resolution, relay global IDs, connections, filter/order types.

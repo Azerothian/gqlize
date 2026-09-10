@@ -76,7 +76,7 @@ which now lives in `gqlize`) and is registered on an `Ormize` instance.
 
 | Package | Path | Responsibility |
 | --- | --- | --- |
-| [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise`/`sync`/`reset`, relationship wiring, the graphql-free resolution engine (`resolveFindAll`/`process*`/`resolve{Many,Single}Relationship`), and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
+| [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise(options?)`/`sync`/`reset`, relationship wiring, the graphql-free resolution engine (`resolveFindAll`/`process*`/`resolve{Many,Single}Relationship`), and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
 | [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | GraphQL layer: `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema. Key files: `src/graphql/*` (builders), `src/graphql/resolvers/*` (the resolver registry), `src/graphql/snapshot/*` (serialisation), `src/cli/*` (the `gqlize` binary), `src/types/gqlize-adapter.ts` (the `GqlizeAdapter` contract). |
 | [`@azerothian/ormize-zod4`](../packages/ormize-zod4) | `packages/ormize-zod4` | Zod v4 projection: `generateZodSchemas(orm, options)` → permission-gated `{ entity, create, update }` schemas per model. |
 | [`@azerothian/nestize`](../packages/nestize) | `packages/nestize` | NestJS REST + Swagger projection: `NestizeModule.forRoot(orm, options)` + `buildOpenApiDocument`/`setupSwagger`. Drives the graphql-free ormize engine over REST; request bodies validated with the ormize-zod4 schemas. |
@@ -207,6 +207,15 @@ The lifecycle becomes: steps 1–4 unchanged (**the ormize instance is still man
 resolution engine the materialized schema binds to; the artifact replaces only type construction),
 then either `createSchema(db, options)` as above or `loadSchema(path, db, options)`.
 
+Mandatory at *load*, that is. **Building an artifact needs no database.** Type construction reads
+model metadata — `getFields` off `rawAttributes`, `getAssociations`, the type mapper, `softDeletes`
+— and nothing on the path opens a connection; `fingerprintDefinitions` reads the same metadata. An
+instance is build-ready after `initialise()`, which is in-memory apart from replaying a definition's
+raw `queries` DDL; `initialise({ddl: false})` skips that replay and removes the last reason a build
+would connect. `sync()` is never on the schema path. This is the same argument as the dialect
+exclusion below, one step further: an artifact can be built by a CI job with no database service at
+all and loaded against a live one.
+
 Two contracts are easy to get wrong and are therefore enforced rather than documented alone:
 
 - **Custom scalars must be passed at both ends.** Coercion is code and cannot be serialised, so the
@@ -241,8 +250,10 @@ Consumer-facing (`packages/ormize/src/manager.ts`):
   here rather than landing under the key `"undefined"` and leaving `defaultAdapter` unset, which used to
   surface as the *next* `addDefinition` blaming the definition for a name the adapter never supplied.
 - `addDefinition(def, adapterName?)` — register a model definition (validates a unique `name`, wires the hook map, calls `adapter.createModel`).
-- `initialise()` — process all relationships, then validate every cross-adapter relationship's key columns,
-  then `initialise()` every adapter. The key check is a post-pass rather than part of wiring because a column
+- `initialise(options?)` — process all relationships, then validate every cross-adapter relationship's key columns,
+  then `initialise(options)` every adapter. `options.ddl === false` reaches the adapters and asks them not to
+  issue DDL, which is what makes an offline schema build possible for definitions carrying raw `queries`; the
+  relationship and join-model wiring above it is in-memory and runs either way. The key check is a post-pass rather than part of wiring because a column
   need not exist yet when the relationship naming it is processed: relationships are wired concurrently, and a
   same-adapter association creates its foreign key as a side effect. A cross-adapter `foreignKey` / `sourceKey` /
   `targetKey` / `otherKey` naming a field that does not exist throws here — ormize reads such a column itself and
@@ -289,6 +300,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `deprecations` | Central deprecation map, mirroring `comments`: `deprecations.{fields,classMethods,instanceMethods}[key] = reason`. Wins over a `deprecated` written on the declaration itself, which is what lets a definition deprecate something it did not author — a relationship, an inherited column. See [Deprecation](#deprecation). |
 | `before` / `after` | gqlize-level transforms discriminated by the `Events` enum (see §8). |
 | `hooks` | Sequelize-style lifecycle `HookMap`. |
+| `queries` | **Sequelize adapter only.** Raw create/drop DDL registered against the definition (`{ [name]: { create, drop } }`, each a string or a thunk). `initialise()` replays every `create`, and `reset()` replays the `drop`s then the `create`s. This is the adapter's only I/O in `initialise()`, which is why `initialise({ddl: false})` — the offline schema build — turns it off. |
 | `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
 
 ### Example (trimmed from `task.ts`)
@@ -978,7 +990,9 @@ Any data source is integrated by implementing the `GqlizeAdapter` interface
 (`packages/ormize-adapter-sequelize/src/index.ts`) is the reference implementation. The
 contract groups into:
 
-- **Lifecycle:** `createModel`, `initialise`, `sync`, `reset`.
+- **Lifecycle:** `createModel`, `initialise(options?)`, `sync`, `reset`. `initialise` takes an
+  `InitialiseOptions` whose only member is `ddl` (default `true`); `ddl: false` means "wire up, but
+  issue no DDL", for a build with no database behind it.
 - **Introspection:** `getModel`, `getFields` (→ `DefinitionField`), `getAssociations`
   (→ `Association`), `getPrimaryKeyNameForModel`, `getValueFromInstance`.
 - **Type mapping:** `getTypeMapper`, `getDefaultListArgs`, `getOrderByGraphQLType`,
@@ -1108,8 +1122,11 @@ each with its own subpath export:
   without an `exports`/extension dance. SWC preserves the leading `#!/usr/bin/env node` verbatim, so
   no post-processing step is needed.
 - **Publishing:** per-package `pnpm build` → `publish/` → `package:npm` / `package:yalc`.
-- **CI:** `.github/workflows/` — `ci.yml`, plus `release.yml` and `release-announce.yml`
-  (staged publishing to npmjs via OIDC trusted publishing).
+- **CI:** `.github/workflows/` — `ci.yml` (Install → Typecheck → Lint → Build → Test → **Schema
+  drift**, the last being `pnpm --filter @azerothian/example-gqlize-basic schema:check`, which
+  double-checks that the committed artifact still matches the models *and* that the schema build
+  never opens a connection — the job has no SQL service), plus `release.yaml` and
+  `release-announce.yml` (staged publishing to npmjs via OIDC trusted publishing).
 
 ---
 

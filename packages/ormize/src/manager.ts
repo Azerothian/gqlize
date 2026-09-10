@@ -16,7 +16,7 @@ import { auditDefinitionScopeSurfaces, auditExtendFields, reportScopeSurfaces } 
 import type { ScopeHook } from "./scope-hooks";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
-import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, NativeDataType,
+import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, InitialiseOptions, NativeDataType,
   RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs, OrderEntry, GlobalKeyTargets } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { InstanceRow, MutationApply, MutationFilter, MutationHost, MutationInput,
@@ -1154,7 +1154,16 @@ export default class Ormize<
     const adapter = this.getModelAdapter(defName);
     return adapter.getValueFromInstance(data, keyName);
   }
-  initialise = async() => {
+  /**
+   * Wire the registered definitions into models, relationships and join models.
+   *
+   * All of that is in-memory, and it is everything the GraphQL schema builder
+   * reads — which is why `initialise({ddl: false})` is enough to generate a
+   * schema with no database behind it. The flag reaches only `adapter.initialise`,
+   * whose sole job is replaying a definition's raw create/drop DDL. `sync()` is
+   * the separate, always-connected step; a schema build never needs it.
+   */
+  initialise = async(options?: InitialiseOptions) => {
     // Create any models queued by the fluent `define()` before wiring relationships.
     if (this._pendingDefs.length > 0) {
       const pending = this._pendingDefs;
@@ -1174,7 +1183,7 @@ export default class Ormize<
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       this.installInstanceHooks(adapterName, adapter);
-      return adapter.initialise();
+      return adapter.initialise(options);
     }));
     this._initialised = true;
     // Last, deliberately: a build that is broken for an ordinary reason should

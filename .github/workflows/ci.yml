@@ -61,3 +61,11 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # Schema drift, and the DB-free-generation gate in one. The example's
+      # `orm()` never connects (see examples/gqlize-basic/src/orm.ts), and this
+      # job has no SQL service — so a change that reintroduces a connection on
+      # the schema-build path fails here, as does an edit to the models that
+      # nobody rebuilt `generated/` for.
+      - name: Schema drift
+        run: pnpm --filter @azerothian/example-gqlize-basic schema:check

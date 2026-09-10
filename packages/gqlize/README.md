@@ -222,7 +222,7 @@ import { buildOrm } from "./src/orm";
 import { adminPermission, anonPermission } from "./src/permissions";
 
 export default defineConfig({
-  orm: () => buildOrm(),               // already initialise()d and sync()ed
+  orm: () => buildOrm(),               // already initialise()d; sync() is not required
   out: "./generated/schema.json",
   sdl: "./generated/schema.graphql",   // optional; for codegen / CI diffs
   profiles: {
@@ -237,6 +237,43 @@ filename (`schema.admin.json`, `schema.anon.json`) so two profiles can never col
 
 Discovery order is `--config`, then the nearest `gqlize.config.{ts,mts,mjs,js,cjs}` walking up from
 the cwd, then a `"gqlize": "./path/to/config"` pointer in `package.json`.
+
+### Building without a database
+
+`orm()` has to return an `initialise()`d instance. It does **not** have to return a connected one:
+`createSchema` reads model metadata — attributes, associations, `paranoid` — and no code on the
+build path opens a connection. So a config can skip `sync()`, skip seeding, and name a backend that
+does not exist:
+
+```ts
+export default defineConfig({
+  orm: async () => {
+    const db = new Ormize();
+    db.registerAdapter(new SequelizeAdapter({}, { dialect: "postgres", logging: false }), "db");
+    await db.addDefinition(ItemDef);
+    await db.addDefinition(TaskDef);
+    await db.initialise({ ddl: false });
+    return db;
+  },
+  out: "./generated/schema.json",
+});
+```
+
+`initialise({ ddl: false })` covers the one case that would otherwise need a server: a definition
+carrying raw create/drop DDL in `queries` has that DDL replayed by `initialise()`, and this skips
+the replay. Everything `initialise()` does that a schema depends on — wiring relationships,
+generating join models, validating cross-adapter keys — is in memory and still happens. What you get
+back can build a schema and cannot serve a request, because the DDL it skipped is DDL the database
+still needs.
+
+The driver package (`pg`, `sqlite3`, …) must still be installed — `new Sequelize()` `require`s it
+eagerly — but it opens no socket until the first query. The dialect is deliberately excluded from
+the artifact's fingerprint, so an artifact built against a nonexistent `postgres` loads against a
+live sqlite, or the reverse.
+
+`gqlize check` is DB-free on the same terms — it rebuilds live and diffs the sorted SDL — which
+makes it a schema-drift gate that runs on a CI runner with no database service. See
+[`examples/gqlize-basic`](../../examples/gqlize-basic), which is wired up this way and gated in CI.
 
 ### Saving it
 
@@ -253,7 +290,7 @@ import { adminPermission } from "./src/permissions";
 import { Money } from "./src/scalars";
 
 async function build() {
-  const orm = await buildOrm();                 // already initialise()d and sync()ed
+  const orm = await buildOrm();                 // already initialise()d; no sync() needed
   const schema = await createSchema(orm, { permission: adminPermission });
 
   const artifact = snapshotSchema(schema, {
@@ -499,7 +536,7 @@ to the CLI:
 ```ts
 import { buildArtifact } from "@azerothian/gqlize/snapshot";
 
-const orm = await buildOrm(); // already initialise()d and sync()ed
+const orm = await buildOrm(); // already initialise()d; no sync() needed
 const { out, typeCount, fieldCount } = await buildArtifact(orm, {
   out: "./generated/schema.json",
   sdl: "./generated/schema.graphql",

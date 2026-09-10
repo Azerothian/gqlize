@@ -7,7 +7,7 @@ import {reciprocalOtherKey, throughModelName, throughOtherKey} from "@azerothian
 import {lowercase} from "@azerothian/utilize/utils/word";
 import type {
   AdapterListOptions, AdapterListRequest, AdapterQueryOptions, AdapterRelationshipRequest,
-  AdapterRow, AdapterWhere, Association, Definition, HookMap, IdTranslation, Model,
+  AdapterRow, AdapterWhere, Association, Definition, HookMap, IdTranslation, InitialiseOptions, Model,
   OrderEntry, OrmAdapter, Permission, Relationship, Selection, WhereOperators,
 } from "@azerothian/utilize/types/index";
 import { Keys, KeyId } from "./keys";
@@ -218,7 +218,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   };
 
   // ---- lifecycle ----
-  initialise = async () => { /* ioredis connects lazily */ };
+  initialise = async (_options?: InitialiseOptions) => { /* ioredis connects lazily; there is no DDL to skip */ };
   sync = async (_options?: AdapterQueryOptions) => { /* indexes are lazy; nothing to migrate */ };
   reset = async (_options?: AdapterQueryOptions) => {
     // Scoped clear (no KEYS/SCAN): walk each model's `ids` and drop everything it references.
