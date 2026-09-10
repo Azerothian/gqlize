@@ -212,6 +212,25 @@ export interface AdapterTransaction {
 }
 
 /**
+ * Options for `Ormize.initialise()` and, forwarded unchanged, `OrmAdapter.initialise()`.
+ */
+export interface InitialiseOptions {
+  /**
+   * Whether the adapter may issue DDL while initialising. Defaults to `true`.
+   *
+   * `false` is for a build that has no database to issue it against — generating
+   * a GraphQL schema reads model metadata only, so the whole relationship and
+   * join-model wiring still has to happen, but nothing needs a connection. The
+   * one exception is a definition carrying raw create/drop DDL (Sequelize's
+   * `definition.queries`), which is exactly what this turns off.
+   *
+   * An instance initialised this way can build a schema; it cannot serve a
+   * request against a database that was never migrated.
+   */
+  ddl?: boolean;
+}
+
+/**
  * The backend (ORM) adapter contract. This is GraphQL-free — it is the interface
  * `@azerothian/ormize` depends on. The GraphQL-typed extension lives in
  * `./gqlize-adapter` (`GqlizeAdapter extends OrmAdapter`) so importing ormize never
@@ -269,7 +288,7 @@ export interface OrmAdapter {
    */
   createFunctionForFind(modelName: string): (keyValue: string, filterKey: string, singular: boolean) => ((options: AdapterQueryOptions) => Promise<AdapterRow>);
   reset(options?: AdapterQueryOptions): Promise<void>;
-  initialise(): Promise<void>;
+  initialise(options?: InitialiseOptions): Promise<void>;
   sync(options?: AdapterQueryOptions): Promise<void>;
   hasInlineCountFeature(): boolean;
   findAll(defName: string, options: AdapterQueryOptions): Promise<AdapterRow[]>;

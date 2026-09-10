@@ -46,8 +46,8 @@ export async function loadConfig(explicitPath?: string, cwd = process.cwd()): Pr
 
   if (typeof config?.orm !== "function") {
     throw new UsageError(
-      `${modulePath} must export a config whose \`orm\` is a function returning an initialised, ` +
-        "synced ormize instance.",
+      `${modulePath} must export a config whose \`orm\` is a function returning an initialised ` +
+        "ormize instance.",
     );
   }
   return {config, path: modulePath, dir: dirname(modulePath)};

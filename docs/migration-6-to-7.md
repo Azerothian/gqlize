@@ -494,6 +494,12 @@ expects. The members are declared with method syntax, which keeps parameters biv
 implementation may still narrow a row to your own instance type
 (`update(row: MyModel, ...)`) without a cast.
 
+`initialise` now takes an optional `InitialiseOptions` (`{ddl?: boolean}`). It is
+source-compatible — an adapter declared `initialise(): Promise<void>` still satisfies the interface,
+and ignoring the argument is fine for a backend with no DDL to skip. Honour it if your adapter does
+issue DDL there: `ddl: false` is what lets a caller wire the models up with no database, which is
+how a schema is generated offline.
+
 `setBuildPermission` is now declared — optional — on `GqlizeAdapter`. It was already implemented by
 both bundled adapters and already called by `createSchema`, but through a
 `typeof adapter.setBuildPermission === "function"` duck-type check, so an adapter that misspelled it
@@ -771,7 +777,11 @@ Not required for migration, but this is what the split bought:
 - **Pre-generated schema artifacts** — `gqlize build` writes the schema to a reviewable JSON
   artifact, and `loadSchema(path, orm, options)` rebuilds an executable `GraphQLSchema` from it plus
   a live ormize instance. `gqlize check` fails CI when the artifact no longer matches the
-  definitions. See the [gqlize README](../packages/gqlize/README.md#pre-generated-schema-artifacts).
+  definitions. Both run with **no database**: building a schema reads model metadata, so a config's
+  `orm()` needs `initialise()` and not `sync()` — and `initialise({ddl: false})` drops the last
+  connection a definition with raw `queries` DDL would need. See the
+  [gqlize README](../packages/gqlize/README.md#pre-generated-schema-artifacts) and
+  [building without a database](../packages/gqlize/README.md#building-without-a-database).
 - **`@deprecated`** — a `deprecated` reason on a column, an exposed method or a whole definition,
   or a central `deprecations` map for declarations you did not author (relationships, inherited
   columns). It reaches the output field, the mutation input, both halves of the `orderBy` enum pair

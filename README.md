@@ -49,7 +49,7 @@ mutations, permissions, hooks, and more.
 
 | Package | Description |
 | --- | --- |
-| [`@azerothian/ormize`](packages/ormize) | GraphQL-free backend manager — `Ormize` class, `registerAdapter`, `define`/`addDefinition`, models, hooks, `initialise`/`sync`/`reset`, relationship wiring, and the definition typesystem. No GraphQL dependency. |
+| [`@azerothian/ormize`](packages/ormize) | GraphQL-free backend manager — `Ormize` class, `registerAdapter`, `define`/`addDefinition`, models, hooks, `initialise(options?)`/`sync`/`reset`, relationship wiring, and the definition typesystem. No GraphQL dependency. |
 | [`@azerothian/gqlize`](packages/gqlize) | GraphQL layer — `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema: object types, connections, queries, deep nested mutations, and permissions. Also ships a **`gqlize` CLI** (`build` / `check` / `print`) that pre-generates the schema into a reviewable JSON artifact, plus `loadSchema` to rebuild an executable schema from it — see the [guide](docs/guide.md#5-pre-generated-schema-artifacts). |
 | [`@azerothian/ormize-adapter-sequelize`](packages/ormize-adapter-sequelize) | Sequelize adapter — the reference data-source implementation. Same `SequelizeAdapter` default export, same `defineModel`/`SequelizeModel` typesystem exports. |
 | [`@azerothian/ormize-adapter-valkey`](packages/ormize-adapter-valkey) | Valkey/Redis adapter — typed-JSON objects with self-maintained index/mapping structures (no keyspace scans), index-only `where` queries, foreign-key index maps for relationships, `MULTI`/`EXEC` transactions with a per-transaction overlay, and object expiry that cascades into the mappings. |
@@ -90,6 +90,14 @@ pnpm typecheck    # tsc -b + turbo  — src via project references, then __tests
 pnpm lint         # eslint .          — type-aware, one program across the workspace
 pnpm watch        # turbo run watch   — tsc --watch per package
 ```
+
+CI runs one more gate on top of those: **Schema drift**
+(`pnpm --filter @azerothian/example-gqlize-basic schema:check`). The example's schema artifact under
+[`examples/gqlize-basic/generated/`](examples/gqlize-basic/generated) is committed on purpose, so
+changing the models — or anything that reshapes the generated schema — fails CI until you re-run
+`pnpm --filter @azerothian/example-gqlize-basic schema:build` and commit the result. That job has no
+database service, which is the second thing the gate proves: generating a schema never opens a
+connection (see [building without a database](docs/guide.md#building-without-a-database)).
 
 `lint` deliberately overlaps `typecheck` as little as possible: `tsc` already runs
 `strict` and `noUnusedLocals` over every file, so the lint layer enforces only what

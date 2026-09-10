@@ -16,6 +16,7 @@ Every example below is drawn from the behaviour exercised in the test suite
    - [Typed models (TypeScript, opt-in)](#typed-models-typescript-opt-in)
 4. [Serving the schema](#4-serving-the-schema)
 5. [Pre-generated schema artifacts](#5-pre-generated-schema-artifacts)
+   - [Building without a database](#building-without-a-database)
 6. [Querying](#6-querying)
    - [Lists & Relay connections](#lists--relay-connections)
    - [Filtering (`where`)](#filtering-where)
@@ -97,8 +98,10 @@ const result = await graphql({
 console.log(result.data.models.Author.edges); // [{ node: { id, name: "Ada" } }]
 ```
 
-The lifecycle is always: **`new Ormize()` → `registerAdapter` → `addDefinition` (×N) →
-`initialise()` → `sync()` → `createSchema(orm)`**.
+The lifecycle to *serve* requests is always: **`new Ormize()` → `registerAdapter` →
+`addDefinition` (×N) → `initialise()` → `sync()` → `createSchema(orm)`**. Only `sync()` needs a
+database — `createSchema` reads model metadata, so generating a schema can stop at `initialise()`
+(see [Building without a database](#building-without-a-database)).
 
 ---
 
@@ -492,7 +495,7 @@ import { defineConfig } from "@azerothian/gqlize/cli/types";
 import { buildDb } from "./src/db";
 
 export default defineConfig({
-  orm: () => buildDb(),                // must return an initialise()d + sync()ed instance
+  orm: () => buildDb(),                // must return an initialise()d instance; sync() is not required
   out: "./generated/schema.json",
   sdl: "./generated/schema.graphql",   // optional sidecar, for codegen and CI diffs
 });
@@ -507,11 +510,14 @@ const db = await buildDb();
 const schema = await loadSchema("./generated/schema.json", db, { permission });
 ```
 
-Three things are worth understanding before you adopt this:
+Four things are worth understanding before you adopt this:
 
-- **The ormize instance is still required.** It *is* the resolution engine — the artifact replaces
-  only the type-construction step, not the data access underneath it. `loadSchema` binds the
-  serialized field descriptors back onto your live definitions.
+- **The ormize instance is still required — but building does not need a database.** The instance
+  *is* the resolution engine at serve time, and the artifact replaces only the type-construction
+  step, not the data access underneath it (`loadSchema` binds the serialized field descriptors back
+  onto your live definitions). *Generating* the artifact is another matter: it reads model
+  metadata — attributes, associations, `paranoid` — and never opens a connection. See
+  [building without a database](#building-without-a-database) below.
 - **Build it for reviewability and determinism, not for boot speed.** Schema generation is a small
   part of a boot dominated by loading the driver and running `initialise()`/`sync()`, and the loader
   still pays those. Measure before claiming a startup win.
@@ -543,6 +549,50 @@ cursor format than the one it accepts back. The fingerprint records whether each
 so that case is caught; to also catch one codec swapped for another of the same shape, name them
 with `idProfile` / `cursorProfile` at build and at load, the way `permissionProfile` names a
 permission set.
+
+### Building without a database
+
+`createSchema` reads model metadata and nothing else, so a config's `orm()` needs to have run
+`initialise()` — which wires relationships and join models in memory — and no more. It does not
+need `sync()`, it does not need seed data, and it does not need anything listening:
+
+```ts
+// gqlize.config.ts — builds with no database anywhere
+import { defineConfig } from "@azerothian/gqlize/cli/types";
+import { Ormize } from "@azerothian/ormize";
+import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { ItemDef, TaskDef } from "./src/models";
+
+export default defineConfig({
+  orm: async () => {
+    const db = new Ormize();
+    db.registerAdapter(new SequelizeAdapter({}, { dialect: "postgres", logging: false }), "db");
+    await db.addDefinition(ItemDef);
+    await db.addDefinition(TaskDef);
+    await db.initialise({ ddl: false });
+    return db;
+  },
+  out: "./generated/schema.json",
+  sdl: "./generated/schema.graphql",
+});
+```
+
+Two things make that work, and both are worth knowing on their own:
+
+- **`initialise({ ddl: false })`.** `initialise()` is in-memory except for one thing: it replays the
+  raw create/drop DDL a definition registered through `queries` (a Sequelize-only definition key —
+  see the [adapter README](../packages/ormize-adapter-sequelize/README.md)). `ddl: false` skips that
+  replay, which is the last reason a build would touch a connection. Definitions without `queries`
+  are unaffected either way. The resulting instance can build a schema and cannot serve a request —
+  the DDL it skipped is DDL the database still needs.
+- **The dialect is not fingerprinted.** Building against `postgres` with no server and serving
+  against sqlite (or the reverse) is a supported setup, so the driver you name here is only about
+  which package has to be installed — `new Sequelize()` `require`s its driver eagerly, but opens no
+  socket until the first query.
+
+`gqlize check` is DB-free on the same terms: by default it rebuilds the schema live and diffs the
+sorted SDL, so it makes a good CI gate on a runner with no database service. `examples/gqlize-basic`
+is wired up exactly this way.
 
 See the [`@azerothian/gqlize` README](../packages/gqlize/README.md#pre-generated-schema-artifacts)
 for permission profiles, custom scalars, `extendFactory`, and the full programmatic API

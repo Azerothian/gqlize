@@ -199,6 +199,7 @@ import {
   type HookMap,
   type IncludeDescriptor,
   type IncludeMap,
+  type InitialiseOptions,
   type NativeDataType,
   type Permission,
   type RequestContext,
@@ -293,10 +294,20 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     };
     this.meta = {};
   }
-  initialise = async () => {
-    if (this.startup.create !== "") {
-      await this.getORM().query(this.startup.create);
+  /**
+   * Replay the raw DDL that definitions registered through `definition.queries`.
+   *
+   * This is the only connection this adapter opens before a query is actually
+   * run — `sequelize.define` and the association calls are pure metadata — so
+   * `ddl: false` is what makes an offline `createSchema` / `gqlize build`
+   * possible for definitions that carry DDL. The resulting instance can build a
+   * schema and nothing more; the types it would have created do not exist.
+   */
+  initialise = async (options?: InitialiseOptions) => {
+    if (options?.ddl === false || this.startup.create === "") {
+      return;
     }
+    await this.getORM().query(this.startup.create);
   };
   sync = async (options?: AdapterQueryOptions) => {
      await this.getORM().sync(options);

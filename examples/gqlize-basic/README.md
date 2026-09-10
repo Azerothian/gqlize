@@ -37,10 +37,10 @@ Set `PORT` to change the port (`PORT=4001 pnpm --filter @azerothian/example-gqli
 | File | Responsibility |
 | --- | --- |
 | [`src/models.ts`](src/models.ts) | Two ormize `Definition`s (`Item`, `Task`) using Sequelize `DataType`s + a relationship. |
-| [`src/orm.ts`](src/orm.ts) | `new Ormize()` → `registerAdapter(new SequelizeAdapter(...))` → `addDefinition()` → `initialise()` → `sync()`, then seeds rows. |
+| [`src/orm.ts`](src/orm.ts) | `new Ormize()` → `registerAdapter(new SequelizeAdapter(...))` → `addDefinition()` → `initialise()` → `sync()`, then seeds rows. `buildOrmForSchema` is the same wiring stopped at `initialise({ ddl: false })` — enough to build a schema, no database needed. |
 | [`src/server.ts`](src/server.ts) | `const schema = await createSchema(orm)` → serve with graphql-yoga. |
 | [`src/run.ts`](src/run.ts) | Executes a query + mutation in-process via `graphql()` (no HTTP). |
-| [`gqlize.config.ts`](gqlize.config.ts) | Config for the `gqlize` CLI — where the orm comes from and where the artifact goes. |
+| [`gqlize.config.ts`](gqlize.config.ts) | Config for the `gqlize` CLI — where the orm comes from and where the artifact goes. Uses the connection-free factory, so `schema:check` runs in CI with no database. |
 | [`src/server-artifact.ts`](src/server-artifact.ts) | The same server, served off a pre-generated schema artifact. |
 
 The whole projection is one call:
@@ -142,6 +142,17 @@ const schema = await loadSchema("./generated/schema.json", orm, { onMismatch: "r
 The ormize instance is still required — it is the resolution engine the schema binds to; the
 artifact only replaces the *type construction* step. `schema:check` is the CI gate: it builds the
 schema live, materializes the artifact, and diffs the sorted SDL, so any drift fails the build.
+
+**`generated/` is committed on purpose.** An artifact you cannot diff in a pull request is an
+artifact that gates nothing, so the pair lives in git and this repo's CI runs `schema:check` on
+every push. Edit the models and the check fails until you re-run `schema:build` and commit the
+result — treat it like any other generated file that ships.
+
+That gate needs no database. [`gqlize.config.ts`](gqlize.config.ts) points at `buildOrmForSchema`
+rather than the server's `buildOrm`: it registers the same definitions, calls
+`initialise({ ddl: false })`, and stops — no `sync()`, no seed rows, no connection. Building a
+schema reads model metadata and never queries, so the CI job needs no database service. See
+[guide §5, "Building without a database"](../../docs/guide.md#building-without-a-database).
 
 > The `schema:*` scripts run the CLI from source (`node -r @swc-node/register
 > ../../packages/gqlize/src/cli/index.ts`) because this example uses the workspace packages

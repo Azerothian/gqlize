@@ -93,6 +93,40 @@ type TaskModel = SequelizeModel<[typeof TaskV1], [typeof TaskV2]>;
 // statics:  staticMethod1: (…) => Promise<any>;  staticMethod2?: (…) => string
 ```
 
+## Raw DDL (`definition.queries`)
+
+A Sequelize-only definition key, for the schema objects `sequelize.define` cannot create —
+a Postgres `CREATE TYPE`, an extension, a trigger:
+
+```ts
+const TaskDef = {
+  name: "Task",
+  define: { /* … */ },
+  queries: {
+    genre: {
+      create: "CREATE TYPE genre AS ENUM ('fiction', 'history');",
+      drop: "DROP TYPE IF EXISTS genre;",
+    },
+  },
+};
+```
+
+Each entry's `create` (a string, or a thunk returning one) is replayed by `initialise()`, and
+`reset()` replays the `drop`s and then the `create`s.
+
+This is the adapter's **only** I/O during `initialise()` — `sequelize.define` and the association
+calls are pure metadata. That is what `initialise({ ddl: false })` turns off:
+
+```ts
+await db.initialise({ ddl: false });   // wire the models up, issue no DDL
+```
+
+Which matters because generating a GraphQL schema reads model metadata and never queries, so with
+this flag `@azerothian/gqlize` can build a schema — or a whole pre-generated artifact — with no
+database anywhere. An instance initialised this way cannot serve a request: the DDL it skipped is
+DDL the database still needs. See
+[gqlize: building without a database](../gqlize/README.md#building-without-a-database).
+
 ## License
 
 This repository generally is covered by MIT unless specified

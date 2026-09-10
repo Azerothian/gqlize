@@ -36,9 +36,31 @@ export interface GqlizeProfile {
 
 export interface GqlizeConfig extends GqlizeProfile {
   /**
-   * Returns an **initialised and synced** ormize instance. Called once per CLI
-   * invocation. The CLI never calls `initialise()`/`sync()` itself — connection
-   * details, migrations and seeding are the application's business.
+   * Returns an **initialised** ormize instance. Called once per CLI invocation.
+   * The CLI never calls `initialise()`/`sync()` itself — connection details,
+   * migrations and seeding are the application's business.
+   *
+   * `sync()` is *not* required: building a schema reads model metadata
+   * (attributes, associations, `paranoid`) and never opens a connection, so the
+   * simplest config an application can have is also one that needs no database
+   * at all. Reuse the app's own factory when that is convenient; write a
+   * connection-free one when you would rather `gqlize build`/`check` ran in CI
+   * without a server:
+   *
+   * ```ts
+   * orm: async () => {
+   *   const db = new Ormize();
+   *   db.registerAdapter(new SequelizeAdapter({}, {dialect: "postgres"}), "db");
+   *   await db.addDefinition(TaskDef);
+   *   await db.initialise({ddl: false});   // no sync(), no connection
+   *   return db;
+   * }
+   * ```
+   *
+   * `{ddl: false}` matters only for definitions carrying raw `queries` DDL —
+   * without it, `initialise()` replays that DDL against a database. The dialect
+   * is not part of the artifact's fingerprint, so an artifact built this way
+   * loads against any backend.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the consumer's own ormize instance, generic over the model map their `define()` chain accumulated. This is the published shape of a `gqlize.config.ts`; pinning it to `AnyOrmize` would change what a 6.0.0 config file is allowed to return. The CLI forwards the value to `createSchema`, which is where the type is actually required.
   orm: () => any | Promise<any>;
