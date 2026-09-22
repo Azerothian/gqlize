@@ -9,12 +9,13 @@ coverage/
 /packages/*/cjs/
 /packages/*/.tsbuild/
 
-# Generated gqlize schema artifacts. Committed for examples/gqlize-basic, where
-# the pair is a reviewable build output that CI diffs (the "Schema drift" step
-# in .github/workflows/ci.yml); rebuild with `pnpm schema:build`. Ignored for
-# every other example until one opts in the same way.
+# Generated gqlize schema artifacts. Committed for the two examples whose pair
+# is a reviewable build output that CI diffs (the "Schema drift" steps in
+# .github/workflows/ci.yml); rebuild with `pnpm schema:build`. Ignored for every
+# other example until one opts in the same way.
 /examples/*/generated/**
 !/examples/gqlize-basic/generated/**
+!/examples/mikro-orm-basic/generated/**
 
 # tooling / local state
 .omc/

@@ -15,7 +15,7 @@ import { buildScopeHooks, buildScopeInstanceHooks } from "./scope-hooks";
 import { auditDefinitionScopeSurfaces, auditExtendFields, reportScopeSurfaces } from "./scope-audit";
 import type { ScopeHook } from "./scope-hooks";
 import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
-import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
+import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf, ModelsOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, InitialiseOptions, NativeDataType,
   RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs, OrderEntry, GlobalKeyTargets } from '@azerothian/utilize/types/index';
 import { DataTypes } from "@azerothian/utilize/types/data-type";
@@ -462,7 +462,7 @@ export default class Ormize<
       return this.unshiftHook(h, hook);
     });
   }
-  registerAdapter = <A extends OrmAdapter>(adapter: A, overrideName?: string): Ormize<TModels, BaseOf<A>> => {
+  registerAdapter = <A extends OrmAdapter>(adapter: A, overrideName?: string): Ormize<TModels & ModelsOf<A>, BaseOf<A>> => {
     if (overrideName) {
       adapter.adapterName = overrideName;
     }
@@ -478,9 +478,9 @@ export default class Ormize<
     this.adapters[adapter.adapterName] =  adapter;
     // The runtime is unchanged; the return type narrows the typesystem base URI
     // (e.g. "sequelize") from the adapter's `__base` brand so `define()` produces
-    // adapter-typed models.
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- ts7 needs it
-    return this as unknown as Ormize<TModels, BaseOf<A>>;
+    // adapter-typed models, and folds in whatever models the adapter registers
+    // on its own (`__models`, for a backend that owns its schema).
+    return this as unknown as Ormize<TModels & ModelsOf<A>, BaseOf<A>>;
   }
   /**
    * Typed, fluent, synchronous registration used to build a strongly-typed
@@ -1162,6 +1162,11 @@ export default class Ormize<
    * schema with no database behind it. The flag reaches only `adapter.initialise`,
    * whose sole job is replaying a definition's raw create/drop DDL. `sync()` is
    * the separate, always-connected step; a schema build never needs it.
+   *
+   * Adapter discovery (`discoverDefinitions`) runs on that same offline path: a
+   * backend that owns its schema reads its own metadata here, which is why an
+   * instance whose every model was discovered can still be built with no database
+   * behind it.
    */
   initialise = async(options?: InitialiseOptions) => {
     // Create any models queued by the fluent `define()` before wiring relationships.
@@ -1172,6 +1177,7 @@ export default class Ormize<
         await this.addDefinition(def, adapterName);
       }
     }
+    await this.discoverAdapterDefinitions();
     await Promise.all(Object.keys(this.defs).map((defName) => {
       const def = this.defs[defName];
       const sourceAdapter = this.getModelAdapter(defName);
@@ -1191,6 +1197,31 @@ export default class Ormize<
     this.auditScopeSurfaces();
   }
 
+  /**
+   * Add the definitions each adapter already knows about — for a backend that owns
+   * its own schema, this is where its models arrive instead of through `define()`.
+   *
+   * Runs after the `define()` queue has drained and skips a name that is already
+   * defined, so an explicitly authored definition wins over the discovered one and
+   * a second `initialise()` call is a no-op rather than a duplicate-name throw.
+   *
+   * Serial, not `Promise.all`: each `addDefinition` writes `this.defs`, and the
+   * `hasDefinition` check above it has to see every prior write.
+   */
+  private async discoverAdapterDefinitions() {
+    for (const adapterName of Object.keys(this.adapters)) {
+      const adapter = this.adapters[adapterName];
+      if (!adapter.discoverDefinitions) {
+        continue;
+      }
+      for (const def of await adapter.discoverDefinitions()) {
+        if (!def.name || this.hasDefinition(def.name)) {
+          continue;
+        }
+        await this.addDefinition(def, adapterName);
+      }
+    }
+  }
   /**
    * Register the composed Sequelize-instance hooks on an adapter's underlying
    * connection. Once per adapter: `initialise()` is callable more than once and

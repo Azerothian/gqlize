@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": ".tsbuild"
+  },
+  "references": [
+    { "path": "../utilize" },
+    { "path": "../gqlize" },
+    { "path": "../graphql-types" }
+  ],
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", ".tsbuild", "lib", "cjs", "publish", "**/*.spec.ts"]
+}

@@ -202,6 +202,46 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  examples/mikro-orm-basic:
+    dependencies:
+      '@azerothian/gqlize':
+        specifier: workspace:*
+        version: link:../../packages/gqlize
+      '@azerothian/ormize':
+        specifier: workspace:*
+        version: link:../../packages/ormize
+      '@azerothian/ormize-adapter-mikro-orm':
+        specifier: workspace:*
+        version: link:../../packages/ormize-adapter-mikro-orm
+      '@mikro-orm/core':
+        specifier: ^7.2.1
+        version: 7.2.1
+      '@mikro-orm/sqlite':
+        specifier: ^7.2.1
+        version: 7.2.1(@mikro-orm/core@7.2.1)
+      graphql:
+        specifier: 17.0.2
+        version: 17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce)
+      graphql-relay:
+        specifier: ^0.10.2
+        version: 0.10.2(graphql@17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce))
+      graphql-yoga:
+        specifier: ^5.21.2
+        version: 5.21.2(graphql@17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce))
+    devDependencies:
+      '@swc-node/register':
+        specifier: ^1.10.10
+        version: 1.11.1(@swc/core@1.15.43)(@swc/types@0.1.27)(supports-color@8.1.1)(typescript@5.9.3)
+      '@swc/core':
+        specifier: ^1.15.43
+        version: 1.15.43
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   examples/nestize-rest:
     dependencies:
       '@azerothian/nestize':
@@ -591,6 +631,76 @@ importers:
       '@types/pluralize':
         specifier: 'catalog:'
         version: 0.0.33
+      copyfiles:
+        specifier: 'catalog:'
+        version: 2.4.1
+      graphql:
+        specifier: 17.0.2
+        version: 17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce)
+      graphql-relay:
+        specifier: ^0.10.2
+        version: 0.10.2(graphql@17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce))
+      jest:
+        specifier: 'catalog:'
+        version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
+      npm-run-all2:
+        specifier: 'catalog:'
+        version: 9.0.2
+      sequelize:
+        specifier: ^6.37.7
+        version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
+      sqlite3:
+        specifier: 'catalog:'
+        version: 6.0.1
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.1
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
+  packages/ormize-adapter-mikro-orm:
+    dependencies:
+      '@azerothian/graphql-types':
+        specifier: workspace:*
+        version: link:../graphql-types
+      '@azerothian/utilize':
+        specifier: workspace:*
+        version: link:../utilize
+    devDependencies:
+      '@azerothian/gqlize':
+        specifier: workspace:*
+        version: link:../gqlize
+      '@azerothian/ormize':
+        specifier: workspace:*
+        version: link:../ormize
+      '@azerothian/ormize-adapter-sequelize':
+        specifier: workspace:*
+        version: link:../ormize-adapter-sequelize
+      '@jest/globals':
+        specifier: 'catalog:'
+        version: 30.4.1(supports-color@8.1.1)
+      '@mikro-orm/core':
+        specifier: ^7.2.1
+        version: 7.2.1
+      '@mikro-orm/sqlite':
+        specifier: ^7.2.1
+        version: 7.2.1(@mikro-orm/core@7.2.1)
+      '@swc/cli':
+        specifier: 'catalog:'
+        version: 0.8.1(@swc/core@1.15.43)(supports-color@8.1.1)
+      '@swc/core':
+        specifier: 'catalog:'
+        version: 1.15.43
+      '@swc/jest':
+        specifier: 'catalog:'
+        version: 0.2.39(@swc/core@1.15.43)
+      '@types/jest':
+        specifier: 'catalog:'
+        version: 30.0.0
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.1.1
       copyfiles:
         specifier: 'catalog:'
         version: 2.4.1
@@ -1757,6 +1867,27 @@ packages:
 
   '@microsoft/tsdoc@0.16.0':
     resolution: {integrity: sha512-xgAyonlVVS+q7Vc7qLW0UrJU7rSFcETRWsqdXZtjzRU8dF+6CkozTK4V4y1LwOX7j8r/vHphjDeMeGI4tNGeGA==}
+
+  '@mikro-orm/core@7.2.1':
+    resolution: {integrity: sha512-+gtJoScbin/C3wPItSZkj5vlMTq/LphBLIxHyi5brCbeA6VDcYuoMopiqoFUMQxdhXXrZlKNIHXGrhb8r3biVg==}
+    engines: {node: '>= 22.17.0'}
+    peerDependencies:
+      dataloader: 2.2.3
+    peerDependenciesMeta:
+      dataloader:
+        optional: true
+
+  '@mikro-orm/sql@7.2.1':
+    resolution: {integrity: sha512-3M9dQeUDLlvAT5VJr/KBGAk9C7xez+psVCnvNkAO4hRhwx2Wm7N1HkuyP4Bwj0MjkHVB6LYvhTw/V6pYsVM8lA==}
+    engines: {node: '>= 22.17.0'}
+    peerDependencies:
+      '@mikro-orm/core': 7.2.1
+
+  '@mikro-orm/sqlite@7.2.1':
+    resolution: {integrity: sha512-+iAPGORAqLl+TcBF+JSLOfRq+PwTQG1NLts+AvN9D8C2czlbDpyjyeaAFSR+5wJlMEZ4wv2rdzt4jSS5T7x3XQ==}
+    engines: {node: '>= 22.17.0'}
+    peerDependencies:
+      '@mikro-orm/core': 7.2.1
 
   '@napi-rs/nice-android-arm-eabi@1.1.1':
     resolution: {integrity: sha512-kjirL3N6TnRPv5iuHw36wnucNqXAO46dzK9oPb0wj076R5Xm8PfUVA9nAFB5ZNMmfJQJVKACAPd/Z2KYMppthw==}
@@ -3007,6 +3138,10 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
+  better-sqlite3@13.0.3:
+    resolution: {integrity: sha512-RbOBxmLBG8uvFUc15X9+9SFemKcQ0WBuISBVkpuiaUB2qblC8UWlHEjdWVoZ8AdhSwmoEgsiXKfopX0CQxaACQ==}
+    engines: {node: '>=22'}
+
   binary-version-check@6.1.0:
     resolution: {integrity: sha512-REKdLKmuViV2WrtWXvNSiPX04KbIjfUV3Cy8batUeOg+FtmowavzJorfFhWq95cVJzINnL/44ixP26TrdJZACA==}
     engines: {node: '>=18'}
@@ -4170,6 +4305,10 @@ packages:
   kind-of@6.0.3:
     resolution: {integrity: sha512-dcS1ul+9tmeD95T+x28/ehLgd9mENa3LsvDTtzm3vyBEO7RPptvAD+t44WVXaUjTBRcrpFeFlC8WCruUR456hw==}
     engines: {node: '>=0.10.0'}
+
+  kysely@0.29.6:
+    resolution: {integrity: sha512-hHaB8C/rfzDDtr/t8YZwxAuPJTT0zHyaPoVzcXwDYhYNAgH/4sIfVhi/XLLIY+bL/FqaIJnjATDbi8ObSELmxg==}
+    engines: {node: '>=22.0.0'}
 
   leven@3.1.0:
     resolution: {integrity: sha512-qsda+H8jTaUaN/x5vzW2rzc+8Rw4TAQ/4KjB46IwK5VH+IlVeeeje/EoZRpiXvIqjFgK84QffqPztGI3VBLG1A==}
@@ -6407,6 +6546,20 @@ snapshots:
 
   '@microsoft/tsdoc@0.16.0': {}
 
+  '@mikro-orm/core@7.2.1': {}
+
+  '@mikro-orm/sql@7.2.1(@mikro-orm/core@7.2.1)':
+    dependencies:
+      '@mikro-orm/core': 7.2.1
+      kysely: 0.29.6
+
+  '@mikro-orm/sqlite@7.2.1(@mikro-orm/core@7.2.1)':
+    dependencies:
+      '@mikro-orm/core': 7.2.1
+      '@mikro-orm/sql': 7.2.1(@mikro-orm/core@7.2.1)
+      better-sqlite3: 13.0.3
+      kysely: 0.29.6
+
   '@napi-rs/nice-android-arm-eabi@1.1.1':
     optional: true
 
@@ -7611,6 +7764,10 @@ snapshots:
   base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.10.43: {}
+
+  better-sqlite3@13.0.3:
+    dependencies:
+      node-addon-api: 8.9.0
 
   binary-version-check@6.1.0:
     dependencies:
@@ -9137,6 +9294,8 @@ snapshots:
       '@keyv/serialize': 1.1.1
 
   kind-of@6.0.3: {}
+
+  kysely@0.29.6: {}
 
   leven@3.1.0: {}
 

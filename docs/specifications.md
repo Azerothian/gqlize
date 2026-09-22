@@ -993,6 +993,12 @@ contract groups into:
 - **Lifecycle:** `createModel`, `initialise(options?)`, `sync`, `reset`. `initialise` takes an
   `InitialiseOptions` whose only member is `ddl` (default `true`); `ddl: false` means "wire up, but
   issue no DDL", for a build with no database behind it.
+- **Discovery (optional):** `discoverDefinitions()`, for a backend that owns its own schema rather
+  than being handed one. `Ormize.initialise()` calls it per adapter *after* the `define()` queue has
+  drained, so an explicitly authored definition of the same name wins, and skips a name that is
+  already defined so a second `initialise()` is a no-op. Omitting it means every model arrives
+  through `define()`/`addDefinition()`, which is how the SQL and Valkey adapters work. Discovery
+  must not open a connection: it is on the path `initialise({ddl: false})` guarantees is offline.
 - **Introspection:** `getModel`, `getFields` (→ `DefinitionField`), `getAssociations`
   (→ `Association`), `getPrimaryKeyNameForModel`, `getValueFromInstance`.
 - **Type mapping:** `getTypeMapper`, `getDefaultListArgs`, `getOrderByGraphQLType`,
@@ -1053,6 +1059,42 @@ contract groups into:
   rather than relying on inheriting it.
 - Inline count via `COUNT(*) OVER()` on postgres/mssql/sqlite.
 - `type-mapper.ts` maps Sequelize DataTypes → GraphQL types.
+
+### MikroORM adapter highlights
+
+The inverted case, and the reason `discoverDefinitions` exists: the models already exist as
+MikroORM entities, and `packages/ormize-adapter-mikro-orm/src/discover.ts` derives definitions
+from `orm.getMetadata()` rather than building anything. `createModel` binds a definition back to
+the entity it was derived from, and raises on a name MikroORM has never heard of — writing a new
+entity into an instance that belongs to the caller is not this adapter's to do.
+
+- **Synthesized foreign keys.** MikroORM has no scalar property for a relation's key: `Article.author`
+  *is* the key holder. ormize and gqlize need a real field for it (§ the global-id rules), so
+  discovery invents `authorId` with `foreignTarget` set to the target's class name, and keeps a
+  per-model alias table mapping it back to the relation property. Every `where`, `orderBy`,
+  `fields` list and mutation input is run through that table.
+- **Two-stage filter translation.** `processFilterArgument` is handed no model name — the engine's
+  call sites build the options bag from a request context that carries none — so it renames
+  operators only (`eq` → `$eq`), and `findAll`/`count` run the alias pass (`resolveAliases`) just
+  before the query, where the model is finally known. The pass is idempotent, so a condition that
+  already went through the model-aware `translateWhere` is unchanged.
+- **To-many reads are queries, not collection loads.** `Collection.loadItems` returns what it is
+  already holding once the collection is initialised — which MikroORM's propagation does on every
+  create — so a filtered or paged read would silently ignore its own arguments. Discovery records
+  MikroORM's `mappedBy`/`inversedBy` as `inverseProperties`, and the read becomes
+  `em.find(Article, {author: 5})`.
+- **The row API is tagged per row**, as the Valkey adapter does, not installed on the entity
+  prototype: an entity class is shared by every MikroORM instance that discovers it, so a prototype
+  method would belong to whichever ormize registered last. MikroORM also decorates those prototypes
+  itself, so "is this name taken" cannot tell a user's method from the ORM's.
+- **Soft delete is opt-in** through `options.paranoid` on the definition override and implemented as
+  a column overlay. A MikroORM global filter would be more idiomatic but would apply to the host
+  application's own queries too.
+- **The auto-generated m:n pivot is not registered**: composite key, no identity beyond the pair it
+  joins, and nothing needs it. A pivot declared as an entity is an ordinary model.
+- `hasInlineCountFeature()` is `false`. `findAndCount` exists but does not fit the contract's
+  `findAll` → `getInlineCount(rows)` shape, and a total carried on the row array survives neither
+  the engine's `.filter(m => m != null)` nor an offset past the end.
 
 ---
 

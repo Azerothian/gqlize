@@ -587,7 +587,17 @@ is worse than one that stops. What each means:
 
 ## Adapters
 
-- Sequelize - https://github.com/VostroNet/gqlize-adapter-sequelize
+Three ship in this repo:
+
+- [`@azerothian/ormize-adapter-sequelize`](../ormize-adapter-sequelize) — SQL, the reference
+  implementation.
+- [`@azerothian/ormize-adapter-valkey`](../ormize-adapter-valkey) — Valkey/Redis, index-only, never
+  scans the keyspace.
+- [`@azerothian/ormize-adapter-mikro-orm`](../ormize-adapter-mikro-orm) — MikroORM. The inverted
+  one: hand it an existing instance and its entities become models, with no definitions to author.
+
+The contract is `GqlizeAdapter` (`src/types/gqlize-adapter.ts`), which extends the GraphQL-free
+`OrmAdapter` in `@azerothian/utilize`; `docs/specifications.md` §9 is the prose version.
 
 ## TODO
 
