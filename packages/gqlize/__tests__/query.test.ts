@@ -617,15 +617,35 @@ it("include operator - required at every level (#70)", async() => {
   }
 });
 
-it("include operator - refuses a required include under a required collection", async() => {
-  // Sequelize builds broken SQL for this shape under a limit (#70); the adapter
-  // says so rather than surfacing an unknown-column error from the driver.
+it("include operator - required include under a required collection", async() => {
+  // Sequelize 6 put the nested join inside the paginated subquery, away from
+  // the collection it joins through, and the SQL failed (#70). The adapter's
+  // `beforeFindAfterOptions` hook keeps it in the outer query.
   const instance = await createInstance();
+  const {Task, Item} = instance.models;
+  const test = await Task.create({name: "test"});
+  const other = await Task.create({name: "other"});
+  const p1 = await Item.create({name: "p1"});
+  const p2 = await Item.create({name: "p2"});
+  await Item.create({name: "p3"});
+  await Item.create({name: "c1", parentId: p1.id, taskId: test.id});
+  await Item.create({name: "c2", parentId: p1.id, taskId: other.id});
+  await Item.create({name: "c3", parentId: p2.id, taskId: other.id});
   const schema = await createSchema(instance);
-  const result = await graphql({schema, source: `query {
-    models { Task(include: [{items: {required: true, include: {task: {required: true}}}}]) { edges { node { name } } } }
-  }`});
-  expect(result.errors?.[0]?.message).toMatch(/required include \("items\.task"\) under a required collection \("items"\)/);
+  type Result = {models: {Item: Connection<{name: string; children: Connection<{name: string}>}> & {total: number}}};
+  // `first: 1` as well: the page has to be counted in parents that pass the
+  // filter, not in whatever rows the subquery happened to take first.
+  for (const args of ["", "first: 1, "]) {
+    const {models} = await run<Result>(schema, `query {
+      models { Item(${args}include: [{children: {required: true, include: {task: {required: true, where: {name: {eq: "test"}}}}}}]) {
+        total edges { node { name children { edges { node { name } } } } }
+      } }
+    }`);
+    expect(models.Item.edges.map((e) => e.node.name)).toEqual(["p1"]);
+    // The INNER JOIN filters the children too, exactly as it does unpaginated.
+    expect(models.Item.edges[0].node.children.edges.map((e) => e.node.name)).toEqual(["c1"]);
+    expect(models.Item.total).toEqual(1);
+  }
 });
 
 it("include operator - where primarykey converted correctly", async() => {

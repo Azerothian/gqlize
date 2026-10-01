@@ -231,6 +231,7 @@ import {
 // been imported from.
 export type * from "./types/query";
 import { replaceWhereOperators, reservedOperatorNames } from "./utils/where-ops";
+import { keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
 
 // Pagination safety bounds. This is the central backstop that bounds every list
 // query (GraphQL relay connections and REST list routes both funnel through
@@ -278,6 +279,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // view of the constructor because the overload set cannot resolve one.
     const SequelizeCtor = Sequelize as unknown as new (...args: SequelizeConnection) => Sequelize;
     this.sequelize = new SequelizeCtor(...config);
+    // On the instance, so it runs for every model's find — native calls
+    // included — rather than only the queries this adapter builds.
+    this.sequelize.addHook("beforeFindAfterOptions", "ormize:nested-subquery", keepNestedJoinsOutOfSubQuery);
     // The caller's adapter options are theirs. `defaultAttr` matters most: it is
     // spread into *every* model, so one shared descriptor object was normalised
     // and stamped by each model in turn, the last one winning the `Model`

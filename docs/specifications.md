@@ -648,9 +648,10 @@ the query through the adapter. Key properties:
   OR-merge). With a row-level scope on the child, the scope filter sits inside the join:
   `required: true` means "has a matching child" among the rows the caller may see, so a parent
   is dropped only when it has no *visible* match. A scope never makes a join required by
-  itself; an unset `required` stays a LEFT JOIN. Under Sequelize, a `required` include nested
-  beneath a `required` hasMany/belongsToMany is refused with an error, because Sequelize 6
-  cannot build that join under a page limit.
+  itself; an unset `required` stays a LEFT JOIN. `required` nests at any depth, including
+  beneath a `required` hasMany/belongsToMany: Sequelize 6 places such a join inside the
+  paginated subquery, away from the collection it joins through, and the Sequelize adapter
+  moves it back to the outer query (a `beforeFindAfterOptions` hook on its instance).
 - **Accurate totals.** When a per-parent limit is applied, the nested connection's `total` is
   fetched with a `count` (firing `beforeCount`) rather than reported as the page length. hasMany
   counts run against the target model with the foreign-key filter so `beforeCount` fires (the

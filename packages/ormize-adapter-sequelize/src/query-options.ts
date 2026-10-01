@@ -167,49 +167,6 @@ export function withInlineCount(
 }
 
 /**
- * Refuse a required collection with a required include beneath it (#70).
- *
- * Sequelize 6 cannot build this under a `limit`, which a list query always has:
- * the required collection forces the root into a subquery, and
- * `Model._validateIncludedElements` then pulls the nested required join into
- * that subquery too — without the collection it joins through — so the database
- * rejects the SQL with an unknown-column error. No include option overrides it.
- * Saying what went wrong, and which relations, beats handing back a driver error
- * that names a column the caller never wrote.
- */
-export function assertNoRequiredUnderRequiredCollection(
-  host: QueryOptionsHost,
-  defName: string,
-  includeStatements: IncludeMap[],
-  path: string[] = [],
-  collection?: string,
-): void {
-  for (const map of includeStatements) {
-    for (const relName of Object.keys(map)) {
-      const inc = map[relName];
-      const rel = host.getAssociation(defName, relName);
-      const relPath = [...path, relName];
-      // Mirrors `processIncludeStatement`: `required` always wins over separate.
-      if (Boolean(inc.separate) && !inc.required && rel.associationType === "hasMany") {
-        continue; // its own query, so its subtree is never part of this one
-      }
-      if (inc.required && collection) {
-        throw new Error(
-          `Sequelize cannot nest a required include ("${relPath.join(".")}") under a required ` +
-          `collection ("${collection}") in a paginated query; make "${collection}" non-required, ` +
-          "or filter it with its own where",
-        );
-      }
-      const isCollection = rel.associationType === "hasMany" || rel.associationType === "belongsToMany";
-      const next = collection || (inc.required && isCollection ? relPath.join(".") : undefined);
-      if (inc.include) {
-        assertNoRequiredUnderRequiredCollection(host, rel.target, inc.include, relPath, next);
-      }
-    }
-  }
-}
-
-/**
  * Build the Sequelize `include` tree, hoisting nested ordering onto the parent
  * query's `order` where the include is a JOIN.
  */
@@ -350,7 +307,6 @@ export async function processListArgsToOptions(
   let order: SequelizeOrder[] = args.orderBy || [];
   let include: SequelizeInclude[] = [];
   if ((args.include || []).length > 0) {
-    assertNoRequiredUnderRequiredCollection(host, defName, args.include as IncludeMap[]);
     const result = await processIncludeStatement(
       host, defName, args.include as IncludeMap[], order, defaultOptions, [], runHook,
     );
