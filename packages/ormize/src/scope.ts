@@ -297,6 +297,7 @@ export function applyScopeWhere(
 export async function scopeIncludePlan(
   include: IncludeMap[] | undefined,
   readScopeFor: (defName: string) => Promise<ResolvedScope>,
+  matchNothingFor?: (defName: string) => PortableWhere | undefined,
 ): Promise<IncludeMap[] | undefined> {
   if (!include || include.length === 0) {
     return include;
@@ -308,36 +309,39 @@ export async function scopeIncludePlan(
       const inc = level[relName];
       const resolved = await readScopeFor(inc.target);
       if (resolved === false) {
-        // Denied outright, and an include has no portable way to say "no rows".
-        // Dropping it is not a hole: it stops the *eager* load, which hands the
-        // relationship back to `resolveManyRelationship` /
-        // `resolveSingleRelationship`, and those answer a denied scope with an
-        // empty page and a `null`.
+        // A `required` relation is a filter on the parent: "parents having a
+        // matching child". With every child denied none matches, so the parent
+        // goes too — dropping the include instead would widen the parent list
+        // to rows the caller asked to exclude (#70). Kept as an INNER JOIN on a
+        // filter nothing satisfies, when the caller can say "nothing".
+        const nothing = inc.required === true ? matchNothingFor?.(inc.target) : undefined;
+        if (nothing) {
+          mapped[relName] = {...inc, where: mergeScopeWhere(inc.where, nothing), include: undefined};
+          continue;
+        }
+        // Otherwise denied outright, and dropping it is not a hole: it stops
+        // the *eager* load, which hands the relationship back to
+        // `resolveManyRelationship` / `resolveSingleRelationship`, and those
+        // answer a denied scope with an empty page and a `null`.
         continue;
       }
       const scoped: IncludeMap[string] = Object.assign({}, inc);
-      scoped.include = await scopeIncludePlan(inc.include, readScopeFor);
+      scoped.include = await scopeIncludePlan(inc.include, readScopeFor, matchNothingFor);
       if (resolved?.where) {
         scoped.where = mergeScopeWhere(inc.where, resolved.where);
-        // Decision 6, and not merely a preference: an adapter that infers
-        // requiredness from the presence of a `where` — Sequelize does — would
-        // read the injected filter as "INNER JOIN" and drop every parent whose
-        // children are all out of scope. A scope on a child must never become a
-        // filter on the parent.
+        // Decision 6: a scope never *makes* a join required. An adapter that
+        // infers requiredness from the presence of a `where` — Sequelize does —
+        // would read the injected filter as "INNER JOIN" and drop every parent
+        // whose children are all out of scope, so an unset `required` is pinned
+        // to `false` here rather than left for the adapter to guess.
         //
-        // Unconditional, and that is the point. This used to run only when
-        // `required` was `undefined`, which is a shape the include planner never
-        // produces — it always writes a defined boolean — so on the path that
-        // reaches this code the guard never fired. A caller asking for
-        // `required: true` on a scoped relation then had its parent list
-        // narrowed by rows it may not see, which reports their existence through
-        // their absence.
-        //
-        // `required: true` keeps its meaning, narrowed to what the caller is
-        // allowed to know: "parents having a matching child" among visible rows.
-        // The children are filtered by the scope either way; only the decision to
-        // discard the parent along with them is refused.
-        scoped.required = false;
+        // A caller's own `required: true` is kept (#70). The scope sits inside
+        // the join, so the INNER JOIN drops a parent only when it has no
+        // *visible* matching child — exactly what the caller would see if the
+        // hidden rows did not exist, so it reports nothing about them. Forcing
+        // it to `false` instead silently turned every scoped `required` into a
+        // LEFT JOIN, returning parents the caller asked to exclude.
+        scoped.required = inc.required === true;
       }
       mapped[relName] = scoped;
     }

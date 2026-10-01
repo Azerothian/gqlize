@@ -1465,7 +1465,17 @@ export default class Ormize<
     // F4. An eagerly-loaded relationship is fetched by *this* query, so its own
     // resolver never gets a filter in edgeways — the include plan is the only
     // place its model's scope can be applied.
-    const scopedInclude = await scopeIncludePlan(a.include as IncludeMap[] | undefined, (targetName) => this.resolveRowScope(targetName, "read", context));
+    const scopedInclude = await scopeIncludePlan(
+      a.include as IncludeMap[] | undefined,
+      (targetName) => this.resolveRowScope(targetName, "read", context),
+      // "No rows", in the include's own vocabulary: the target's key `in []`.
+      // Lets a `required` relation whose model is denied outright still filter
+      // its parent rather than vanish from the plan.
+      (targetName) => {
+        const [pk] = this.getModelAdapter(targetName).getPrimaryKeyNameForModel(targetName);
+        return pk ? {[pk]: {in: []}} : undefined;
+      },
+    );
     if (scopedInclude !== a.include) {
       a = {...a, include: scopedInclude};
     }

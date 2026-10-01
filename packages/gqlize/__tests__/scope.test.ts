@@ -194,6 +194,35 @@ describe("gqlize - row-level scope through the schema", () => {
     expect(result.data.models.Doc.total).toEqual(2);
   });
 
+  it("honours `required: true` on scoped relations at every level (#70)", async() => {
+    // Both models are scoped, so both levels pass through the scope guard. An
+    // INNER JOIN with the scope inside it drops only parents with no *visible*
+    // match; the guard used to turn each into a LEFT JOIN instead, handing back
+    // parents the caller asked to exclude.
+    const docs = async(body: string) => {
+      const result = await run(`query { models { Doc(include: [{notes: {required: true, where: {body: {eq: "${body}"}}}}]) {
+        total edges { node { name } }
+      } } }`, "u1");
+      expect(result.errors).toBeUndefined();
+      return result.data.models.Doc;
+    };
+    expect((await docs("missing")).edges).toEqual([]);
+    expect((await docs("missing")).total).toEqual(0);
+    expect((await docs("our note")).edges.map((e) => e.node.name)).toEqual(["ours"]);
+    // A note u1 cannot see matches nothing, exactly as if it did not exist.
+    expect((await docs("their note")).edges).toEqual([]);
+
+    const notes = async(body: string) => {
+      const result = await run(`query { models { Note(include: [{doc: {required: true, include: [{notes: {required: true, where: {body: {eq: "${body}"}}}}]}}]) {
+        edges { node { body doc { name } } }
+      } } }`, "u1") as unknown as {errors?: unknown[]; data: {models: {Note: Connection<{body: string; doc: {name: string} | null}>}}};
+      expect(result.errors).toBeUndefined();
+      return result.data.models.Note.edges.map((e) => e.node);
+    };
+    expect(await notes("missing")).toEqual([]);
+    expect(await notes("our note")).toEqual([{body: "our note", doc: {name: "ours"}}]);
+  });
+
   it("does not let a scoped child become a filter on its parent", async() => {
     // Decision 6. `u1` owns a doc whose notes it cannot see once the note scope
     // pins a different owner — the doc must still come back, with no notes.

@@ -591,6 +591,43 @@ it("include operator - required", async() => {
   expect(models.Task.edges[0].node.items.edges).toHaveLength(2);
 });
 
+it("include operator - required at every level (#70)", async() => {
+  const instance = await createInstance();
+  const {Task, Item} = instance.models;
+  const other = await Task.create({name: "other"});
+  const test = await Task.create({name: "test"});
+  const p1 = await Item.create({name: "p1", taskId: other.id});
+  const p2 = await Item.create({name: "p2"});
+  const p3 = await Item.create({name: "p3", taskId: test.id});
+  await Item.create({name: "c1", parentId: p1.id});
+  await Item.create({name: "c2", parentId: p2.id});
+  await Item.create({name: "c3", parentId: p3.id});
+  const schema = await createSchema(instance);
+  const include = `include: [{parent: {required: true, include: {task: {required: true, where: {name: {eq: "test"}}}}}}]`;
+  type Row = {name: string; parent?: {name: string; task?: {name: string} | null} | null};
+  type Result = {models: {Item: Connection<Row> & {total: number}}};
+  // Whether or not the selection reaches the nested relation — the selection
+  // builds its own plan, which the explicit include has to merge into, not lose.
+  for (const node of ["name", "name parent { name }", "name parent { name task { name } }"]) {
+    const {models} = await run<Result>(schema, `query {
+      models { Item(${include}) { total edges { node { ${node} } } } }
+    }`);
+    expect(models.Item.edges.map((e) => e.node.name)).toEqual(["c3"]);
+    expect(models.Item.total).toEqual(1);
+  }
+});
+
+it("include operator - refuses a required include under a required collection", async() => {
+  // Sequelize builds broken SQL for this shape under a limit (#70); the adapter
+  // says so rather than surfacing an unknown-column error from the driver.
+  const instance = await createInstance();
+  const schema = await createSchema(instance);
+  const result = await graphql({schema, source: `query {
+    models { Task(include: [{items: {required: true, include: {task: {required: true}}}}]) { edges { node { name } } } }
+  }`});
+  expect(result.errors?.[0]?.message).toMatch(/required include \("items\.task"\) under a required collection \("items"\)/);
+});
+
 it("include operator - where primarykey converted correctly", async() => {
   const instance = await createInstance();
   const {Task, TaskItem} = instance.models;

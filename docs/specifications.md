@@ -645,9 +645,12 @@ the query through the adapter. Key properties:
   default a selected relation is a LEFT JOIN, so a nested `where` filters the child rows but not
   the parent; `required: true` promotes it to an INNER JOIN so parents without a matching related
   row are excluded. Equivalent to `required` on the explicit `include` argument (the two
-  OR-merge). A row-level scope on the child overrides it back to a LEFT JOIN — see §12:
-  `required: true` means "has a matching child" among the rows the caller may see, and a
-  parent is never dropped because its children were filtered by a scope.
+  OR-merge). With a row-level scope on the child, the scope filter sits inside the join:
+  `required: true` means "has a matching child" among the rows the caller may see, so a parent
+  is dropped only when it has no *visible* match. A scope never makes a join required by
+  itself; an unset `required` stays a LEFT JOIN. Under Sequelize, a `required` include nested
+  beneath a `required` hasMany/belongsToMany is refused with an error, because Sequelize 6
+  cannot build that join under a page limit.
 - **Accurate totals.** When a per-parent limit is applied, the nested connection's `total` is
   fetched with a `count` (firing `beforeCount`) rather than reported as the page length. hasMany
   counts run against the target model with the foreign-key filter so `beforeCount` fires (the
