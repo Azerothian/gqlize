@@ -1148,33 +1148,61 @@ describe("ormize - row-level scope, the adapter hooks (§13)", () => {
     expect(folder.docs).toEqual([]);
   });
 
-  it("keeps `required: true` from filtering the parent through the engine's include plan too", async () => {
-    // The §12 twin of the test below. The same conditional guard existed in
-    // `scopeIncludePlan` (the engine's plan) and in `scopeIncludes` (the adapter
-    // hook), and neither fired for a defined `required` — so both are pinned.
+  it("honours `required: true` on a scoped include through the engine's include plan (#70)", async () => {
+    // The §12 twin of the test below. A caller's `required: true` keeps its
+    // INNER JOIN, with the scope inside it: the folder holds docs, but none the
+    // caller may see, so it has no visible matching child and is excluded —
+    // the same answer as if those docs did not exist at all.
     const db = await buildRelated({ scope: scopeDoc(ownedBy(3)) });
     await seedFolder(db, true);
     const { models } = await db.resolveFindAll("Folder", null, {
       include: [{ docs: { target: "Doc", associationType: "hasMany", required: true } }],
     }, ctx(3));
-    expect(models).toHaveLength(1);
+    expect(models).toHaveLength(0);
   });
 
-  it("does not let a scoped include filter its parent even when the caller asked for `required`", async () => {
-    // The guard above only fired when `required` was `undefined`, and the
-    // include planner always sets a defined boolean — so on the path that
-    // actually reaches this code it never fired at all. A caller writing
-    // `docs(required: true)` against a scoped child got the parent list
-    // silently narrowed by rows it is not allowed to see, which reports the
-    // existence of those rows through their absence.
+  it("honours `required: true` on a scoped native include (#70)", async () => {
+    // Forcing `required: false` here turned every scoped `required` into a
+    // LEFT JOIN, so parents the caller asked to exclude came back anyway.
     const db = await buildRelated({ scope: scopeDoc(ownedBy(3)) });
     await seedFolder(db, true);
     const folders = await db.models.Folder.findAll({
       include: [{ model: db.models.Doc, as: "docs", required: true }],
       ...asRequest(3),
     }) as { docs: NamedRow[] }[];
-    expect(folders).toHaveLength(1);
-    expect(folders[0].docs).toEqual([]);
+    expect(folders).toHaveLength(0);
+  });
+
+  it("keeps a `required: true` parent whose matching child is visible, with only the visible children", async () => {
+    const db = await buildRelated({ scope: scopeDoc(ownedBy(1)) });
+    await seedFolder(db, true);
+    await db.models.Folder.create({ title: "empty" });
+    const { models } = await db.resolveFindAll("Folder", null, {
+      include: [{ docs: { target: "Doc", associationType: "hasMany", required: true } }],
+    }, ctx(1));
+    const folders = models as unknown as { title: string; docs: NamedRow[] }[];
+    expect(folders.map((f) => f.title)).toEqual(["f"]);
+    expect(folders[0].docs.map((d) => d.name)).toEqual(["mine"]);
+  });
+
+  it("excludes the parent of a `required` include whose model is denied outright", async () => {
+    // Dropping the include — what a denied scope does otherwise — would widen
+    // the parent list to rows the caller asked to exclude.
+    const db = await buildRelated({ scope: scopeDoc(() => false) });
+    await seedFolder(db, true);
+    const { models } = await db.resolveFindAll("Folder", null, {
+      include: [{ docs: { target: "Doc", associationType: "hasMany", required: true } }],
+    }, ctx(1));
+    expect(models).toHaveLength(0);
+  });
+
+  it("still keeps the parent of an unrequired include whose model is denied outright", async () => {
+    const db = await buildRelated({ scope: scopeDoc(() => false) });
+    await seedFolder(db, true);
+    const { models } = await db.resolveFindAll("Folder", null, {
+      include: [{ docs: { target: "Doc", associationType: "hasMany", required: false } }],
+    }, ctx(1));
+    expect(models).toHaveLength(1);
   });
 
   it("cannot be displaced by a definition hook that rewrites `where`", async () => {
