@@ -254,13 +254,13 @@ async function overriddenField(def: Partial<Definition>) {
 }
 
 test("createBasicFieldsFunc - an override describes itself", async() => {
-  const field = await overriddenField({ override: { meta: { description: "override text" } } as Definition["override"] });
+  const field = await overriddenField({ override: { meta: { description: "override text" } } });
   expect(field.description).toBe("override text");
 });
 
 test("createBasicFieldsFunc - comments.fields describes an override, and wins", async() => {
   const field = await overriddenField({
-    override: { meta: { description: "override text" } } as Definition["override"],
+    override: { meta: { description: "override text" } },
     comments: { fields: { meta: "comment text" } },
   });
   expect(field.description).toBe("comment text");
