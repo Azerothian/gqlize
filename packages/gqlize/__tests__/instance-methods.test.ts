@@ -1,4 +1,5 @@
-import {graphql, GraphQLEnumType, GraphQLInputObjectType, GraphQLObjectType} from "graphql";
+import {graphql, GraphQLEnumType, GraphQLInputObjectType, GraphQLObjectType, GraphQLString} from "graphql";
+import Sequelize from "sequelize";
 import {describe, it, expect} from "@jest/globals";
 
 import {createInstance, resultData, validateResult} from "./helper";
@@ -132,6 +133,95 @@ describe("exposed instance methods — projection", () => {
     // the method's include did not clobber the selection-derived one
     expect(node.petNames).toBe("ari,rex");
     expect(node.pets.edges.map((e) => e.node.name).sort()).toEqual(["ari", "rex"]);
+  });
+});
+
+describe("exposed instance methods — finding the implementation (#72)", () => {
+  // Top-level `instanceMethods`, plus an `options.instanceMethods` — empty or
+  // not. The adapter used to install one bag *or* the other, so every
+  // top-level method vanished as soon as the nested bag existed at all.
+  const gadget = (options: Definition["options"]): Definition => ({
+    name: "Gadget",
+    define: {name: {type: Sequelize.STRING, allowNull: false}},
+    expose: {
+      instanceMethods: {
+        query: {
+          shout: {type: GraphQLString, fields: ["name"]},
+          whisper: {type: GraphQLString, fields: ["name"]},
+          clash: {type: GraphQLString},
+        },
+      },
+    },
+    instanceMethods: {
+      shout(this: {name: string}) {
+        return `${this.name}!`;
+      },
+      clash() {
+        return "top-level";
+      },
+    },
+    options,
+  });
+  type GadgetResult = {models: {Gadget: {edges: {node: {shout: string; whisper?: string; clash?: string}}[]}}};
+
+  it("finds a top-level method beside an empty `options.instanceMethods`", async() => {
+    const instance = await createInstance([gadget({instanceMethods: {}})]);
+    await instance.models.Gadget.create({name: "g"});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ models { Gadget { edges { node { shout } } } } }"});
+    validateResult(result);
+    expect(resultData<GadgetResult>(result).models.Gadget.edges[0].node.shout).toBe("g!");
+  });
+
+  it("merges both spellings, the nested one winning a name both declare", async() => {
+    const instance = await createInstance([gadget({instanceMethods: {
+      whisper(this: {name: string}) {
+        return `${this.name}...`;
+      },
+      clash() {
+        return "nested";
+      },
+    }})]);
+    await instance.models.Gadget.create({name: "g"});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ models { Gadget { edges { node { shout whisper clash } } } } }"});
+    validateResult(result);
+    expect(resultData<GadgetResult>(result).models.Gadget.edges[0].node).toEqual({shout: "g!", whisper: "g...", clash: "nested"});
+  });
+
+  it("resolves on plain objects a class method returns typed as the model", async() => {
+    // `reverseNameArray` hands back `{id, name}` literals typed `Task[]` — no
+    // model instance, so no prototype to find the method on.
+    const instance = await createInstance();
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: `{
+      classMethods { Task { reverseNameArray { name testInstanceMethod(input: {amount: 1}) { name } } } }
+    }`});
+    validateResult(result);
+    const rows = resultData<{classMethods: {Task: {reverseNameArray: {name: string; testInstanceMethod: {name: string}[]}[]}}}>(result)
+      .classMethods.Task.reverseNameArray;
+    expect(rows.map((r) => r.testInstanceMethod[0].name)).toEqual(["reverseName41", "reverseName31"]);
+  });
+
+  it("resolves on plain objects an instance method returns typed as the model", async() => {
+    const instance = await createInstance();
+    await instance.models.Task.create({name: "item1"});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: `{
+      models { Task { edges { node { testInstanceMethod(input: {amount: 1}) { testInstanceMethod(input: {amount: 2}) { name } } } } } }
+    }`});
+    validateResult(result);
+    const node = resultData<{models: {Task: {edges: {node: {testInstanceMethod: {testInstanceMethod: {name: string}[]}[]}}[]}}}>(result)
+      .models.Task.edges[0].node;
+    expect(node.testInstanceMethod[0].testInstanceMethod[0].name).toBe("item112");
+  });
+
+  it("still reports a method with no implementation anywhere", async() => {
+    const instance = await createInstance([{...gadget({}), name: "Gizmo", instanceMethods: {}}]);
+    await instance.models.Gizmo.create({name: "g"});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ models { Gizmo { edges { node { shout } } } } }"});
+    expect(result.errors?.[0]?.message).toMatch(/neither the row nor the definition/);
   });
 });
 

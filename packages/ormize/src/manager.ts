@@ -14,7 +14,7 @@ import type { ScopeMissBehaviour } from "./scope";
 import { buildScopeHooks, buildScopeInstanceHooks } from "./scope-hooks";
 import { auditDefinitionScopeSurfaces, auditExtendFields, reportScopeSurfaces } from "./scope-audit";
 import type { ScopeHook } from "./scope-hooks";
-import { expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
+import { definitionMethods, expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, InitialiseOptions, NativeDataType,
   RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs, OrderEntry, GlobalKeyTargets } from '@azerothian/utilize/types/index';
@@ -1817,10 +1817,8 @@ export default class Ormize<
       if (!entry) {
         throw new Error(`ormize: "${defName}.${methodName}" is not exposed as an instance-method transform.`);
       }
-      // Same resolution order the adapter uses when it installs these onto the
-      // model prototype: `options.instanceMethods` is the nested spelling,
-      // `instanceMethods` the flat one.
-      const implementation = definition.options?.instanceMethods?.[methodName] || definition.instanceMethods?.[methodName];
+      // The same merged view the adapter installs onto the model prototype.
+      const implementation = definitionMethods(definition, "instanceMethods")[methodName];
       if (typeof implementation !== "function") {
         throw new Error(`ormize: instance-method transform "${defName}.${methodName}" is exposed but the model declares no such instance method.`);
       }

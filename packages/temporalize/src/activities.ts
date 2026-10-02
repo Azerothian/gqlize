@@ -1,5 +1,5 @@
 import { isAllowed, isModelAllowed } from "@azerothian/utilize";
-import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
+import { definitionMethods, mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import type { Definition, Permission, PermissionContext } from "@azerothian/utilize";
 import type { Ormize } from "@azerothian/ormize";
 import { TemporalizeRegistry } from "./registry";
@@ -51,10 +51,7 @@ type Call = {
 
 /** Method names declared either top-level or under `options` (the adapter merges both, `options` winning). */
 function methodNames(definition: Definition, key: "classMethods" | "instanceMethods"): string[] {
-  const source = definition.options?.[key] || definition[key];
-  if (!source) {
-    return [];
-  }
+  const source = definitionMethods(definition, key);
   return Object.keys(source).filter((name) => typeof source[name] === "function");
 }
 

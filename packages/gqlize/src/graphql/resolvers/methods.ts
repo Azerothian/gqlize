@@ -1,4 +1,5 @@
 import type { GraphQLResolveInfo } from "graphql";
+import { definitionMethods } from "@azerothian/utilize/exposed-methods";
 import type { AdapterRow, RequestContext } from "../../types";
 import type { BindingContext, FieldBinding } from "./types";
 
@@ -17,22 +18,30 @@ export function buildInstanceMethodResolver(
   }
   const { before, after, output } = methodDef;
   const { methodName, defName } = binding;
+  // The definition's own implementation, for a row the adapter never built:
+  // a class or instance method that returns plain objects typed as this model
+  // hands back values with no prototype to find the method on (#72).
+  const declared = definitionMethods(definition, "instanceMethods")[methodName];
 
   return async function resolve(source: AdapterRow, args: unknown, context: RequestContext, info: GraphQLResolveInfo) {
     if (before) {
       args = await before(args, context);
     }
-    // The method is defined on the row's prototype, which only the adapter knows
-    // the shape of — reaching it is a widening, and the `typeof` below is what
-    // decides whether there is anything to call.
-    const implementation = (source as Record<string, unknown> | null | undefined)?.[methodName];
+    // The row's own method first — the adapter installs it on the prototype and
+    // may have bound something richer. Reaching it is a widening, and the
+    // `typeof` below is what decides whether there is anything to call. A plain
+    // object falls back to the definition's implementation, run with the row as
+    // `this` exactly as the prototype method would be.
+    const own = (source as Record<string, unknown> | null | undefined)?.[methodName];
+    const implementation = typeof own === "function" ? own : declared;
     // An entry that declares `output` needs no implementation at all: the
     // formatter produces the value from the loaded row. Without one, an absent
     // implementation is still an error — there is nothing to resolve from.
     if (typeof implementation !== "function") {
       if (!output) {
         throw new Error(
-          `gqlize: instance method "${defName}.${methodName}" is exposed but the model has no such method, `
+          `gqlize: instance method "${defName}.${methodName}" is exposed but neither the row nor the definition `
+          + "(`instanceMethods` / `options.instanceMethods`) has an implementation, "
           + "and the entry declares no `output` to produce the value from the row instead.",
         );
       }

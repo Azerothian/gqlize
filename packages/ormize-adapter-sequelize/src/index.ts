@@ -19,7 +19,7 @@ import type { ResolvedScope } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import { replaceDefWhereOperators } from "./utils/where-operators";
-import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothian/utilize/exposed-methods";
+import { computedOrderableFields as computedOrderableFieldsFor, definitionMethods } from "@azerothian/utilize/exposed-methods";
 const log = logger("gqlize::adapter::sequelize::");
 
 /**
@@ -712,14 +712,15 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     (newDef.removeAttributes || []).forEach((attr) => {
       this.sequelize.models[defName].removeAttribute(attr);
     });
-    // `options.classMethods`/`options.instanceMethods` are the nested spelling
-    // and win over the top-level one when both are authored.
-    const classMethods = newDef.options?.classMethods || newDef.classMethods;
-    const instanceMethods = newDef.options?.instanceMethods || newDef.instanceMethods;
-    if (classMethods) {
+    // Both spellings, merged — the nested `options.*` one wins a name both
+    // declare. Picking one bag or the other dropped every top-level method
+    // from a definition that also had an `options.instanceMethods` (#72).
+    const classMethods = definitionMethods(newDef, "classMethods");
+    const instanceMethods = definitionMethods(newDef, "instanceMethods");
+    if (Object.keys(classMethods).length > 0) {
       await this.installClassMethods(defName, classMethods);
     }
-    if (instanceMethods) {
+    if (Object.keys(instanceMethods).length > 0) {
       this.installInstanceMethods(defName, instanceMethods);
     }
 
