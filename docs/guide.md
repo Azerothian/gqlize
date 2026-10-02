@@ -1820,5 +1820,70 @@ target lives on a different adapter) are not supported. See the runnable
 
 ---
 
+## 14. The MikroORM adapter
+
+`@azerothian/ormize-adapter-mikro-orm` goes the other way round from the two above. They are handed
+a `Definition` and build a native model from it; this one is handed a **MikroORM instance that
+already has its entities** and derives the definitions from that instance's own metadata. There is
+nothing to `define()`.
+
+```ts
+import { MikroORM } from "@mikro-orm/postgresql";
+import { Ormize } from "@azerothian/ormize";
+import MikroAdapter from "@azerothian/ormize-adapter-mikro-orm";
+import { User, Article } from "./entities";
+
+const mikro = await MikroORM.init({ entities: [User, Article] });
+
+const db = new Ormize()
+  .registerAdapter(new MikroAdapter<{ User: User; Article: Article }>(mikro));
+
+await db.initialise();          // entities discovered here
+db.models.User.findAll();       // typed as Promise<User[]>
+```
+
+The entity map only affects types — it is what makes `db.models.User` a `MikroModel<User>`. It is
+written out rather than inferred because `typeof User` carries `name: string`, not the literal
+`"User"`.
+
+**How it arrives.** `Ormize.initialise()` calls each adapter's optional `discoverDefinitions()` after
+the `define()` queue has drained. An explicitly authored definition of the same name wins, and a name
+already defined is skipped — so calling `initialise()` twice is a no-op rather than a duplicate-name
+throw.
+
+**Foreign keys.** MikroORM has no scalar property for a relation's key: `Article.author` *is* the key
+holder. So discovery synthesizes `authorId`, typed by what it points at — which is what gives it the
+right relay global id (an `Author` id, not an `Article` one) and makes `where: { authorId: … }` work
+like any other column. Everything is mapped back to the relation property on the way down.
+
+**Offline builds.** MikroORM's synchronous constructor discovers entities without connecting, and
+this adapter's discovery reads that metadata and opens nothing — so `initialise({ddl: false})`
+followed by `createSchema(orm)` prints a full schema with no database at all. That is what
+`examples/mikro-orm-basic`'s `schema:check` runs as a CI drift gate.
+
+**The EntityManager.** Every call reads `mikro.em`, which already resolves to the host's
+`RequestContext` fork when one is active. Forking behind the host's back would discard whatever it
+arranged, so the adapter does not. `orm.transaction(...)` forks explicitly, and the handle *is* a
+forked EntityManager — so a nested mutation joins it with nothing further to wire.
+
+**Overrides.** Discovery reads structure, not intent: `expose`, `comments`, `deprecations`,
+`override`, hooks, class/instance methods, custom where-operators and soft delete are authored,
+through `MikroAdapterOptions.definitions`. The merge is per key for `define`/`options`/`comments`/
+`deprecations`/`override` and by name for `ignoreFields`/`relationships`, so naming one column does
+not drop the other forty. A **cross-adapter relationship** is declared the same way — MikroORM cannot
+express one, since the other end is not one of its entities.
+
+**Soft delete** is opt-in per entity (`options: { paranoid: true, deletedAt: "deletedAt" }` on the
+override) and implemented as a column overlay; MikroORM has none of its own, and a global filter
+would reach the host application's own queries. For the same reason `manageSchema` defaults to
+`false`: the schema belongs to the application, and an ormize call must not issue DDL under it.
+
+**Limitations:** composite primary keys, embeddables (one `Object` field rather than a nested type),
+polymorphic/STI entities (root only), and `define()` against this adapter (it binds to the entities
+it was given). See the runnable [`examples/mikro-orm-basic`](../examples/mikro-orm-basic) and the
+[package README](../packages/ormize-adapter-mikro-orm).
+
+---
+
 *See [specifications.md](specifications.md) for the architecture, the adapter contract, and the
 full generated-schema reference.*

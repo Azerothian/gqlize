@@ -33,6 +33,7 @@ peerDependencyRules:
 allowBuilds:
   '@scarf/scarf': false # telemetry phone-home
   '@swc/core': true # resolves the napi binary for the workspace compiler
+  better-sqlite3: true # native build, @mikro-orm/sqlite driver for the mikro-orm suites
   esbuild: true # ships a platform binary; nothing builds without it
   protobufjs: false # postinstall only prints a version-scheme warning
   redis-memory-server: true # downloads the redis binary the valkey suites need

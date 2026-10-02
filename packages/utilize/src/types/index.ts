@@ -248,6 +248,19 @@ export interface OrmAdapter {
   adapterName: string;
   createModel(def: Definition, hooks?: HookMap): Promise<Model>;
   /**
+   * The definitions this adapter already knows about, for a backend that owns its
+   * own schema — an existing MikroORM instance, a Prisma client, an introspected
+   * database. Called once per adapter from `Ormize.initialise()`, *after* the
+   * `define()` queue has drained, so an explicitly authored definition of the same
+   * name wins and the adapter's version is skipped.
+   *
+   * Absent means "this backend has no schema of its own": every model must arrive
+   * through `define()`/`addDefinition()`, which is how the SQL and Valkey adapters
+   * work. Discovery must not open a connection — it is on the path
+   * `initialise({ddl: false})` guarantees is offline.
+   */
+  discoverDefinitions?(): Definition[] | Promise<Definition[]>;
+  /**
    * Register hooks on the adapter's *connection* rather than on a model, for
    * backends that draw that distinction (Sequelize fires `beforeQuery`,
    * `beforeConnect` and friends off the Sequelize instance, and a model never

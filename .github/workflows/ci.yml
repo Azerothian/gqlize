@@ -62,10 +62,18 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # Schema drift, and the DB-free-generation gate in one. The example's
-      # `orm()` never connects (see examples/gqlize-basic/src/orm.ts), and this
-      # job has no SQL service — so a change that reintroduces a connection on
-      # the schema-build path fails here, as does an edit to the models that
-      # nobody rebuilt `generated/` for.
+      # Schema drift, and the DB-free-generation gate in one. Each example's
+      # `orm()` never connects (see its `src/orm.ts`), and this job has no SQL
+      # service — so a change that reintroduces a connection on the schema-build
+      # path fails here, as does an edit to the models that nobody rebuilt
+      # `generated/` for.
+      #
+      # Both examples, because the two adapters reach the offline path from
+      # opposite directions: the SQL one skips replaying a definition's raw DDL,
+      # while the MikroORM one derives its definitions from metadata that was
+      # never behind a connection in the first place.
       - name: Schema drift
         run: pnpm --filter @azerothian/example-gqlize-basic schema:check
+
+      - name: Schema drift (mikro-orm)
+        run: pnpm --filter @azerothian/example-mikro-orm-basic schema:check

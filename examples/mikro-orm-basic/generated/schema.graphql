@@ -1,0 +1,673 @@
+schema {
+  query: RootQuery
+  mutation: Mutation
+}
+
+type RootQuery {
+  """Fetches an object given its ID"""
+  node(
+    """The ID of an object"""
+    id: ID!
+  ): Node
+  models: QueryModels
+}
+
+"""An object with an ID"""
+interface Node {
+  """The id of the object."""
+  id: ID!
+}
+
+type QueryModels {
+  Task(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first ${amount} of records from provided cursor, if a cursor is not provided the results will be the first ${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first ${amount} of records from provided cursor, if a cursor is not provided  the results will be the last ${amount} of records.
+    """
+    last: Int
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [TaskOrderBy]
+    where: GQLTQueryTaskWhere
+    include: GQLTTaskInclude
+  ): TaskList
+  Item(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first ${amount} of records from provided cursor, if a cursor is not provided the results will be the first ${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first ${amount} of records from provided cursor, if a cursor is not provided  the results will be the last ${amount} of records.
+    """
+    last: Int
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [ItemOrderBy]
+    where: GQLTQueryItemWhere
+    include: GQLTItemInclude
+  ): ItemList
+}
+
+type TaskList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo!
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Task"""
+  edges: [TaskEdge!]!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+"""Task edge"""
+type TaskEdge {
+  node: Task
+  cursor: String!
+}
+
+type Task implements Node {
+  """The ID of an object"""
+  id: ID!
+  name: String!
+  done: Boolean!
+  createdAt: GQLTDate!
+
+  """The ID of an object"""
+  itemId: ID!
+  item(
+    """
+    When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+  ): Item
+}
+
+"""
+A special custom Scalar type for Dates that converts to a ISO formatted string 
+"""
+scalar GQLTDate
+
+type Item implements Node {
+  """The ID of an object"""
+  id: ID!
+
+  """What this group of tasks is called"""
+  label: String!
+  tasks(
+    """If provided it will return results after the provided cursor"""
+    after: String
+
+    """
+    If provided the results will be the first ${amount} of records from provided cursor, if a cursor is not provided the results will be the first ${amount} of records.
+    """
+    first: Int
+
+    """If provided it will return results before the provided cursor"""
+    before: String
+
+    """
+    If provided the results will be the first ${amount} of records from provided cursor, if a cursor is not provided  the results will be the last ${amount} of records.
+    """
+    last: Int
+
+    """
+    When true and this is a nested relationship, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
+    """
+    required: Boolean
+
+    """
+    If provided this will sort the results by the supplied column and direction
+    """
+    orderBy: [TaskOrderBy]
+    where: GQLTQueryTaskWhere
+    include: GQLTTaskInclude
+  ): TaskHasManyTasksList
+}
+
+type TaskHasManyTasksList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo!
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for TaskHasManyTasks"""
+  edges: [TaskHasManyTasksEdge!]!
+}
+
+"""TaskHasManyTasks edge"""
+type TaskHasManyTasksEdge {
+  node: Task
+  cursor: String!
+}
+
+enum TaskOrderBy {
+  idASC
+  idDESC
+  nameASC
+  nameDESC
+  doneASC
+  doneDESC
+  createdAtASC
+  createdAtDESC
+  itemIdASC
+  itemIdDESC
+}
+
+input GQLTQueryTaskWhere {
+  id: GQLTQueryTaskWhereid
+  name: GQLTQueryTaskWherename
+  done: GQLTQueryTaskWheredone
+  createdAt: GQLTQueryTaskWherecreatedAt
+  itemId: GQLTQueryTaskWhereitemId
+  or: [GQLTQueryTaskWhere]
+  and: [GQLTQueryTaskWhere]
+}
+
+input GQLTQueryTaskWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  between: [ID]
+  notBetween: [ID]
+}
+
+input GQLTQueryTaskWherename {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  between: [String]
+  notBetween: [String]
+}
+
+input GQLTQueryTaskWheredone {
+  eq: Boolean
+  ne: Boolean
+  gte: Boolean
+  lte: Boolean
+  lt: Boolean
+  not: Boolean
+  is: Boolean
+  like: Boolean
+  notLike: Boolean
+  iLike: Boolean
+  notILike: Boolean
+  startsWith: Boolean
+  endsWith: Boolean
+  substring: Boolean
+  in: [Boolean]
+  notIn: [Boolean]
+  between: [Boolean]
+  notBetween: [Boolean]
+}
+
+input GQLTQueryTaskWherecreatedAt {
+  eq: GQLTDate
+  ne: GQLTDate
+  gte: GQLTDate
+  lte: GQLTDate
+  lt: GQLTDate
+  not: GQLTDate
+  is: GQLTDate
+  like: GQLTDate
+  notLike: GQLTDate
+  iLike: GQLTDate
+  notILike: GQLTDate
+  startsWith: GQLTDate
+  endsWith: GQLTDate
+  substring: GQLTDate
+  in: [GQLTDate]
+  notIn: [GQLTDate]
+  between: [GQLTDate]
+  notBetween: [GQLTDate]
+}
+
+input GQLTQueryTaskWhereitemId {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  between: [ID]
+  notBetween: [ID]
+}
+
+input GQLTTaskInclude {
+  item: GQLTTaskIncludeitemObject
+}
+
+input GQLTTaskIncludeitemObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryItemWhere
+  orderBy: [ItemOrderBy]
+  include: GQLTItemInclude
+}
+
+input GQLTQueryItemWhere {
+  id: GQLTQueryItemWhereid
+  label: GQLTQueryItemWherelabel
+  or: [GQLTQueryItemWhere]
+  and: [GQLTQueryItemWhere]
+}
+
+input GQLTQueryItemWhereid {
+  eq: ID
+  ne: ID
+  gte: ID
+  lte: ID
+  lt: ID
+  not: ID
+  is: ID
+  like: ID
+  notLike: ID
+  iLike: ID
+  notILike: ID
+  startsWith: ID
+  endsWith: ID
+  substring: ID
+  in: [ID]
+  notIn: [ID]
+  between: [ID]
+  notBetween: [ID]
+}
+
+input GQLTQueryItemWherelabel {
+  eq: String
+  ne: String
+  gte: String
+  lte: String
+  lt: String
+  not: String
+  is: String
+  like: String
+  notLike: String
+  iLike: String
+  notILike: String
+  startsWith: String
+  endsWith: String
+  substring: String
+  in: [String]
+  notIn: [String]
+  between: [String]
+  notBetween: [String]
+}
+
+enum ItemOrderBy {
+  idASC
+  idDESC
+  labelASC
+  labelDESC
+}
+
+input GQLTItemInclude {
+  tasks: GQLTItemIncludetasksObject
+}
+
+input GQLTItemIncludetasksObject {
+  required: Boolean
+  separate: Boolean
+  where: GQLTQueryTaskWhere
+  orderBy: [TaskOrderBy]
+  include: GQLTTaskInclude
+}
+
+type ItemList {
+  """Pager object for cursor based operations"""
+  pageInfo: PageInfo!
+
+  """Total amount of records available"""
+  total: Int
+
+  """List of edges for Item"""
+  edges: [ItemEdge!]!
+}
+
+"""Item edge"""
+type ItemEdge {
+  node: Item
+  cursor: String!
+}
+
+type Mutation {
+  models: MutationModels
+}
+
+type MutationModels {
+  Task(
+    """This will create a new element for Task"""
+    create: [TaskRequiredInput]
+
+    """This will update a new element for Task"""
+    update: [TaskUpdateInput]
+
+    """
+    This will find elements for Task and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [TaskSelectInput]
+
+    """This will delete a new element for Task"""
+    delete: [GQLTQueryTaskWhere]
+  ): [Task]
+  Item(
+    """This will create a new element for Item"""
+    create: [ItemRequiredInput]
+
+    """This will update a new element for Item"""
+    update: [ItemUpdateInput]
+
+    """
+    This will find elements for Item and run relationship mutations on them without modifying the elements themselves
+    """
+    select: [ItemSelectInput]
+
+    """This will delete a new element for Item"""
+    delete: [GQLTQueryItemWhere]
+  ): [Item]
+}
+
+""""""
+input TaskRequiredInput {
+  name: String!
+  done: Boolean
+  createdAt: GQLTDate
+
+  """This a primary key for Task"""
+  itemId: ID
+
+  """This is the mutation object for TaskItemBelongsTo"""
+  item: TaskItemBelongsToInput
+}
+
+""""""
+input TaskItemBelongsToInput {
+  """This will create a new element with a relationship to the current Task"""
+  create: ItemRequiredInput
+
+  """
+  This will update any matching elements that have a relationship to the current Task
+  """
+  update: TaskItemUpdate
+
+  """This will associate an existing matching element with the current Task"""
+  set: GQLTQueryItemWhere
+
+  """When true, this will disassociate the current item from the Task"""
+  remove: Boolean
+
+  """
+  This will delete any matching elements that have a relationship with the current Task
+  """
+  delete: GQLTQueryItemWhere
+
+  """This will restore the soft-deleted item related to the current Task"""
+  restore: GQLTQueryItemWhere
+
+  """
+  This will find the matching related item and run relationship mutations on it without modifying the element itself
+  """
+  select: TaskItemSelect
+}
+
+""""""
+input ItemRequiredInput {
+  """What this group of tasks is called"""
+  label: String!
+
+  """This is the mutation object for ItemTasksHasMany"""
+  tasks: ItemTasksHasManyInput
+}
+
+""""""
+input ItemTasksHasManyInput {
+  """This will create a new element with a relationship to the current Item"""
+  create: [TaskRequiredInput]
+
+  """
+  This will update any matching elements that have a relationship to the current Item
+  """
+  update: [ItemTasksUpdate]
+
+  """
+  This will add any matching elements with a relationship to the current Item
+  """
+  add: [GQLTQueryTaskWhere]
+
+  """
+  This will replace the entire tasks set with the matching existing elements
+  """
+  set: [GQLTQueryTaskWhere]
+
+  """
+  This will remove the relationship from any matching elements from the current Item
+  """
+  remove: [GQLTQueryTaskWhere]
+
+  """
+  This will delete any matching elements that have a relationship with the current Item
+  """
+  delete: [GQLTQueryTaskWhere]
+
+  """
+  This will restore any soft-deleted matching elements related to the current Item
+  """
+  restore: [GQLTQueryTaskWhere]
+
+  """
+  This will find matching related elements and run relationship mutations on them without modifying the elements themselves
+  """
+  select: [ItemTasksSelect]
+}
+
+""""""
+input ItemTasksUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryTaskWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskOptionalInput {
+  name: String
+  done: Boolean
+  createdAt: GQLTDate
+
+  """This a primary key for Task"""
+  itemId: ID
+
+  """This is the mutation object for TaskItemBelongsTo"""
+  item: TaskItemBelongsToInput
+}
+
+""""""
+input ItemTasksSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskItemUpdate {
+  """This will apply a filter to your mutation"""
+  where: GQLTQueryItemWhere
+
+  """
+  This will update the items that you targeted with the filter in the where element
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemOptionalInput {
+  """What this group of tasks is called"""
+  label: String
+
+  """This is the mutation object for ItemTasksHasMany"""
+  tasks: ItemTasksHasManyInput
+}
+
+""""""
+input TaskItemSelect {
+  """
+  Filter used to find the existing related elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}
+
+""""""
+input TaskUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of ${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: TaskOptionalInput
+}
+
+""""""
+input TaskSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryTaskWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of ${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: TaskOptionalInput
+}
+
+""""""
+input ItemUpdateInput {
+  """
+  If provided this will restrict to changes to only the elements that match
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  If provided this will restrict the changes to only the first amount of ${limit}
+  """
+  limit: Int
+
+  """This is the input for the data"""
+  input: ItemOptionalInput
+}
+
+""""""
+input ItemSelectInput {
+  """
+  Filter used to find the existing elements to run relationship mutations on
+  """
+  where: GQLTQueryItemWhere
+
+  """
+  If provided this will restrict the selection to only the first amount of ${limit}
+  """
+  limit: Int
+
+  """
+  Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
+  """
+  input: ItemOptionalInput
+}

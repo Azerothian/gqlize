@@ -500,6 +500,20 @@ and ignoring the argument is fine for a backend with no DDL to skip. Honour it i
 issue DDL there: `ddl: false` is what lets a caller wire the models up with no database, which is
 how a schema is generated offline.
 
+`discoverDefinitions` is new, and optional. An adapter that owns its own schema — one wrapping an
+existing MikroORM instance or Prisma client, or introspecting a live database — implements it and
+returns the definitions it already knows about; `Ormize.initialise()` calls it per adapter after the
+`define()` queue has drained, so an explicitly authored definition of the same name wins, and skips
+a name that is already registered so a second `initialise()` is a no-op. Leave it off and nothing
+changes: every model arrives through `define()`/`addDefinition()`, which is how the SQL and Valkey
+adapters work. If you do implement it, it must not open a connection — it sits on the same offline
+path `initialise({ddl: false})` guarantees.
+
+Alongside it, `registerAdapter`'s return type now folds in an optional `__models` phantom (see
+`ModelsOf` in `@azerothian/utilize/types/orm`), so an adapter registering models without `define()`
+can still contribute their types to `orm.models`. An adapter that does not declare `__models`
+contributes nothing, and `TModels` is unchanged.
+
 `setBuildPermission` is now declared — optional — on `GqlizeAdapter`. It was already implemented by
 both bundled adapters and already called by `createSchema`, but through a
 `typeof adapter.setBuildPermission === "function"` duck-type check, so an adapter that misspelled it
