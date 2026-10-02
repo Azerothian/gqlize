@@ -299,7 +299,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `deprecated` | Model-level `@deprecated` reason. GraphQL cannot deprecate an object type, so the mark lands on the two fields that lead to the model: `QueryModels.<Name>` and `MutationModels.<Name>`. |
 | `deprecations` | Central deprecation map, mirroring `comments`: `deprecations.{fields,classMethods,instanceMethods}[key] = reason`. Wins over a `deprecated` written on the declaration itself, which is what lets a definition deprecate something it did not author — a relationship, an inherited column. See [Deprecation](#deprecation). |
 | `before` / `after` | gqlize-level transforms discriminated by the `Events` enum (see §8). |
-| `hooks` | Sequelize-style lifecycle `HookMap`. |
+| `hooks` | Sequelize-style lifecycle `HookMap`. Merged with `options.hooks`; a hook named in both runs both, top-level first. |
 | `queries` | **Sequelize adapter only.** Raw create/drop DDL registered against the definition (`{ [name]: { create, drop } }`, each a string or a thunk). `initialise()` replays every `create`, and `reset()` replays the `drop`s then the `create`s. This is the adapter's only I/O in `initialise()`, which is why `initialise({ddl: false})` — the offline schema build — turns it off. |
 | `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
 

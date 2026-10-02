@@ -1577,8 +1577,9 @@ db.addDefinition({
 });
 ```
 
-**Sequelize lifecycle hooks** (`options.hooks`) — `beforeFind`, `beforeCreate`, `afterFind`,
-`beforeCount`, etc. A `beforeFind` can read the originating GraphQL args via
+**Sequelize lifecycle hooks** (`options.hooks`, or top-level `hooks`) — `beforeFind`,
+`beforeCreate`, `afterFind`, `beforeCount`, etc. Both spellings are merged; a hook named in
+both runs both, top-level first. A `beforeFind` can read the originating GraphQL args via
 `options.getGraphQLArgs()` (fed by the query's `rootValue`):
 
 ```ts
