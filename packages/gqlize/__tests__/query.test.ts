@@ -3,7 +3,8 @@ import {createInstance, resultData, validateResult} from "./helper";
 import {createSchema} from "../src";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 
-import {describe, it, expect} from "@jest/globals";
+import {describe, it, expect, jest} from "@jest/globals";
+import Sequelize from "sequelize";
 import {toGlobalId} from "graphql-relay";
 
 type Edge<T> = {node: T; cursor?: string};
@@ -645,6 +646,31 @@ it("include operator - required include under a required collection", async() =>
     // The INNER JOIN filters the children too, exactly as it does unpaginated.
     expect(models.Item.edges[0].node.children.edges.map((e) => e.node.name)).toEqual(["c1"]);
     expect(models.Item.total).toEqual(1);
+  }
+});
+
+it("include operator - a relationship whose options.as differs is reached by its name", async() => {
+  // The include input, permissions and the output field all key by `name`;
+  // the adapter used to register the association under `options.as` instead,
+  // so `include: {owner: …}` reached for an association that did not exist.
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    const instance = await createInstance([{
+      name: "Ticket",
+      define: {name: {type: Sequelize.STRING, allowNull: false}},
+      relationships: [{type: "belongsTo", model: "Task", name: "owner", options: {as: "user", foreignKey: "taskId"}}],
+    }]);
+    const {Task, Ticket} = instance.models;
+    const task = await Task.create({name: "task1"});
+    await Ticket.create({name: "t1", taskId: task.id});
+    await Ticket.create({name: "t2"});
+    const schema = await createSchema(instance);
+    const {models} = await run<{models: {Ticket: Connection<{name: string; owner: {name: string} | null}>}}>(schema, `query {
+      models { Ticket(include: [{owner: {required: true}}]) { edges { node { name owner { name } } } } }
+    }`);
+    expect(models.Ticket.edges.map((e) => e.node)).toEqual([{name: "t1", owner: {name: "task1"}}]);
+  } finally {
+    warn.mockRestore();
   }
 });
 

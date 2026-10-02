@@ -166,7 +166,9 @@ Definition keys you'll commonly use:
   A field may also carry `description`, `args` and `resolve`
   (see [below](#field-arguments--field-resolvers)).
 - **`relationships`** — `{ type, model, name, options }`, `type` ∈ `belongsTo | hasOne | hasMany
-  | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`as`/`through`.
+  | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`through`. `name` is the
+  relationship's alias everywhere (output field, `include` key, permissions); an
+  `options.as` that differs is ignored with a warning.
 - **`override`** — expose a column as a different GraphQL type with `input`/`output` transforms
   (see [§10](#10-custom-scalars--json-columns)).
 - **`whereOperators` / `whereOperatorTypes`** — custom filter operators usable in `where`
@@ -174,7 +176,9 @@ Definition keys you'll commonly use:
 - **`expose.classMethods` / `expose.instanceMethods`** — surface methods to GraphQL under
   `query` and `mutations` (see [Class & instance methods](#class--instance-methods)).
 - **`options`** — passed to Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, and the
-  `classMethods`/`instanceMethods` implementations.
+  `classMethods`/`instanceMethods` implementations. `tableName`, `hooks` and the method bags
+  may also be written at the top level; `options` wins a clash for `tableName` and the
+  methods, and hooks named in both run both.
 
 > **Junction models.** A `through` model that only carries FK columns (+ your extra columns) has
 > no relationships of its own; exclude it from the schema with a permission gate so it isn't

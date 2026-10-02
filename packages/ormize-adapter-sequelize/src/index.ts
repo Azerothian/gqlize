@@ -681,6 +681,13 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         hooks,
       }),
     });
+    // `SequelizeDefinition` declares `tableName` at the top level as well as
+    // under `options`, but only `options` reaches `sequelize.define` — so the
+    // top-level one type-checked and was then ignored, and the table took the
+    // default name. The nested one wins when both are given.
+    if (newDef.options.tableName === undefined && def.tableName !== undefined) {
+      newDef.options.tableName = def.tableName;
+    }
     if(!newDef.name) {
       throw new Error("Unable to create model with no name");
     }
@@ -917,12 +924,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       model.relationships = {};
     }
     try {
-      const opts: Record<string, unknown> = Object.assign(
-        {
-          as: name,
-        },
-        options
-      );
+      // `name` is the relationship's identity everywhere else — the include
+      // input, permissions, `model.relationships`, ormize and the valkey adapter
+      // all key by it — so it is the alias here too. Letting `options.as` win
+      // registered the association under a second name, and an `include` naming
+      // the relationship then reached for an association that did not exist.
+      if (options.as !== undefined && options.as !== name) {
+        // eslint-disable-next-line no-console -- see the paranoid warning in `createModel`: `debug` is silent unless enabled, and this changes which name a client must use
+        console.warn(
+          `Relationship "${targetModel}.${name}": options.as "${options.as}" is ignored; the relationship is named by "name".`,
+        );
+      }
+      const opts: Record<string, unknown> = Object.assign({}, options, { as: name });
       // `through` may also be a bare model name, which Sequelize accepts as-is.
       // Only the object form carries a `model` to resolve.
       //
