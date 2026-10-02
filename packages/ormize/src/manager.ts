@@ -3,7 +3,7 @@ import pluralize from "pluralize";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
 import {lowercase} from "@azerothian/utilize/utils/word";
-import {reciprocalOtherKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
+import {reciprocalOtherKey, relationshipForeignKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
 import {definitionHooks} from "@azerothian/utilize/utils/definition-hooks";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {copyDefinition} from "@azerothian/utilize/utils/copy-on-write";
@@ -997,7 +997,7 @@ export default class Ormize<
       name: rel.name,
       options: rel.options,
     };
-    const {foreignKey} = rel.options;
+    const foreignKey = relationshipForeignKey(rel.type, rel.options);
     if (targetAdapter === sourceAdapter) {
       this.relationships[def.name][rel.name].internal = true;
       //TODO: populate foreignKey/sourceKeys if not provided

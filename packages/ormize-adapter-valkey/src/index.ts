@@ -3,7 +3,7 @@ import { computedOrderableFields as computedOrderableFieldsFor, definitionMethod
 import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
-import {reciprocalOtherKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
+import {reciprocalOtherKey, relationshipForeignKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
 import {lowercase} from "@azerothian/utilize/utils/word";
 import type {
   AdapterListOptions, AdapterListRequest, AdapterQueryOptions, AdapterRelationshipRequest,
@@ -300,7 +300,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     const out: { [rel: string]: ValkeyAssociation } = {};
     for (const rel of model.relationships) {
       const type = rel.type;
-      const fk = rel.options?.foreignKey;
+      const fk = relationshipForeignKey(type, rel.options);
       const join = rel.__join;
       out[rel.name] = {
         name: rel.name,
@@ -338,7 +338,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
 
   createRelationship = (defName: string, targetModel: string, relName: string, relType: string, options: Relationship["options"] = {}) => {
     const source = this.model(defName);
-    const fk = options.foreignKey;
+    const fk = relationshipForeignKey(relType, options);
     // Ensure the foreign key is an indexed field on whichever model owns it, so
     // relationship reads are index-driven.
     // Auto-created relationship FK fields are writable by default — in a KV store

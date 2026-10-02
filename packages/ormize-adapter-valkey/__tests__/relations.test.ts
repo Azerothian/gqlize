@@ -211,3 +211,49 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
     expect((await list("Post")).length).toBe(0);
   });
 });
+
+// A belongsToMany whose keys are written only under `through`. Both spellings
+// are typed; Sequelize used to read neither `through.foreignKey` nor
+// `through.otherKey`, and nothing read `through.foreignKey` at all, so the two
+// backends joined on different columns.
+const throughKeyDefs: Definition[] = [
+  {
+    name: "Course",
+    define: { title: { type: DataTypes.String, index: true } },
+    options: {},
+    relationships: [{ type: "belongsToMany", model: "Student", name: "students",
+      options: { through: { model: "Enrolment", foreignKey: "courseRef", otherKey: "studentRef" } } }],
+  },
+  {
+    name: "Student",
+    define: { name: { type: DataTypes.String, index: true } },
+    options: {},
+    relationships: [{ type: "belongsToMany", model: "Course", name: "courses",
+      options: { through: { model: "Enrolment", foreignKey: "studentRef", otherKey: "courseRef" } } }],
+  },
+  { name: "Enrolment", define: {}, options: {} },
+];
+
+describe.each(backends)("$name adapter — belongsToMany keys under `through`", ({ name, makeAdapter }) => {
+  it("joins on the keys `through` declares", async () => {
+    if (name === "valkey") await flush(client);
+    const orm = new Ormize();
+    orm.registerAdapter(makeAdapter(), "db");
+    for (const d of throughKeyDefs) await orm.addDefinition(d);
+    await orm.initialise();
+    await orm.sync();
+
+    await orm.processCreate("Course", null, { input: { title: "maths", students: { create: [{ name: "ann" }, { name: "bob" }] } } }, {});
+    const links = (await orm.resolveFindAll("Enrolment", null, {}, {}, undefined)).models as Row[];
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link.courseRef).not.toBeNull();
+      expect(link.studentRef).not.toBeNull();
+    }
+    const adapter = orm.getModelAdapter("Course");
+    const assoc = adapter.getAssociations("Course").students;
+    const course = ((await orm.resolveFindAll("Course", null, {}, {}, undefined)).models as Row[])[0];
+    const { models } = await adapter.resolveManyRelationship("Student", assoc, course, { args: {}, offset: 0 });
+    expect((models as Row[]).map((s) => s.name).sort()).toEqual(["ann", "bob"]);
+  });
+});

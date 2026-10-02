@@ -232,6 +232,7 @@ import {
 export type * from "./types/query";
 import { replaceWhereOperators, reservedOperatorNames } from "./utils/where-ops";
 import { keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
+import { throughForeignKey, throughOtherKey } from "@azerothian/utilize/utils/join-keys";
 
 // Pagination safety bounds. This is the central backstop that bounds every list
 // query (GraphQL relay connections and REST list routes both funnel through
@@ -957,6 +958,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         opts.through = options.through.model
           ? { ...options.through, model: this.sequelize.models[options.through.model] }
           : { ...options.through };
+      }
+      // Sequelize reads a belongsToMany's keys off the association options only,
+      // never off `through`. Both spellings are typed, and ormize and the valkey
+      // adapter honour the `through` one, so hoist it — the top-level key still
+      // wins — or this backend joins on a guessed column the others do not use.
+      if (type === "belongsToMany") {
+        if (opts.foreignKey === undefined && throughForeignKey(options.through) !== undefined) {
+          opts.foreignKey = throughForeignKey(options.through);
+        }
+        if (opts.otherKey === undefined && throughOtherKey(options.through) !== undefined) {
+          opts.otherKey = throughOtherKey(options.through);
+        }
       }
       // `type` names one of Sequelize's association builders (`belongsTo`,
       // `hasMany`, ...) and is called by name off the model class, so the lookup

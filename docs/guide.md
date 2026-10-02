@@ -166,7 +166,9 @@ Definition keys you'll commonly use:
   A field may also carry `description`, `args` and `resolve`
   (see [below](#field-arguments--field-resolvers)).
 - **`relationships`** — `{ type, model, name, options }`, `type` ∈ `belongsTo | hasOne | hasMany
-  | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`through`. `name` is the
+  | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`through`; a `belongsToMany`
+  may instead declare its keys as `through: { model, foreignKey, otherKey }` (a top-level key
+  wins), and every backend joins on the same columns either way. `name` is the
   relationship's alias everywhere (output field, `include` key, permissions); an
   `options.as` that differs is ignored with a warning.
 - **`override`** — expose a column as a different GraphQL type with `input`/`output` transforms
