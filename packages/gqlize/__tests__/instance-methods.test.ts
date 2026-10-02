@@ -248,6 +248,67 @@ describe("exposed instance methods — finding the implementation (#72)", () => 
     expect(rows[1].item).toBeNull();
   });
 
+  it("runs a field's own `resolve` and `override.output` against a real row", async() => {
+    // Field code written against the adapter's rows — `row.get(...)`, as the
+    // Task fixture's `options` override does — threw `get is not a function`
+    // on the plain literals a class method returns typed as the model.
+    const instance = await createInstance([{
+      name: "Badge",
+      define: {
+        label: {
+          type: Sequelize.STRING,
+          allowNull: true,
+          resolve: (row: {get(key: string): string}) => row.get("label").toUpperCase(),
+        },
+        meta: {type: Sequelize.STRING, allowNull: true},
+      },
+      override: {
+        meta: {
+          type: {name: "BadgeMeta", fields: {raw: {type: GraphQLString}}},
+          output: (row: {get(key: string): string}) => ({raw: row.get("meta")}),
+          input: (value: {raw?: string}) => value.raw,
+        },
+      },
+      classMethods: {
+        listed() {
+          return [{id: 1, label: "plain", meta: "m"}];
+        },
+      },
+      expose: {classMethods: {query: {listed: {type: "Badge[]", args: {}}}}},
+    }]);
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ classMethods { Badge { listed { label meta { raw } } } } }"});
+    validateResult(result);
+    expect(resultData<{classMethods: {Badge: {listed: {label: string; meta: {raw: string}}[]}}}>(result).classMethods.Badge.listed)
+      .toEqual([{label: "PLAIN", meta: {raw: "m"}}]);
+  });
+
+  it("gives an instance method the row API on a plain row", async() => {
+    const instance = await createInstance([{
+      ...gadget({}),
+      name: "Widget",
+      instanceMethods: {
+        shout(this: {get(key: string): string}) {
+          return `${this.get("name")}!`;
+        },
+      },
+      classMethods: {
+        listed() {
+          return [{id: 1, name: "plain"}];
+        },
+      },
+      expose: {
+        instanceMethods: {query: {shout: {type: GraphQLString, fields: ["name"]}}},
+        classMethods: {query: {listed: {type: "Widget[]", args: {}}}},
+      },
+    }]);
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ classMethods { Widget { listed { shout } } } }"});
+    validateResult(result);
+    expect(resultData<{classMethods: {Widget: {listed: {shout: string}[]}}}>(result).classMethods.Widget.listed)
+      .toEqual([{shout: "plain!"}]);
+  });
+
   it("still reports a method with no implementation anywhere", async() => {
     const instance = await createInstance([{...gadget({}), name: "Gizmo", instanceMethods: {}}]);
     await instance.models.Gizmo.create({name: "g"});

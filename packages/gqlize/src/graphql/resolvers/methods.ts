@@ -32,7 +32,10 @@ export function buildInstanceMethodResolver(
     // `typeof` below is what decides whether there is anything to call. A plain
     // object falls back to the definition's implementation, run with the row as
     // `this` exactly as the prototype method would be.
-    const own = (source as Record<string, unknown> | null | undefined)?.[methodName];
+    // Turned into the adapter's own instance first, so a method that reaches for
+    // `this.get()` or a relationship accessor works on a plain row too.
+    const row = ctx.instance.asInstance(defName, source);
+    const own = (row as Record<string, unknown> | null | undefined)?.[methodName];
     const implementation = typeof own === "function" ? own : declared;
     // An entry that declares `output` needs no implementation at all: the
     // formatter produces the value from the loaded row. Without one, an absent
@@ -47,10 +50,10 @@ export function buildInstanceMethodResolver(
       }
     }
     let result = typeof implementation === "function"
-      ? await implementation.apply(source, [args, context])
+      ? await implementation.apply(row, [args, context])
       : undefined;
     if (output) {
-      result = await output(result, { source, args, context, info, modelDefinition: definition });
+      result = await output(result, { source: row, args, context, info, modelDefinition: definition });
     }
     if (after) {
       result = await after(result, context);

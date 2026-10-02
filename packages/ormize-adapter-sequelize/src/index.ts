@@ -1359,7 +1359,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * over its values — not a new record — gives it the accessors, keyed off
    * whatever primary and foreign keys it carries.
    */
-  private asInstance(defName: string, row: SequelizeRow): SequelizeRow {
+  asInstance(defName: string, row: SequelizeRow): SequelizeRow {
     if (row && typeof (row as {get?: unknown}).get === "function") {
       return row;
     }

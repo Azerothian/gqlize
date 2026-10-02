@@ -1148,6 +1148,14 @@ export default class Ormize<
     scopedWhere: (defName, operation, context, where, options) => this.scopeNativeWhere(defName, operation, context, where, options),
     assertRowsInScope: (defName, operation, context, rows, options) => this.assertRowsInScope(defName, operation, context, rows, options),
   };
+  /** See {@link OrmAdapter.asInstance}; a row that is not an object passes through. */
+  asInstance = (defName: string, row: AdapterRow): AdapterRow => {
+    if (!row || typeof row !== "object") {
+      return row;
+    }
+    const adapter = this.getModelAdapter(defName);
+    return adapter.asInstance ? adapter.asInstance(defName, row) : row;
+  }
   getValueFromInstance = (defName: string, data: AdapterRow, keyName: string): unknown => {
     if (!data) {
       return undefined;
