@@ -102,7 +102,12 @@ export default function createBasicFieldsFunc(defName: string, instance: GQLMana
           });
           const type = fieldDefinition.allowNull ? namedType : new GraphQLNonNull(namedType);
           const config = {
-            // description: overrideFieldDefinition.description || fieldDefinition.description,
+            // Same precedence as an ordinary field, with the override's own text
+            // ahead of the column's: it is the override that describes what the
+            // field now returns.
+            description: (definition.comments?.fields || {})[fieldName]
+              || overrideFieldDefinition.description
+              || fieldDefinition.description,
             type,
             // An override replaces the column's *type*, not its identity — the
             // field is still `fieldName` on this model, so it deprecates through
