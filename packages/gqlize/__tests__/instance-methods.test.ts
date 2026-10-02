@@ -216,6 +216,38 @@ describe("exposed instance methods — finding the implementation (#72)", () => 
     expect(node.testInstanceMethod[0].testInstanceMethod[0].name).toBe("item112");
   });
 
+  it("resolves relationships on plain objects a class method returns typed as the model", async() => {
+    // The relationship accessors live on the model prototype too; the adapter
+    // builds an instance over the plain values to reach them.
+    const instance = await createInstance();
+    const {Task, TaskItem, Item} = instance.models;
+    // `reverseNameArray` returns ids 1 and 2; only task 1 exists and has children.
+    const task = await Task.create({name: "task1"});
+    await TaskItem.create({name: "taskitem1", taskId: task.id});
+    const item = await Item.create({name: "i1", taskId: task.id});
+    await (task as unknown as {addBtmItems(rows: unknown[]): Promise<void>}).addBtmItems([item]);
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: `{
+      classMethods { Task { reverseNameArray {
+        items { total edges { node { name } } }
+        firstItems: items(first: 1) { total }
+        item { name }
+        btmItems { total edges { node { name } } }
+      } } }
+    }`});
+    validateResult(result);
+    type Rel = {total: number; edges?: {node: {name: string}}[]};
+    const rows = resultData<{classMethods: {Task: {reverseNameArray: {
+      items: Rel; firstItems: Rel; item: {name: string} | null; btmItems: Rel;
+    }[]}}}>(result).classMethods.Task.reverseNameArray;
+    expect(rows[0].items).toEqual({total: 1, edges: [{node: {name: "taskitem1"}}]});
+    expect(rows[0].firstItems.total).toBe(1);
+    expect(rows[0].item).toEqual({name: "i1"});
+    expect(rows[0].btmItems).toEqual({total: 1, edges: [{node: {name: "i1"}}]});
+    expect(rows[1].items).toEqual({total: 0, edges: []});
+    expect(rows[1].item).toBeNull();
+  });
+
   it("still reports a method with no implementation anywhere", async() => {
     const instance = await createInstance([{...gadget({}), name: "Gizmo", instanceMethods: {}}]);
     await instance.models.Gizmo.create({name: "g"});

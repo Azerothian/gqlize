@@ -1323,6 +1323,22 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // column, and a spread would keep whichever was written second.
     return { [Op.and]: [a, b] };
   }
+  /**
+   * The row as a model instance, built around it when it is not one.
+   *
+   * A class or instance method can return plain objects typed as a model, and
+   * gqlize resolves that model's relationships on them like any other row. The
+   * association accessors (`getItems`, `countItems`, `get`) live on the model
+   * prototype, so a plain object has none of them (#72). Building an instance
+   * over its values — not a new record — gives it the accessors, keyed off
+   * whatever primary and foreign keys it carries.
+   */
+  private asInstance(defName: string, row: SequelizeRow): SequelizeRow {
+    if (row && typeof (row as {get?: unknown}).get === "function") {
+      return row;
+    }
+    return this.sequelize.models[defName].build(row as unknown as Record<string, unknown>, {isNewRecord: false});
+  }
   // eslint-disable-next-line @typescript-eslint/require-await -- `OrmAdapter.resolveSingleRelationship` is declared `Promise<AdapterRow>` (utilize/src/types/index.ts:313); the eager-loaded branch returns synchronously, so `async` is what satisfies the contract's return type
   resolveSingleRelationship = async (
     _defName: string,
@@ -1342,7 +1358,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (fields[relationship.name] !== undefined) {
       return fields[relationship.name];
     }
-    return fields[relationship.accessors.get](options);
+    return rowFields(this.asInstance(relationship.source, source))[relationship.accessors.get](options);
   };
   // Count a relationship for its `total`. For hasMany, count the target directly
   // with the foreign-key filter so the child's beforeCount hook fires (Sequelize's
@@ -1365,7 +1381,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (relationship.associationType === "hasMany") {
       const TargetModel = this.sequelize.models[relationship.target];
       const filter = Object.assign({}, countWhere, {
-        [relationship.foreignKey]: source.get(relationship.sourceKey),
+        [relationship.foreignKey]: this.asInstance(relationship.source, source).get(relationship.sourceKey),
       });
       // `getGraphQLArgs` is this project's own addition to the options bag — the
       // hooks read it off `options`; Sequelize itself ignores it.
@@ -1374,7 +1390,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         getGraphQLArgs: options?.getGraphQLArgs,
       }, paranoid) as AdapterQueryOptions);
     }
-    return rowFields(source)[relationship.accessors.count](
+    return rowFields(this.asInstance(relationship.source, source))[relationship.accessors.count](
       Object.assign({ where: countWhere, getGraphQLArgs: options?.getGraphQLArgs }, paranoid),
     );
   };
@@ -1441,12 +1457,13 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // eight arguments, so `selectedFields` and `runHook` were dropped here and a
     // JOIN-include `beforeFind` never fired on the relationship path.
     const { getOptions, countOptions } = await this.processListArgsToOptions(defName, request);
-    const models = await fields[relationship.accessors.get](getOptions);
+    const instance = rowFields(this.asInstance(relationship.source, source));
+    const models = await instance[relationship.accessors.get](getOptions);
     let total;
     if (this.hasInlineCountFeature()) {
       total = await this.getInlineCount(models);
     } else {
-      total = await fields[relationship.accessors.count](countOptions);
+      total = await instance[relationship.accessors.count](countOptions);
     }
     return {
       total,
