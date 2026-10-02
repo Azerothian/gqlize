@@ -37,10 +37,20 @@ function isRelationshipInputAllowed(options: GqlizeOptions, defName: string, rel
  * object at all — the built version cannot be inspected because it is a thunk,
  * deferred so that relationship targets later in the build order resolve.
  */
-function hasInputFields(defName: string, defFields: DefinitionFields, associations: {[relName: string]: Association}, mutableDefNames: Set<string>, forceOptional: boolean, options: GqlizeOptions) {
+/**
+ * Whether a column becomes a mutation input field: structurally writable,
+ * permitted for this kind of write, and not in `ignoreFields` — which is
+ * documented as excluded from every generated type, inputs included.
+ */
+function isColumnInput(definition: Definition, defName: string, fieldName: string, kind: "create" | "update", defFields: DefinitionFields, options: GqlizeOptions) {
+  return !definition.ignoreFields?.includes(fieldName)
+    && isInputFieldWritable(options.permission, defName, fieldName, kind, defFields[fieldName]);
+}
+
+function hasInputFields(defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, mutableDefNames: Set<string>, forceOptional: boolean, options: GqlizeOptions) {
   const kind = forceOptional ? "update" : "create";
   const hasWritableField = Object.keys(defFields).some((fieldName) => {
-    return isInputFieldWritable(options.permission, defName, fieldName, kind, defFields[fieldName]);
+    return isColumnInput(definition, defName, fieldName, kind, defFields, options);
   });
   if (hasWritableField) {
     return true;
@@ -57,7 +67,7 @@ function hasInputFields(defName: string, defFields: DefinitionFields, associatio
 //(instance, defName, fields, relationships, inputTypes, false)
 export function generateInputFields(instance: GQLManager, defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, inputTypes: SchemaCache["mutationInputs"], schemaCache: SchemaCache, forceOptional: boolean, options: GqlizeOptions) {
   const def = waterfallSync(Object.keys(defFields), (fieldName: string, fields: GraphQLInputFieldConfigMap) => {
-    const doNotSkip = isInputFieldWritable(options.permission, defName, fieldName, forceOptional ? "update" : "create", defFields[fieldName]);
+    const doNotSkip = isColumnInput(definition, defName, fieldName, forceOptional ? "update" : "create", defFields, options);
     if (!doNotSkip) {
       return fields;
     }
@@ -288,9 +298,9 @@ export default function createMutationInput(instance: GQLManager, defName: strin
   // input object would have no fields and make the whole schema invalid, so it
   // is not built and the mutations that would take it are omitted.
   const doNotSkipUpdate = isMutationAllowed(options.permission, defName, "update") &&
-    hasInputFields(defName, fields, associations, mutableDefNames, true, options);
+    hasInputFields(defName, definition, fields, associations, mutableDefNames, true, options);
   const doNotSkipCreate = isMutationAllowed(options.permission, defName, "create") &&
-    hasInputFields(defName, fields, associations, mutableDefNames, false, options);
+    hasInputFields(defName, definition, fields, associations, mutableDefNames, false, options);
   const required = doNotSkipCreate ? createGQLInputObject(`${defName}RequiredInput`, function() {
     return generateInputFields(instance, defName, definition, fields, associations, inputTypes, schemaCache, false, options);
   }, schemaCache, "") : undefined;

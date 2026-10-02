@@ -95,12 +95,12 @@ export class NestizeService {
 
   /** Validate that every filter field is permitted — see `@azerothian/utilize/guards`. */
   private assertFilterAllowed(name: string, where: unknown): void {
-    guards.assertFilterAllowed(this.permission, name, where, FAIL);
+    guards.assertFilterAllowed(this.permission, name, where, FAIL, this.orm.getDefinition(name));
   }
 
   /** Validate that every `orderBy` field is permitted for the model. */
   private assertOrderAllowed(name: string, orderBy: unknown): void {
-    guards.assertOrderAllowed(this.permission, name, orderBy, FAIL);
+    guards.assertOrderAllowed(this.permission, name, orderBy, FAIL, this.orm.getDefinition(name));
   }
 
   /**

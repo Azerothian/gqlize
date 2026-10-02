@@ -12,7 +12,7 @@ import {
   type Options as SequelizeOptions,
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
-import { isFieldAllowed, scopeParametersIn, bindScopeParameters } from "@azerothian/utilize/gate";
+import { isFieldExposed, scopeParametersIn, bindScopeParameters } from "@azerothian/utilize/gate";
 import { copyDefine, copyField, copyModelOptions } from "@azerothian/utilize/utils/copy-on-write";
 import { lowercase } from "@azerothian/utilize/utils/word";
 import type { ResolvedScope } from "@azerothian/utilize/gate";
@@ -862,7 +862,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // client can binary-search its value from row counts (boolean oracle).
     let f = Object.keys(fields).reduce((o, k) => {
       const field = fields[k];
-      if (!isFieldAllowed(perm, defName, k)) {
+      if (!isFieldExposed(definition, perm, defName, k)) {
         return o;
       }
       if (field.primaryKey || field.foreignKey) {
@@ -881,7 +881,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       const field = rels[k];
       switch (field.associationType) {
         case "belongsTo":
-          if (isFieldAllowed(perm, defName, field.foreignKey)) {
+          if (isFieldExposed(definition, perm, defName, field.foreignKey)) {
             o[field.foreignKey] = GraphQLID;
           }
           break;

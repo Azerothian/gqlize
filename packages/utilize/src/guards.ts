@@ -1,4 +1,4 @@
-import { isFieldAllowed } from "./gate";
+import { isFieldExposed } from "./gate";
 import type { Permission } from "./types/index";
 
 /**
@@ -76,6 +76,7 @@ export function assertScopedMutation(where: unknown, optIn: boolean | undefined,
  */
 export function assertFilterAllowed(
   permission: Permission | undefined, name: string, where: unknown, fail: Fail,
+  definition?: {ignoreFields?: string[]},
 ): void {
   if (!where || typeof where !== "object") {
     return;
@@ -85,13 +86,15 @@ export function assertFilterAllowed(
     if (LOGICAL_OPERATORS.has(key.toLowerCase())) {
       const branch = clause[key];
       if (Array.isArray(branch)) {
-        branch.forEach((c) => assertFilterAllowed(permission, name, c, fail));
+        branch.forEach((c) => assertFilterAllowed(permission, name, c, fail, definition));
       } else {
-        assertFilterAllowed(permission, name, branch, fail);
+        assertFilterAllowed(permission, name, branch, fail, definition);
       }
       continue;
     }
-    if (!isFieldAllowed(permission, name, key)) {
+    // `definition` is optional so a caller without one keeps the permission
+    // check alone; one that has it also refuses an `ignoreFields` column.
+    if (!isFieldExposed(definition, permission, name, key)) {
       fail("denied-field", `Unknown or not permitted filter field '${key}'`);
     }
   }
@@ -103,13 +106,14 @@ const LOGICAL_OPERATORS = new Set(["and", "or", "not"]);
 /** Validate that every `orderBy` field is permitted for the model. */
 export function assertOrderAllowed(
   permission: Permission | undefined, name: string, orderBy: unknown, fail: Fail,
+  definition?: {ignoreFields?: string[]},
 ): void {
   if (!Array.isArray(orderBy)) {
     return;
   }
   for (const entry of orderBy) {
     const field = Array.isArray(entry) ? entry[0] : entry;
-    if (typeof field === "string" && field && !isFieldAllowed(permission, name, field)) {
+    if (typeof field === "string" && field && !isFieldExposed(definition, permission, name, field)) {
       fail("denied-field", `Unknown or not permitted order field '${field}'`);
     }
   }
