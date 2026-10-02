@@ -2,14 +2,12 @@
 // GraphQL-layer methods on the gqlize binding; they wrap an ormize (Ormize) instance.
 import { Ormize as Database } from "@azerothian/ormize";
 import GqlizeBinding from "../src/manager";
-import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { registerDialectAdapter } from "./helper/dialect";
 import {test,expect} from "@jest/globals";
 
 test("manager - resolveManyRelationship - hasMany", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  await registerDialectAdapter(db);
 
   const itemDef = {
     name: "Item",
@@ -53,9 +51,7 @@ test("manager - resolveManyRelationship - hasMany", async() => {
 
 test("manager - resolveManyRelationship - hasMany - with limit", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  await registerDialectAdapter(db);
 
   const itemDef = {
     name: "Item",
@@ -101,9 +97,7 @@ test("manager - resolveManyRelationship - hasMany - with limit", async() => {
 
 test("manager - resolveManyRelationship - belongsToMany", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  await registerDialectAdapter(db);
 
   const parentDef = {
     name: "Parent",
@@ -179,9 +173,7 @@ test("manager - resolveManyRelationship - belongsToMany", async() => {
 
 test("manager - resolveManyRelationship - belongsToMany - with limit", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  await registerDialectAdapter(db);
 
   const parentDef = {
     name: "Parent",
@@ -256,9 +248,7 @@ test("manager - resolveManyRelationship - belongsToMany - with limit", async() =
 
 test("manager - resolveSingleRelationship - belongsTo", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  await registerDialectAdapter(db);
 
   const itemDef = {
     name: "Item",
@@ -298,9 +288,7 @@ test("manager - resolveSingleRelationship - belongsTo", async() => {
 
 test("manager - resolveSingleRelationship - hasOne", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  await registerDialectAdapter(db);
 
   const itemDef = {
     name: "Item",

@@ -21,6 +21,23 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/comments.test.ts',
   '<rootDir>/__tests__/include-leaf-model.test.ts',
   '<rootDir>/__tests__/where-variables.test.ts',
+  '<rootDir>/__tests__/manager-resolve.test.ts',
+  '<rootDir>/__tests__/paranoid.test.ts',
+  '<rootDir>/__tests__/scope.test.ts',
+  '<rootDir>/__tests__/scope-extend.test.ts',
+  '<rootDir>/__tests__/instance-methods.test.ts',
+  '<rootDir>/__tests__/permission-helper.test.ts',
+  '<rootDir>/__tests__/permission-empty-types.test.ts',
+  '<rootDir>/__tests__/pageinfo.test.ts',
+  '<rootDir>/__tests__/ignore-fields.test.ts',
+  '<rootDir>/__tests__/definition-field-args.test.ts',
+  '<rootDir>/__tests__/relationship-missing-target.test.ts',
+  '<rootDir>/__tests__/codecs/integration.test.ts',
+  '<rootDir>/__tests__/codecs/id-regressions.test.ts',
+  '<rootDir>/__tests__/codecs/scope.test.ts',
+  '<rootDir>/__tests__/codecs/artifact.test.ts',
+  '<rootDir>/__tests__/snapshot/load-runtime.test.ts',
+  '<rootDir>/__tests__/snapshot/live-types.test.ts',
 ];
 
 // Functional suites re-run against a schema that has been through the artifact
@@ -42,6 +59,14 @@ const ROUNDTRIP_SUITES = [
   '<rootDir>/__tests__/include-leaf-model.test.ts',
   '<rootDir>/__tests__/where-variables.test.ts',
   '<rootDir>/__tests__/pageinfo.test.ts',
+  '<rootDir>/__tests__/paranoid.test.ts',
+  '<rootDir>/__tests__/scope.test.ts',
+  '<rootDir>/__tests__/instance-methods.test.ts',
+  '<rootDir>/__tests__/permission-empty-types.test.ts',
+  '<rootDir>/__tests__/ignore-fields.test.ts',
+  '<rootDir>/__tests__/definition-field-args.test.ts',
+  '<rootDir>/__tests__/codecs/integration.test.ts',
+  '<rootDir>/__tests__/codecs/id-regressions.test.ts',
 ];
 
 module.exports = {

@@ -6,7 +6,7 @@ import TaskItemModel from "./models/task-item";
 import Item from "./models/item";
 import MemoModel from "./models/memo";
 import Sequelize from "sequelize";
-import { createAdapterForDialect, registerTeardown } from "./dialect";
+import { createAdapterForDialect, registerSuiteTeardown, registerTeardown } from "./dialect";
 import type {Definition} from "../../src/types";
 
 /**
@@ -14,10 +14,12 @@ import type {Definition} from "../../src/types";
  * editing the shared models — `schema-golden.test.ts` pins the SDL these six
  * produce, and any edit to them churns that snapshot for unrelated reasons.
  */
-export async function createInstance(extraDefinitions: Definition[] = []) {
+export async function createInstance(extraDefinitions: Definition[] = [], options: {suite?: boolean} = {}) {
   const db = new Database();
   const { adapter, name, teardown } = await createAdapterForDialect();
-  registerTeardown(teardown);
+  // `suite`: built in a `beforeAll` and shared by the describe's tests — see
+  // `registerSuiteTeardown` for the one rule that comes with it.
+  (options.suite ? registerSuiteTeardown : registerTeardown)(teardown);
   db.registerAdapter(adapter, name);
   const parentDef = {
     name: "Parent",

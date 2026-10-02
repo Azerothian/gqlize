@@ -8,7 +8,7 @@ import type { ScopePredicate } from "@azerothian/utilize/gate";
 import { describe, it, expect, beforeAll } from "@jest/globals";
 
 import { createSchema } from "../src";
-import { createAdapterForDialect, registerTeardown } from "./helper/dialect";
+import { createAdapterForDialect, registerSuiteTeardown, registerTeardown } from "./helper/dialect";
 
 // The whole feature, seen from the only place a caller actually stands.
 //
@@ -80,10 +80,10 @@ const owned: ScopePredicate = (_defName, _operation, _options, context) => {
   return { where: { ownerId: { eq: id } }, set: { ownerId: id } };
 };
 
-async function build(scope?: ScopePredicate) {
+async function build(scope?: ScopePredicate, options: { suite?: boolean } = {}) {
   const db = new Database(scope ? { permission: { scope } } : undefined);
   const { adapter, name, teardown } = await createAdapterForDialect();
-  registerTeardown(teardown);
+  (options.suite ? registerSuiteTeardown : registerTeardown)(teardown);
   db.registerAdapter(adapter, name);
   await db.addDefinition(DocDef);
   await db.addDefinition(NoteDef);
@@ -111,7 +111,7 @@ describe("gqlize - row-level scope through the schema", () => {
   };
 
   beforeAll(async() => {
-    ({ schema } = await build(owned));
+    ({ schema } = await build(owned, { suite: true }));
     ourDoc = await seed("u1", "ours", "our note");
     theirDoc = await seed("u2", "theirs", "their note");
   });
@@ -184,16 +184,6 @@ describe("gqlize - row-level scope through the schema", () => {
     expect(result.data.models.Doc[0]!.ownerId).toEqual("u1");
   });
 
-  it("shows every row to a schema built without a scope", async() => {
-    // The control. Everything above is the scope working; this is the same
-    // schema shape proving the tests are not simply reading an empty database.
-    const bare = await build();
-    await ask(bare.schema, `mutation { models { Doc(create: {name: "a"}) { id } } }`);
-    await ask(bare.schema, `mutation { models { Doc(create: {name: "b"}) { id } } }`);
-    const result = await ask(bare.schema, "query { models { Doc { total } } }");
-    expect(result.data.models.Doc.total).toEqual(2);
-  });
-
   it("honours `required: true` on scoped relations at every level (#70)", async() => {
     // Both models are scoped, so both levels pass through the scope guard. An
     // INNER JOIN with the scope inside it drops only parents with no *visible*
@@ -221,6 +211,19 @@ describe("gqlize - row-level scope through the schema", () => {
     };
     expect(await notes("missing")).toEqual([]);
     expect(await notes("our note")).toEqual([{body: "our note", doc: {name: "ours"}}]);
+  });
+
+  // The two tests below build instances of their own. On Postgres that resets
+  // the database this describe's `beforeAll` seeded, so every test reading the
+  // shared schema has to come before them.
+  it("shows every row to a schema built without a scope", async() => {
+    // The control. Everything above is the scope working; this is the same
+    // schema shape proving the tests are not simply reading an empty database.
+    const bare = await build();
+    await ask(bare.schema, `mutation { models { Doc(create: {name: "a"}) { id } } }`);
+    await ask(bare.schema, `mutation { models { Doc(create: {name: "b"}) { id } } }`);
+    const result = await ask(bare.schema, "query { models { Doc { total } } }");
+    expect(result.data.models.Doc.total).toEqual(2);
   });
 
   it("does not let a scoped child become a filter on its parent", async() => {
