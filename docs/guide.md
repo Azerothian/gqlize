@@ -1818,6 +1818,12 @@ the artifact's `models` fingerprint changes; rebuild the artifact.
 This adapter used to treat an omitted `allowNull` as nullable, so the same definition produced a
 different schema on each backend. Add `allowNull: true` to any field that can be empty.
 
+**Instance methods.** A record carries the definition's instance methods, and one named like a
+built-in (`save`, `update`, `destroy`, `reload`, `get`, `toJSON`) replaces it, as a prototype
+method does on Sequelize. A method cannot share its name with a field, a relationship or one of a
+relationship's accessors (`getTags`, `setTags`, …): the stored value or the accessor would hide
+it, so the definition is rejected with an error naming the clash.
+
 **Sequelize-style model API.** In addition to the manager pipeline (`orm.processCreate`/
 `resolveFindAll`), the direct model/instance API works too, so a Valkey-backed model is used the same
 way as a Sequelize one: static `orm.models.X.create/findAll/findOne/findByPk/count/update/destroy`,
