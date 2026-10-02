@@ -1813,6 +1813,11 @@ on the Sequelize adapter (see [Field arguments & field resolvers](#field-argumen
 `description`/`comment` on a Valkey-backed model, its GraphQL fields now gain those descriptions and
 the artifact's `models` fingerprint changes; rebuild the artifact.
 
+**Nullability.** As on the Sequelize adapter, a field is nullable only when it declares
+`allowNull: true`; omitting it makes the GraphQL field non-null and the create input require it.
+This adapter used to treat an omitted `allowNull` as nullable, so the same definition produced a
+different schema on each backend. Add `allowNull: true` to any field that can be empty.
+
 **Sequelize-style model API.** In addition to the manager pipeline (`orm.processCreate`/
 `resolveFindAll`), the direct model/instance API works too, so a Valkey-backed model is used the same
 way as a Sequelize one: static `orm.models.X.create/findAll/findOne/findByPk/count/update/destroy`,

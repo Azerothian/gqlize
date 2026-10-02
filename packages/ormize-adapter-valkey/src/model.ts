@@ -80,7 +80,10 @@ export class ValkeyModel {
         index: src.index === true,
         writable: src.writable === true,
         // Primary keys are never null (the GraphQL Node interface requires ID!).
-        allowNull: src.primaryKey === true ? false : src.allowNull !== false,
+        // Same default as the sequelize adapter: a field is nullable only when it
+        // says so. Two backends answering differently for one definition gave
+        // the same model two different GraphQL schemas.
+        allowNull: src.primaryKey === true ? false : src.allowNull === true,
         defaultValue: src.defaultValue,
         ignoreGlobalKey: src.ignoreGlobalKey,
         // `comment` is the sequelize spelling — that adapter maps `attr.comment`

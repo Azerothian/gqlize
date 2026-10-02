@@ -177,7 +177,7 @@ describe("valkey adapter — exposed instance methods", () => {
       id: { type: DataTypes.UUID, primaryKey: true },
       firstName: { type: DataTypes.String, index: true },
       lastName: { type: DataTypes.String, index: true },
-      secret: { type: DataTypes.String },
+      secret: { type: DataTypes.String, allowNull: true },
     },
     expose: {
       instanceMethods: {

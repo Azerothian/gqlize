@@ -241,7 +241,7 @@ async function buildMirror(prefix: string) {
       id: { type: DataTypes.UUID, primaryKey: true },
       value: { type: DataTypes.String, index: true },
       // The join key must be indexed — Valkey never scans the keyspace.
-      ownerId: { type: DataTypes.String, index: true },
+      ownerId: { type: DataTypes.String, index: true, allowNull: true },
     },
     options: {},
     relationships: [
@@ -462,7 +462,7 @@ async function buildHasOne(prefix: string) {
     define: {
       id: { type: DataTypes.UUID, primaryKey: true },
       nickname: { type: DataTypes.String, index: true },
-      accountId: { type: DataTypes.String, index: true },
+      accountId: { type: DataTypes.String, index: true, allowNull: true },
     },
     options: {},
     relationships: [
