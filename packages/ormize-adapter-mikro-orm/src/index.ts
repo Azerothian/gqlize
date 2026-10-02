@@ -224,6 +224,71 @@ implements GqlizeAdapter {
     return undefined;
   }
 
+  /**
+   * Promote a plain row to a managed entity, when possible.
+   *
+   * A class or instance method can return a plain object (`{id: 1, name: "x"}`)
+   * typed as a model. `em.populate()` needs a managed entity and throws on a
+   * plain object; the Collection accessors on a plain row are absent and a
+   * to-many fallback silently answers empty. When the row carries the model's
+   * primary key we ask MikroORM for a `getReference` — a lightweight managed
+   * proxy that `populate` can load and whose collections are real. When the row
+   * is already a managed entity (recognised by `modelForRow`), it is returned
+   * unchanged. If the primary key is absent there is nothing to anchor a
+   * reference to, so the plain object is returned as-is.
+   */
+  private managedRow(defName: string, row: MikroRow, options?: AdapterQueryOptions): MikroRow {
+    if (!row || typeof row !== "object") {
+      return row;
+    }
+    // Already a managed entity — nothing to do.
+    if (this.modelForRow(row)) {
+      return row;
+    }
+    const model = this.models[defName];
+    if (!model) {
+      return row;
+    }
+    const pk = model.primaryKey;
+    const id = row[pk];
+    if (id == null) {
+      // No primary key; cannot anchor a reference.
+      return row;
+    }
+    // `getReference` returns a managed proxy by primary key that MikroORM can
+    // populate and whose collections load correctly — without issuing a query.
+    return this.emFor(options).getReference(model.entity, id) as MikroRow;
+  }
+
+  /**
+   * Return a row that exposes the full row API.
+   *
+   * When the row is already a managed entity this adapter returned (recognised
+   * by `modelForRow`), it is returned unchanged. Otherwise a shallow copy is
+   * tagged with the row API so callers that need CRUD, relationship accessors or
+   * instance methods on a plain object get them — without mutating the caller's
+   * own object.
+   *
+   * This mirrors the optional `asInstance` method on the adapter contract; it
+   * is harmless when the caller never calls it.
+   */
+  asInstance = (defName: string, row: AdapterRow): AdapterRow => {
+    const entity = row as MikroRow;
+    if (!entity || typeof entity !== "object") {
+      return row;
+    }
+    // Already tagged or a managed entity — the row API is already there.
+    if (this.modelForRow(entity)) {
+      return row;
+    }
+    const model = this.models[defName];
+    if (!model) {
+      return row;
+    }
+    // Tag a shallow copy so the caller's own object is never mutated.
+    return tagRow(this, model, { ...entity });
+  };
+
   getAssociations = (defName: string) => {
     const model = this.model(defName);
     const out: { [relName: string]: Association } = {};
@@ -696,7 +761,10 @@ implements GqlizeAdapter {
     defName: string, association: Association, source: AdapterRow, request: AdapterRelationshipRequest,
   ): Promise<AdapterRow> => {
     const options = request.options || {};
-    const row = source as MikroRow;
+    // A class or instance method may return a plain object typed as a model.
+    // `em.populate` needs a managed entity; a reference by primary key is what
+    // MikroORM can populate without first loading the whole row.
+    const row = this.managedRow(association.source, source as MikroRow, options);
     const property = association.name;
     const target = this.models[defName] || this.models[association.target];
     // Always populate, rather than testing whether it is loaded first. Only a
@@ -793,8 +861,11 @@ implements GqlizeAdapter {
   private async collectionPage(
     target: RegisteredMikroModel, row: MikroRow, association: Association, request: AdapterRelationshipRequest,
   ): Promise<AdapterRelationshipPage> {
-    const { args = {}, offset, whereOperators, countOnly } = request;
-    const collection = row?.[association.name];
+    const { args = {}, offset, whereOperators, countOnly, options } = request;
+    // A plain-object row has no real Collection; obtain a managed reference so
+    // the property holds an actual Collection that can be loaded.
+    const managed = this.managedRow(association.source, row, options);
+    const collection = managed?.[association.name];
     if (!isCollectionLike(collection)) {
       return { total: 0, models: [] };
     }
@@ -828,7 +899,10 @@ implements GqlizeAdapter {
     if (joinFilter) {
       return this.count(association.target, { where: andWhere(joinFilter, translateWhere(target, where)) });
     }
-    const collection = (source as MikroRow)?.[association.name];
+    // A plain-object row has no real Collection; obtain a managed reference so
+    // the property carries an actual Collection that can count its members.
+    const managed = this.managedRow(association.source, source as MikroRow);
+    const collection = managed?.[association.name];
     if (!isCollectionLike(collection)) {
       return 0;
     }
