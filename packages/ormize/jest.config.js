@@ -1,4 +1,4 @@
-const { baseProject, coverage } = require('../../scripts/jest/base-config');
+const { baseProject, coverage, conventions } = require('../../scripts/jest/base-config');
 
 /** @type {import('jest').Config} */
 const base = baseProject('ormize');
@@ -14,6 +14,9 @@ const POSTGRES_SUITES = [
 ];
 
 module.exports = {
+  // Shared conventions: `passWithNoTests` is run-wide, so it sits at the root;
+  // the ignore patterns are per project (below).
+  passWithNoTests: conventions.passWithNoTests,
   maxWorkers: process.env.CI ? 2 : 4,
   // PGlite (in-process WASM Postgres) is slower than sqlite — especially the
   // first test in a file, which lazily boots the WASM instance. Set at the root
@@ -25,6 +28,7 @@ module.exports = {
     {
       ...base,
       displayName: 'sqlite',
+      testPathIgnorePatterns: conventions.testPathIgnorePatterns,
       testMatch: ["**/__tests__/**/?(*.)+(spec|test).[jt]s?(x)"],
       setupFiles: ['<rootDir>/__tests__/setup/dialect-sqlite.ts'],
       setupFilesAfterEnv: ['<rootDir>/__tests__/setup/teardown.ts'],
@@ -32,6 +36,7 @@ module.exports = {
     {
       ...base,
       displayName: 'postgres',
+      testPathIgnorePatterns: conventions.testPathIgnorePatterns,
       testMatch: POSTGRES_SUITES,
       setupFiles: ['<rootDir>/__tests__/setup/dialect-postgres.ts'],
       setupFilesAfterEnv: ['<rootDir>/__tests__/setup/teardown.ts'],

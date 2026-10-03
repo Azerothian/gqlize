@@ -2,7 +2,7 @@ import Database from "../src/manager";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { describe, it, expect } from "@jest/globals";
 import Sequelize from "sequelize";
-import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 // A minimal self-referential model: a Node has many child Nodes. `name` is NOT
 // NULL, so a nested create with a null name fails at the DB — exercising the
@@ -76,10 +76,7 @@ async function buildTwoAdapterOrm() {
   return db;
 }
 
-// Cross-adapter coordinated transactions require two independent database
-// connections with concurrent transactions. PGlite runs a single WASM instance
-// with serialized statement execution, which deadlocks the coordinated rollback.
-(testDialect() === "postgres" ? describe.skip : describe)("manager - cross-adapter transactions", () => {
+describe("manager - cross-adapter transactions", () => {
   it("rolls back BOTH adapters when work on one fails", async () => {
     const db = await buildTwoAdapterOrm();
     await expect(
