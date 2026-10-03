@@ -232,7 +232,7 @@ import {
 // been imported from.
 export type * from "./types/query";
 import { replaceWhereOperators, normalizeWhereForDialect, reservedOperatorNames } from "./utils/where-ops";
-import { keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
+import { fixNestedThroughJoin, keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
 import { throughForeignKey, throughOtherKey } from "@azerothian/utilize/utils/join-keys";
 
 // Pagination safety bounds. This is the central backstop that bounds every list
@@ -284,6 +284,17 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // On the instance, so it runs for every model's find — native calls
     // included — rather than only the queries this adapter builds.
     this.sequelize.addHook("beforeFindAfterOptions", "ormize:nested-subquery", keepNestedJoinsOutOfSubQuery);
+    fixNestedThroughJoin(this.sequelize.getQueryInterface().queryGenerator);
+    // A paginated `separate` hasMany is loaded with Sequelize's grouped limit:
+    // one `ORDER BY … LIMIT` subquery per parent, glued with UNION. Sequelize
+    // drops the outer ORDER BY unless the dialect says it needs one, so each
+    // parent's page came back in whatever order the UNION produced — on SQLite
+    // a plain UNION, which reorders. Ordering the outer select by the same keys
+    // keeps every parent's rows in order: a subsequence of a sorted list is
+    // sorted. An own property on this instance's dialect, so the shared
+    // prototype — and every other Sequelize in the process — is untouched.
+    const dialect = (this.sequelize as unknown as {dialect: {supports: Record<string, unknown>}}).dialect;
+    dialect.supports = {...dialect.supports, topLevelOrderByRequired: true};
     // The caller's adapter options are theirs. `defaultAttr` matters most: it is
     // spread into *every* model, so one shared descriptor object was normalised
     // and stamped by each model in turn, the last one winning the `Model`
@@ -1522,6 +1533,29 @@ function isWindowed(rows: unknown): boolean {
   return Array.isArray(rows) && Boolean((rows as unknown as {[WINDOWED]?: boolean})[WINDOWED]);
 }
 
+/**
+ * Drop repeated rows from a windowed page, keeping the first of each key.
+ *
+ * Sequelize's grouped limit takes one `ORDER BY … LIMIT` subquery per parent
+ * *key*, and when several loaded parents share a key — every root pointing at
+ * the same belongsTo row — it repeats that key. Over `UNION ALL` (Postgres) the
+ * page then came back with every row several times; SQLite's plain UNION
+ * happened to collapse them. In place, because the instance holds this array.
+ */
+function dedupeInPlace(rows: SequelizeRow[], pk: string): void {
+  const seen = new Set<unknown>();
+  let write = 0;
+  for (const row of rows) {
+    const key = rowFields(row)[pk];
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    rows[write++] = row;
+  }
+  rows.length = write;
+}
+
 /** Walk the loaded rows alongside the include tree, marking each windowed `separate` result. */
 function markWindowedIncludes(rows: SequelizeRow[], includes: SequelizeInclude[] | undefined): void {
   if (!includes || includes.length === 0) {
@@ -1533,10 +1567,14 @@ function markWindowedIncludes(rows: SequelizeRow[], includes: SequelizeInclude[]
       continue;
     }
     const windowed = Boolean(inc.separate) && (inc.limit != null || inc.offset != null);
+    const pk = (inc.model as {primaryKeyAttribute?: string} | undefined)?.primaryKeyAttribute;
     for (const row of rows) {
       const value = row ? rowFields(row)[as] : undefined;
       if (windowed && Array.isArray(value)) {
         Object.defineProperty(value, WINDOWED, { value: true, enumerable: false });
+        if (pk) {
+          dedupeInPlace(value as SequelizeRow[], pk);
+        }
       }
       const children = Array.isArray(value) ? value : value ? [value] : [];
       markWindowedIncludes(children as SequelizeRow[], inc.include);

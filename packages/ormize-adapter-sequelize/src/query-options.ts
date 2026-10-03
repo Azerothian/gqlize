@@ -42,6 +42,7 @@ export interface QueryOptionsHost {
   getFields(modelName: string): { [fieldName: string]: DefinitionFieldMeta };
   getPrimaryKeyNameForModel(modelName: string): string[];
   getAssociation(modelName: string, assocName: string): Association;
+  getAssociations(modelName: string): { [relName: string]: Association };
   hasInlineCountFeature(): boolean;
   processFilterArgument(
     where: AdapterWhere | undefined,
@@ -119,16 +120,28 @@ export function selectedAttributes(
 ): SequelizeAttribute[] {
   const attributes = [...seed];
   const fields = host.getFields(defName);
+  // The keys the selected relations resolve through, looked up by the
+  // relation's *name* — which is what a selection set holds. Matching the
+  // target's model name instead (`alpha` for a relation called `toA`) dropped
+  // the key whenever the two differed, and a relation resolved later by its own
+  // query (a paginated belongsToMany's rows, a plain row) came back `null`.
+  const relationKeys = new Set<string>();
+  if (selectedFields) {
+    const associations = host.getAssociations(defName);
+    for (const relName of selectedFields) {
+      const association = associations[relName];
+      if (association) {
+        relationKeys.add(association.associationType === "belongsTo" ? association.foreignKey : association.sourceKey);
+      }
+    }
+  }
   Object.keys(fields).forEach((key) => {
     const field = fields[key];
     if (field.primaryKey) {
       return;
     }
-    if (selectedFields && selectedFields.indexOf(key) === -1) {
-      const foreignTarget = field.foreignTarget ? field.foreignTarget.toLowerCase() : undefined;
-      if (foreignTarget === undefined || selectedFields.indexOf(foreignTarget) === -1) {
-        return;
-      }
+    if (selectedFields && selectedFields.indexOf(key) === -1 && !relationKeys.has(key)) {
+      return;
     }
     // `DefinitionFieldMeta.name` is optional because a user-authored field
     // carries none — the adapter fills it in. Either way the map is keyed by
