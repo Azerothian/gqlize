@@ -9,20 +9,21 @@ import Sequelize from "sequelize";
 import { AnyTypedDef, Definition, Relationship } from "../src/types";
 import { OrmAdapter } from "@azerothian/utilize/types/index";
 import {describe, test, expect} from "@jest/globals";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
-const adapter = () => new SequelizeAdapter({}, {dialect: "sqlite"}) as OrmAdapter;
+const adapter = async () => trackConnection(new SequelizeAdapter({}, await dialectConfig())) as OrmAdapter;
 
 /** One manager with a single adapter registered as `sqlite`. */
-const single = () => {
+const single = async () => {
   const db = new Database();
-  db.registerAdapter(adapter(), "sqlite");
+  db.registerAdapter(await adapter(), "sqlite");
   return db;
 };
 
 /** Two adapters, so a definition can be put on either side of an adapter boundary. */
-const dual = () => {
-  const db = single();
-  db.registerAdapter(adapter(), "sqlite2");
+const dual = async () => {
+  const db = await single();
+  db.registerAdapter(await adapter(), "sqlite2");
   return db;
 };
 
@@ -34,16 +35,17 @@ const def = (name: string, define: Definition["define"] = {}, relationships: Par
 // A factory, not a shared literal: sequelize stamps `field`/`fieldName` onto the
 // attribute object it is given, so reusing one instance aliases the columns.
 const str = () => ({type: Sequelize.STRING, allowNull: true});
+const int = () => ({type: Sequelize.INTEGER, allowNull: true});
 
 describe("adapter resolution", () => {
   test("def.datasource names an adapter that was never registered", async() => {
-    const db = single();
+    const db = await single();
     await expect(db.addDefinition({...def("Foo"), datasource: "postgres"}))
       .rejects.toThrow("Cannot add definition 'Foo': no adapter named 'postgres' is registered (from def.datasource). Registered adapters: 'sqlite'.");
   });
 
   test("the adapterName argument names an adapter that was never registered", async() => {
-    const db = single();
+    const db = await single();
     await expect(db.addDefinition(def("Foo"), "sqlite3"))
       .rejects.toThrow("no adapter named 'sqlite3' is registered (from the adapterName argument)");
   });
@@ -55,7 +57,7 @@ describe("adapter resolution", () => {
   });
 
   test("a fluent define() against an unknown adapter names the model it came from", async() => {
-    const db = single();
+    const db = await single();
     db.define(def("Foo") as AnyTypedDef, "nope");
     // The stack points at `initialise()`, never at the `define()` call, so the
     // message is the only thing that can carry the model name.
@@ -63,7 +65,7 @@ describe("adapter resolution", () => {
   });
 
   test("a failed addDefinition leaves nothing behind, so a retry succeeds", async() => {
-    const db = single();
+    const db = await single();
     await expect(db.addDefinition({...def("Foo"), datasource: "postgres"})).rejects.toThrow();
     expect(db.defs.Foo).toBeUndefined();
     expect(db.defsAdapters.Foo).toBeUndefined();
@@ -89,14 +91,14 @@ describe("adapter resolution", () => {
 
 describe("model resolution", () => {
   test("an unknown model is reported as such, and lists the models that exist", async() => {
-    const db = single();
+    const db = await single();
     await db.addDefinition(def("Foo"));
     expect(() => db.getFields("Nope"))
       .toThrow("Ormize.getModelAdapter: no model named 'Nope' has been defined. Defined models: 'Foo'.");
   });
 
   test("a model whose adapter is missing is a different error from a missing model", async() => {
-    const db = single();
+    const db = await single();
     await db.addDefinition(def("Foo"));
     // Only reachable by unregistering behind the manager's back, but it is the
     // second of the two hops `getModelAdapter` makes and it needs its own voice.
@@ -106,14 +108,14 @@ describe("model resolution", () => {
   });
 
   test("getModel and getDefinitionHooks report the model, not a TypeError", async() => {
-    const db = single();
+    const db = await single();
     expect(() => db.getModel("Nope")).toThrow("no model named 'Nope' has been defined");
     await expect(db.getDefinitionHooks("Nope"))
       .rejects.toThrow("Ormize.getDefinitionHooks: no model named 'Nope' has been defined");
   });
 
   test("hasDefinition answers the question without throwing", async() => {
-    const db = single();
+    const db = await single();
     expect(db.hasDefinition("Foo")).toEqual(false);
     await db.addDefinition(def("Foo"));
     expect(db.hasDefinition("Foo")).toEqual(true);
@@ -128,14 +130,14 @@ describe("relationship validation", () => {
   };
 
   test("a target model that was never defined", async() => {
-    const db = single();
+    const db = await single();
     await db.addDefinition(def("Foo", {}, [{name: "bars", type: "hasMany", model: "Bar", options: {foreignKey: "fooId"}}]));
     await expect(db.initialise())
       .rejects.toThrow("Relationship 'Foo.bars' (hasMany) targets model 'Bar', which has not been defined");
   });
 
   test("a target model that was never defined, and no foreignKey to blame instead", async() => {
-    const db = single();
+    const db = await single();
     await db.addDefinition(def("Foo", {}, [{name: "bars", type: "hasMany", model: "Bar", options: {}}]));
     // This used to report a missing foreign key - true of the input, but not the
     // reason it failed, and supplying one only moved the crash.
@@ -144,19 +146,19 @@ describe("relationship validation", () => {
   });
 
   test("no target model at all", async() => {
-    const db = single();
+    const db = await single();
     await db.addDefinition(def("Foo", {}, [{name: "bars", type: "hasMany", options: {}}]));
     await expect(db.initialise()).rejects.toThrow("Relationship 'Foo.bars' (hasMany) does not name a target model.");
   });
 
   test("an unnamed relationship is rejected rather than stored under the key 'undefined'", async() => {
-    const db = single();
+    const db = await single();
     await expect(wire(db, [{type: "hasMany", model: "Bar", options: {foreignKey: "fooId"}}]))
       .rejects.toThrow("Relationship on 'Foo' targeting 'Bar' has no name.");
   });
 
   test("an unknown relationship type is rejected on the same-adapter branch", async() => {
-    const db = single();
+    const db = await single();
     // The manager's own guard used to sit below the same-adapter early return,
     // leaving this case to whichever adapter happened to validate.
     await expect(wire(db, [{name: "bars", type: "hasLots", model: "Bar", options: {foreignKey: "fooId"}}]))
@@ -164,19 +166,19 @@ describe("relationship validation", () => {
   });
 
   test("an unknown relationship type is rejected on the cross-adapter branch", async() => {
-    const db = dual();
+    const db = await dual();
     await db.addDefinition(def("Bar"), "sqlite2");
     await db.addDefinition(def("Foo", {}, [{name: "bars", type: "hasLots", model: "Bar", options: {foreignKey: "fooId"}}]), "sqlite");
     await expect(db.initialise()).rejects.toThrow("unknown relationship type 'hasLots'");
   });
 
   test("a same-adapter relationship may omit options entirely", async() => {
-    const db = single();
+    const db = await single();
     await expect(wire(db, [{name: "bars", type: "hasMany", model: "Bar"}])).resolves.not.toThrow();
   });
 
   test("a relationship is still wired when it is valid", async() => {
-    const db = single();
+    const db = await single();
     await wire(db, [{name: "bars", type: "hasMany", model: "Bar", options: {foreignKey: "fooId"}}]);
     expect(db.relationships.Foo.bars.internal).toEqual(true);
   });
@@ -184,7 +186,7 @@ describe("relationship validation", () => {
 
 describe("cross-adapter key validation", () => {
   test("a foreignKey naming no column on the target fails at initialise, not at the first query", async() => {
-    const db = dual();
+    const db = await dual();
     await db.addDefinition(def("Bar", {a: str()}), "sqlite2");
     await db.addDefinition(def("Foo", {a: str()}, [
       {name: "bars", type: "hasMany", model: "Bar", options: {foreignKey: "nopeId"}},
@@ -195,7 +197,7 @@ describe("cross-adapter key validation", () => {
   });
 
   test("the message lists the fields the target does have", async() => {
-    const db = dual();
+    const db = await dual();
     await db.addDefinition(def("Bar", {a: str()}), "sqlite2");
     await db.addDefinition(def("Foo", {a: str()}, [
       {name: "bars", type: "hasMany", model: "Bar", options: {foreignKey: "nopeId"}},
@@ -204,8 +206,8 @@ describe("cross-adapter key validation", () => {
   });
 
   test("a sourceKey naming no column on the source is caught too", async() => {
-    const db = dual();
-    await db.addDefinition(def("Bar", {a: str(), fooId: str()}), "sqlite2");
+    const db = await dual();
+    await db.addDefinition(def("Bar", {a: str(), fooId: int()}), "sqlite2");
     await db.addDefinition(def("Foo", {a: str()}, [
       {name: "bars", type: "hasMany", model: "Bar", options: {foreignKey: "fooId", sourceKey: "nope"}},
     ]), "sqlite");
@@ -213,7 +215,7 @@ describe("cross-adapter key validation", () => {
   });
 
   test("a belongsTo targetKey naming no column on the target is caught", async() => {
-    const db = dual();
+    const db = await dual();
     await db.addDefinition(def("Bar", {a: str()}), "sqlite2");
     await db.addDefinition(def("Foo", {a: str(), barId: str()}, [
       {name: "bar", type: "belongsTo", model: "Bar", options: {foreignKey: "barId", targetKey: "nope"}},
@@ -222,8 +224,8 @@ describe("cross-adapter key validation", () => {
   });
 
   test("declared keys wire cleanly", async() => {
-    const db = dual();
-    await db.addDefinition(def("Bar", {a: str(), fooId: str()}), "sqlite2");
+    const db = await dual();
+    await db.addDefinition(def("Bar", {a: str(), fooId: int()}), "sqlite2");
     await db.addDefinition(def("Foo", {a: str()}, [
       {name: "bars", type: "hasMany", model: "Bar", options: {foreignKey: "fooId"}},
     ]), "sqlite");
@@ -236,7 +238,7 @@ describe("cross-adapter key validation", () => {
   });
 
   test("a cross-adapter belongsToMany validates against its generated join model", async() => {
-    const db = dual();
+    const db = await dual();
     await db.addDefinition(def("Bar", {a: str()}), "sqlite2");
     await db.addDefinition(def("Foo", {a: str()}, [
       {name: "bars", type: "belongsToMany", model: "Bar", options: {foreignKey: "fooId", otherKey: "barId"}},
@@ -248,7 +250,7 @@ describe("cross-adapter key validation", () => {
   });
 
   test("a same-adapter relationship is not held to the same rule", async() => {
-    const db = single();
+    const db = await single();
     await db.addDefinition(def("Bar", {a: str()}));
     await db.addDefinition(def("Foo", {a: str()}, [
       // Sequelize creates `fooId` on Bar itself; only a cross-adapter key has
@@ -259,7 +261,7 @@ describe("cross-adapter key validation", () => {
   });
 
   test("a key created by another model's relationship is not a false positive", async() => {
-    const db = dual();
+    const db = await dual();
     await db.addDefinition(def("Bar", {a: str()}, [
       // Same-adapter belongsTo: sqlite2 creates `otherId` on Bar as a side effect,
       // concurrently with Foo's relationship being wired.

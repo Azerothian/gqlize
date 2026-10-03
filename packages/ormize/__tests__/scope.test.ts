@@ -8,6 +8,7 @@ import { scopeAware, unscoped } from "@azerothian/utilize/gate";
 import type { HookMap } from "../src/types";
 import { ScopeDeniedError, ScopeEscapeError } from "../src/scope";
 import { ScopeConfigurationError } from "@azerothian/utilize/gate";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 // One flat model. `ownerId` is an ordinary column rather than a relationship's
 // foreign key, so it survives `isStructurallyWritable` — which is what lets the
@@ -27,7 +28,7 @@ async function buildOrm(options: {
     onScopeMiss: options.onScopeMiss,
   });
   db.registerAdapter(
-    new SequelizeAdapter({}, { dialect: "sqlite", logging: false }),
+    trackConnection(new SequelizeAdapter({}, await dialectConfig())),
     "sqlite",
   );
   await db.addDefinition({
@@ -303,7 +304,7 @@ async function buildRelated(options: {
     onScopeMiss: options.onScopeMiss,
   });
   db.registerAdapter(
-    new SequelizeAdapter({}, { dialect: "sqlite", logging: false }),
+    trackConnection(new SequelizeAdapter({}, await dialectConfig())),
     "sqlite",
   );
   await db.addDefinition({
@@ -637,8 +638,8 @@ async function buildCross(options: {
 } = {}) {
   const permission: Permission | undefined = options.scope ? { scope: options.scope } : undefined;
   const db = new Database({ permission, onScopeMiss: options.onScopeMiss });
-  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
-  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite2");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite2");
   await db.addDefinition({
     name: "Vault",
     define: { title: { type: Sequelize.STRING, allowNull: true } },
@@ -1435,7 +1436,8 @@ describe("ormize - row-level scope through a raw SQL class method (§12)", () =>
   // it is text, so there is nothing left to rewrite. A reserved named parameter
   // is the only lever, which is why §12's audit refuses to build a scoped model
   // whose raw query does not pull it.
-  const OWNED = "SELECT name FROM docs WHERE (:scopeOwnerId IS NULL OR ownerId = :scopeOwnerId) ORDER BY name";
+  // Quote `"ownerId"` so PostgreSQL's identifier folding does not lowercase it.
+  const OWNED = 'SELECT name FROM docs WHERE (:scopeOwnerId IS NULL OR "ownerId" = :scopeOwnerId) ORDER BY name';
   const owned = (args: string[] = []) => ({ type: "query", query: OWNED, args });
   const call = (db: Orm, args: unknown = {}, context: unknown = ctx(1)) =>
     db.resolveClassMethod("Doc", "owned", args, context) as Promise<NamedRow[]>;
