@@ -886,6 +886,15 @@ importers:
       '@azerothian/utilize':
         specifier: workspace:*
         version: link:../utilize
+      '@electric-sql/pglite':
+        specifier: 'catalog:'
+        version: 0.5.4
+      '@electric-sql/pglite-socket':
+        specifier: 'catalog:'
+        version: 0.2.7(@electric-sql/pglite-age@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_hashids@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_ivm@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_textsearch@0.0.6(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_uuidv7@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgtap@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgvector@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite@0.5.4)
+      '@jest/globals':
+        specifier: 'catalog:'
+        version: 30.4.1(supports-color@8.1.1)
       '@types/node':
         specifier: 'catalog:'
         version: 26.1.1

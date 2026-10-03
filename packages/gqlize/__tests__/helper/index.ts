@@ -17,8 +17,8 @@ import type {Definition} from "../../src/types";
 export async function createInstance(extraDefinitions: Definition[] = [], options: {suite?: boolean} = {}) {
   const db = new Database();
   const { adapter, name, teardown } = await createAdapterForDialect();
-  // `suite`: built in a `beforeAll` and shared by the describe's tests — see
-  // `registerSuiteTeardown` for the one rule that comes with it.
+  // `suite`: built in a `beforeAll` and shared by the describe's tests, so its
+  // connection must stay open past the first test.
   (options.suite ? registerSuiteTeardown : registerTeardown)(teardown);
   db.registerAdapter(adapter, name);
   const parentDef = {

@@ -213,9 +213,6 @@ describe("gqlize - row-level scope through the schema", () => {
     expect(await notes("our note")).toEqual([{body: "our note", doc: {name: "ours"}}]);
   });
 
-  // The two tests below build instances of their own. On Postgres that resets
-  // the database this describe's `beforeAll` seeded, so every test reading the
-  // shared schema has to come before them.
   it("shows every row to a schema built without a scope", async() => {
     // The control. Everything above is the scope working; this is the same
     // schema shape proving the tests are not simply reading an empty database.
