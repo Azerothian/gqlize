@@ -85,7 +85,7 @@ describe("paging", () => {
     const post = await instance.models.PagingPost.create({ title: "post1" });
     for (let i = 1; i <= 5; i++) {
       const tag = await instance.models.PagingTag.create({ label: `tag${i}` });
-      await (post as any).addTag(tag);
+      await (post as unknown as {addTag(tag: unknown): Promise<void>}).addTag(tag);
     }
 
     schema = await createSchema(instance);
@@ -324,6 +324,19 @@ describe("paging", () => {
       const p1Names = p1.edges.map((e) => e.node.name);
       const p2Names = p2.edges.map((e) => e.node.name);
       expect(p1Names.filter((n) => p2Names.includes(n))).toHaveLength(0);
+    });
+
+    it("first+after returns exactly the next window, whatever the offset", async () => {
+      // A paginated hasMany is fetched `separate`, already windowed in SQL;
+      // slicing it again in memory dropped rows whenever the page held more
+      // rows than the cursor's offset.
+      const all = (await queryParentChildren("first: 100")).edges.map((e) => e.node.name);
+      for (const [index, size] of [[0, 2], [0, 3], [1, 2], [2, 2], [3, 3]]) {
+        const anchor = await queryParentChildren(`first: ${index + 1}`);
+        const cursor = anchor.edges[index].cursor;
+        const page = await queryParentChildren(`first: ${size}, after: "${cursor}"`);
+        expect(page.edges.map((e) => e.node.name)).toEqual(all.slice(index + 1, index + 1 + size));
+      }
     });
 
     it("last+before returns children before the cursor", async () => {

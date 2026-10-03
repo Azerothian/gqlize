@@ -217,6 +217,7 @@ import type {
   SequelizeModelClass,
   SequelizeOrder,
   SequelizeOrderPrefix,
+  SequelizeInclude,
   SequelizeRow,
 } from "./types/query";
 import {
@@ -1217,9 +1218,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     return rest;
   };
 
-  findAll = (defName: string, options: AdapterQueryOptions): Promise<SequelizeRow[]> => {
+  findAll = async (defName: string, options: AdapterQueryOptions): Promise<SequelizeRow[]> => {
     const Model = this.sequelize.models[defName];
-    return Model.findAll(options);
+    const rows = await Model.findAll(options);
+    markWindowedIncludes(rows, (options as {include?: SequelizeInclude[]}).include);
+    return rows;
   };
   count = (defName: string, options: AdapterQueryOptions): Promise<number> => {
     const Model = this.sequelize.models[defName];
@@ -1459,14 +1462,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       // first place.
       const window = args.first != null ? args.first : args.last;
       if (window != null && models.length > 0) {
-        const start = request.offset || 0;
-        // When a `separate` include already applied the offset in its SQL query,
-        // the loaded models are the correct page. Applying the offset again
-        // would overshoot and return an empty (or wrong) page.  Detect this: if
-        // `start` is beyond the loaded set, the offset was already consumed by
-        // SQL and the in-memory slice should start from 0.
-        const effectiveStart = (start > 0 && start >= models.length) ? 0 : start;
-        models = models.slice(effectiveStart, effectiveStart + window);
+        // A `separate` include already applied the window in SQL — those rows
+        // *are* the page, and slicing them again dropped rows whenever the page
+        // held more rows than the cursor's offset. Only rows a JOIN loaded in
+        // full (a `required` relation) are windowed here.
+        if (!isWindowed(val)) {
+          const start = request.offset || 0;
+          models = models.slice(start, start + window);
+        }
       }
       let total = models.length;
       if (args && (args.first != null || args.last != null)) {
@@ -1506,6 +1509,39 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       models,
     };
   };
+}
+
+/**
+ * Marks a relation's rows that a `separate` include loaded with its own
+ * `limit`/`offset`, so `resolveManyRelationship` knows the page is already cut.
+ * Non-enumerable: it never reaches serialised output.
+ */
+const WINDOWED = Symbol("ormize-adapter-sequelize:windowed");
+
+function isWindowed(rows: unknown): boolean {
+  return Array.isArray(rows) && Boolean((rows as unknown as {[WINDOWED]?: boolean})[WINDOWED]);
+}
+
+/** Walk the loaded rows alongside the include tree, marking each windowed `separate` result. */
+function markWindowedIncludes(rows: SequelizeRow[], includes: SequelizeInclude[] | undefined): void {
+  if (!includes || includes.length === 0) {
+    return;
+  }
+  for (const inc of includes) {
+    const as = inc.as;
+    if (!as) {
+      continue;
+    }
+    const windowed = Boolean(inc.separate) && (inc.limit != null || inc.offset != null);
+    for (const row of rows) {
+      const value = row ? rowFields(row)[as] : undefined;
+      if (windowed && Array.isArray(value)) {
+        Object.defineProperty(value, WINDOWED, { value: true, enumerable: false });
+      }
+      const children = Array.isArray(value) ? value : value ? [value] : [];
+      markWindowedIncludes(children as SequelizeRow[], inc.include);
+    }
+  }
 }
 
 export function mergeFilterStatement(
