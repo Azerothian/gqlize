@@ -9,6 +9,7 @@ import { Ormize } from "@azerothian/ormize";
 import SequelizeAdapter from "../src";
 import { defineModel } from "../src/types/orm";
 import { describe, expect, it, jest } from "@jest/globals";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 // Author-declared instance interface, Sequelize v6 idiom.
 interface WidgetInstance
@@ -44,7 +45,7 @@ describe("definition typesystem", () => {
   });
 
   it("fluent define() chains, defers creation to initialise(), and builds a working model", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
 
     // Fluent chain: registerAdapter fixes the base URI, define() accumulates models.
     const db = new Ormize().registerAdapter(adapter).define(WidgetDef);
@@ -74,7 +75,7 @@ describe("definition typesystem", () => {
 
 describe("createModel - method spellings (#72)", () => {
   it("installs top-level and `options.*` methods together, the nested one winning a clash", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
     const Model = await adapter.createModel({
       name: "Mixed",
       define: { name: { type: Sequelize.STRING } },
@@ -106,7 +107,7 @@ describe("createModel - method spellings (#72)", () => {
   });
 
   it("is not masked by an empty `options.instanceMethods`", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
     const Model = await adapter.createModel({
       name: "Masked",
       define: { name: { type: Sequelize.STRING } },
@@ -120,13 +121,13 @@ describe("createModel - method spellings (#72)", () => {
 
 describe("createModel - top-level tableName", () => {
   it("names the table from a top-level `tableName`", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
     const Model = await adapter.createModel({ name: "Tabled", tableName: "app_tabled", define: {} });
     expect(Model.getTableName()).toBe("app_tabled");
   });
 
   it("prefers `options.tableName` when both are given", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
     const Model = await adapter.createModel({
       name: "Both", tableName: "top_both", define: {}, options: { tableName: "nested_both" },
     });
@@ -136,7 +137,7 @@ describe("createModel - top-level tableName", () => {
 
 describe("createRelationship - the alias is the relationship name", () => {
   it("registers under `name` and warns when `options.as` differs", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
     await adapter.createModel({ name: "Account", define: { name: { type: Sequelize.STRING } } });
     await adapter.createModel({ name: "Ledger", define: { name: { type: Sequelize.STRING } } });
     const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -158,7 +159,7 @@ describe("getFields - authored field metadata", () => {
   // regresses, `createModel` also stashes the authored definition on the model
   // (`model.definition`), which `getFields` could read instead.
   it("passes authored args/resolve through rawAttributes", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const resolve = (source: { name: string }) => source.name;
     const args = { casing: { type: "Casing" } };
     const db = new Ormize().registerAdapter(adapter).define({
@@ -180,7 +181,7 @@ describe("getFields - authored field metadata", () => {
   });
 
   it("accepts either spelling of the field description", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const db = new Ormize().registerAdapter(adapter).define({
       name: "Described",
       define: {
@@ -201,7 +202,7 @@ describe("getFields - authored field metadata", () => {
   });
 
   it("does not leak Sequelize's own attribute internals", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const db = new Ormize().registerAdapter(adapter).define({
       name: "Plain",
       define: { name: { type: Sequelize.STRING, allowNull: false } },

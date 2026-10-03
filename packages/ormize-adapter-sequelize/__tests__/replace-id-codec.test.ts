@@ -5,6 +5,7 @@ import { prefixIdCodec, rawIdCodec } from "@azerothian/gqlize";
 import SequelizeAdapter from "../src";
 import { describe, expect, it, beforeAll } from "@jest/globals";
 import type { AdapterWhere, IncludeMap } from "@azerothian/utilize/types/index";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 /**
  * The adapter's `replaceIdIn*` hooks take an `IdTranslation` — the codec plus the
@@ -24,7 +25,7 @@ let adapter: SequelizeAdapter;
 let db: Ormize;
 
 beforeAll(async () => {
-  adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+  adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()), { suite: true });
   db = new Ormize().registerAdapter(adapter);
   await db.addDefinition({
     name: "Owner",

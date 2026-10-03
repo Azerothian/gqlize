@@ -658,6 +658,9 @@ importers:
       '@azerothian/ormize':
         specifier: workspace:*
         version: link:../ormize
+      '@azerothian/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
       '@jest/globals':
         specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
