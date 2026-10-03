@@ -11,12 +11,30 @@ import { isQueryInstanceMethodAllowed, type Permission } from "./gate";
 import type {
   DeclaredIncludeMap,
   Definition,
+  DefinitionMethod,
   ExposedMethodContext,
   ExposedMethods,
   OptionHook,
   OrderEntry,
   WhereOperators,
 } from "./types/index";
+
+/**
+ * A definition's method implementations, both spellings merged: top-level
+ * `instanceMethods`/`classMethods` and the nested `options.*` form, the nested
+ * one winning a name both declare.
+ *
+ * Every reader goes through this. Picking one bag *or* the other (#72) silently
+ * dropped every top-level method from a definition that also had an
+ * `options.instanceMethods` — even an empty one — so an exposed method was
+ * declared, typed into the schema, and then not found on the row.
+ */
+export function definitionMethods(
+  definition: Definition | undefined,
+  key: "classMethods" | "instanceMethods",
+): {[name: string]: DefinitionMethod} {
+  return {...definition?.[key], ...definition?.options?.[key]};
+}
 
 /** The exposed query instance methods of a definition, never undefined. */
 export function queryInstanceMethods(definition: Definition | undefined): ExposedMethods {

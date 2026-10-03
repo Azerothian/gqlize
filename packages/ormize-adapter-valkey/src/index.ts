@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothian/utilize/exposed-methods";
+import { computedOrderableFields as computedOrderableFieldsFor, definitionMethods } from "@azerothian/utilize/exposed-methods";
 import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
@@ -261,8 +261,8 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     // Wire user-declared class/instance methods (top-level + options.*), matching
     // the Sequelize adapter. Class methods → statics; instance methods → stashed
     // for `tag()` to attach to each returned record.
-    const classMethods = { ...(def.classMethods || {}), ...(def.options?.classMethods || {}) };
-    const instanceMethods = { ...(def.instanceMethods || {}), ...(def.options?.instanceMethods || {}) };
+    const classMethods = definitionMethods(def, "classMethods");
+    const instanceMethods = definitionMethods(def, "instanceMethods");
     for (const k of Object.keys(classMethods)) model[k] = classMethods[k];
     model.__instanceMethods = instanceMethods;
 

@@ -22,6 +22,7 @@
 // line, so the cheap answer is not the silent one.
 
 import { scopeDispositionOf, scopeParametersIn } from "@azerothian/utilize/gate";
+import { definitionMethods } from "@azerothian/utilize/exposed-methods";
 import type { Definition } from "@azerothian/utilize/types/index";
 
 export type ScopeSurfaceKind = "classMethod" | "instanceMethod" | "sqlClassMethod" | "extendField";
@@ -85,12 +86,6 @@ function auditEntry(defName: string, kind: ScopeSurfaceKind, name: string, value
   };
 }
 
-/** The two spellings of a method bag; the nested one wins, as `createModel` has it. */
-function methodsOf(def: Definition, key: "classMethods" | "instanceMethods"): {[name: string]: unknown} {
-  const nested = def.options?.[key] as {[name: string]: unknown} | undefined;
-  return nested || def[key] || {};
-}
-
 /**
  * Audit one definition's methods.
  *
@@ -103,7 +98,7 @@ function methodsOf(def: Definition, key: "classMethods" | "instanceMethods"): {[
  */
 export function auditDefinitionScopeSurfaces(defName: string, def: Definition): ScopeSurfaceFinding[] {
   const findings: ScopeSurfaceFinding[] = [];
-  const classMethods = methodsOf(def, "classMethods");
+  const classMethods = definitionMethods(def, "classMethods");
   for (const name of Object.keys(classMethods)) {
     const value = classMethods[name];
     // A descriptor rather than a function is the raw-SQL form — the same branch
@@ -114,7 +109,7 @@ export function auditDefinitionScopeSurfaces(defName: string, def: Definition): 
       findings.push(finding);
     }
   }
-  const instanceMethods = methodsOf(def, "instanceMethods");
+  const instanceMethods = definitionMethods(def, "instanceMethods");
   for (const name of Object.keys(instanceMethods)) {
     const finding = auditEntry(defName, "instanceMethod", name, instanceMethods[name]);
     if (finding) {

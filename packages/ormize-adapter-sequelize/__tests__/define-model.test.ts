@@ -72,6 +72,52 @@ describe("definition typesystem", () => {
   });
 });
 
+describe("createModel - method spellings (#72)", () => {
+  it("installs top-level and `options.*` methods together, the nested one winning a clash", async () => {
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    const Model = await adapter.createModel({
+      name: "Mixed",
+      define: { name: { type: Sequelize.STRING } },
+      instanceMethods: {
+        topLevel() { return "top"; },
+        clash() { return "top-level"; },
+      },
+      classMethods: {
+        topStatic() { return "top"; },
+      },
+      options: {
+        instanceMethods: {
+          nested() { return "nested"; },
+          clash() { return "nested"; },
+        },
+        classMethods: {
+          nestedStatic() { return "nested"; },
+        },
+      },
+    });
+    const statics = Model as unknown as Record<string, () => string>;
+    const row = Model.build({ name: "m" }) as unknown as Record<string, () => string>;
+    // Picking one bag or the other dropped the top-level ones entirely.
+    expect(row.topLevel()).toBe("top");
+    expect(row.nested()).toBe("nested");
+    expect(row.clash()).toBe("nested");
+    expect(statics.topStatic()).toBe("top");
+    expect(statics.nestedStatic()).toBe("nested");
+  });
+
+  it("is not masked by an empty `options.instanceMethods`", async () => {
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    const Model = await adapter.createModel({
+      name: "Masked",
+      define: { name: { type: Sequelize.STRING } },
+      instanceMethods: { topLevel() { return "top"; } },
+      options: { instanceMethods: {} },
+    });
+    const row = Model.build({ name: "m" }) as unknown as Record<string, () => string>;
+    expect(row.topLevel()).toBe("top");
+  });
+});
+
 describe("getFields - authored field metadata", () => {
   // `args`/`resolve` are authored on a field for gqlize's benefit and mean
   // nothing to Sequelize. `getFields` reads them back off `rawAttributes`,
