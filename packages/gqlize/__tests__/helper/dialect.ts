@@ -1,5 +1,6 @@
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import {
+  closeConnection,
   dialectConfig,
   registerTeardown as registerSharedTeardown,
   testDialect,
@@ -9,8 +10,7 @@ import { GqlizeAdapter } from "../../src/types";
 /**
  * gqlize's view of the shared test database (`@azerothian/test-fixtures/dialect`):
  * SQLite in memory, or Postgres through PGlite, picked by the Jest project.
- * Every Postgres adapter gets a schema of its own, so instances never see one
- * another's tables.
+ * On Postgres every adapter gets a database of its own (see `dialectConfig`).
  */
 
 export { shutdownShared, teardownAll, teardownSuite } from "@azerothian/test-fixtures/dialect";
@@ -50,9 +50,7 @@ export async function createAdapterForDialect(
     name: currentDialect(),
     // Closing over the concrete adapter rather than the widened view keeps
     // `.sequelize` typed.
-    teardown: async () => {
-      await sequelizeAdapter.sequelize.close();
-    },
+    teardown: () => closeConnection(sequelizeAdapter),
   };
 }
 

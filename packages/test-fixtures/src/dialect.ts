@@ -13,7 +13,7 @@ import os from "os";
 import fs from "fs";
 import path from "path";
 // Type-only: erased at compile time, so a SQLite run never loads the PGlite
-// WASM — the real `require`s stay inside the lazy `sharedPg()` below.
+// WASM — the real `require`s stay inside the lazy `startSlot()` below.
 import type { PGlite } from "@electric-sql/pglite";
 import type { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 
@@ -29,45 +29,35 @@ export function testDialect(): TestDialect {
   return value === "postgres" ? "postgres" : "sqlite";
 }
 
-interface SharedPg {
+/** One PGlite database and the socket that serves it. */
+interface PgSlot {
   pglite: PGlite;
   server: PGLiteSocketServer;
   dir: string;
 }
-let shared: SharedPg | undefined;
-let sharedInit: Promise<SharedPg> | undefined;
+// The file's databases, and the tag of the adapter using each (`undefined`
+// when free). Jest gives every file a fresh module registry, so this pool is
+// per file.
+const slots: Array<Promise<PgSlot>> = [];
+const holders: Array<string | undefined> = [];
 
 /**
- * One PGlite per test file. Jest gives every file a fresh module registry, so
- * this singleton is per file, not per test — paying the WASM start-up (about a
- * second) once rather than for every test.
+ * Start a PGlite and serve it on its own unix socket. Lazy `require`, so a
+ * SQLite project never loads the WASM.
  */
-function sharedPg(): Promise<SharedPg> {
-  if (!sharedInit) {
-    sharedInit = (async () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy on purpose: a SQLite project must never load the WASM
-      const { PGlite: PGliteCtor } = require("@electric-sql/pglite") as typeof import("@electric-sql/pglite");
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- as above
-      const { PGLiteSocketServer: ServerCtor } = require("@electric-sql/pglite-socket") as typeof import("@electric-sql/pglite-socket");
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ormize-pglite-"));
-      const pglite = await PGliteCtor.create();
-      const server = new ServerCtor({
-        db: pglite,
-        path: path.join(dir, ".s.PGSQL.5432"),
-        // Every open adapter holds one connection (`pool.max: 1` below); a
-        // test that builds several at once — cross-adapter, transactions —
-        // needs a few of them live together.
-        maxConnections: 8,
-      });
-      await server.start();
-      shared = { pglite, server, dir };
-      return shared;
-    })();
-  }
-  return sharedInit;
+async function startSlot(): Promise<PgSlot> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy on purpose: a SQLite project must never load the WASM
+  const { PGlite: PGliteCtor } = require("@electric-sql/pglite") as typeof import("@electric-sql/pglite");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- as above
+  const { PGLiteSocketServer: ServerCtor } = require("@electric-sql/pglite-socket") as typeof import("@electric-sql/pglite-socket");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ormize-pglite-"));
+  const pglite = await PGliteCtor.create();
+  const server = new ServerCtor({ db: pglite, path: path.join(dir, ".s.PGSQL.5432") });
+  await server.start();
+  return { pglite, server, dir };
 }
 
-let schemaCounter = 0;
+let tagCounter = 0;
 
 /** Sequelize connection options — kept loose: callers spread their own on top. */
 export type DialectConfig = { [option: string]: unknown };
@@ -75,48 +65,52 @@ export type DialectConfig = { [option: string]: unknown };
 /**
  * Sequelize connection options for the current dialect, `overrides` on top.
  *
- * On Postgres every call gets a **schema of its own** and pins its connection
- * to it with `search_path`, rather than every adapter sharing (and resetting)
- * `public`. Two adapters open at once — a cross-adapter relationship, a
- * coordinated transaction, a suite seeded in `beforeAll` — then cannot see or
- * clobber each other's tables, exactly as two in-memory SQLite databases
- * cannot.
+ * On Postgres every adapter gets a whole database to itself, its `public`
+ * schema reset to empty — exactly what an application sees on a real server.
+ * That matters: Sequelize's Postgres paths assume `public` (`sync({force:
+ * true})`, so `adapter.reset()`, introspects it; enum types are looked up in
+ * it), so isolating adapters by schema broke them.
+ *
+ * The databases are PGlite instances kept in a small per-file pool. The first
+ * adapter uses the first, and each later one reuses any whose adapter has been
+ * closed (through `trackConnection` / `closeConnection`). Another instance
+ * starts only when adapters are open *at the same time* — a cross-adapter
+ * relationship, a suite seeded in `beforeAll` alongside per-test ones — so the
+ * WASM start-up (about a second) is paid once per file in the ordinary case.
  */
 export async function dialectConfig(overrides: DialectConfig = {}): Promise<DialectConfig> {
   if (testDialect() !== "postgres") {
     return { dialect: "sqlite", logging: false, ...overrides };
   }
-  const pg = await sharedPg();
-  const schema = `t_${process.pid}_${++schemaCounter}`;
-  await pg.pglite.exec(`CREATE SCHEMA "${schema}";`);
-  const overrideHooks = (overrides.hooks || {}) as { [name: string]: unknown };
+  const tag = `ormize-test-${process.pid}-${++tagCounter}`;
+  let index = holders.findIndex((holder) => holder === undefined);
+  if (index === -1) {
+    index = slots.length;
+    slots.push(startSlot());
+  }
+  holders[index] = tag;
+  const slot = await slots[index];
+  await slot.pglite.exec("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;");
+  const overrideDialectOptions = (overrides.dialectOptions || {}) as { [name: string]: unknown };
   return {
     dialect: "postgres",
-    host: pg.dir,
+    host: slot.dir,
     port: 5432,
     username: "postgres",
     password: "postgres",
     database: "postgres",
     logging: false,
-    // One connection per adapter: `search_path` is per connection, and a
-    // second pooled connection would not have it.
+    // PGlite is a single Postgres backend: one connection per adapter.
     pool: { max: 1, min: 0, idle: 1000 },
     ...overrides,
-    hooks: {
-      ...overrideHooks,
-      afterConnect: async (connection: { query(sql: string): Promise<unknown> }, config: unknown) => {
-        await connection.query(`SET search_path TO "${schema}"`);
-        const user = overrideHooks.afterConnect as ((c: unknown, cfg: unknown) => unknown) | undefined;
-        if (user) {
-          await user(connection, config);
-        }
-      },
-    },
+    // `application_name` doubles as the tag `closeConnection` reads to free
+    // this adapter's database for the next one.
+    dialectOptions: { ...overrideDialectOptions, application_name: tag },
   };
 }
 
 /** Anything holding a Sequelize instance to close — the adapter, structurally. */
-export type Closable = { sequelize: { close(): Promise<unknown> } };
+export type Closable = { sequelize: { close(): Promise<unknown>; options?: { dialectOptions?: unknown } } };
 
 // Connections closed after each test, and after each file (`suite`): a
 // database built once in a `beforeAll` has to outlive the per-test teardown.
@@ -130,10 +124,18 @@ export function registerTeardown(fn: () => Promise<void>, options: { suite?: boo
 
 /** Close `adapter`'s connection after the current test (or, with `suite`, after the file). */
 export function trackConnection<T extends Closable>(adapter: T, options: { suite?: boolean } = {}): T {
-  registerTeardown(async () => {
-    await adapter.sequelize.close();
-  }, options);
+  registerTeardown(() => closeConnection(adapter), options);
   return adapter;
+}
+
+/** Close `adapter`'s connection now, freeing its database for the next adapter. */
+export async function closeConnection(adapter: Closable): Promise<void> {
+  await adapter.sequelize.close();
+  const tag = (adapter.sequelize.options?.dialectOptions as { application_name?: string } | undefined)?.application_name;
+  const index = tag === undefined ? -1 : holders.indexOf(tag);
+  if (index !== -1) {
+    holders[index] = undefined;
+  }
 }
 
 async function drain(fns: Array<() => Promise<void>>): Promise<void> {
@@ -156,15 +158,18 @@ export function teardownSuite(): Promise<void> {
   return drain(suiteTeardowns);
 }
 
-/** Stop the file's PGlite and its socket server, if one was started. */
+/** Stop every PGlite this file started, and their socket servers. */
 export async function shutdownShared(): Promise<void> {
-  if (!shared) {
-    return;
+  const started = slots.splice(0, slots.length);
+  holders.splice(0, holders.length);
+  for (const pending of started) {
+    try {
+      const slot = await pending;
+      try { await slot.server.stop(); } catch { /* already stopped */ }
+      try { await slot.pglite.close(); } catch { /* already closed */ }
+      try { fs.rmSync(slot.dir, { recursive: true, force: true }); } catch { /* already gone */ }
+    } catch {
+      // A slot that never started has nothing to stop.
+    }
   }
-  const s = shared;
-  shared = undefined;
-  sharedInit = undefined;
-  try { await s.server.stop(); } catch { /* already stopped */ }
-  try { await s.pglite.close(); } catch { /* already closed */ }
-  try { fs.rmSync(s.dir, { recursive: true, force: true }); } catch { /* already gone */ }
 }
