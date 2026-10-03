@@ -282,6 +282,14 @@ export function buildIncludeMapFromSelection(
       descriptor.deleted = fieldArgs.deleted;
     }
     if (collection) {
+      // `last` alone (no `first`, `before`, or `after`) means "the last N rows
+      // of the ordered set". The include plan cannot express this because the
+      // SQL OFFSET depends on the total, which is not known at plan-build time.
+      // Excluding it from the separate plan routes it through the per-parent
+      // resolver, which counts first and then queries with the right offset.
+      const isLastOnly = fieldArgs.last != null && Number(fieldArgs.last) > 0
+        && fieldArgs.first == null
+        && fieldArgs.after == null && fieldArgs.before == null;
       const paginated =
         fieldArgs.first != null || fieldArgs.last != null ||
         fieldArgs.after != null || fieldArgs.before != null;
@@ -296,7 +304,7 @@ export function buildIncludeMapFromSelection(
       descriptor.separate =
         association.associationType === "hasMany" &&
         !descriptor.required &&
-        (paginated || fieldArgs.separate === true);
+        ((paginated && !isLastOnly) || fieldArgs.separate === true);
       // A per-parent limit can only be expressed by `separate`. Where that is
       // not available — a `belongsToMany`, which Sequelize cannot fetch
       // separately, or a `required` relation, where the INNER JOIN that filters
@@ -330,10 +338,14 @@ export function buildIncludeMapFromSelection(
       if (fieldArgs.after) {
         descriptor.offset = decodeCursorIndex(fieldArgs.after, cursorCodec) + 1;
       } else if (fieldArgs.before) {
-        let offset = decodeCursorIndex(fieldArgs.before, cursorCodec) + 1;
+        const beforeIdx = decodeCursorIndex(fieldArgs.before, cursorCodec);
+        // Clamp the limit so the window stops before the cursor (not past it).
+        // The old formula used `index + 1 - limit`, which overshot by one and
+        // included the cursor row itself.
         if (descriptor.limit != null) {
-          offset -= descriptor.limit;
+          descriptor.limit = Math.min(descriptor.limit, beforeIdx);
         }
+        const offset = beforeIdx - (descriptor.limit ?? beforeIdx);
         descriptor.offset = offset < 0 ? 0 : offset;
       }
     }

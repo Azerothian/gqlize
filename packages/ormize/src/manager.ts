@@ -16,6 +16,7 @@ import { buildScopeHooks, buildScopeInstanceHooks } from "./scope-hooks";
 import { auditDefinitionScopeSurfaces, auditExtendFields, reportScopeSurfaces } from "./scope-audit";
 import type { ScopeHook } from "./scope-hooks";
 import { definitionMethods, expandOrderBy, mutationInstanceMethods, whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
+import { clampPageSize } from "@azerothian/utilize/utils/page-size";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, Association, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, AdapterWhere, DataTypeDescriptor, InitialiseOptions, NativeDataType,
   RelationshipType, RequestContext, Selection, IncludeMap, FindAllArgs, OrderEntry, GlobalKeyTargets } from '@azerothian/utilize/types/index';
@@ -1331,12 +1332,41 @@ export default class Ormize<
     }
     a = this.expandComputedOrder(defName, a, {context, info: selection?.raw});
     const offset = cursorOffset(args);
+    // --- Backward pagination adjustments for relationships ----------------
+    // Clamp the effective page size when paging backward so the window does
+    // not overshoot past the cursor position (same logic as resolveFindAll).
+    if (args.before) {
+      const relArgs = a as Record<string, unknown>;
+      const pageSize = clampPageSize(relArgs.first != null ? relArgs.first : relArgs.last);
+      const clamped = Math.min(pageSize, args.before.index);
+      // Rewrite first/last to the clamped value — processListArgsToOptions and
+      // the in-memory slice both read these.
+      if (relArgs.first != null) {
+        a = {...a, first: clamped};
+      } else {
+        a = {...a, last: clamped};
+      }
+    }
+    // `last` without a cursor on a relationship: count first, then offset from
+    // the end — the same strategy as resolveFindAll. The adapter's eager path
+    // loaded from offset 0, so the models are the wrong page; passing the right
+    // offset forces the non-eager (accessor query) path.
+    let effectiveOffset = offset;
+    if ((a as Record<string, unknown>).last != null && !args.after && !args.before && (a as Record<string, unknown>).first == null) {
+      const lastPageSize = clampPageSize((a as Record<string, unknown>).last);
+      const countResult = await adapter.resolveManyRelationship(defName, association, source, {
+        args: a, offset: undefined, selection, whereOperators: whereOperatorsFor(definition), options,
+        countOnly: true, selectedFields: selection?.fields, runHook: this.runHook,
+      });
+      effectiveOffset = Math.max(0, countResult.total - lastPageSize);
+    }
+    // --------------------------------------------------------------------
     // Count-only: the nested connection selects `total` but not `edges`/rows — the
     // adapter runs a count instead of a findAll (fires beforeCount natively); fire
     // afterCount here.
     const countOnly = Boolean(selection?.countOnly);
     const result = await adapter.resolveManyRelationship(defName, association, source, {
-      args: a, offset, selection, whereOperators: whereOperatorsFor(definition), options, countOnly,
+      args: a, offset: effectiveOffset, selection, whereOperators: whereOperatorsFor(definition), options, countOnly,
       selectedFields: selection?.fields, runHook: this.runHook,
     });
     if (countOnly && result) {
@@ -1553,6 +1583,26 @@ export default class Ormize<
       countOptions.where = getOptions.where;
       countOptions.include = getOptions.include;
     }
+    // --- Backward pagination adjustments (after hooks, before the query) -----
+    // `before`: clamp the LIMIT so the window stops before the cursor, not past it.
+    if (args.before) {
+      getOptions.limit = Math.min(getOptions.limit ?? Infinity, args.before.index);
+    }
+    // `last` without a cursor: the relay "last N" semantics are "the last N rows
+    // of the total ordered set". We need the total count to compute the right
+    // offset. For adapters with inline count this is an extra round-trip; for the
+    // `before`+`last` case the offset was already computed by `cursorOffset`.
+    const lastArgs = args as Record<string, unknown>;
+    if (lastArgs.last != null && !args.after && !args.before) {
+      const {limit: _l, offset: _o, order: _ord, attributes: _a, ...countable} = getOptions;
+      const lastCountOpts = countOptions || Object.assign({}, countable, {
+        include: (getOptions.include || []).filter((i: {required?: boolean, separate?: boolean}) => i.required && !i.separate),
+      });
+      const preTotal = await adapter.count(defName, lastCountOpts);
+      getOptions.offset = Math.max(0, preTotal - (getOptions.limit ?? preTotal));
+    }
+    // -----------------------------------------------------------------------
+
     // Count-only: the connection selects `total` but not `edges`/rows — skip the
     // findAll and run a count (fires beforeCount natively + afterCount manually).
     if (selection?.countOnly) {
@@ -1583,6 +1633,16 @@ export default class Ormize<
     let total;
     if (adapter.hasInlineCountFeature()) {
       total = await adapter.getInlineCount(models);
+      // Inline count reads `full_count` from the first row. When the page is
+      // empty (e.g. `after` past the end), there is no row to read from and it
+      // returns 0 — but the connection total is still the true row count. Fall
+      // back to a separate COUNT when this happens.
+      if (total === 0 && models.length === 0 && (getOptions.offset ?? 0) > 0) {
+        const {limit: _l, offset: _o, order: _ord, attributes: _a, ...countable} = getOptions;
+        total = await adapter.count(defName, Object.assign({}, countable, {
+          include: (getOptions.include || []).filter((i: {required?: boolean, separate?: boolean}) => i.required && !i.separate),
+        }));
+      }
     } else {
       // `countOptions` is only optional for adapters that count inline; the two
       // are the same decision, so an adapter reaching here without one has a
@@ -2072,16 +2132,23 @@ function createResolveContext(context: RequestContext, selection: Selection | un
 
 // Cursor-based offset from decoded `after`/`before` args (shared by the top-level
 // list resolver and the relationship resolver).
+//
+// `before` paging: offset so the window ends just before the cursor position.
+// `args.limit` was never populated by the connection layer — it carries `first`
+// and `last`, not `limit` — so the subtraction was a no-op and `before` returned
+// rows AFTER the cursor.  Fixed to use `clampPageSize(first ?? last)` and the
+// correct formula: `max(0, cursor.index - pageSize)`.
 function cursorOffset(args: FindAllArgs) {
   if (args.after) {
     return args.after.index + 1;
   }
   if (args.before) {
-    let offset = args.before.index + 1;
-    if (args.limit) {
-      offset -= Number(args.limit);
-    }
-    return offset;
+    const pageSize = clampPageSize(
+      (args as Record<string, unknown>).first != null
+        ? (args as Record<string, unknown>).first
+        : (args as Record<string, unknown>).last,
+    );
+    return Math.max(0, args.before.index - pageSize);
   }
   return undefined;
 }

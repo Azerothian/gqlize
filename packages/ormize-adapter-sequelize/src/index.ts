@@ -1460,7 +1460,13 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       const window = args.first != null ? args.first : args.last;
       if (window != null && models.length > 0) {
         const start = request.offset || 0;
-        models = models.slice(start, start + window);
+        // When a `separate` include already applied the offset in its SQL query,
+        // the loaded models are the correct page. Applying the offset again
+        // would overshoot and return an empty (or wrong) page.  Detect this: if
+        // `start` is beyond the loaded set, the offset was already consumed by
+        // SQL and the in-memory slice should start from 0.
+        const effectiveStart = (start > 0 && start >= models.length) ? 0 : start;
+        models = models.slice(effectiveStart, effectiveStart + window);
       }
       let total = models.length;
       if (args && (args.first != null || args.last != null)) {

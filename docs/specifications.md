@@ -265,8 +265,8 @@ Consumer-facing (`packages/ormize/src/manager.ts`):
 
 Internal resolution methods invoked by generated resolvers:
 
-- `resolveFindAll` — list query resolver (cursor→offset, `adapter.processListArgsToOptions` → `adapter.findAll` + count, fires `before` with `Events.QUERY`).
-- `resolveSingleRelationship` / `resolveManyRelationship` — relationship resolvers.
+- `resolveFindAll` — list query resolver (cursor→offset, `adapter.processListArgsToOptions` → `adapter.findAll` + count, fires `before` with `Events.QUERY`). Backward pagination (`before`/`last`) computes offset as `max(0, cursor.index - pageSize)` and clamps the limit to `min(pageSize, cursor.index)`. `last` without a cursor counts first and offsets from the end.
+- `resolveSingleRelationship` / `resolveManyRelationship` — relationship resolvers. The same backward-pagination semantics apply to nested connections.
 - `resolveClassMethod` — invokes `Model[methodName](args, context)` with optional before/after.
 - `processCreate` / `processUpdate` / `processDelete` — mutation executors; run `processInputs`, translate global IDs (`replaceIdDeep`), fire the matching `Events.MUTATION_*` hook, delegate to adapter functions, then `processRelationshipMutation`.
 - `processRelationshipMutation` — the nested-mutation engine (see §5).
@@ -274,6 +274,25 @@ Internal resolution methods invoked by generated resolvers:
 > These internal resolution methods are invoked by gqlize's generated resolvers; they live in
 > `packages/ormize/src/manager.ts` (the `Ormize` class is backend-only) and are called from the
 > GraphQL layer in `packages/gqlize`.
+
+---
+
+### Paging semantics
+
+| Arguments | Behaviour |
+| --- | --- |
+| `first: N` | First N rows of the ordered set. |
+| `first: N, after: C` | N rows after cursor C. |
+| `after: C` | Default page size (100) of rows after cursor C. |
+| `last: N` | Last N rows of the ordered set (count-then-offset). |
+| `last: N, before: C` | N rows ending just before cursor C. |
+| `before: C` | Default page size ending just before cursor C. |
+
+Page size is always clamped: absent → 100 (DEFAULT\_PAGE\_SIZE); above 1000 → 1000 (MAX\_PAGE\_SIZE). Both constants live in `@azerothian/utilize/utils/page-size`.
+
+### Default order
+
+A primary-key ASC tiebreaker is automatically appended when `orderBy` does not already end with the PK. This ensures deterministic pagination on all dialects — including Postgres, where an UPDATE may physically relocate a row. The tiebreaker is applied at the adapter level (`processListArgsToOptions`) for root and per-parent queries, and in `processIncludeStatement` for separate includes.
 
 ---
 

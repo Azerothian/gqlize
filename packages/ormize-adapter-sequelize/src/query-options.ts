@@ -227,7 +227,16 @@ export async function processIncludeStatement(
         if (separate) {
           retVal.separate = true;
           if ((inc.orderBy || []).length > 0) {
-            retVal.order = inc.orderBy;
+            // PK tiebreaker for the separate include's own order
+            let sepOrder: SequelizeOrder[] = inc.orderBy || [];
+            const [sepPk] = host.getPrimaryKeyNameForModel(targetDefName);
+            if (sepPk) {
+              const sepLast = sepOrder.length > 0 ? sepOrder[sepOrder.length - 1][0] : null;
+              if (sepLast !== sepPk) {
+                sepOrder = [...sepOrder, [sepPk, "ASC"]];
+              }
+            }
+            retVal.order = sepOrder;
           }
           if (inc.limit != null) {
             retVal.limit = inc.limit;
@@ -305,6 +314,21 @@ export async function processListArgsToOptions(
     : undefined;
 
   let order: SequelizeOrder[] = args.orderBy || [];
+  // Deterministic pagination tiebreaker: append the primary key when the order
+  // does not already end with it. Without this, rows with identical sort-column
+  // values can appear in any order across pages — and on Postgres, UPDATEd rows
+  // may physically relocate, making the un-tiebroken ordering unstable even
+  // within a single connection traversal.
+  const [pk] = host.getPrimaryKeyNameForModel(defName);
+  if (pk) {
+    const lastCol = order.length > 0
+      ? order[order.length - 1][0]
+      : null;
+    if (lastCol !== pk) {
+      order = [...order, [pk, "ASC"]];
+    }
+  }
+
   let include: SequelizeInclude[] = [];
   if ((args.include || []).length > 0) {
     const result = await processIncludeStatement(

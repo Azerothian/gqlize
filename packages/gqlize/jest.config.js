@@ -36,6 +36,7 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/codecs/id-regressions.test.ts',
   '<rootDir>/__tests__/codecs/scope.test.ts',
   '<rootDir>/__tests__/codecs/artifact.test.ts',
+  '<rootDir>/__tests__/paging.test.ts',
   '<rootDir>/__tests__/snapshot/load-runtime.test.ts',
   '<rootDir>/__tests__/snapshot/live-types.test.ts',
   '<rootDir>/__tests__/column-types.test.ts',
@@ -73,6 +74,7 @@ const ROUNDTRIP_SUITES = [
   '<rootDir>/__tests__/column-types.test.ts',
   '<rootDir>/__tests__/mutation-nested-verbs.test.ts',
   '<rootDir>/__tests__/where-operators.test.ts',
+  '<rootDir>/__tests__/paging.test.ts',
 ];
 
 module.exports = {
