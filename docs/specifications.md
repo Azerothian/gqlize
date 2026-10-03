@@ -664,7 +664,10 @@ the query through the adapter. Key properties:
   default a selected relation is a LEFT JOIN, so a nested `where` filters the child rows but not
   the parent; `required: true` promotes it to an INNER JOIN so parents without a matching related
   row are excluded. Equivalent to `required` on the explicit `include` argument (the two
-  OR-merge). With a row-level scope on the child, the scope filter sits inside the join:
+  OR-merge). `required` is local: it removes rows of its *own* parent level, and reaches the
+  root only through an unbroken chain of required levels. Under a non-required single relation
+  the parent field becomes `null`; under a non-required collection the parent row drops out of
+  that collection, and the root is unaffected. With a row-level scope on the child, the scope filter sits inside the join:
   `required: true` means "has a matching child" among the rows the caller may see, so a parent
   is dropped only when it has no *visible* match. A scope never makes a join required by
   itself; an unset `required` stays a LEFT JOIN. `required` nests at any depth, including
