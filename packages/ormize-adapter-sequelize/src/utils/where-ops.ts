@@ -117,9 +117,13 @@ export function normalizeWhereForDialect(
 
 function walkWhereTree(obj: AdapterWhere, dialect: string): AdapterWhere {
   const result: AdapterWhere = {};
-  for (const key of Object.keys(obj)) {
+  // `Reflect.ownKeys`, not `Object.keys`: a where built inside the engine — a
+  // cross-adapter join, a scope, a definition's `whereOperators` — already
+  // carries Sequelize `Op` symbols, and rebuilding the object from its string
+  // keys alone dropped them, silently widening the filter to every row.
+  for (const key of Reflect.ownKeys(obj)) {
     const value = obj[key];
-    if (POSTGRES_ONLY_OPS.has(key)) {
+    if (typeof key === "string" && POSTGRES_ONLY_OPS.has(key)) {
       throw new Error(
         `gqlize: the "${key}" operator requires the postgres dialect`,
       );
@@ -131,17 +135,17 @@ function walkWhereTree(obj: AdapterWhere, dialect: string): AdapterWhere {
       key === "notILike" ? "notLike" :
       key;
 
+    let mapped: unknown = value;
     if (Array.isArray(value)) {
-      result[mappedKey] = value.map((item: unknown) =>
+      mapped = value.map((item: unknown) =>
         isPlainObj(item)
           ? walkWhereTree(item as AdapterWhere, dialect)
           : item,
       );
     } else if (isPlainObj(value)) {
-      result[mappedKey] = walkWhereTree(value as AdapterWhere, dialect);
-    } else {
-      result[mappedKey] = value;
+      mapped = walkWhereTree(value as AdapterWhere, dialect);
     }
+    result[mappedKey] = mapped;
   }
   return result;
 }
