@@ -16,6 +16,7 @@
 export const CORE_VALUE_FUNCS = [
   "eq",
   "ne",
+  "gt",
   "gte",
   "lte",
   "lt",
@@ -45,8 +46,14 @@ export const REGEX_VALUE_FUNCS = [
 /** Boolean combinators taking a list of whole `where` objects. */
 export const CORE_ARRAY_FUNCS = ["or", "and"] as const;
 
-/** SQL adds the quantified forms, which a key-value store has no analogue for. */
-export const SQL_ARRAY_FUNCS = ["or", "and", "any", "all"] as const;
+/**
+ * SQL boolean combinators. `any`/`all` were removed: the GraphQL schema exposed
+ * them as boolean combinators (taking `[Where]`), but Sequelize's `Op.any` /
+ * `Op.all` are value quantifiers (`= ANY(ARRAY[…])`), not boolean combinators,
+ * so a client that sent `{ any: [{…}] }` got an opaque SQL error instead of the
+ * expected OR-like semantics.
+ */
+export const SQL_ARRAY_FUNCS = ["or", "and"] as const;
 
 /** Operators taking a list of the field's own type. */
 export const CORE_ARRAY_VALUES = ["in", "notIn", "between", "notBetween"] as const;

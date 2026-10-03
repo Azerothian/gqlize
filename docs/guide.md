@@ -677,10 +677,25 @@ query {
 
 Available operators (from the generated filter type):
 
-- **value:** `eq`, `ne`, `gte`, `lte`, `lt`, `not`, `is`, `like`, `notLike`, `iLike`, `notILike`,
-  `startsWith`, `endsWith`, `substring`, `regexp`, `notRegexp`, `iRegexp`, `notIRegexp`
-- **list:** `in`, `notIn`, `between`, `notBetween`, `contains`, `contained`, `overlap`, … (array-valued)
-- **combinators:** `and`, `or`, `any`, `all` (each takes a list of whole `where` objects)
+- **value:** `eq`, `ne`, `gt`, `gte`, `lte`, `lt`, `not`, `is`, `like`, `notLike`, `iLike`,
+  `notILike`, `startsWith`, `endsWith`, `substring`; `regexp`, `notRegexp`, `iRegexp`,
+  `notIRegexp` (opt-in via `enableRegexpOperators`, **Postgres only**)
+- **list:** `in`, `notIn`, `between`, `notBetween`, `contains`, `contained`, `overlap`,
+  `adjacent`, `strictLeft`, `strictRight`, `noExtendRight`, `noExtendLeft` (array/range
+  operators — **Postgres only**; a clear error is raised on other dialects)
+- **combinators:** `and`, `or` (each takes a list of whole `where` objects)
+
+**Dialect notes:**
+
+- **`iLike` / `notILike` on SQLite:** SQLite has no `ILIKE` operator, but its `LIKE` is
+  already case-insensitive for ASCII characters. The adapter transparently translates
+  `iLike` → `LIKE` and `notILike` → `NOT LIKE` on SQLite, so these operators work on
+  both dialects.
+- **`like` case sensitivity:** Postgres `LIKE` is case-sensitive; SQLite `LIKE` is
+  case-insensitive for ASCII. Use `iLike` for portable case-insensitive matching.
+- **Postgres-only operators** (regexp, array/range): using them on a non-Postgres dialect
+  raises `gqlize: the "<op>" operator requires the postgres dialect` instead of a raw SQL
+  error. The GraphQL schema itself stays dialect-independent.
 
 ```graphql
 # combine conditions

@@ -230,7 +230,7 @@ import {
 // built over them; they stay exported from here, which is where they have always
 // been imported from.
 export type * from "./types/query";
-import { replaceWhereOperators, reservedOperatorNames } from "./utils/where-ops";
+import { replaceWhereOperators, normalizeWhereForDialect, reservedOperatorNames } from "./utils/where-ops";
 import { keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
 import { throughForeignKey, throughOtherKey } from "@azerothian/utilize/utils/join-keys";
 
@@ -1121,7 +1121,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     );
   }
   async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): Promise<AdapterWhere> {
-    const w = replaceWhereOperators(where || {});
+    // Dialect-aware normalisation: rewrites iLike → like on SQLite (where LIKE
+    // is already case-insensitive) and rejects postgres-only operators on
+    // non-postgres dialects with a clear message.
+    const normalized = normalizeWhereForDialect(where || {}, this.sequelize.getDialect());
+    const w = replaceWhereOperators(normalized);
     if (whereOperators) {
       return replaceDefWhereOperators(w, whereOperators, options);
     }
