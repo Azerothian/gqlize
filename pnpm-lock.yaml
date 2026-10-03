@@ -491,6 +491,15 @@ importers:
       '@azerothian/ormize-zod4':
         specifier: workspace:*
         version: link:../ormize-zod4
+      '@azerothian/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
+      '@electric-sql/pglite':
+        specifier: 'catalog:'
+        version: 0.5.4
+      '@electric-sql/pglite-socket':
+        specifier: 'catalog:'
+        version: 0.2.7(@electric-sql/pglite-age@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_hashids@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_ivm@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_textsearch@0.0.6(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_uuidv7@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgtap@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgvector@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite@0.5.4)
       '@jest/globals':
         specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
@@ -536,6 +545,9 @@ importers:
       npm-run-all2:
         specifier: 'catalog:'
         version: 9.0.2
+      pg:
+        specifier: 'catalog:'
+        version: 8.22.0
       reflect-metadata:
         specifier: ^0.2.0
         version: 0.2.2
@@ -570,6 +582,12 @@ importers:
       '@azerothian/test-fixtures':
         specifier: workspace:*
         version: link:../test-fixtures
+      '@electric-sql/pglite':
+        specifier: 'catalog:'
+        version: 0.5.4
+      '@electric-sql/pglite-socket':
+        specifier: 'catalog:'
+        version: 0.2.7(@electric-sql/pglite-age@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_hashids@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_ivm@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_textsearch@0.0.6(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_uuidv7@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgtap@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgvector@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite@0.5.4)
       '@jest/globals':
         specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
@@ -606,6 +624,12 @@ importers:
       npm-run-all2:
         specifier: 'catalog:'
         version: 9.0.2
+      pg:
+        specifier: 'catalog:'
+        version: 8.22.0
+      pg-hstore:
+        specifier: 'catalog:'
+        version: 2.3.4
       sequelize:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
@@ -634,6 +658,9 @@ importers:
       '@azerothian/ormize':
         specifier: workspace:*
         version: link:../ormize
+      '@azerothian/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
       '@jest/globals':
         specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
@@ -701,6 +728,15 @@ importers:
       '@azerothian/ormize-adapter-sequelize':
         specifier: workspace:*
         version: link:../ormize-adapter-sequelize
+      '@azerothian/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
+      '@electric-sql/pglite':
+        specifier: 'catalog:'
+        version: 0.5.4
+      '@electric-sql/pglite-socket':
+        specifier: 'catalog:'
+        version: 0.2.7(@electric-sql/pglite-age@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_hashids@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_ivm@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_textsearch@0.0.6(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_uuidv7@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgtap@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgvector@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite@0.5.4)
       '@jest/globals':
         specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
@@ -737,6 +773,9 @@ importers:
       npm-run-all2:
         specifier: 'catalog:'
         version: 9.0.2
+      pg:
+        specifier: 'catalog:'
+        version: 8.22.0
       redis-memory-server:
         specifier: 'catalog:'
         version: 0.12.1(supports-color@8.1.1)
@@ -768,6 +807,15 @@ importers:
       '@azerothian/ormize-adapter-sequelize':
         specifier: workspace:*
         version: link:../ormize-adapter-sequelize
+      '@azerothian/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
+      '@electric-sql/pglite':
+        specifier: 'catalog:'
+        version: 0.5.4
+      '@electric-sql/pglite-socket':
+        specifier: 'catalog:'
+        version: 0.2.7(@electric-sql/pglite-age@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_hashids@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_ivm@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_textsearch@0.0.6(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_uuidv7@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgtap@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgvector@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite@0.5.4)
       '@jest/globals':
         specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
@@ -795,6 +843,12 @@ importers:
       npm-run-all2:
         specifier: 'catalog:'
         version: 9.0.2
+      pg:
+        specifier: 'catalog:'
+        version: 8.22.0
+      pg-hstore:
+        specifier: 'catalog:'
+        version: 2.3.4
       sequelize:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
@@ -823,6 +877,15 @@ importers:
       '@azerothian/ormize-zod4':
         specifier: workspace:*
         version: link:../ormize-zod4
+      '@azerothian/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
+      '@electric-sql/pglite':
+        specifier: 'catalog:'
+        version: 0.5.4
+      '@electric-sql/pglite-socket':
+        specifier: 'catalog:'
+        version: 0.2.7(@electric-sql/pglite-age@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_hashids@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_ivm@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_textsearch@0.0.6(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_uuidv7@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgtap@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgvector@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite@0.5.4)
       '@jest/globals':
         specifier: 'catalog:'
         version: 30.4.1(supports-color@8.1.1)
@@ -868,6 +931,9 @@ importers:
       npm-run-all2:
         specifier: 'catalog:'
         version: 9.0.2
+      pg:
+        specifier: 'catalog:'
+        version: 8.22.0
       sequelize:
         specifier: ^6.37.7
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.22.0)(sqlite3@6.0.1)(supports-color@8.1.1)
@@ -886,6 +952,15 @@ importers:
       '@azerothian/utilize':
         specifier: workspace:*
         version: link:../utilize
+      '@electric-sql/pglite':
+        specifier: 'catalog:'
+        version: 0.5.4
+      '@electric-sql/pglite-socket':
+        specifier: 'catalog:'
+        version: 0.2.7(@electric-sql/pglite-age@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_hashids@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_ivm@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_textsearch@0.0.6(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pg_uuidv7@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgtap@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite-pgvector@0.0.5(@electric-sql/pglite@0.5.4))(@electric-sql/pglite@0.5.4)
+      '@jest/globals':
+        specifier: 'catalog:'
+        version: 30.4.1(supports-color@8.1.1)
       '@types/node':
         specifier: 'catalog:'
         version: 26.1.1

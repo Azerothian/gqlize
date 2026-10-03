@@ -37,6 +37,8 @@
   },
   "devDependencies": {
     "@azerothian/test-fixtures": "workspace:*",
+    "@electric-sql/pglite": "catalog:",
+    "@electric-sql/pglite-socket": "catalog:",
     "@jest/globals": "catalog:",
     "@swc/cli": "catalog:",
     "@swc/core": "catalog:",
@@ -49,6 +51,8 @@
     "graphql-relay": "^0.10.2",
     "jest": "catalog:",
     "npm-run-all2": "catalog:",
+    "pg": "catalog:",
+    "pg-hstore": "catalog:",
     "sequelize": "^6.37.7",
     "sqlite3": "catalog:",
     "tsx": "catalog:",

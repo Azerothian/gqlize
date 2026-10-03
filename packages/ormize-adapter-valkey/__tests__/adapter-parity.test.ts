@@ -4,6 +4,7 @@ import { DataTypes } from "@azerothian/utilize/types/data-type";
 import { relationshipAccessors } from "@azerothian/utilize/utils/relationship-accessors";
 import type { Definition } from "@azerothian/utilize/types/index";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
@@ -22,8 +23,9 @@ beforeAll(async () => { client = await makeClient(); });
 afterAll(async () => { await shutdown(); });
 
 const backends = [
-  { name: "sequelize", make: () => new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) },
-  { name: "valkey", make: () => new ValkeyAdapter({ prefix: "parity" }, client) },
+  { name: "sequelize", make: async () => trackConnection(new SequelizeAdapter({}, await dialectConfig())) },
+  // eslint-disable-next-line @typescript-eslint/require-await -- kept async to match the sequelize factory's return type
+  { name: "valkey", make: async () => new ValkeyAdapter({ prefix: "parity" }, client) },
 ];
 
 /**
@@ -36,11 +38,11 @@ type MapperAdapter = { getTypeMapper(): (t: unknown, model?: string, field?: str
 
 describe.each(backends)("$name adapter — parity", ({ name, make }) => {
   let orm: Ormize;
-  let adapter: ReturnType<typeof make>;
+  let adapter: Awaited<ReturnType<typeof make>>;
   beforeEach(async () => {
     if (name === "valkey") await flush(client);
     orm = new Ormize();
-    adapter = make();
+    adapter = await make();
     orm.registerAdapter(adapter, "db");
   });
 

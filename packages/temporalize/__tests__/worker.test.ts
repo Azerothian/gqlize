@@ -1,7 +1,12 @@
 import { beforeAll, describe, expect, it, jest } from "@jest/globals";
 import type { Worker, WorkerOptions } from "@temporalio/worker";
+import { testDialect } from "@azerothian/test-fixtures/dialect";
 import type { CreateWorkersOptions } from "../src/worker";
 import { buildOrm } from "./helper";
+
+// The datasource segment in queue names reflects whichever adapter the
+// definition is pinned to — "sqlite" or "postgres" depending on the project.
+const ds = testDialect();
 
 // `@temporalio/worker` loads a native addon and Worker.create() opens a
 // connection, so the factory's wiring is asserted against a stubbed SDK: which
@@ -28,7 +33,7 @@ import { createWorkers } from "../src/worker";
 describe("createWorkers", () => {
   let orm: Awaited<ReturnType<typeof buildOrm>>;
   beforeAll(async () => {
-    orm = await buildOrm();
+    orm = await buildOrm({ suite: true });
   });
 
   const build = async (options: CreateWorkersOptions = {}) => {
@@ -38,11 +43,11 @@ describe("createWorkers", () => {
 
   it("creates one worker per queue and registers only that queue's activities", async () => {
     const workers = await build({ queuePrefix: "myapp" });
-    expect(workers.workers.map((w) => w.queue).sort()).toEqual(["myapp.sqlite.Item", "myapp.sqlite.Task"]);
+    expect(workers.workers.map((w) => w.queue).sort()).toEqual([`myapp.${ds}.Item`, `myapp.${ds}.Task`]);
 
-    const task = workers.get("myapp.sqlite.Task")!;
+    const task = workers.get(`myapp.${ds}.Task`)!;
     expect(task.models).toEqual(["Task"]);
-    const keys = Object.keys(created.find((o) => o.taskQueue === "myapp.sqlite.Task")!.activities!);
+    const keys = Object.keys(created.find((o) => o.taskQueue === `myapp.${ds}.Task`)!.activities!);
     expect(keys).toContain("Task.create");
     expect(keys).toContain("Task.findAll");
     expect(keys.some((k) => k.startsWith("Item."))).toBe(false);
@@ -58,8 +63,8 @@ describe("createWorkers", () => {
   });
 
   it("restricts launched workers with onlyQueues", async () => {
-    const workers = await build({ queuePrefix: "myapp", onlyQueues: ["myapp.sqlite.Task"] });
-    expect(workers.workers.map((w) => w.queue)).toEqual(["myapp.sqlite.Task"]);
+    const workers = await build({ queuePrefix: "myapp", onlyQueues: [`myapp.${ds}.Task`] });
+    expect(workers.workers.map((w) => w.queue)).toEqual([`myapp.${ds}.Task`]);
     // The queue map still describes every model, so a client built from it can
     // address models this process does not serve.
     expect(Object.keys(workers.queueMap.byModel).sort()).toEqual(["Item", "Task"]);
@@ -67,7 +72,7 @@ describe("createWorkers", () => {
 
   it("restricts generated models with the models allow-list", async () => {
     const workers = await build({ queuePrefix: "myapp", models: ["Task"] });
-    expect(workers.workers.map((w) => w.queue)).toEqual(["myapp.sqlite.Task"]);
+    expect(workers.workers.map((w) => w.queue)).toEqual([`myapp.${ds}.Task`]);
     expect(Object.keys(workers.queueMap.byModel)).toEqual(["Task"]);
   });
 

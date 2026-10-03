@@ -3,6 +3,7 @@ import { Ormize } from "@azerothian/ormize";
 import SequelizeAdapter from "../src";
 import type { Definition } from "@azerothian/utilize";
 import { describe, expect, it, jest, afterEach } from "@jest/globals";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 /**
  * Soft delete, at the adapter boundary: which models actually soft delete, and
@@ -18,7 +19,7 @@ async function build(
   definitions: Definition[],
 ) {
   const orm = new Ormize();
-  const adapter = new SequelizeAdapter(adapterOptions, { dialect: "sqlite", logging: false });
+  const adapter = trackConnection(new SequelizeAdapter(adapterOptions, await dialectConfig({ logging: false })));
   orm.registerAdapter(adapter as never, "sqlite");
   for (const def of definitions) {
     await orm.addDefinition(def);

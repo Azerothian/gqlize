@@ -6,9 +6,14 @@ import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { Relationship } from "@azerothian/utilize/types/index";
 import Sequelize from "sequelize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
 import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
+
+// The Sequelize adapter name reflects the current dialect — "sqlite" or
+// "postgres" — so model definitions that pin to the Sequelize side use this.
+const sqlName = testDialect();
 
 let client: IORedis;
 
@@ -44,7 +49,9 @@ async function createOne(orm: Ormize, model: string, input: Record<string, unkno
 async function build(prefix: string) {
   const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  const sqlAdapter = new SequelizeAdapter({}, await dialectConfig());
+  trackConnection(sqlAdapter);
+  orm.registerAdapter(sqlAdapter, sqlName);
   await orm.addDefinition({
     name: "Item",
     define: {
@@ -70,7 +77,7 @@ async function build(prefix: string) {
     relationships: [
       { type: "belongsTo", model: "Item", name: "item", options: { foreignKey: "itemId" } },
     ],
-  }, "sqlite");
+  }, sqlName);
   await orm.initialise();
   await orm.sync();
   const schema = await createSchema(orm);
@@ -226,7 +233,7 @@ describe("cross-adapter relationships — queries", () => {
 async function buildMirror(prefix: string) {
   const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  { const a = new SequelizeAdapter({}, await dialectConfig()); trackConnection(a); orm.registerAdapter(a, sqlName); }
   await orm.addDefinition({
     name: "Owner",
     define: { name: { type: Sequelize.STRING } },
@@ -234,7 +241,7 @@ async function buildMirror(prefix: string) {
     relationships: [
       { type: "hasMany", model: "Tag", name: "tags", options: { foreignKey: "ownerId" } },
     ],
-  }, "sqlite");
+  }, sqlName);
   await orm.addDefinition({
     name: "Tag",
     define: {
@@ -448,7 +455,7 @@ describe("cross-adapter relationships — mutations with Valkey as the target", 
 async function buildHasOne(prefix: string) {
   const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  { const a = new SequelizeAdapter({}, await dialectConfig()); trackConnection(a); orm.registerAdapter(a, sqlName); }
   await orm.addDefinition({
     name: "Account",
     define: { email: { type: Sequelize.STRING, allowNull: false } },
@@ -456,7 +463,7 @@ async function buildHasOne(prefix: string) {
     relationships: [
       { type: "hasOne", model: "Profile", name: "profile", options: { foreignKey: "accountId" } },
     ],
-  }, "sqlite");
+  }, sqlName);
   await orm.addDefinition({
     name: "Profile",
     define: {
@@ -515,10 +522,10 @@ describe("cross-adapter relationships — hasOne", () => {
 // the join has to physically live in one store or the other. Which one is the
 // caller's choice, expressed by which adapter the through model is registered on
 // — both are exercised below.
-async function buildBtm(prefix: string, throughOn: "valkey" | "sqlite") {
+async function buildBtm(prefix: string, throughOn: "valkey" | typeof sqlName) {
   const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  { const a = new SequelizeAdapter({}, await dialectConfig()); trackConnection(a); orm.registerAdapter(a, sqlName); }
   await orm.addDefinition({
     name: "Student",
     define: {
@@ -531,7 +538,7 @@ async function buildBtm(prefix: string, throughOn: "valkey" | "sqlite") {
     relationships: [
       { type: "belongsToMany", model: "Course", name: "courses", options: { through: "Enrolment", foreignKey: "studentId" } },
     ],
-  }, "sqlite");
+  }, sqlName);
   await orm.addDefinition({
     name: "Course",
     define: {
@@ -570,7 +577,7 @@ async function buildBtm(prefix: string, throughOn: "valkey" | "sqlite") {
   return { orm, schema: await createSchema(orm) };
 }
 
-describe.each(["sqlite", "valkey"] as const)("cross-adapter relationships — belongsToMany (join on %s)", (throughOn) => {
+describe.each([sqlName, "valkey"] as const)("cross-adapter relationships — belongsToMany (join on %s)", (throughOn) => {
   const build = async (prefix: string) => {
     const built = await buildBtm(`${prefix}-${throughOn}`, throughOn);
     for (const name of ["ann", "bob"]) {
@@ -695,13 +702,13 @@ describe("cross-adapter relationships — a generated join model", () => {
   const buildWith = async (prefix: string, options: Relationship["options"], reciprocal?: Relationship["options"]) => {
     const orm = new Ormize();
     orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
-    orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+    { const a = new SequelizeAdapter({}, await dialectConfig()); trackConnection(a); orm.registerAdapter(a, sqlName); }
     await orm.addDefinition({
       name: "Left",
       define: { name: { type: Sequelize.STRING, allowNull: false } },
       options: { timestamps: false },
       relationships: [{ type: "belongsToMany", model: "Right", name: "rights", options }],
-    }, "sqlite");
+    }, sqlName);
     await orm.addDefinition({
       name: "Right",
       define: { id: { type: DataTypes.UUID, primaryKey: true }, name: { type: DataTypes.String, index: true } },
@@ -753,13 +760,13 @@ describe("cross-adapter relationships — a generated join model", () => {
   it("leaves an explicitly registered through model alone", async () => {
     const orm = new Ormize();
     orm.registerAdapter(new ValkeyAdapter({ prefix: "xa-btm-g4" }, client), "valkey");
-    orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+    { const a = new SequelizeAdapter({}, await dialectConfig()); trackConnection(a); orm.registerAdapter(a, sqlName); }
     await orm.addDefinition({
       name: "Left",
       define: { name: { type: Sequelize.STRING, allowNull: false } },
       options: { timestamps: false },
       relationships: [{ type: "belongsToMany", model: "Right", name: "rights", options: { through: "LeftRight", foreignKey: "leftId", otherKey: "rightId" } }],
-    }, "sqlite");
+    }, sqlName);
     await orm.addDefinition({
       name: "Right",
       define: { id: { type: DataTypes.UUID, primaryKey: true }, name: { type: DataTypes.String, index: true } },
@@ -775,11 +782,11 @@ describe("cross-adapter relationships — a generated join model", () => {
       },
       options: { timestamps: false },
       relationships: [],
-    }, "sqlite");
+    }, sqlName);
     await orm.initialise();
     await orm.sync();
     const schema = await createSchema(orm);
-    expect(orm.defsAdapters.LeftRight).toBe("sqlite");
+    expect(orm.defsAdapters.LeftRight).toBe(sqlName);
     expect(await link(schema)).toEqual(["r1"]);
     // The registered columns survive — nothing was regenerated over them.
     expect(Object.keys(orm.getFields("LeftRight"))).toContain("note");
@@ -791,7 +798,7 @@ describe("cross-adapter relationships — a generated join model", () => {
 async function buildParanoid(prefix: string) {
   const orm = new Ormize();
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  { const a = new SequelizeAdapter({}, await dialectConfig()); trackConnection(a); orm.registerAdapter(a, sqlName); }
   await orm.addDefinition({
     name: "Box",
     define: {
@@ -811,7 +818,7 @@ async function buildParanoid(prefix: string) {
     },
     options: { timestamps: true, paranoid: true },
     relationships: [],
-  }, "sqlite");
+  }, sqlName);
   await orm.initialise();
   await orm.sync();
   return { orm, schema: await createSchema(orm) };

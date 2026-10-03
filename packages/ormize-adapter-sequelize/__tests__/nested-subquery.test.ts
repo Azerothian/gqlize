@@ -4,6 +4,7 @@ import { describe, expect, it } from "@jest/globals";
 
 import SequelizeAdapter from "../src";
 import { keepNestedJoinsOutOfSubQuery } from "../src/utils/nested-subquery";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 // #70. Sequelize 6 marks a required include `subQuery` whenever an ancestor is
 // required, even when that ancestor is a collection joined *outside* the
@@ -16,7 +17,8 @@ type Named = Model & { name: string };
 async function build() {
   // The adapter's own Sequelize instance: what proves the hook is installed on
   // every instance the adapter creates, not just on models it defines itself.
-  const { sequelize } = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+  const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
+  const { sequelize } = adapter;
   const define = (name: string) =>
     sequelize.define<Named>(name, { name: DataTypes.STRING }, { timestamps: false });
   const Kind = define("Kind");

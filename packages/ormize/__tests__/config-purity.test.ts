@@ -5,6 +5,7 @@ import { DataTypes, isOrmizeDataType } from "@azerothian/utilize/types/data-type
 import type { Definition } from "../src/types";
 import Database, { type HookFunction } from "../src/manager";
 import deepFreeze from "./helper/deep-freeze";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 /**
  * Config purity: a `Definition`, and the options bag handed to `new Ormize`,
@@ -104,7 +105,7 @@ function makeDefs(): Definition[] {
 
 async function build(defs: Definition[], options = {}) {
   const db = new Database(options);
-  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
   for (const def of defs) {
     await db.addDefinition(def);
   }
@@ -200,7 +201,7 @@ describe("config purity — adapter options", () => {
   it("does not share defaultAttr descriptors between models", async () => {
     const defaultAttr = { tenantId: { type: Sequelize.INTEGER } };
     const db = new Database();
-    db.registerAdapter(new SequelizeAdapter({ defaultAttr }, { dialect: "sqlite", logging: false }), "sqlite");
+    db.registerAdapter(trackConnection(new SequelizeAdapter({ defaultAttr }, await dialectConfig())), "sqlite");
     await db.addDefinition({ name: "A", define: { a: { type: Sequelize.STRING } }, options: {} });
     await db.addDefinition({ name: "B", define: { b: { type: Sequelize.STRING } }, options: {} });
     await db.initialise();
@@ -235,7 +236,7 @@ describe("config purity — globalHooks", () => {
     const db = new Database({ globalHooks: { beforeCreate: authored as unknown as HookFunction } });
     expect(() => db.addHook("beforeCreate", added as unknown as HookFunction)).not.toThrow();
 
-    db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+    db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
     await db.addDefinition({ name: "Thing", define: { name: { type: Sequelize.STRING } }, options: {} });
     await db.initialise();
     await db.sync();

@@ -4,6 +4,7 @@ import { Ormize, createRoleBasedPermissions, DataType, DataTypes as OrmizeDataTy
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { generateZodSchemas } from "../src";
 import type { Definition } from "@azerothian/utilize";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 const ItemDef: Definition = {
   name: "Item",
@@ -38,7 +39,7 @@ const TaskDef: Definition = {
 
 async function buildOrm() {
   const orm = new Ormize();
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }), "sqlite");
+  orm.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig()), { suite: true }), "sqlite");
   await orm.addDefinition(ItemDef);
   await orm.addDefinition(TaskDef);
   await orm.initialise();

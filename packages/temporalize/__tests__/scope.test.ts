@@ -4,6 +4,7 @@ import { Ormize } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import type { Definition } from "@azerothian/utilize";
 import type { ScopePredicate } from "@azerothian/utilize/gate";
+import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
 import { createActivities } from "../src/activities";
 import type { ActivityMap } from "../src/types";
 
@@ -39,7 +40,9 @@ const owned: ScopePredicate = (_defName, _operation, _options, context) => {
 
 async function buildOrm(): Promise<Ormize> {
   const orm = new Ormize({ permission: { scope: owned } });
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  const adapter = new SequelizeAdapter({}, await dialectConfig());
+  trackConnection(adapter, { suite: true });
+  orm.registerAdapter(adapter, testDialect());
   await orm.addDefinition(TaskDef);
   await orm.initialise();
   await orm.sync();

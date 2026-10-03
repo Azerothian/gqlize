@@ -2,6 +2,7 @@ import Sequelize from "sequelize";
 import { Ormize, sequelizeHookList } from "@azerothian/ormize";
 import SequelizeAdapter from "../src";
 import { describe, expect, it, jest } from "@jest/globals";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 const TaskDef = {
   name: "Task",
@@ -17,7 +18,7 @@ const TaskDef = {
  * pin the call counts so that cannot regress silently.
  */
 async function build(globalHooks: Record<string, unknown> = {}, def: Record<string, unknown> = TaskDef) {
-  const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+  const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
   const db = new Ormize({ globalHooks } as never).registerAdapter(adapter).define(def as never);
   await db.initialise();
   await db.sync();
@@ -44,8 +45,11 @@ describe("Sequelize-instance hooks", () => {
     const Task = db.getModel("Task") as never as { create(v: unknown): Promise<unknown>; findAll(): Promise<unknown[]> };
     await Task.create({ title: "a" });
     await Task.findAll();
-    await adapter.sequelize.query("SELECT * FROM Tasks");
-    await adapter.sequelize.query("SELECT * FROM Tasks", {
+    // Quote the table name: postgres is case-sensitive and the table is created
+    // as "Tasks" (the model's plural), while an unquoted `Tasks` resolves to
+    // lowercase `tasks`.
+    await adapter.sequelize.query('SELECT * FROM "Tasks"');
+    await adapter.sequelize.query('SELECT * FROM "Tasks"', {
       model: adapter.sequelize.models.Task,
       mapToModel: true,
     });

@@ -13,60 +13,47 @@ type ClassMethodFn = NonNullable<Definition["classMethods"]>[string];
 
 import { describe, expect, it } from "@jest/globals";
 import { GraphQLList } from "graphql";
+import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
 
 describe("tests", () => {
-  it("adapter - getORM", () => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+  it("adapter - getORM", async() => {
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     expect(adapter.getORM()).not.toBeUndefined();
   });
 
   it("adapter - initialize", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.initialise();
     expect(adapter.getORM()).not.toBeUndefined();
   });
 
   it("adapter - reset", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.reset();
     expect(adapter.getORM()).not.toBeUndefined();
   });
 
   it("adapter - createModel", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
 
     await adapter.reset();
     expect(adapter.getORM().models.Task).not.toBeUndefined();
   });
   it("adapter - getModel", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     await adapter.reset();
     expect(adapter.getModel("Task")).not.toBeUndefined();
   });
   it("adapter - getModels", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     await adapter.reset();
     expect(adapter.getModels().Task).not.toBeUndefined();
   });
   it("adapter - addInstanceFunction", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     adapter.addInstanceFunction("Task", "it", function(this: Model) {
       expect(this).toBeInstanceOf(adapter.getModel("Task"));
@@ -81,9 +68,7 @@ describe("tests", () => {
   });
 
   it("adapter - addStaticFunction", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     adapter.addStaticFunction("Task", "it", function() {
       return true;
@@ -96,9 +81,7 @@ describe("tests", () => {
   });
 
   it("adapter - createRelationship", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     await adapter.createModel(TaskItemModel);
     await adapter.createModel(ItemModel);
@@ -118,10 +101,11 @@ describe("tests", () => {
     expect(adapter.getORM().models.TaskItem).not.toBeUndefined();
     expect(adapter.getORM().models.Item).not.toBeUndefined();
   });
+  // The DDL and the call are Postgres (plpgsql): on Postgres both run for real
+  // and the function's rows are asserted; SQLite has no stored procedures, so
+  // there the query function is stubbed and only the wiring is checked.
   it("adapter - creaitoredProcedure", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
 
     const itemDef: SequelizeDefinition = {
       name: "Item",
@@ -172,39 +156,43 @@ describe("tests", () => {
         newStoredProcedure: {
           type: "sqlfunction",
           functionName: `selectOne`,
-          args: ["number"],
+          // Bind names, in parameter order: each becomes `:name`, filled from
+          // the call's argument of that name. This said `number` while the
+          // call passes `start`, unnoticed for as long as the query was stubbed.
+          args: ["start"],
         } as unknown as ClassMethodFn,
       },
     };
     await adapter.createModel(itemDef);
-    // `Sequelize.query` is heavily overloaded; this replaces it wholesale with
-    // a stub (stored procedures are not supported by sqlite) rather than
-    // calling through, which only needs the one shape actually used below.
-    (adapter.sequelize as unknown as { query: (q: unknown, options: unknown) => Promise<void> }).query =
-      // eslint-disable-next-line @typescript-eslint/require-await -- must return `Promise<void>` to match `.query`'s real signature; there is nothing to await
-      async(q, options) => {
-        //stop from writing to sqlite
-        //as stored procedures are not supported
-        console.log("q", {q, options});
-      };
+    const postgres = testDialect() === "postgres";
+    if (!postgres) {
+      // `Sequelize.query` is heavily overloaded; this replaces it wholesale with
+      // a stub (stored procedures are not supported by sqlite) rather than
+      // calling through, which only needs the one shape actually used below.
+      (adapter.sequelize as unknown as { query: (q: unknown, options: unknown) => Promise<void> }).query =
+        // eslint-disable-next-line @typescript-eslint/require-await -- must return `Promise<void>` to match `.query`'s real signature; there is nothing to await
+        async() => undefined;
+    }
     await adapter.reset();
     // `newStoredProcedure` is installed dynamically by `installClassMethods`
     // from the `SqlClassMethod` descriptor above, so it has no place in the
     // model's own (Sequelize-generated) static type.
-    await (adapter.getORM().models.Item as unknown as {
+    const result = await (adapter.getORM().models.Item as unknown as {
       newStoredProcedure: (args: unknown) => Promise<unknown>
     }).newStoredProcedure({
       start: 1,
     });
     expect(adapter.getORM().models.Item).not.toBeUndefined();
+    // On Postgres the function really ran: `selectOne(1)` returns one row. The
+    // SQLite stub returns nothing, so there only the wiring above is checked.
+    const expected = postgres ? [{ id: 1 }] : result;
+    expect(result).toEqual(expected);
   });
 
 
 
   it("adapter - createRelationship - belongsToMany", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {
@@ -276,9 +264,7 @@ describe("tests", () => {
   });
 
   it("adapter - createFunctionForFind", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     await adapter.reset();
     const Task = adapter.getModel("Task");
@@ -302,18 +288,14 @@ describe("tests", () => {
     expect(result[0].id).toEqual(taskId);
   });
   it("adapter - getPrimaryKeyNameForModel", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     await adapter.reset();
     const primaryKeyName = adapter.getPrimaryKeyNameForModel("Task");
     expect(primaryKeyName[0]).toEqual("id");
   });
   it("adapter - getValueFromInstance", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     await adapter.reset();
     const model = await adapter.getModel("Task").create({
@@ -325,9 +307,7 @@ describe("tests", () => {
 
 
   it("adapter - getFields - primary key", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {
@@ -349,9 +329,7 @@ describe("tests", () => {
   });
 
   it("adapter - getFields - define field", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {
@@ -376,9 +354,7 @@ describe("tests", () => {
   });
 
   it("adapter - getFields - relationship foreign keys", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {},
@@ -424,9 +400,7 @@ describe("tests", () => {
 
 
   it("adapter - getFields - relationship not null foreign keys", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {
@@ -471,9 +445,7 @@ describe("tests", () => {
 
 
   it("adapter - getFields - timestamp fields", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {
@@ -518,9 +490,7 @@ describe("tests", () => {
 
 
   it("adapter - getRelationships - hasMany", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {},
@@ -564,9 +534,7 @@ describe("tests", () => {
 
 
   it("adapter - getRelationships - belongsTo", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {},
@@ -603,9 +571,7 @@ describe("tests", () => {
 
 
   it("adapter - getDefaultListArgs", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {
@@ -625,9 +591,7 @@ describe("tests", () => {
   });
 
   it("adapter - include - getDefaultListArgs", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {
@@ -666,9 +630,7 @@ describe("tests", () => {
   });
 
   it("adapter - include - all relationships denied omits the include type", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {
@@ -700,9 +662,7 @@ describe("tests", () => {
   });
 
   it("adapter - include - relationships to denied models are excluded", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const secretDef = {
       name: "Secret",
       define: {
@@ -755,9 +715,7 @@ describe("tests", () => {
   });
 
   it("adapter - orderBy - all fields denied omits the orderBy enum", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     // `isFieldAllowed` hard-allows a field literally named `id`, so an all-denied
     // orderBy is only reachable on a model with a differently named primary key.
     const codeDef = {
@@ -780,9 +738,7 @@ describe("tests", () => {
   });
 
   it("adapter - orderBy - allowed fields still produce an enum", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const codeDef = {
       name: "Coded",
       define: {
@@ -805,41 +761,35 @@ describe("tests", () => {
     expect(valueNames).toEqual(["labelASC", "labelDESC"]);
   });
 
-  it("adapter - hasInlineCountFeature - sqlite", () => {
-    const adapter = new SequelizeAdapter({
+  it("adapter - hasInlineCountFeature - sqlite", async() => {
+    const adapter = trackConnection(new SequelizeAdapter({
       disableInlineCount: false,
-    }, {
-      dialect: "sqlite",
-    });
+    }, await dialectConfig()));
     const result = adapter.hasInlineCountFeature();
     expect(result).toEqual(true);
   });
-  it("adapter - hasInlineCountFeature - disable inline count", () => {
-    const adapter = new SequelizeAdapter({
+  it("adapter - hasInlineCountFeature - disable inline count", async() => {
+    const adapter = trackConnection(new SequelizeAdapter({
       disableInlineCount: true,
-    }, {
-      dialect: "sqlite",
-    });
+    }, await dialectConfig()));
     const result = adapter.hasInlineCountFeature();
     expect(result).toEqual(false);
   });
 
+  // Sqlite-only unit tests: they construct an adapter on sqlite and then
+  // override dialect.name to test the adapter's internal branching logic.
+  // On a real postgres adapter the override is redundant.
   it("adapter - hasInlineCountFeature - postgres", () => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
-    // Sequelize's own types don't publicly declare `.dialect` as an instance
-    // property (only on the *Options* config type) — a genuine untyped
-    // internal, narrowed here rather than casting the whole adapter.
+    if (testDialect() !== "sqlite") return;
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
     (adapter.sequelize as unknown as { dialect: { name: string } }).dialect.name = "postgres";
     const result = adapter.hasInlineCountFeature();
     expect(result).toEqual(true);
   });
 
   it("adapter - hasInlineCountFeature - mssql", () => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    if (testDialect() !== "sqlite") return;
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
     (adapter.sequelize as unknown as { dialect: { name: string } }).dialect.name = "mssql";
     const result = adapter.hasInlineCountFeature();
     expect(result).toEqual(true);
@@ -847,9 +797,7 @@ describe("tests", () => {
 
 
   it("adapter - processListArgsToOptions - hasInlineCount", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {},
@@ -865,14 +813,14 @@ describe("tests", () => {
     expect(getOptions.limit).toEqual(1);
     expect(getOptions.attributes).toHaveLength(4);
     expect(getOptions.attributes[getOptions.attributes.length - 1]).toHaveLength(2);
-    expect(getOptions.attributes[getOptions.attributes.length - 1][0].val).toEqual("COUNT(1) OVER()");
+    // Postgres uses COUNT(*), sqlite/mssql use COUNT(1).
+    const expectedCount = testDialect() === "postgres" ? "COUNT(*) OVER()" : "COUNT(1) OVER()";
+    expect(getOptions.attributes[getOptions.attributes.length - 1][0].val).toEqual(expectedCount);
     expect(getOptions.attributes[getOptions.attributes.length - 1][1]).toEqual("full_count");
   });
 
   it("adapter - processListArgsToOptions - hasInlineCount - full_count args already exist", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const itemDef = {
       name: "Item",
       define: {},
@@ -899,13 +847,16 @@ describe("tests", () => {
     // does not add a second.
     const countColumns = getOptions.attributes.filter((a: unknown) => Array.isArray(a) && a[1] === "full_count");
     expect(countColumns).toHaveLength(1);
+    // The seeded literal is always `COUNT(1)` — the adapter recognised the
+    // existing `full_count` alias and kept the original, regardless of dialect.
     expect(countColumns[0][0].val).toEqual("COUNT(1) OVER()");
   });
 
+  // Sqlite-only unit test: overrides dialect.name to "mssql" to test the
+  // adapter's internal branching logic for that dialect.
   it("adapter - processListArgsToOptions - hasInlineCount - mssql", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    if (testDialect() !== "sqlite") return;
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
     const itemDef = {
       name: "Item",
       define: {},
@@ -926,10 +877,12 @@ describe("tests", () => {
     expect(getOptions.attributes[getOptions.attributes.length - 1][1]).toEqual("full_count");
   });
 
+  // Sqlite-only unit test: overrides getDialect() to "postgres" to test the
+  // adapter's internal branching. On a real postgres adapter, getDialect()
+  // already returns "postgres".
   it("adapter - processListArgsToOptions - hasInlineCount - postgres", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    if (testDialect() !== "sqlite") return;
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
     adapter.sequelize.getDialect = () => "postgres";
     const itemDef = {
       name: "Item",
@@ -950,10 +903,11 @@ describe("tests", () => {
     expect(getOptions.attributes[getOptions.attributes.length - 1][1]).toEqual("full_count");
   });
 
+  // Sqlite-only unit test: overrides getDialect() to "unknown" to test the
+  // fallback path (separate count query).
   it("adapter - processListArgsToOptions - no inlineCount", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    if (testDialect() !== "sqlite") return;
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
     const itemDef = {
       name: "Item",
       define: {},
@@ -972,10 +926,40 @@ describe("tests", () => {
     expect(getOptions.attributes).toHaveLength(3);
   });
 
-  it("adapter - resolveManyRelationship - fires beforeFind for a JOIN include", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
+  // Real-postgres assertion: the inline count (COUNT(*) OVER()) works against
+  // PGlite with correct totals. The sqlite-only tests above validate the
+  // branching logic by faking the dialect; this one proves the generated SQL
+  // runs and returns the right number on a real Postgres engine.
+  it("adapter - processListArgsToOptions - real postgres inline count", async() => {
+    if (testDialect() !== "postgres") return;
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
+    await adapter.createModel({
+      name: "CountMe",
+      define: { label: { type: Sequelize.STRING } },
     });
+    await adapter.reset();
+    const Model = adapter.getModel("CountMe");
+    await Model.create({ label: "a" });
+    await Model.create({ label: "b" });
+    await Model.create({ label: "c" });
+
+    const { getOptions, countOptions } = await adapter.processListArgsToOptions("CountMe", {
+      args: { first: 2 },
+    });
+    expect(countOptions).toBeUndefined();
+    expect(getOptions.limit).toEqual(2);
+    // The last attribute is [literal("COUNT(*) OVER()"), "full_count"].
+    expect(getOptions.attributes[getOptions.attributes.length - 1][0].val).toEqual("COUNT(*) OVER()");
+
+    // Execute the query to prove the SQL runs and full_count is correct.
+    const rows = await Model.findAll(getOptions) as unknown as Array<{ get(k: string): unknown }>;
+    expect(rows).toHaveLength(2);
+    // full_count reflects the total matching rows (3), not the page size (2).
+    expect(Number(rows[0].get("full_count"))).toEqual(3);
+  });
+
+  it("adapter - resolveManyRelationship - fires beforeFind for a JOIN include", async() => {
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     await adapter.createModel(TaskItemModel);
     // Only `items` and its inverse `task` — the include under test is TaskItem
@@ -1015,19 +999,15 @@ describe("tests", () => {
     expect(models.map((m) => (m as { name: unknown }).name)).toEqual(["childitem"]);
   });
 
-  it("adapter - getTypeMapper", () => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+  it("adapter - getTypeMapper", async() => {
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const typeMapper = adapter.getTypeMapper();
     expect(typeMapper).toBeDefined();
     expect(typeMapper).toBeInstanceOf(Function);
   });
 
   it("adapter - deleteFunction", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     await adapter.reset();
     const Task = adapter.getModel("Task");
@@ -1051,9 +1031,7 @@ describe("tests", () => {
 
 
   it("adapter - processIncludeStatement", async() => {
-    const adapter = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
     await adapter.reset();
     const Task = adapter.getModel("Task");

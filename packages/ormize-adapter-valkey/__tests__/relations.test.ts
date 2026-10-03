@@ -3,6 +3,7 @@ import { Ormize, type MutationFilter, type MutationInputTree } from "@azerothian
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { AdapterWhere, Definition, Selection } from "@azerothian/utilize/types/index";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
@@ -66,8 +67,9 @@ const defs: Definition[] = [
 ];
 
 const backends = [
-  { name: "sequelize", makeAdapter: () => new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) },
-  { name: "valkey", makeAdapter: () => new ValkeyAdapter({ prefix: "rel" }, client) },
+  { name: "sequelize", makeAdapter: async () => trackConnection(new SequelizeAdapter({}, await dialectConfig())) },
+  // eslint-disable-next-line @typescript-eslint/require-await -- kept async to match the sequelize factory's return type
+  { name: "valkey", makeAdapter: async () => new ValkeyAdapter({ prefix: "rel" }, client) },
 ];
 
 beforeAll(async () => { client = await makeClient(); });
@@ -79,7 +81,7 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
   beforeEach(async () => {
     if (name === "valkey") await flush(client);
     orm = new Ormize();
-    orm.registerAdapter(makeAdapter(), "db");
+    orm.registerAdapter(await makeAdapter(), "db");
     for (const d of defs) await orm.addDefinition(d);
     await orm.initialise();
     await orm.sync();
@@ -238,7 +240,7 @@ describe.each(backends)("$name adapter — belongsToMany keys under `through`", 
   it("joins on the keys `through` declares", async () => {
     if (name === "valkey") await flush(client);
     const orm = new Ormize();
-    orm.registerAdapter(makeAdapter(), "db");
+    orm.registerAdapter(await makeAdapter(), "db");
     for (const d of throughKeyDefs) await orm.addDefinition(d);
     await orm.initialise();
     await orm.sync();
