@@ -95,3 +95,27 @@ describe("utilize - gate helpers", () => {
     expect(unknownPermissionKeys(legacy).sort()).toEqual(["extensions", "subscription"]);
   });
 });
+
+describe("utilize - ignoreFields", () => {
+  const definition = { ignoreFields: ["secret"] };
+  const fail = (code: string, message: string) => {
+    throw new Error(`${code}: ${message}`);
+  };
+
+  it("isFieldExposed refuses an ignored field and otherwise defers to the permission", async () => {
+    const { isFieldExposed } = await import("../src/gate");
+    expect(isFieldExposed(definition, undefined, "M", "secret")).toBe(false);
+    expect(isFieldExposed(definition, undefined, "M", "name")).toBe(true);
+    expect(isFieldExposed(undefined, undefined, "M", "secret")).toBe(true);
+    const perm: Permission = { field: (_m: string, f: string) => f !== "name" };
+    expect(isFieldExposed(definition, perm, "M", "name")).toBe(false);
+  });
+
+  it("the filter and order guards refuse an ignored field when given the definition", async () => {
+    const { assertFilterAllowed, assertOrderAllowed } = await import("../src/guards");
+    expect(() => assertFilterAllowed(undefined, "M", { or: [{ secret: { eq: "x" } }] }, fail, definition)).toThrow(/secret/);
+    expect(() => assertOrderAllowed(undefined, "M", [["secret", "ASC"]], fail, definition)).toThrow(/secret/);
+    // Without one, a caller keeps the permission check alone.
+    expect(() => assertFilterAllowed(undefined, "M", { secret: { eq: "x" } }, fail)).not.toThrow();
+  });
+});

@@ -75,6 +75,7 @@ export default class GqlizeBinding {
    */
   getModelAdapter = (modelName: string): GqlizeAdapter => this.orm.getModelAdapter(modelName) as GqlizeAdapter;
   getValueFromInstance: AnyOrmize["getValueFromInstance"] = (...a) => this.orm.getValueFromInstance(...a);
+  asInstance: AnyOrmize["asInstance"] = (...a) => this.orm.asInstance(...a);
   isTypeOf: AnyOrmize["isTypeOf"] = (...a) => this.orm.isTypeOf(...a);
   resolveClassMethod: AnyOrmize["resolveClassMethod"] = (...a) => this.orm.resolveClassMethod(...a);
   auditExtendSurfaces: AnyOrmize["auditExtendSurfaces"] = (...a) => this.orm.auditExtendSurfaces(...a);

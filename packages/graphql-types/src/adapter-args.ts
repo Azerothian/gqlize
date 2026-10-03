@@ -6,7 +6,7 @@ import {
   type GraphQLFieldConfigArgumentMap,
   type GraphQLInputFieldConfigMap,
 } from "graphql";
-import { isFieldAllowed, isModelAllowed, isQueryDeletedAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
+import { isFieldExposed, isModelAllowed, isQueryDeletedAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
 import { computedWhereFields } from "@azerothian/utilize/exposed-methods";
 import { deprecationFor } from "@azerothian/utilize/utils/deprecation";
 import type { Definition, OrderEntry, Permission } from "@azerothian/utilize/types/index";
@@ -171,7 +171,7 @@ export function getOrderByGraphQLType(
     // definition of its own, and `targetOf` is the one handle it is given.
     const definition = host.targetOf(defName)?.definition;
     for (const fieldName of host.orderableFields(defName)) {
-      if (!isFieldAllowed(perm, defName, fieldName)) {
+      if (!isFieldExposed(definition, perm, defName, fieldName)) {
         continue;
       }
       // A deprecated column should not stay silently sortable: both halves of

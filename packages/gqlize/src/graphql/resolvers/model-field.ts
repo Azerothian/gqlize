@@ -67,7 +67,22 @@ export function buildModelFieldResolver(
       `gqlize: no resolve function on field "${binding.defName}.${binding.fieldName}"`,
     );
   }
-  return resolve;
+  return withInstanceSource(resolve, binding.defName, ctx);
+}
+
+/**
+ * Run user field code against a real row.
+ *
+ * A class or instance method can return plain objects typed as this model,
+ * and a field's own `resolve` or `override.output` is written against the
+ * adapter's rows — `row.get("options")` and the like — so it threw on them.
+ * The adapter turns such a value into its own instance first; a row that
+ * already is one is handed over unchanged.
+ */
+function withInstanceSource<TArgs extends unknown[], TResult>(
+  resolve: (source: AdapterRow, ...rest: TArgs) => TResult, defName: string, ctx: BindingContext,
+) {
+  return (source: AdapterRow, ...rest: TArgs): TResult => resolve(ctx.instance.asInstance(defName, source), ...rest);
 }
 
 /** `definition.override[fieldName].output` */
@@ -82,5 +97,5 @@ export function buildOverrideOutputResolver(
       `gqlize: no override output resolver for "${binding.defName}.${binding.fieldName}"`,
     );
   }
-  return resolve;
+  return withInstanceSource(resolve, binding.defName, ctx);
 }

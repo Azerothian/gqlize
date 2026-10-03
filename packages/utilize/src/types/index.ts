@@ -273,6 +273,17 @@ export interface OrmAdapter {
   getAssociations(defName: string): {[relName: string]: Association};
   getValueFromInstance(model: AdapterRow, sourceKey: string): unknown;
   /**
+   * The row as this adapter's own instance: returned unchanged when it already
+   * is one, otherwise an instance built over its values.
+   *
+   * A class or instance method can return plain objects typed as a model, and
+   * gqlize then runs a field's `resolve`, an `override.output` or an instance
+   * method on them — code written against real rows (`row.get(...)`, a
+   * relationship accessor). Optional: an adapter whose rows are already plain
+   * objects has nothing to build.
+   */
+  asInstance?(defName: string, row: AdapterRow): AdapterRow;
+  /**
    * The fields of a created model, as the adapter knows them — which is
    * {@link DefinitionFieldMeta}, not the {@link DefinitionField} a user authors:
    * the adapter fills in `name` and resolves `foreignTarget` from the

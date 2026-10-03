@@ -8,7 +8,7 @@ import Sequelize, {
 import { Ormize } from "@azerothian/ormize";
 import SequelizeAdapter from "../src";
 import { defineModel } from "../src/types/orm";
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
 
 // Author-declared instance interface, Sequelize v6 idiom.
 interface WidgetInstance
@@ -115,6 +115,38 @@ describe("createModel - method spellings (#72)", () => {
     });
     const row = Model.build({ name: "m" }) as unknown as Record<string, () => string>;
     expect(row.topLevel()).toBe("top");
+  });
+});
+
+describe("createModel - top-level tableName", () => {
+  it("names the table from a top-level `tableName`", async () => {
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    const Model = await adapter.createModel({ name: "Tabled", tableName: "app_tabled", define: {} });
+    expect(Model.getTableName()).toBe("app_tabled");
+  });
+
+  it("prefers `options.tableName` when both are given", async () => {
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    const Model = await adapter.createModel({
+      name: "Both", tableName: "top_both", define: {}, options: { tableName: "nested_both" },
+    });
+    expect(Model.getTableName()).toBe("nested_both");
+  });
+});
+
+describe("createRelationship - the alias is the relationship name", () => {
+  it("registers under `name` and warns when `options.as` differs", async () => {
+    const adapter = new SequelizeAdapter({}, { dialect: "sqlite", logging: false });
+    await adapter.createModel({ name: "Account", define: { name: { type: Sequelize.STRING } } });
+    await adapter.createModel({ name: "Ledger", define: { name: { type: Sequelize.STRING } } });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      adapter.createRelationship("Ledger", "Account", "owner", "belongsTo", { as: "user", foreignKey: "accountId" });
+      expect(Object.keys(adapter.getAssociations("Ledger"))).toEqual(["owner"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('options.as "user" is ignored'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

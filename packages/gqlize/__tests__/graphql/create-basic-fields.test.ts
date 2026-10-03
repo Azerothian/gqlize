@@ -228,3 +228,45 @@ test("createBasicFieldsFunc - foreign keys", async() => {
   expect(fields.parentId.type).toEqual(GraphQLID);
 
 });
+
+// An overridden output field used to get no description at all — the line was
+// commented out — while every other field, and the override's own input field,
+// read `comments.fields` then the field's own text.
+async function overriddenField(def: Partial<Definition>) {
+  const db = new GqlizeBinding(new Ormize());
+  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  const itemDef = {
+    name: "Item",
+    define: { meta: { type: Sequelize.STRING, allowNull: true, comment: "column text" } },
+    override: {
+      meta: {
+        type: new GraphQLObjectType({ name: "ItemMeta", fields: { raw: { type: GraphQLString } } }),
+        ...(def.override?.meta || {}),
+      },
+    },
+    comments: def.comments,
+    relationships: [],
+  } as Definition;
+  await db.addDefinition(itemDef);
+  await db.initialise();
+  const fields = createBasicFieldsFunc("Item", db, itemDef, {}, createSchemaCache())();
+  return fields.meta;
+}
+
+test("createBasicFieldsFunc - an override describes itself", async() => {
+  const field = await overriddenField({ override: { meta: { description: "override text" } } });
+  expect(field.description).toBe("override text");
+});
+
+test("createBasicFieldsFunc - comments.fields describes an override, and wins", async() => {
+  const field = await overriddenField({
+    override: { meta: { description: "override text" } },
+    comments: { fields: { meta: "comment text" } },
+  });
+  expect(field.description).toBe("comment text");
+});
+
+test("createBasicFieldsFunc - an override falls back to the column's description", async() => {
+  const field = await overriddenField({});
+  expect(field.description).toBe("column text");
+});

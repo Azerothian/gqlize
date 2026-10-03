@@ -5,7 +5,7 @@ import {
   CORE_ARRAY_VALUES,
   CORE_VALUE_FUNCS,
 } from "@azerothian/graphql-types/operators";
-import { isFieldAllowed } from "@azerothian/utilize/gate";
+import { isFieldExposed } from "@azerothian/utilize/gate";
 import type { Permission } from "@azerothian/utilize/types/index";
 import typeMapper from "./type-mapper";
 import { ValkeyModel } from "./model";
@@ -25,7 +25,7 @@ export function createQueryConfig(model: ValkeyModel, permission?: Permission): 
   const defName = model.name;
   const f: {[fieldName: string]: GraphQLInputType} = {};
   for (const k of filterableFields(model)) {
-    if (!isFieldAllowed(permission, defName, k)) continue;
+    if (!isFieldExposed(model.definition, permission, defName, k)) continue;
     const field = model.fields[k];
     f[k] = field.primaryKey || field.foreignKey ? GraphQLID : typeMapper(field.type, `GQLTWhere${defName}`, k);
   }

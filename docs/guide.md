@@ -166,7 +166,11 @@ Definition keys you'll commonly use:
   A field may also carry `description`, `args` and `resolve`
   (see [below](#field-arguments--field-resolvers)).
 - **`relationships`** — `{ type, model, name, options }`, `type` ∈ `belongsTo | hasOne | hasMany
-  | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`as`/`through`.
+  | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`through`; a `belongsToMany`
+  may instead declare its keys as `through: { model, foreignKey, otherKey }` (a top-level key
+  wins), and every backend joins on the same columns either way. `name` is the
+  relationship's alias everywhere (output field, `include` key, permissions); an
+  `options.as` that differs is ignored with a warning.
 - **`override`** — expose a column as a different GraphQL type with `input`/`output` transforms
   (see [§10](#10-custom-scalars--json-columns)).
 - **`whereOperators` / `whereOperatorTypes`** — custom filter operators usable in `where`
@@ -174,7 +178,9 @@ Definition keys you'll commonly use:
 - **`expose.classMethods` / `expose.instanceMethods`** — surface methods to GraphQL under
   `query` and `mutations` (see [Class & instance methods](#class--instance-methods)).
 - **`options`** — passed to Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, and the
-  `classMethods`/`instanceMethods` implementations.
+  `classMethods`/`instanceMethods` implementations. `tableName`, `hooks` and the method bags
+  may also be written at the top level; `options` wins a clash for `tableName` and the
+  methods, and hooks named in both run both.
 
 > **Junction models.** A `through` model that only carries FK columns (+ your extra columns) has
 > no relationships of its own; exclude it from the schema with a permission gate so it isn't
@@ -1577,8 +1583,9 @@ db.addDefinition({
 });
 ```
 
-**Sequelize lifecycle hooks** (`options.hooks`) — `beforeFind`, `beforeCreate`, `afterFind`,
-`beforeCount`, etc. A `beforeFind` can read the originating GraphQL args via
+**Sequelize lifecycle hooks** (`options.hooks`, or top-level `hooks`) — `beforeFind`,
+`beforeCreate`, `afterFind`, `beforeCount`, etc. Both spellings are merged; a hook named in
+both runs both, top-level first. A `beforeFind` can read the originating GraphQL args via
 `options.getGraphQLArgs()` (fed by the query's `rootValue`):
 
 ```ts
@@ -1805,6 +1812,17 @@ on the Sequelize adapter (see [Field arguments & field resolvers](#field-argumen
 `comment` included. All three used to be dropped by this adapter — so if you already author
 `description`/`comment` on a Valkey-backed model, its GraphQL fields now gain those descriptions and
 the artifact's `models` fingerprint changes; rebuild the artifact.
+
+**Nullability.** As on the Sequelize adapter, a field is nullable only when it declares
+`allowNull: true`; omitting it makes the GraphQL field non-null and the create input require it.
+This adapter used to treat an omitted `allowNull` as nullable, so the same definition produced a
+different schema on each backend. Add `allowNull: true` to any field that can be empty.
+
+**Instance methods.** A record carries the definition's instance methods, and one named like a
+built-in (`save`, `update`, `destroy`, `reload`, `get`, `toJSON`) replaces it, as a prototype
+method does on Sequelize. A method cannot share its name with a field, a relationship or one of a
+relationship's accessors (`getTags`, `setTags`, …): the stored value or the accessor would hide
+it, so the definition is rejected with an error naming the clash.
 
 **Sequelize-style model API.** In addition to the manager pipeline (`orm.processCreate`/
 `resolveFindAll`), the direct model/instance API works too, so a Valkey-backed model is used the same

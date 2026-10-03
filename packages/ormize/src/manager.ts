@@ -3,7 +3,8 @@ import pluralize from "pluralize";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
 import {lowercase} from "@azerothian/utilize/utils/word";
-import {reciprocalOtherKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
+import {reciprocalOtherKey, relationshipForeignKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
+import {definitionHooks} from "@azerothian/utilize/utils/definition-hooks";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {copyDefinition} from "@azerothian/utilize/utils/copy-on-write";
 import {capitalize} from "@azerothian/utilize/utils/word";
@@ -512,7 +513,7 @@ export default class Ormize<
   // eslint-disable-next-line @typescript-eslint/require-await -- must stay async: callers (and __tests__/resolution-errors.test.ts) rely on requireDefinition's throw arriving as a rejected promise, not a sync throw
   getDefinitionHooks = async(defName: string): Promise<HookMap> => {
     const def = this.requireDefinition(defName, "Ormize.getDefinitionHooks");
-    return (def.hooks || def.options?.hooks) || {};
+    return definitionHooks(def);
   }
   /**
    * The adapter registered under `datasource`, or a message that says which name
@@ -627,7 +628,7 @@ export default class Ormize<
    * an audit hook that looked live and had never run. Say so instead.
    */
   private warnDefinitionInstanceHooks(def: Definition) {
-    const authored = (def.hooks || def.options?.hooks) || {};
+    const authored = definitionHooks(def);
     const names = Object.keys(authored).filter((name) => sequelizeHookSet.has(name));
     if (names.length > 0) {
       console.warn( // eslint-disable-line no-console
@@ -996,7 +997,7 @@ export default class Ormize<
       name: rel.name,
       options: rel.options,
     };
-    const {foreignKey} = rel.options;
+    const foreignKey = relationshipForeignKey(rel.type, rel.options);
     if (targetAdapter === sourceAdapter) {
       this.relationships[def.name][rel.name].internal = true;
       //TODO: populate foreignKey/sourceKeys if not provided
@@ -1147,6 +1148,14 @@ export default class Ormize<
     scopedWhere: (defName, operation, context, where, options) => this.scopeNativeWhere(defName, operation, context, where, options),
     assertRowsInScope: (defName, operation, context, rows, options) => this.assertRowsInScope(defName, operation, context, rows, options),
   };
+  /** See {@link OrmAdapter.asInstance}; a row that is not an object passes through. */
+  asInstance = (defName: string, row: AdapterRow): AdapterRow => {
+    if (!row || typeof row !== "object") {
+      return row;
+    }
+    const adapter = this.getModelAdapter(defName);
+    return adapter.asInstance ? adapter.asInstance(defName, row) : row;
+  }
   getValueFromInstance = (defName: string, data: AdapterRow, keyName: string): unknown => {
     if (!data) {
       return undefined;

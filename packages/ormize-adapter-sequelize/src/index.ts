@@ -12,7 +12,7 @@ import {
   type Options as SequelizeOptions,
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
-import { isFieldAllowed, scopeParametersIn, bindScopeParameters } from "@azerothian/utilize/gate";
+import { isFieldExposed, scopeParametersIn, bindScopeParameters } from "@azerothian/utilize/gate";
 import { copyDefine, copyField, copyModelOptions } from "@azerothian/utilize/utils/copy-on-write";
 import { lowercase } from "@azerothian/utilize/utils/word";
 import type { ResolvedScope } from "@azerothian/utilize/gate";
@@ -232,6 +232,7 @@ import {
 export type * from "./types/query";
 import { replaceWhereOperators, reservedOperatorNames } from "./utils/where-ops";
 import { keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
+import { throughForeignKey, throughOtherKey } from "@azerothian/utilize/utils/join-keys";
 
 // Pagination safety bounds. This is the central backstop that bounds every list
 // query (GraphQL relay connections and REST list routes both funnel through
@@ -681,6 +682,13 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         hooks,
       }),
     });
+    // `SequelizeDefinition` declares `tableName` at the top level as well as
+    // under `options`, but only `options` reaches `sequelize.define` — so the
+    // top-level one type-checked and was then ignored, and the table took the
+    // default name. The nested one wins when both are given.
+    if (newDef.options.tableName === undefined && def.tableName !== undefined) {
+      newDef.options.tableName = def.tableName;
+    }
     if(!newDef.name) {
       throw new Error("Unable to create model with no name");
     }
@@ -854,7 +862,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // client can binary-search its value from row counts (boolean oracle).
     let f = Object.keys(fields).reduce((o, k) => {
       const field = fields[k];
-      if (!isFieldAllowed(perm, defName, k)) {
+      if (!isFieldExposed(definition, perm, defName, k)) {
         return o;
       }
       if (field.primaryKey || field.foreignKey) {
@@ -873,7 +881,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       const field = rels[k];
       switch (field.associationType) {
         case "belongsTo":
-          if (isFieldAllowed(perm, defName, field.foreignKey)) {
+          if (isFieldExposed(definition, perm, defName, field.foreignKey)) {
             o[field.foreignKey] = GraphQLID;
           }
           break;
@@ -917,12 +925,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       model.relationships = {};
     }
     try {
-      const opts: Record<string, unknown> = Object.assign(
-        {
-          as: name,
-        },
-        options
-      );
+      // `name` is the relationship's identity everywhere else — the include
+      // input, permissions, `model.relationships`, ormize and the valkey adapter
+      // all key by it — so it is the alias here too. Letting `options.as` win
+      // registered the association under a second name, and an `include` naming
+      // the relationship then reached for an association that did not exist.
+      if (options.as !== undefined && options.as !== name) {
+        // eslint-disable-next-line no-console -- see the paranoid warning in `createModel`: `debug` is silent unless enabled, and this changes which name a client must use
+        console.warn(
+          `Relationship "${targetModel}.${name}": options.as "${options.as}" is ignored; the relationship is named by "name".`,
+        );
+      }
+      const opts: Record<string, unknown> = Object.assign({}, options, { as: name });
       // `through` may also be a bare model name, which Sequelize accepts as-is.
       // Only the object form carries a `model` to resolve.
       //
@@ -944,6 +958,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         opts.through = options.through.model
           ? { ...options.through, model: this.sequelize.models[options.through.model] }
           : { ...options.through };
+      }
+      // Sequelize reads a belongsToMany's keys off the association options only,
+      // never off `through`. Both spellings are typed, and ormize and the valkey
+      // adapter honour the `through` one, so hoist it — the top-level key still
+      // wins — or this backend joins on a guessed column the others do not use.
+      if (type === "belongsToMany") {
+        if (opts.foreignKey === undefined && throughForeignKey(options.through) !== undefined) {
+          opts.foreignKey = throughForeignKey(options.through);
+        }
+        if (opts.otherKey === undefined && throughOtherKey(options.through) !== undefined) {
+          opts.otherKey = throughOtherKey(options.through);
+        }
       }
       // `type` names one of Sequelize's association builders (`belongsTo`,
       // `hasMany`, ...) and is called by name off the model class, so the lookup
@@ -1323,6 +1349,22 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // column, and a spread would keep whichever was written second.
     return { [Op.and]: [a, b] };
   }
+  /**
+   * The row as a model instance, built around it when it is not one.
+   *
+   * A class or instance method can return plain objects typed as a model, and
+   * gqlize resolves that model's relationships on them like any other row. The
+   * association accessors (`getItems`, `countItems`, `get`) live on the model
+   * prototype, so a plain object has none of them (#72). Building an instance
+   * over its values — not a new record — gives it the accessors, keyed off
+   * whatever primary and foreign keys it carries.
+   */
+  asInstance(defName: string, row: SequelizeRow): SequelizeRow {
+    if (row && typeof (row as {get?: unknown}).get === "function") {
+      return row;
+    }
+    return this.sequelize.models[defName].build(row as unknown as Record<string, unknown>, {isNewRecord: false});
+  }
   // eslint-disable-next-line @typescript-eslint/require-await -- `OrmAdapter.resolveSingleRelationship` is declared `Promise<AdapterRow>` (utilize/src/types/index.ts:313); the eager-loaded branch returns synchronously, so `async` is what satisfies the contract's return type
   resolveSingleRelationship = async (
     _defName: string,
@@ -1342,7 +1384,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (fields[relationship.name] !== undefined) {
       return fields[relationship.name];
     }
-    return fields[relationship.accessors.get](options);
+    return rowFields(this.asInstance(relationship.source, source))[relationship.accessors.get](options);
   };
   // Count a relationship for its `total`. For hasMany, count the target directly
   // with the foreign-key filter so the child's beforeCount hook fires (Sequelize's
@@ -1365,7 +1407,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (relationship.associationType === "hasMany") {
       const TargetModel = this.sequelize.models[relationship.target];
       const filter = Object.assign({}, countWhere, {
-        [relationship.foreignKey]: source.get(relationship.sourceKey),
+        [relationship.foreignKey]: this.asInstance(relationship.source, source).get(relationship.sourceKey),
       });
       // `getGraphQLArgs` is this project's own addition to the options bag — the
       // hooks read it off `options`; Sequelize itself ignores it.
@@ -1374,7 +1416,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         getGraphQLArgs: options?.getGraphQLArgs,
       }, paranoid) as AdapterQueryOptions);
     }
-    return rowFields(source)[relationship.accessors.count](
+    return rowFields(this.asInstance(relationship.source, source))[relationship.accessors.count](
       Object.assign({ where: countWhere, getGraphQLArgs: options?.getGraphQLArgs }, paranoid),
     );
   };
@@ -1441,12 +1483,13 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // eight arguments, so `selectedFields` and `runHook` were dropped here and a
     // JOIN-include `beforeFind` never fired on the relationship path.
     const { getOptions, countOptions } = await this.processListArgsToOptions(defName, request);
-    const models = await fields[relationship.accessors.get](getOptions);
+    const instance = rowFields(this.asInstance(relationship.source, source));
+    const models = await instance[relationship.accessors.get](getOptions);
     let total;
     if (this.hasInlineCountFeature()) {
       total = await this.getInlineCount(models);
     } else {
-      total = await fields[relationship.accessors.count](countOptions);
+      total = await instance[relationship.accessors.count](countOptions);
     }
     return {
       total,

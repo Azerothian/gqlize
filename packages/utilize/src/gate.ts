@@ -132,6 +132,26 @@ export function isModelAllowed(permission: Permission | undefined, model: string
 }
 
 /**
+ * Whether a field is exposed at all: not in the definition's `ignoreFields`, and
+ * allowed by `permission.field`.
+ *
+ * `ignoreFields` is documented as excluded from every generated type, but only
+ * the output type honoured it — an ignored column stayed writable through the
+ * mutation inputs and filterable and sortable through `where`/`orderBy`. Every
+ * reader that decides whether a field is exposed goes through this instead of
+ * `isFieldAllowed` alone.
+ */
+export function isFieldExposed(
+  definition: {ignoreFields?: string[]} | undefined,
+  permission: Permission | undefined, model: string, field: string,
+): boolean {
+  if (definition?.ignoreFields?.includes(field)) {
+    return false;
+  }
+  return isFieldAllowed(permission, model, field);
+}
+
+/**
  * Whether an output/entity field is exposed (`permission.field`). The `id` field
  * is always allowed, matching gqlize's `create-basic-fields` behavior.
  */

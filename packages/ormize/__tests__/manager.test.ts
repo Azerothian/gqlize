@@ -308,3 +308,63 @@ test("manager - processSelect without input returns rows instead of throwing", a
   const rows = await db.processSelect("SelectParent", null, {where: {name: "a"}}, {});
   expect(rows.length).toEqual(1);
 });
+
+// Both hook spellings are documented. Reading one *or* the other dropped every
+// `options.hooks` entry whenever a top-level `hooks` existed, even `{}`.
+async function hookedDb(hooks: Definition["hooks"], nestedHooks: Definition["hooks"]) {
+  const db = new Database();
+  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  await db.addDefinition({
+    name: "Hooked",
+    define: { name: { type: Sequelize.STRING } },
+    hooks,
+    options: { hooks: nestedHooks },
+  });
+  await db.initialise();
+  await db.sync();
+  return db;
+}
+
+test("manager - definition hooks - an empty top-level map does not hide options.hooks", async () => {
+  const fired: string[] = [];
+  const db = await hookedDb({}, {
+    beforeFind(options: unknown) {
+      fired.push("nested");
+      return options;
+    },
+  });
+  await db.models.Hooked.findAll();
+  expect(fired).toEqual(["nested"]);
+});
+
+test("manager - definition hooks - a name in both spellings runs both, top-level first", async () => {
+  const fired: string[] = [];
+  const db = await hookedDb({
+    beforeFind(options: unknown) {
+      fired.push("top");
+      return options;
+    },
+  }, {
+    beforeFind(options: unknown) {
+      fired.push("nested");
+      return options;
+    },
+    afterFind(rows: unknown) {
+      fired.push("nested-after");
+      return rows;
+    },
+  });
+  await db.models.Hooked.findAll();
+  expect(fired).toEqual(["top", "nested", "nested-after"]);
+});
+
+test("manager - asInstance hands a plain row to the adapter and passes anything else through", async () => {
+  const db = await hookedDb(undefined, undefined);
+  expect(db.asInstance("Hooked", null)).toBeNull();
+  const plain = { id: 1, name: "plain" };
+  const row = db.asInstance("Hooked", plain) as { get(key: string): unknown };
+  expect(row).not.toBe(plain);
+  expect(row.get("name")).toBe("plain");
+  // An instance is handed back as it is.
+  expect(db.asInstance("Hooked", row)).toBe(row);
+});
