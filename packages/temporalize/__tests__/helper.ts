@@ -4,6 +4,7 @@ import { Ormize } from "@azerothian/ormize";
 import type { Definition } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { ApplicationFailure } from "@temporalio/common";
+import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
 
 /** Contexts seen by `definition.before`, so tests can assert context propagation. */
 export const seenContexts: unknown[] = [];
@@ -52,8 +53,10 @@ const ItemDef: Definition = {
 };
 
 const TaskDef: Definition = {
+  // Pin Task to the current dialect's adapter by name, so the datasource segment
+  // in queue names reflects whichever project is running.
+  datasource: testDialect(),
   name: "Task",
-  datasource: "sqlite",
   define: {
     name: { type: DataTypes.STRING, allowNull: false },
     done: { type: DataTypes.BOOLEAN, defaultValue: false },
@@ -67,11 +70,19 @@ const TaskDef: Definition = {
   ],
 };
 
-/** Fresh, initialised and synced in-memory ormize (Item hasMany Task). */
-export async function buildOrm(): Promise<Ormize> {
+/**
+ * Fresh, initialised and synced ormize (Item hasMany Task).
+ *
+ * Pass `{ suite: true }` when the orm is built once in a `beforeAll` and must
+ * outlive per-test teardowns. Defaults to per-test, which is what `beforeEach`
+ * callers need — otherwise PGlite's 8-connection cap is exhausted.
+ */
+export async function buildOrm(options: { suite?: boolean } = {}): Promise<Ormize> {
   seenContexts.length = 0;
   const orm = new Ormize();
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+  const adapter = new SequelizeAdapter({}, await dialectConfig());
+  trackConnection(adapter, options);
+  orm.registerAdapter(adapter, testDialect());
   await orm.addDefinition(ItemDef);
   await orm.addDefinition(TaskDef);
   await orm.initialise();

@@ -1,25 +1,30 @@
 import { beforeAll, describe, expect, it } from "@jest/globals";
 import type { Ormize } from "@azerothian/ormize";
+import { testDialect } from "@azerothian/test-fixtures/dialect";
 import { buildQueueMap, listModels, resolveQueueName } from "../src/queue";
 import type { QueueNameInput } from "../src/types";
 import { buildOrm } from "./helper";
 
+// The datasource segment in queue names reflects whichever adapter the
+// definition is pinned to — "sqlite" or "postgres" depending on the project.
+const ds = testDialect();
+
 describe("queue naming", () => {
   let orm: Ormize;
   beforeAll(async () => {
-    orm = await buildOrm();
+    orm = await buildOrm({ suite: true });
   });
 
   it("composes prefix + datasource + model", () => {
-    expect(resolveQueueName(orm, "Task", { queuePrefix: "myapp" })).toBe("myapp.sqlite.Task");
+    expect(resolveQueueName(orm, "Task", { queuePrefix: "myapp" })).toBe(`myapp.${ds}.Task`);
   });
 
   it("omits an absent prefix rather than leaving a leading separator", () => {
-    expect(resolveQueueName(orm, "Task")).toBe("sqlite.Task");
+    expect(resolveQueueName(orm, "Task")).toBe(`${ds}.Task`);
   });
 
   it("honors a custom separator", () => {
-    expect(resolveQueueName(orm, "Task", { queuePrefix: "myapp", queueSeparator: "-" })).toBe("myapp-sqlite-Task");
+    expect(resolveQueueName(orm, "Task", { queuePrefix: "myapp", queueSeparator: "-" })).toBe(`myapp-${ds}-Task`);
   });
 
   it("can drop the datasource segment", () => {
@@ -36,7 +41,7 @@ describe("queue naming", () => {
     const seen: QueueNameInput[] = [];
     resolveQueueName(orm, "Task", { queueName: (i) => (seen.push(i), "q") });
     expect(seen[0].model).toBe("Task");
-    expect(seen[0].datasource).toBe("sqlite");
+    expect(seen[0].datasource).toBe(ds);
     expect(seen[0].definition.name).toBe("Task");
   });
 
@@ -52,8 +57,8 @@ describe("queue naming", () => {
   describe("buildQueueMap", () => {
     it("maps each model to its own queue", () => {
       const map = buildQueueMap(orm, { queuePrefix: "myapp" });
-      expect(map.byModel).toEqual({ Item: "myapp.sqlite.Item", Task: "myapp.sqlite.Task" });
-      expect(map.byQueue["myapp.sqlite.Task"]).toEqual(["Task"]);
+      expect(map.byModel).toEqual({ Item: `myapp.${ds}.Item`, Task: `myapp.${ds}.Task` });
+      expect(map.byQueue[`myapp.${ds}.Task`]).toEqual(["Task"]);
     });
 
     it("groups colliding overrides onto one queue", () => {
