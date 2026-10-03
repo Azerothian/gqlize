@@ -29,7 +29,7 @@ describe("tests", () => {
 
   it("adapter - reset", async() => {
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
-    await adapter.getORM().sync();
+    await adapter.reset();
     expect(adapter.getORM()).not.toBeUndefined();
   });
 
@@ -37,19 +37,19 @@ describe("tests", () => {
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
 
-    await adapter.getORM().sync();
+    await adapter.reset();
     expect(adapter.getORM().models.Task).not.toBeUndefined();
   });
   it("adapter - getModel", async() => {
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
-    await adapter.getORM().sync();
+    await adapter.reset();
     expect(adapter.getModel("Task")).not.toBeUndefined();
   });
   it("adapter - getModels", async() => {
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
-    await adapter.getORM().sync();
+    await adapter.reset();
     expect(adapter.getModels().Task).not.toBeUndefined();
   });
   it("adapter - addInstanceFunction", async() => {
@@ -59,7 +59,7 @@ describe("tests", () => {
       expect(this).toBeInstanceOf(adapter.getModel("Task"));
       return true;
     });
-    await adapter.getORM().sync();
+    await adapter.reset();
     const Task = adapter.getModel("Task");
     // `it` is installed dynamically by `addInstanceFunction` above, so it has
     // no place in `Task`'s own (Sequelize-generated) instance type.
@@ -73,7 +73,7 @@ describe("tests", () => {
     adapter.addStaticFunction("Task", "it", function() {
       return true;
     });
-    await adapter.getORM().sync();
+    await adapter.reset();
     // `it` is installed dynamically by `addStaticFunction` above, so it has no
     // place in `Task`'s own (Sequelize-generated) static type.
     const Task = adapter.getModel("Task") as unknown as { it: () => boolean };
@@ -96,16 +96,15 @@ describe("tests", () => {
       });
     });
 
-    await adapter.getORM().sync();
+    await adapter.reset();
     expect(adapter.getORM().models.Task).not.toBeUndefined();
     expect(adapter.getORM().models.TaskItem).not.toBeUndefined();
     expect(adapter.getORM().models.Item).not.toBeUndefined();
   });
-  // Sqlite-only unit test: the query function is stubbed to prevent sqlite from
-  // running the stored-procedure DDL. The stub breaks Sequelize's internal
-  // `tableExists` / foreign-key introspection on postgres, so skip there.
+  // The DDL and the call are Postgres (plpgsql): on Postgres both run for real
+  // and the function's rows are asserted; SQLite has no stored procedures, so
+  // there the query function is stubbed and only the wiring is checked.
   it("adapter - creaitoredProcedure", async() => {
-    if (testDialect() !== "sqlite") return;
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
 
     const itemDef: SequelizeDefinition = {
@@ -157,31 +156,37 @@ describe("tests", () => {
         newStoredProcedure: {
           type: "sqlfunction",
           functionName: `selectOne`,
-          args: ["number"],
+          // Bind names, in parameter order: each becomes `:name`, filled from
+          // the call's argument of that name. This said `number` while the
+          // call passes `start`, unnoticed for as long as the query was stubbed.
+          args: ["start"],
         } as unknown as ClassMethodFn,
       },
     };
     await adapter.createModel(itemDef);
-    // `Sequelize.query` is heavily overloaded; this replaces it wholesale with
-    // a stub (stored procedures are not supported by sqlite) rather than
-    // calling through, which only needs the one shape actually used below.
-    (adapter.sequelize as unknown as { query: (q: unknown, options: unknown) => Promise<void> }).query =
-      // eslint-disable-next-line @typescript-eslint/require-await -- must return `Promise<void>` to match `.query`'s real signature; there is nothing to await
-      async(q, options) => {
-        //stop from writing to sqlite
-        //as stored procedures are not supported
-        console.log("q", {q, options});
-      };
+    const postgres = testDialect() === "postgres";
+    if (!postgres) {
+      // `Sequelize.query` is heavily overloaded; this replaces it wholesale with
+      // a stub (stored procedures are not supported by sqlite) rather than
+      // calling through, which only needs the one shape actually used below.
+      (adapter.sequelize as unknown as { query: (q: unknown, options: unknown) => Promise<void> }).query =
+        // eslint-disable-next-line @typescript-eslint/require-await -- must return `Promise<void>` to match `.query`'s real signature; there is nothing to await
+        async() => undefined;
+    }
     await adapter.reset();
     // `newStoredProcedure` is installed dynamically by `installClassMethods`
     // from the `SqlClassMethod` descriptor above, so it has no place in the
     // model's own (Sequelize-generated) static type.
-    await (adapter.getORM().models.Item as unknown as {
+    const result = await (adapter.getORM().models.Item as unknown as {
       newStoredProcedure: (args: unknown) => Promise<unknown>
     }).newStoredProcedure({
       start: 1,
     });
     expect(adapter.getORM().models.Item).not.toBeUndefined();
+    // On Postgres the function really ran: `selectOne(1)` returns one row. The
+    // SQLite stub returns nothing, so there only the wiring above is checked.
+    const expected = postgres ? [{ id: 1 }] : result;
+    expect(result).toEqual(expected);
   });
 
 
@@ -251,7 +256,7 @@ describe("tests", () => {
       });
     });
 
-    await adapter.getORM().sync();
+    await adapter.reset();
     const {models} = adapter.getORM();
     expect(models.Item).toBeDefined();
     expect(models.ItemChildMap).toBeDefined();
@@ -261,7 +266,7 @@ describe("tests", () => {
   it("adapter - createFunctionForFind", async() => {
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
-    await adapter.getORM().sync();
+    await adapter.reset();
     const Task = adapter.getModel("Task");
     const task = await Task.create({
       name: "ttttttttttttttt",
@@ -285,14 +290,14 @@ describe("tests", () => {
   it("adapter - getPrimaryKeyNameForModel", async() => {
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
-    await adapter.getORM().sync();
+    await adapter.reset();
     const primaryKeyName = adapter.getPrimaryKeyNameForModel("Task");
     expect(primaryKeyName[0]).toEqual("id");
   });
   it("adapter - getValueFromInstance", async() => {
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
-    await adapter.getORM().sync();
+    await adapter.reset();
     const model = await adapter.getModel("Task").create({
       name: "111111111111111111",
     });
@@ -313,7 +318,7 @@ describe("tests", () => {
       relationships: [],
     };
     await adapter.createModel(itemDef);
-    await adapter.getORM().sync();
+    await adapter.reset();
     const ItemFields = adapter.getFields("Item");
     expect(ItemFields).toBeDefined();
     expect(ItemFields.id).toBeDefined();
@@ -338,7 +343,7 @@ describe("tests", () => {
       relationships: [],
     };
     await adapter.createModel(itemDef);
-    await adapter.getORM().sync();
+    await adapter.reset();
     const ItemFields = adapter.getFields("Item");
     expect(ItemFields).toBeDefined();
     expect(ItemFields.name).toBeDefined();
@@ -384,7 +389,7 @@ describe("tests", () => {
     await waterfall(itemChildDef.relationships, (rel) => {
       return adapter.createRelationship(itemChildDef.name, rel.model, rel.name, rel.type, rel.options);
     });
-    await adapter.getORM().sync();
+    await adapter.reset();
     const fields = adapter.getFields("ItemChild");
     expect(fields).toBeDefined();
     expect(fields.parentId).toBeDefined();
@@ -427,7 +432,7 @@ describe("tests", () => {
     await waterfall(itemDef.relationships, (rel) => {
       return adapter.createRelationship(itemDef.name, rel.model, rel.name, rel.type, rel.options);
     });
-    await adapter.getORM().sync();
+    await adapter.reset();
     const ItemFields = adapter.getFields("Item");
     expect(ItemFields).toBeDefined();
     expect(ItemFields.parentId).toBeDefined();
@@ -473,7 +478,7 @@ describe("tests", () => {
     await waterfall(itemDef.relationships, (rel) => {
       return adapter.createRelationship(itemDef.name, rel.model, rel.name, rel.type, rel.options);
     });
-    await adapter.getORM().sync();
+    await adapter.reset();
     const ItemFields = adapter.getFields("Item");
     expect(ItemFields).toBeDefined();
     expect(ItemFields.createdAt).toBeDefined();
@@ -511,7 +516,7 @@ describe("tests", () => {
     await waterfall(itemDef.relationships, (rel) => {
       return adapter.createRelationship(itemDef.name, rel.model, rel.name, rel.type, rel.options);
     });
-    await adapter.getORM().sync();
+    await adapter.reset();
     const rels = adapter.getAssociations("Item");
     expect(rels).toBeDefined();
     expect(rels.parent).toBeDefined();
@@ -555,7 +560,7 @@ describe("tests", () => {
     await waterfall(itemDef.relationships, (rel) => {
       return adapter.createRelationship(itemDef.name, rel.model, rel.name, rel.type, rel.options);
     });
-    await adapter.getORM().sync();
+    await adapter.reset();
     const rels = adapter.getAssociations("Item");
     expect(rels).toBeDefined();
     expect(rels.children).toBeDefined();
@@ -932,7 +937,7 @@ describe("tests", () => {
       name: "CountMe",
       define: { label: { type: Sequelize.STRING } },
     });
-    await adapter.getORM().sync();
+    await adapter.reset();
     const Model = adapter.getModel("CountMe");
     await Model.create({ label: "a" });
     await Model.create({ label: "b" });
@@ -962,7 +967,7 @@ describe("tests", () => {
     adapter.createRelationship("Task", "TaskItem", "items", "hasMany", {foreignKey: "taskId"});
     adapter.createRelationship("TaskItem", "Task", "task", "belongsTo", {foreignKey: "taskId"});
     await adapter.initialise();
-    await adapter.getORM().sync();
+    await adapter.reset();
 
     const task = await adapter.getModel("Task").create({name: "parenttask"});
     // `Model<any, any>`'s attributes aren't narrowed to this fixture's real
@@ -1004,7 +1009,7 @@ describe("tests", () => {
   it("adapter - deleteFunction", async() => {
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
-    await adapter.getORM().sync();
+    await adapter.reset();
     const Task = adapter.getModel("Task");
     await Task.create({
       name: "ttttttttttttttt",
@@ -1028,7 +1033,7 @@ describe("tests", () => {
   it("adapter - processIncludeStatement", async() => {
     const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     await adapter.createModel(TaskModel);
-    await adapter.getORM().sync();
+    await adapter.reset();
     const Task = adapter.getModel("Task");
     await Task.create({
       name: "ttttttttttttttt",
