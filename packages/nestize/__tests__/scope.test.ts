@@ -8,6 +8,7 @@ import { Ormize } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import type { Definition } from "@azerothian/utilize";
 import type { ScopePredicate } from "@azerothian/utilize/gate";
+import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
 import { NestizeModule } from "../src";
 
 // nestize's list / findOne / count all reach the engine through
@@ -51,7 +52,9 @@ describe("nestize - row-level scope over REST", () => {
 
   beforeAll(async () => {
     const orm = new Ormize({ permission: { scope: owned } });
-    orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+    const adapter = new SequelizeAdapter({}, await dialectConfig());
+    trackConnection(adapter, { suite: true });
+    orm.registerAdapter(adapter, testDialect());
     await orm.addDefinition(TaskDef);
     await orm.initialise();
     await orm.sync();
