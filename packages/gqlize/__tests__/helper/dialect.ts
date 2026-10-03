@@ -76,6 +76,28 @@ const teardowns: Array<() => Promise<void>> = [];
 export function registerTeardown(fn: () => Promise<void>) {
   teardowns.push(fn);
 }
+// Suite-scoped teardown: a database built once in a `beforeAll` must outlive
+// the per-test teardown above, or its Postgres connection is closed after the
+// suite's first test. Drained by an afterAll in the Jest setup file.
+//
+// On Postgres every instance shares one PGlite database and resets `public`
+// when it is created, so a suite-scoped instance is only safe while no other
+// instance is created underneath it — keep such suites in their own describe,
+// with any test that builds its own instance outside it.
+const suiteTeardowns: Array<() => Promise<void>> = [];
+export function registerSuiteTeardown(fn: () => Promise<void>) {
+  suiteTeardowns.push(fn);
+}
+export async function teardownSuite() {
+  const fns = suiteTeardowns.splice(0, suiteTeardowns.length);
+  for (const fn of fns) {
+    try {
+      await fn();
+    } catch (e) {
+      // ignore teardown errors
+    }
+  }
+}
 export async function teardownAll() {
   const fns = teardowns.splice(0, teardowns.length);
   for (const fn of fns) {
@@ -120,4 +142,20 @@ export async function createAdapterForDialect(): Promise<DialectAdapter> {
 
   const adapter = new SequelizeAdapter({}, { dialect: "sqlite" }) as unknown as GqlizeAdapter;
   return { adapter, name: "sqlite", teardown: async () => { /* in-memory, nothing to close */ } };
+}
+
+/**
+ * Register a dialect-aware adapter on `db`, closed after the current test (or,
+ * with `suite`, after the file). The replacement for the hand-built
+ * `new SequelizeAdapter({}, {dialect: "sqlite"})` a test used to register,
+ * which kept it on SQLite whichever project ran it.
+ */
+export async function registerDialectAdapter(
+  db: { registerAdapter(adapter: GqlizeAdapter, name: string): unknown },
+  options: { suite?: boolean } = {},
+): Promise<GqlizeAdapter> {
+  const { adapter, name, teardown } = await createAdapterForDialect();
+  (options.suite ? registerSuiteTeardown : registerTeardown)(teardown);
+  db.registerAdapter(adapter, name);
+  return adapter;
 }

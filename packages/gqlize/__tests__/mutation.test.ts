@@ -3,10 +3,9 @@ import {graphql, GraphQLSchema} from "graphql";
 // import {createSchema} from "../src";
 import Sequelize from "sequelize";
 import {toGlobalId} from "graphql-relay";
-import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { registerDialectAdapter } from "./helper/dialect";
 import { Ormize as Database } from "@azerothian/ormize";
 import {createSchema} from "../src";
-import { GqlizeAdapter } from "../src/types";
 import { Definition } from '../src/types/index';
 import {test,describe, it, beforeAll, beforeEach, expect} from "@jest/globals";
 
@@ -580,9 +579,7 @@ describe("mutations", () => {
       },
     } as Definition;
     const db = new Database();
-    db.registerAdapter(new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    }), "sqlite");
+    await registerDialectAdapter(db);
     await db.addDefinition(taskModel);
     await db.initialise();
     await db.sync();
@@ -639,9 +636,7 @@ describe("mutations", () => {
     } as Definition;
 
     const db = new Database();
-    db.registerAdapter(new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    }), "sqlite");
+    await registerDialectAdapter(db);
     await db.addDefinition(taskModel);
     await db.initialise();
     await db.sync();
@@ -701,9 +696,7 @@ describe("mutations", () => {
       },
     } as Definition;
     const db = new Database();
-    db.registerAdapter(new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    }), "sqlite");
+    await registerDialectAdapter(db);
     await db.addDefinition(taskModel);
     await db.initialise();
     await db.sync();
@@ -1019,10 +1012,7 @@ describe("mutations", () => {
 
 test("add multiple ids", async() => {
   const db = new Database();
-  const sqlite = new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }) as GqlizeAdapter;
-  db.registerAdapter(sqlite, "sqlite");
+  await registerDialectAdapter(db);
   const parentDef = {
     name: "Parent",
     define: {
@@ -1061,8 +1051,8 @@ test("add multiple ids", async() => {
       },
     ],
   };
-  await db.addDefinition(parentDef, "sqlite");
-  await db.addDefinition(childDef, "sqlite");
+  await db.addDefinition(parentDef);
+  await db.addDefinition(childDef);
   await db.initialise();
   await db.sync();
   // const ParentModel = db.getModel("Parent");
@@ -1173,10 +1163,7 @@ describe("2 degree mutation(nested)", () => {
   let parent: {id: number}, child: {id: number}, schema: GraphQLSchema, db: Database;
   beforeAll(async() => {
     db = new Database();
-    const sqlite = new SequelizeAdapter({}, {
-      dialect: "sqlite",
-    }) as GqlizeAdapter;
-    db.registerAdapter(sqlite, "sqlite");
+    await registerDialectAdapter(db, {suite: true});
     const parentDef = {
       name: "Parent",
       define: {
@@ -1214,8 +1201,8 @@ describe("2 degree mutation(nested)", () => {
         },
       ],
     };
-    await db.addDefinition(parentDef, "sqlite");
-    await db.addDefinition(childDef, "sqlite");
+    await db.addDefinition(parentDef);
+    await db.addDefinition(childDef);
     await db.initialise();
     await db.sync();
   });

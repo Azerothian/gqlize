@@ -78,3 +78,79 @@ function replaceKeyDeep(obj: PropertyKeyMap<unknown>, keyMap: PropertyKeyMap<sym
 export function replaceWhereOperators(where: AdapterWhere): AdapterWhere {
   return replaceKeyDeep(where, ops);
 }
+
+// ---- dialect-aware normalisation ------------------------------------------------
+
+/**
+ * Operators that only Postgres supports. When a non-postgres dialect encounters
+ * one, a clear error is raised instead of letting the driver emit a raw SQL
+ * error that gives no context.
+ *
+ * The set covers regex operators (which the GraphQL schema only exposes when the
+ * adapter opts in via `enableRegexpOperators`) and the array/range family.
+ */
+const POSTGRES_ONLY_OPS = new Set([
+  "regexp", "notRegexp", "iRegexp", "notIRegexp",
+  "contains", "contained", "overlap",
+  "adjacent", "strictLeft", "strictRight", "noExtendRight", "noExtendLeft",
+]);
+
+/**
+ * Walk a where tree and:
+ * 1. On SQLite, rewrite `iLike` → `like` and `notILike` → `notLike` (SQLite's
+ *    LIKE is already ASCII case-insensitive, matching ILIKE semantics).
+ * 2. On any non-postgres dialect, raise a clear error for postgres-only
+ *    operators instead of letting the driver fail with a raw SQL error.
+ *
+ * Called **before** `replaceWhereOperators` (which swaps string keys for `Op`
+ * symbols), so every key is still a plain string.
+ */
+export function normalizeWhereForDialect(
+  where: AdapterWhere,
+  dialect: string,
+): AdapterWhere {
+  if (dialect === "postgres") {
+    return where;
+  }
+  return walkWhereTree(where, dialect);
+}
+
+function walkWhereTree(obj: AdapterWhere, dialect: string): AdapterWhere {
+  const result: AdapterWhere = {};
+  // `Reflect.ownKeys`, not `Object.keys`: a where built inside the engine — a
+  // cross-adapter join, a scope, a definition's `whereOperators` — already
+  // carries Sequelize `Op` symbols, and rebuilding the object from its string
+  // keys alone dropped them, silently widening the filter to every row.
+  for (const key of Reflect.ownKeys(obj)) {
+    const value = obj[key];
+    if (typeof key === "string" && POSTGRES_ONLY_OPS.has(key)) {
+      throw new Error(
+        `gqlize: the "${key}" operator requires the postgres dialect`,
+      );
+    }
+    // SQLite LIKE is ASCII case-insensitive, so iLike/notILike can be lowered
+    // to like/notLike without changing semantics.
+    const mappedKey =
+      key === "iLike" ? "like" :
+      key === "notILike" ? "notLike" :
+      key;
+
+    let mapped: unknown = value;
+    if (Array.isArray(value)) {
+      mapped = value.map((item: unknown) =>
+        isPlainObj(item)
+          ? walkWhereTree(item as AdapterWhere, dialect)
+          : item,
+      );
+    } else if (isPlainObj(value)) {
+      mapped = walkWhereTree(value as AdapterWhere, dialect);
+    }
+    result[mappedKey] = mapped;
+  }
+  return result;
+}
+
+function isPlainObj(v: unknown): boolean {
+  return v !== null && typeof v === "object" && !Array.isArray(v) &&
+    Object.getPrototypeOf(v) === Object.prototype;
+}

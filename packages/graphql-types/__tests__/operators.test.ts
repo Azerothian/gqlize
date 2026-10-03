@@ -16,7 +16,7 @@ import {
 describe("operator vocabularies", () => {
   it("pins the core value operators and their order", () => {
     expect(CORE_VALUE_FUNCS).toEqual([
-      "eq", "ne", "gte", "lte", "lt", "not", "is",
+      "eq", "ne", "gt", "gte", "lte", "lt", "not", "is",
       "like", "notLike", "iLike", "notILike",
       "startsWith", "endsWith", "substring",
     ]);
@@ -31,9 +31,12 @@ describe("operator vocabularies", () => {
     }
   });
 
-  it("pins the boolean combinators, with SQL's quantified forms appended", () => {
+  it("pins the boolean combinators (any/all removed: they were value quantifiers, not boolean combinators)", () => {
     expect(CORE_ARRAY_FUNCS).toEqual(["or", "and"]);
-    expect(SQL_ARRAY_FUNCS).toEqual(["or", "and", "any", "all"]);
+    // `any`/`all` were removed: Sequelize's Op.any/Op.all are value quantifiers
+    // (= ANY(ARRAY[…])), not boolean combinators taking [Where], so exposing
+    // them as such produced opaque SQL errors.
+    expect(SQL_ARRAY_FUNCS).toEqual(["or", "and"]);
   });
 
   it("pins the list operators, with SQL's extras interleaved rather than appended", () => {

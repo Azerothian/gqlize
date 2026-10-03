@@ -4,6 +4,7 @@ import { fromCursor, toCursor } from "../objects/cursor";
 import { processAfter } from "../utils/after";
 import Events from "../../events";
 import { defaultCursorCodec } from "../../codecs/cursor";
+import { clampPageSize } from "@azerothian/utilize/utils/page-size";
 import type { CursorCodec } from "../../types";
 import type { AdapterRelationshipPage, AdapterRow, FindAllArgs, RequestContext } from "../../types";
 import type { BindingContext, DataSourceDescriptor, FieldBinding } from "./types";
@@ -126,22 +127,33 @@ export function buildConnectionResolver(
     // Carry each edge's absolute position alongside it. The page flags below need
     // it, and re-decoding the cursor just minted to get it back would make every
     // codec pay for a round trip it has no other reason to support.
+    //
+    // The offset (the absolute position of the first row in this page) depends on
+    // which direction the client paged:
+    //   after:  cursor.index + 1  (skip everything up to and including the cursor)
+    //   before: max(0, cursor.index - pageSize)
+    //   last (no cursor): max(0, total - pageSize)
+    //   else:   0
+    const aRec = a as Record<string, unknown>;
+    let pageOffset: number;
+    if (args.after && cursor) {
+      pageOffset = cursor.index + 1;
+    } else if (args.before && cursor) {
+      const pageSize = clampPageSize(aRec.first != null ? aRec.first : aRec.last);
+      pageOffset = Math.max(0, cursor.index - Math.min(pageSize, cursor.index));
+    } else if (aRec.last != null && !args.after) {
+      pageOffset = Math.max(0, total - clampPageSize(aRec.last));
+    } else {
+      pageOffset = 0;
+    }
+
     const positioned = await Promise.all(
       models.map(async (row, idx) => {
         const node = await processAfter(row, a, context, info, definition, Events.OUTPUT);
         if (!node) {
           return undefined;
         }
-        let startIndex = null;
-        if (cursor) {
-          startIndex = Number(cursor.index);
-        }
-        if (startIndex !== null) {
-          startIndex++;
-        } else {
-          startIndex = 0;
-        }
-        const index = idx + startIndex;
+        const index = idx + pageOffset;
         return {
           index,
           edge: {

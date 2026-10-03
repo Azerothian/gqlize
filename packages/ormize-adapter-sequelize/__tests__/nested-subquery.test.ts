@@ -100,14 +100,15 @@ describe("required includes under a required collection (#70)", () => {
 });
 
 describe("keepNestedJoinsOutOfSubQuery", () => {
-  it("only moves a child whose parent is outside the subquery", () => {
-    type Node = { subQuery: boolean; include?: Node[] };
+  type Node = { subQuery: boolean; subQueryFilter?: boolean; required?: boolean; include?: Node[] };
+
+  it("only moves a required child whose parent is outside the subquery", () => {
     const options: { include: Node[] } = {
       include: [
         // A required collection: outside the subquery, so its child must be too.
-        { subQuery: false, include: [{ subQuery: true, include: [{ subQuery: true }] }] },
+        { required: true, subQuery: false, include: [{ required: true, subQuery: true, include: [{ required: true, subQuery: true }] }] },
         // A required belongsTo: inside, and its child may stay inside with it.
-        { subQuery: true, include: [{ subQuery: true }] },
+        { required: true, subQuery: true, include: [{ required: true, subQuery: true }] },
       ],
     };
     keepNestedJoinsOutOfSubQuery(options);
@@ -115,6 +116,27 @@ describe("keepNestedJoinsOutOfSubQuery", () => {
     expect(options.include[0].include?.[0].include?.[0].subQuery).toBe(false);
     expect(options.include[1].subQuery).toBe(true);
     expect(options.include[1].include?.[0].subQuery).toBe(true);
+  });
+
+  it("keeps an include that is not required — and all beneath it — off the root's filter", () => {
+    // `required` is local: below a non-required level it may remove that
+    // level's rows, never the roots. Sequelize placed such a subtree in the
+    // paginated subquery or on the root's EXISTS filter because a descendant
+    // was required.
+    const options: { include: Node[] } = {
+      include: [
+        { required: false, subQuery: true, include: [
+          { required: true, subQuery: false, subQueryFilter: true, include: [{ required: true, subQuery: true }] },
+        ] },
+      ],
+    };
+    keepNestedJoinsOutOfSubQuery(options);
+    const [optional] = options.include;
+    const child = optional.include?.[0];
+    expect(optional.subQuery).toBe(false);
+    expect(optional.subQueryFilter).toBe(false);
+    expect(child?.subQueryFilter).toBe(false);
+    expect(child?.include?.[0].subQuery).toBe(false);
   });
 
   it("leaves a query with no includes alone", () => {

@@ -677,10 +677,25 @@ query {
 
 Available operators (from the generated filter type):
 
-- **value:** `eq`, `ne`, `gte`, `lte`, `lt`, `not`, `is`, `like`, `notLike`, `iLike`, `notILike`,
-  `startsWith`, `endsWith`, `substring`, `regexp`, `notRegexp`, `iRegexp`, `notIRegexp`
-- **list:** `in`, `notIn`, `between`, `notBetween`, `contains`, `contained`, `overlap`, … (array-valued)
-- **combinators:** `and`, `or`, `any`, `all` (each takes a list of whole `where` objects)
+- **value:** `eq`, `ne`, `gt`, `gte`, `lte`, `lt`, `not`, `is`, `like`, `notLike`, `iLike`,
+  `notILike`, `startsWith`, `endsWith`, `substring`; `regexp`, `notRegexp`, `iRegexp`,
+  `notIRegexp` (opt-in via `enableRegexpOperators`, **Postgres only**)
+- **list:** `in`, `notIn`, `between`, `notBetween`, `contains`, `contained`, `overlap`,
+  `adjacent`, `strictLeft`, `strictRight`, `noExtendRight`, `noExtendLeft` (array/range
+  operators — **Postgres only**; a clear error is raised on other dialects)
+- **combinators:** `and`, `or` (each takes a list of whole `where` objects)
+
+**Dialect notes:**
+
+- **`iLike` / `notILike` on SQLite:** SQLite has no `ILIKE` operator, but its `LIKE` is
+  already case-insensitive for ASCII characters. The adapter transparently translates
+  `iLike` → `LIKE` and `notILike` → `NOT LIKE` on SQLite, so these operators work on
+  both dialects.
+- **`like` case sensitivity:** Postgres `LIKE` is case-sensitive; SQLite `LIKE` is
+  case-insensitive for ASCII. Use `iLike` for portable case-insensitive matching.
+- **Postgres-only operators** (regexp, array/range): using them on a non-Postgres dialect
+  raises `gqlize: the "<op>" operator requires the postgres dialect` instead of a raw SQL
+  error. The GraphQL schema itself stays dialect-independent.
 
 ```graphql
 # combine conditions
@@ -729,17 +744,36 @@ connection's name and the row's index, though the format is
 connection is rejected by another, and a malformed one raises `Invalid cursor`:
 
 ```graphql
-# page 1
+# page 1 — forward
 query { models { Post(first: 10) { edges { cursor node { id } } pageInfo { endCursor hasNextPage } } } }
 
 # page 2 — pass the previous page's cursor
 query { models { Post(first: 10, after: "eyJpZCI6..." ) { edges { cursor node { id } } } } }
+
+# backward — last 5 rows before a cursor
+query { models { Post(last: 5, before: "eyJpZCI6..." ) { edges { cursor node { id } } } } }
+
+# last N rows of the entire ordered set
+query { models { Post(last: 10) { edges { cursor node { id } } } } }
 ```
+
+**Forward pagination** (`first`, `first`+`after`, `after` alone) pages from the start of the
+ordered set, or from the position after a cursor. **Backward pagination** (`last`, `last`+`before`,
+`before` alone) pages from the end or from just before a cursor. `last` without `before` returns
+the last N rows of the total ordered set; `before` without `last` returns a default-sized page
+ending just before the cursor.
 
 `cursor` is `String!` and `pageInfo` is `PageInfo!` with `hasNextPage` / `hasPreviousPage` both
 `Boolean!`, so a paging loop needs no null checks on the values it drives off. `startCursor` and
 `endCursor` are still nullable — an empty page has no first or last edge to name — so guard the
 "is there another page" decision on `hasNextPage`, not on the cursor being present.
+
+**Page size bounds.** An absent `first`/`last` defaults to 100. A value above 1000 is clamped to
+1000. Both limits are in `@azerothian/utilize/utils/page-size`.
+
+**Default order.** When `orderBy` is absent or does not already end with the primary key, a PK ASC
+tiebreaker is appended automatically. This makes pagination deterministic on every dialect —
+including Postgres, where UPDATE can change a row's physical position.
 
 ### Relationships & eager loading
 
