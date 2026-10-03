@@ -38,6 +38,8 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/codecs/artifact.test.ts',
   '<rootDir>/__tests__/snapshot/load-runtime.test.ts',
   '<rootDir>/__tests__/snapshot/live-types.test.ts',
+  '<rootDir>/__tests__/column-types.test.ts',
+  '<rootDir>/__tests__/mutation-nested-verbs.test.ts',
 ];
 
 // Functional suites re-run against a schema that has been through the artifact
@@ -67,6 +69,8 @@ const ROUNDTRIP_SUITES = [
   '<rootDir>/__tests__/definition-field-args.test.ts',
   '<rootDir>/__tests__/codecs/integration.test.ts',
   '<rootDir>/__tests__/codecs/id-regressions.test.ts',
+  '<rootDir>/__tests__/column-types.test.ts',
+  '<rootDir>/__tests__/mutation-nested-verbs.test.ts',
 ];
 
 module.exports = {
