@@ -189,13 +189,12 @@ input GQLTQueryTaskWhere {
   itemId: GQLTQueryTaskWhereitemId
   or: [GQLTQueryTaskWhere]
   and: [GQLTQueryTaskWhere]
-  any: [GQLTQueryTaskWhere]
-  all: [GQLTQueryTaskWhere]
 }
 
 input GQLTQueryTaskWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -225,6 +224,7 @@ input GQLTQueryTaskWhereid {
 input GQLTQueryTaskWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -254,6 +254,7 @@ input GQLTQueryTaskWherename {
 input GQLTQueryTaskWheredone {
   eq: Boolean
   ne: Boolean
+  gt: Boolean
   gte: Boolean
   lte: Boolean
   lt: Boolean
@@ -283,6 +284,7 @@ input GQLTQueryTaskWheredone {
 input GQLTQueryTaskWhereitemId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -326,13 +328,12 @@ input GQLTQueryItemWhere {
   label: GQLTQueryItemWherelabel
   or: [GQLTQueryItemWhere]
   and: [GQLTQueryItemWhere]
-  any: [GQLTQueryItemWhere]
-  all: [GQLTQueryItemWhere]
 }
 
 input GQLTQueryItemWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -362,6 +363,7 @@ input GQLTQueryItemWhereid {
 input GQLTQueryItemWherelabel {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
