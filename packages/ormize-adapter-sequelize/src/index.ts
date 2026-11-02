@@ -502,8 +502,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
           autoPopulated,
           ignoreGlobalKey: attr.ignoreGlobalKey,
           // Opt-in that lets a pk/fk be set from client input (default: excluded
-          // to prevent mass-assignment — see isStructurallyWritable).
-          writable: attr.writable === true,
+          // to prevent mass-assignment — see isStructurallyWritable). Left
+          // undefined when unauthored, so an explicit `false` can still opt a
+          // column out of `writableForeignKeys`.
+          writable: typeof attr.writable === "boolean" ? attr.writable : undefined,
           // `args`/`resolve` are authored on the field and are meaningless to
           // Sequelize, which carries unknown attribute keys through `define`
           // onto `rawAttributes` untouched (the same escape hatch the two flags
