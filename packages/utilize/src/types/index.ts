@@ -667,6 +667,20 @@ export type GqlizeOptions = {
    */
   onScopeMiss?: ScopeMissBehaviour,
   /**
+   * Make every foreign key client-writable again, as it was in 6.x, without
+   * marking each column `writable: true`. Default: `false`.
+   *
+   * Read by the `Ormize` constructor, not by `createSchema`: the engine applies
+   * it in `getFields`, which is what the GraphQL inputs, the zod schemas and
+   * the runtime mass-assignment guard all read, so the three cannot disagree.
+   *
+   * Only plain foreign keys are affected. A key that is also a primary key (a
+   * join model's composite key) stays guarded, and a column authored with
+   * `writable: false` opts back out — use that for an owner/tenant key that
+   * must only ever be set by a scope. See {@link isStructurallyWritable}.
+   */
+  writableForeignKeys?: boolean,
+  /**
    * How primary/foreign keys are rendered as opaque ids and read back.
    * Default: `relayIdCodec()` — base64 `Type:id`, byte-identical to what every
    * previous version emitted.
@@ -821,7 +835,8 @@ export type DefinitionField = {
   /**
    * Opts a primary key or foreign key back into client-writable mutation input.
    * Both are excluded by default as a mass-assignment / IDOR guard — see
-   * {@link isStructurallyWritable}.
+   * {@link isStructurallyWritable}. `false` keeps a foreign key guarded even
+   * under `GqlizeOptions.writableForeignKeys`.
    */
   writable?: boolean;
   foreignTarget?: string;

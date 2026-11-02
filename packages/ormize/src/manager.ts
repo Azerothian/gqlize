@@ -178,6 +178,8 @@ export default class Ormize<
    */
   private permission: Permission | undefined;
   private onScopeMiss: ScopeMissBehaviour;
+  /** See `GqlizeOptions.writableForeignKeys`; applied in `getFields`. */
+  private writableForeignKeys: boolean;
   /**
    * The row-level scope, re-imposed on the adapter's own model hooks (§13).
    *
@@ -218,6 +220,7 @@ export default class Ormize<
     this.defaultAdapter = undefined;
     this.permission = options.permission;
     this.onScopeMiss = options.onScopeMiss || "empty";
+    this.writableForeignKeys = options.writableForeignKeys === true;
     // Built unconditionally: whether a scope is configured is asked at call
     // time, so a `setPermission` after `initialise()` reaches the models that
     // already exist. Field initialisers have all run by here, so `this.host`
@@ -796,7 +799,20 @@ export default class Ormize<
   getFields = (defName: string) => {
     const adapter = this.getModelAdapter(defName);
     //TODO: add cross adapter fields
-    return adapter.getFields(defName);
+    const fields = adapter.getFields(defName);
+    if (!this.writableForeignKeys || !fields) {
+      return fields;
+    }
+    // A fresh copy per call, never cached and never written back: adapters
+    // memoise this object and the valkey adapter keeps mutating its own during
+    // relationship wiring, so either would leave a stale or shared answer.
+    return Object.keys(fields).reduce((o, key) => {
+      const field = fields[key];
+      o[key] = field.foreignKey && !field.primaryKey && field.writable === undefined
+        ? {...field, writable: true}
+        : field;
+      return o;
+    }, {} as typeof fields);
   }
   /**
    * Associations for a model, merging the adapter's native ones with the

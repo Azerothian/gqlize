@@ -1166,6 +1166,24 @@ Delete with a variable (the delete arg type is `[GQLTQuery{Model}Where]`):
 mutation ($where: [GQLTQueryPostWhere]) { models { Post(delete: $where) { id } } }
 ```
 
+#### Writing primary & foreign keys
+
+Primary and foreign keys are **not** on the create/update inputs by default (a client could
+otherwise forge an id or reassign a record's owner). Set a relationship through its
+[nested input](#nested-relationship-writes) instead, or opt keys back in:
+
+```ts
+define: { roleId: { type: DataTypes.INTEGER, allowNull: true, writable: true } } // one column
+new Ormize({ writableForeignKeys: true })                                         // every foreign key
+```
+
+`writableForeignKeys` covers plain foreign keys only; primary keys still need `writable: true`, and
+a column with `writable: false` stays guarded. A written key takes the target's global id:
+
+```graphql
+mutation { models { User(create: { name: "Ada", roleId: "<Role global id>" }) { id roleId } } }
+```
+
 ### Restoring soft-deleted rows
 
 A [paranoid](#soft-delete-paranoid) model also gets a `restore` argument, which clears `deletedAt`

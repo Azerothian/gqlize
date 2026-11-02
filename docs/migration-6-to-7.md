@@ -175,7 +175,17 @@ excluded from create and update inputs by default.** A field opts back in explic
 ```
 
 This is deliberately independent of your `permission` config — a permissive predicate does not
-re-enable it. `writable: true` is the only opt-in.
+re-enable it. The opt-ins are structural: `writable: true` per column, or, to restore the 6.x
+behaviour for every foreign key at once, `writableForeignKeys` on the `Ormize` constructor:
+
+```ts
+const orm = new Ormize({ writableForeignKeys: true });
+```
+
+That covers plain foreign keys only. Primary keys, including a join model's composite foreign-key
+primary key, still need `writable: true`. A column authored with `writable: false` stays guarded,
+which is what you want for an owner/tenant key that only a scope should set. The written value is
+the target's global id, the same value the field returns.
 
 Columns marked `autoPopulated` are **not** excluded: in this codebase `autoPopulated` also covers any
 column with a `defaultValue`, which is legitimate client input. Auto-increment primary keys are
@@ -184,7 +194,7 @@ already covered by the primary-key rule.
 > **Watch for:** a mutation that used to set a relationship by writing `taskId` directly now silently
 > ignores that field. Set relationships through the nested relationship inputs instead (see
 > [guide.md § Nested relationship writes](guide.md#nested-relationship-writes)), or add
-> `writable: true` if you genuinely want the raw FK exposed.
+> `writable: true` (or `writableForeignKeys`) if you genuinely want the raw FK exposed.
 
 ### Pagination is bounded: 100 by default, 1000 maximum
 
@@ -808,7 +818,7 @@ Not required for migration, but this is what the split bought:
 - [ ] Packages renamed; `Database` → `Ormize` from `@azerothian/ormize`.
 - [ ] Deep `lib/...` imports replaced with package-root or declared subpath imports.
 - [ ] Mutations that wrote primary keys or foreign keys audited — either moved to nested relationship
-      inputs or opted in with `writable: true`.
+      inputs or opted in with `writable: true` / `writableForeignKeys`.
 - [ ] Callers that relied on unpaginated lists updated to page explicitly.
 - [ ] `enableRegexpOperators: true` set if you use `$regexp` and friends.
 - [ ] `where` / `orderBy` usage checked against your permission config.
