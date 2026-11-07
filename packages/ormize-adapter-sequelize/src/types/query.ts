@@ -90,7 +90,7 @@ export type ListArgs = {
  * the contract declares it: the hook name selects the value's shape, so neither
  * it nor the return can be narrowed here.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches OrmAdapter's own `runHook` field signature verbatim (see utilize/src/types/index.ts), which is deliberately this permissive
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches `AdapterListRequest.runHook`'s signature verbatim (see utilize/src/types/selection.ts), which is deliberately this permissive
 export type RunHook = (defName: string, hookName: string, value: any, ...args: any[]) => Promise<any>;
 
 /** An association prefix in an ORDER BY entry — Sequelize's `{model, as}` form. */

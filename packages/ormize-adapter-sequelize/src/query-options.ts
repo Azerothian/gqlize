@@ -312,10 +312,19 @@ export async function processListArgsToOptions(
   } = request as AdapterListRequest & { runHook?: RunHook };
   const args = (request.args || {}) as ListArgs;
 
+  // A narrowed selection still has to carry the columns it is sorted by. With a
+  // joined `hasMany` and a limit, Sequelize puts the root in a subquery and orders
+  // the outer query by `Model.column`, which fails unless the subquery selected
+  // it. Only the root's own named columns: an include's order is prefixed with
+  // its model, and a computed sort is an expression.
+  const sortColumns = (args.orderBy || [])
+    .map((entry) => entry[0])
+    .filter((column): column is string => typeof column === "string");
+  const selected = selectedFields && sortColumns.length > 0 ? [...selectedFields, ...sortColumns] : selectedFields;
   // Clone rather than alias: `selectedAttributes` mutates in place (unshift), so
   // aliasing a caller-provided `defaultOptions.attributes` would accumulate
   // entries across calls.
-  let attributes = selectedAttributes(host, defName, selectedFields, [...(defaultOptions.attributes || [])]);
+  let attributes = selectedAttributes(host, defName, selected, [...(defaultOptions.attributes || [])]);
   if (host.hasInlineCountFeature()) {
     attributes = withInlineCount(host, attributes);
   }

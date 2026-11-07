@@ -16,14 +16,16 @@ graphql-types + utilize  →  ormize  →  gqlize       (GraphQL schema, CLI, sc
                                     →  nestize      (NestJS REST + OpenAPI, uses ormize-zod4)
                                     →  temporalize  (Temporal activities/workers)
 adapters: ormize-adapter-sequelize (reference), ormize-adapter-valkey
+read-cache stores: MemoryCacheStore (in ormize), ormize-cache-ioredis
 ```
 
 | Path | Role |
 | --- | --- |
-| `packages/utilize` | GraphQL-free shared foundation: types (`Definition`, `OrmAdapter`, …), permission gates (`src/gate.ts`), role-based permissions, global-key helpers. |
-| `packages/ormize` | Backend manager: definitions, adapters, models, hooks, scopes, relationship mutations, cross-adapter transactions (`src/manager.ts` is the core). |
+| `packages/utilize` | GraphQL-free shared foundation: types (`src/types/`, one file per theme, re-exported from `types/index.ts`), permission gates (`src/gate.ts`), role-based permissions, global-key helpers. |
+| `packages/ormize` | Backend manager: definitions, adapters, models, hooks, scopes, relationship mutations, cross-adapter transactions. `src/manager.ts` is the `Ormize` class; the work it delegates lives in `src/engine/`. |
 | `packages/gqlize` | `createSchema(orm, options)`; builders in `src/graphql/create-*.ts`, resolvers in `src/graphql/resolvers/`, artifact build/load in `src/graphql/snapshot/`, CLI in `src/cli/`. |
-| `packages/ormize-adapter-*` | Data-source implementations. The sequelize adapter implements `GqlizeAdapter` from gqlize. |
+| `packages/ormize-adapter-*` | Data-source implementations. The sequelize adapter implements `GqlizeAdapter` from gqlize; its `src/index.ts` is a thin class over `reads.ts`, `writes.ts`, `model-creation.ts` and siblings. |
+| `packages/ormize-cache-ioredis` | Redis/Valkey `CacheStore` for the read cache (`ormize/src/read-cache/`). |
 | `packages/test-fixtures` | Private. Shared model definitions plus the SQLite/PGlite test DB helper (`src/dialect.ts`). Never published. |
 | `examples/*` | Runnable consumers. `gqlize-basic/generated/` is committed and diffed by CI. |
 | `tools/lint` | ESLint flat config and the TypeScript the linter runs on. |
@@ -46,8 +48,17 @@ pnpm --filter @azerothian/example-gqlize-basic schema:check   # CI schema-drift 
 To run one package or one file:
 
 ```bash
-pnpm --filter @azerothian/gqlize test -- __tests__/mutation.test.ts
-pnpm --filter @azerothian/gqlize test -- __tests__/mutation.test.ts --selectProjects sqlite
+pnpm --filter @azerothian/gqlize test -- __tests__/mutation-crud.test.ts
+pnpm --filter @azerothian/gqlize test -- __tests__/mutation-crud.test.ts --selectProjects sqlite
+```
+
+The read-cache benchmark is opt-in and not part of `pnpm test`:
+
+```bash
+pnpm --filter @azerothian/gqlize exec jest --selectProjects sqlite \
+  --testMatch '**/__tests__/bench/*.bench.ts' --coverage=false
+pnpm --filter @azerothian/ormize-cache-ioredis exec jest \
+  --testMatch '**/__tests__/bench/*.bench.ts' --coverage=false
 ```
 
 CI (`.github/workflows/ci.yml`) runs typecheck → lint → build → test → schema drift. Do them in that
@@ -99,7 +110,57 @@ order: lint needs a program that compiles.
 - **Cyclic test fixtures.** `gqlize` and `ormize` tests import the sequelize adapter, but they can't
   declare it as a dependency because that would make a cycle. `turbo.json` lists its `src/` as a hash
   input instead. Copy that pattern if you add a similar edge.
+- **Read cache invalidation.** The read cache (`ormize/src/read-cache/`) can only invalidate writes it
+  sees: `mutationEntry` in `ormize/src/engine/mutations.ts` and the adapter's `after*` write hooks
+  (`WRITE_HOOKS` in `engine/constants.ts`, applied in `engine/hooks.ts`). A new write path outside both
+  has to call `readCache.invalidate`, or cached reads stay stale until TTL.
+- **Engine hosts stay private.** The `Ormize` class hands `src/engine/*` a private `engine` facade, not
+  `this`. Its fields are getters over the manager's private state. Two things depend on that:
+  - The permission bag and the §13 scope hooks stay `private`. Widening them so `this` satisfies a host
+    interface would let callers bypass `setPermission`'s re-audit, or replace hooks that must run last.
+  - A hook keeps its host for the life of the process. A host that *copies* state, instead of reading
+    it through a getter, freezes it at model creation. A later `setPermission` would then never reach
+    the hooks, and `scope-enforcement.test.ts` pins that it does.
+
+  Add what a new engine module needs to that facade, as a getter or a delegating function.
+- **Cache key format.** `cacheEntryKey` (`utilize/src/utils/cache-key.ts`) and the `LOOKUP` Lua script
+  in `ormize-cache-ioredis` build the same entry key independently. Change both together, or the Redis
+  store never hits.
 - **Lint ceiling.** Warnings are a ratchet. Never raise the limit; fix the code or lower it.
+
+## Code layout
+
+Keep every file under 1000 lines where it can be helped, tests included. When a file grows past that,
+split it by concern into modules a reader can find by name. Don't split it into numbered parts.
+
+- **Classes stay thin.** A large class (`Ormize`, `SequelizeAdapter`) keeps its state and its public
+  members. Each public member delegates to a free function in a sibling module, and that function
+  takes a narrow host interface, as `ormize/src/engine/*`, `sequelize/src/query-options.ts` and
+  `reads.ts` do. Public members keep their name and kind: an arrow property stays an arrow property,
+  because callers pass them around detached.
+- **Type barrels.** `utilize/src/types/index.ts` only re-exports the themed files beside it
+  (`adapter.ts`, `definitions.ts`, `selection.ts`, `options.ts`, `cache.ts`, `codecs.ts`,
+  `relationships.ts`, `primitives.ts`). Import from `types/index` and add new types to the themed
+  file they belong in.
+- **Test files.** Split a test file by `describe` topic. Put shared setup in `__tests__/helper/` (for
+  example `ormize/__tests__/helper/scope-fixtures.ts`). Every new file has to be listed wherever the
+  old one was: `POSTGRES_SUITES` / `ROUNDTRIP_SUITES` in the package's `jest.config.js`.
+- **Headers.** Every module opens with a short comment saying what it holds and how it relates to its
+  neighbours. Don't record where code was moved from: git has that, and the note goes stale.
+
+Where the core logic lives:
+
+| Concern | File |
+| --- | --- |
+| `Ormize` public API, state, wiring of the facades | `ormize/src/manager.ts` |
+| List/relationship reads, `resolveFindAll`, include plans, paging | `ormize/src/engine/resolution.ts` |
+| `process*` mutations, `mutationEntry`, instance transforms | `ormize/src/engine/mutations.ts` |
+| Nested relationship verbs | `ormize/src/relationship-mutations.ts` |
+| Hook composition (`createHook`, `runHook`) and hook lists | `ormize/src/engine/hooks.ts`, `engine/constants.ts` |
+| Row scope: engine side / model-hook backstop / audit | `ormize/src/engine/scope-bridge.ts`, `scope-hooks.ts`, `scope-audit.ts` |
+| Relationship wiring and cross-adapter join models | `ormize/src/engine/relationships.ts`, `cross-adapter.ts` |
+| Read-cache tagging / the cache itself | `ormize/src/engine/read-cache-bridge.ts`, `read-cache/` |
+| Sequelize reads / writes / model creation | `ormize-adapter-sequelize/src/reads.ts`, `writes.ts`, `model-creation.ts` |
 
 ## Code style
 

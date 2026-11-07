@@ -41,6 +41,7 @@ Every example below is drawn from the behaviour exercised in the test suite
 11. [Multiple data sources](#11-multiple-data-sources)
 12. [Transactions & async context](#12-transactions--async-context)
 13. [The Valkey / Redis adapter](#13-the-valkey--redis-adapter)
+14. [Read cache](#14-read-cache)
 
 ---
 
@@ -1887,6 +1888,79 @@ the Valkey filter DSL — plain equality `{ name: "x" }` or `{ name: { eq: "x" }
 **Limitations:** composite multi-field indexes and cross-adapter relationships (a relation whose
 target lives on a different adapter) are not supported. See the runnable
 [`examples/valkey-basic`](../examples/valkey-basic).
+
+---
+
+## 14. Read cache
+
+An optional LRU cache in front of adapter reads: list fetches (eager-loaded relations included) and
+`total` counts, for GraphQL, REST and anything else that reads through ormize. It is off until you
+pass a store.
+
+```ts
+import { Ormize, MemoryCacheStore } from "@azerothian/ormize";
+
+const orm = new Ormize({
+  cache: {
+    store: new MemoryCacheStore({ maxEntries: 5_000, maxSize: 128 * 1024 * 1024 }),
+    ttl: 30_000,                  // ms, default 60 000
+    maxEntrySize: 512 * 1024,     // bytes; bigger results are returned but not stored
+    exclude: ["AuditLog"],        // or ({defName, operation, context}) => boolean
+  },
+});
+```
+
+To share the cache, and its invalidations, across processes, use the Redis/Valkey store:
+
+```ts
+import { IORedisCacheStore } from "@azerothian/ormize-cache-ioredis";
+
+const orm = new Ormize({
+  cache: { store: new IORedisCacheStore(new IORedis(url), { prefix: "app-cache", maxEntries: 50_000 }) },
+});
+```
+
+**What you get for free.**
+
+- *Size limits.* Each store evicts the least recently used entry past `maxEntries` or `maxSize`
+  (bytes). `maxEntrySize` keeps one huge page from flushing everything else.
+- *Deduplication.* Identical reads that arrive while one is in flight share its adapter call.
+  `dedupe: false` turns this off. Every caller still gets its own rows, so mutating them is safe.
+- *Invalidation.* Every mutation, and every write through `orm.models.X`, invalidates the models it
+  could have touched. Any cached read that included one of those models (as the root or eager-loaded)
+  misses next time. Inside `orm.transaction(...)` the invalidation is repeated after the commit.
+- *Security.* A row scope (`permission.scope`) is merged into the filter before the key is built, so
+  two users with different scopes never share an entry. Reads inside a transaction are never cached.
+
+**Exclusions.** Keep a model out with `exclude`, or on the definition itself:
+
+```ts
+{ name: "Session", define: { ... }, cache: false }
+{ name: "Country", define: { ... }, cache: { ttl: 24 * 60 * 60 * 1000 } }  // per-model TTL
+```
+
+**Hooks.** A model with its own `beforeFind`/`afterFind`/`beforeCount` hooks (on the model or
+global) is **not** cached by default. Those hooks run inside the adapter call, so on a hit they
+wouldn't run, and the stored result would be whatever they produced for whoever missed first. If
+they give every caller the same answer, opt in with `hooks: "cache"` (all models) or a `cache: {}`
+object on the definition. If they depend on the caller in a way the filter doesn't show, also pass
+`vary`:
+
+```ts
+cache: { store, hooks: "cache", vary: (context) => context.user?.tenantId }
+```
+
+**Writes ormize can't see.** Raw SQL, another service writing the same database, or a userland
+`post.addTag(tag)` on a join table with no definition of its own are only caught by the TTL. Tell
+the cache yourself:
+
+```ts
+await orm.readCache?.invalidate(["Post", "Tag"]);
+await orm.readCache?.clear();
+```
+
+A failing store never fails a query. The read goes to the database and the error goes to
+`onError` (default `console.warn`).
 
 ---
 

@@ -136,6 +136,27 @@ describe("exposed instance methods — projection", () => {
   });
 });
 
+describe("exposed instance methods — sorting under a narrowed selection", () => {
+  it("keeps the sort column when only a relation-backed method is selected", async() => {
+    // A joined `hasMany` plus a limit puts the root in a subquery, and the outer
+    // ORDER BY names `Person.lastName`. Narrowing to the method's own columns used
+    // to leave it out of the subquery: "no such column: Person.lastName".
+    const instance = await personInstance();
+    const {Pet} = instance.models;
+    const [john, ada, zoe] = await people(instance);
+    await Pet.create({name: "Rex", personId: john.get("id")});
+    await Pet.create({name: "Tom", personId: ada.get("id")});
+    await Pet.create({name: "Kit", personId: zoe.get("id")});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: `{
+      models { Person(orderBy: lastNameASC) { edges { node { petNames } } } }
+    }`});
+    validateResult(result);
+    expect(resultData<{models: {Person: {edges: {node: {petNames: string}}[]}}}>(result)
+      .models.Person.edges.map((e) => e.node.petNames)).toEqual(["Kit", "Tom", "Rex"]);
+  });
+});
+
 describe("exposed instance methods — finding the implementation (#72)", () => {
   // Top-level `instanceMethods`, plus an `options.instanceMethods` — empty or
   // not. The adapter used to install one bag *or* the other, so every

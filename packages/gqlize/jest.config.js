@@ -14,7 +14,8 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/query.test.ts',
   '<rootDir>/__tests__/query-eager.test.ts',
   '<rootDir>/__tests__/query-count.test.ts',
-  '<rootDir>/__tests__/mutation.test.ts',
+  '<rootDir>/__tests__/mutation-crud.test.ts',
+  '<rootDir>/__tests__/mutation-complex.test.ts',
   '<rootDir>/__tests__/mutation-relationships.test.ts',
   '<rootDir>/__tests__/relay.test.ts',
   '<rootDir>/__tests__/permission.test.ts',
@@ -44,6 +45,8 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/where-operators.test.ts',
   '<rootDir>/__tests__/relationship-matrix.test.ts',
   '<rootDir>/__tests__/writable-foreign-keys.test.ts',
+  '<rootDir>/__tests__/read-cache.test.ts',
+  '<rootDir>/__tests__/read-cache-equivalence.test.ts',
 ];
 
 // Functional suites re-run against a schema that has been through the artifact
@@ -56,7 +59,8 @@ const ROUNDTRIP_SUITES = [
   '<rootDir>/__tests__/query.test.ts',
   '<rootDir>/__tests__/query-eager.test.ts',
   '<rootDir>/__tests__/query-count.test.ts',
-  '<rootDir>/__tests__/mutation.test.ts',
+  '<rootDir>/__tests__/mutation-crud.test.ts',
+  '<rootDir>/__tests__/mutation-complex.test.ts',
   '<rootDir>/__tests__/mutation-relationships.test.ts',
   '<rootDir>/__tests__/relay.test.ts',
   '<rootDir>/__tests__/permission.test.ts',
@@ -79,6 +83,8 @@ const ROUNDTRIP_SUITES = [
   '<rootDir>/__tests__/paging.test.ts',
   '<rootDir>/__tests__/relationship-matrix.test.ts',
   '<rootDir>/__tests__/writable-foreign-keys.test.ts',
+  '<rootDir>/__tests__/read-cache.test.ts',
+  '<rootDir>/__tests__/read-cache-equivalence.test.ts',
 ];
 
 module.exports = {

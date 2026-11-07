@@ -49,10 +49,14 @@ export function requestFrom(options: AdapterQueryOptions | undefined): RequestCo
  *
  * Reaching a row is a read whatever happens next, so the read scope is ANDed on
  * top of the operation's own.
+ *
+ * `includeDeleted` is for a restore. The row it reaches is soft-deleted by
+ * definition, so a lookup that skips deleted rows never finds it and refuses
+ * every restore, in scope or not.
  */
 export async function writable(
   host: AdapterRoutingHost, defName: string, adapter: OrmAdapter, row: AdapterRow,
-  operation: ScopeOperation, options: AdapterQueryOptions | undefined,
+  operation: ScopeOperation, options: AdapterQueryOptions | undefined, includeDeleted = false,
 ): Promise<boolean> {
   const request = requestFrom(options);
   let where = await host.scopedWhere(defName, "read", request, undefined, options);
@@ -74,6 +78,9 @@ export async function writable(
     ...(options?.transaction !== undefined ? {transaction: options.transaction} : {}),
     where: filterMerger(host, defName)(pk, value, true, where),
     limit: 1,
+    // Spelled the way `relationship-mutations` asks for soft-deleted rows. A
+    // backend that doesn't soft delete ignores it.
+    ...(includeDeleted ? {paranoid: false} : {}),
   }));
   if (!found) {
     host.scopeMiss(defName, operation);

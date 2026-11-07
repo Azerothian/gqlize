@@ -1,6 +1,6 @@
 import { DataTypes } from "sequelize";
 import { Ormize } from "@azerothian/ormize";
-import type { Definition } from "@azerothian/utilize";
+import type { Definition, GqlizeOptions } from "@azerothian/utilize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
 
@@ -62,8 +62,8 @@ const TaskDef: Definition = {
 };
 
 /** Build a fresh, initialised & synced ormize (Item hasMany Task). */
-export async function buildOrm(): Promise<Ormize> {
-  const orm = new Ormize();
+export async function buildOrm(options?: GqlizeOptions): Promise<Ormize> {
+  const orm = new Ormize(options);
   const adapter = new SequelizeAdapter({}, await dialectConfig());
   trackConnection(adapter, { suite: true });
   orm.registerAdapter(adapter, testDialect());

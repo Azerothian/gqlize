@@ -76,12 +76,13 @@ which now lives in `gqlize`) and is registered on an `Ormize` instance.
 
 | Package | Path | Responsibility |
 | --- | --- | --- |
-| [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise(options?)`/`sync`/`reset`, relationship wiring, the graphql-free resolution engine (`resolveFindAll`/`process*`/`resolve{Many,Single}Relationship`), and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
+| [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`, with its engine in `src/engine/`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise(options?)`/`sync`/`reset`, relationship wiring, the graphql-free resolution engine (`resolveFindAll`/`process*`/`resolve{Many,Single}Relationship`), and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
 | [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | GraphQL layer: `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema. Key files: `src/graphql/*` (builders), `src/graphql/resolvers/*` (the resolver registry), `src/graphql/snapshot/*` (serialisation), `src/cli/*` (the `gqlize` binary), `src/types/gqlize-adapter.ts` (the `GqlizeAdapter` contract). |
 | [`@azerothian/ormize-zod4`](../packages/ormize-zod4) | `packages/ormize-zod4` | Zod v4 projection: `generateZodSchemas(orm, options)` → permission-gated `{ entity, create, update }` schemas per model. |
 | [`@azerothian/nestize`](../packages/nestize) | `packages/nestize` | NestJS REST + Swagger projection: `NestizeModule.forRoot(orm, options)` + `buildOpenApiDocument`/`setupSwagger`. Drives the graphql-free ormize engine over REST; request bodies validated with the ormize-zod4 schemas. |
 | [`@azerothian/ormize-adapter-sequelize`](../packages/ormize-adapter-sequelize) | `packages/ormize-adapter-sequelize` | Reference `GqlizeAdapter` implementation over Sequelize 6. Same `SequelizeAdapter` default export. Entry: `src/index.ts`; `src/type-mapper.ts`, `src/utils/where-ops.ts`, `src/utils/where-operators.ts`. Typesystem binding in `src/types/orm.ts` (`defineModel`, `SequelizeModel`, `IORSequelizeModel`). |
 | [`@azerothian/utilize`](../packages/utilize) | `packages/utilize` | Shared, GraphQL-free foundation: `OrmAdapter` (backend adapter contract), `Definition`, `DefinitionField*`, `Association`, `Relationship`, `WhereOperators`, `Selection`, `DataType`/`DataTypes`, options/cache types; the generic definition typesystem (`src/types/orm.ts`: `ITypedDefinition`, `IORModel`); the `Events` enum; permission gate helpers + `createRoleBasedPermissions` (`src/gate.ts`, `src/permissions.ts`); and utilities (`logger`, `unique`, `word`, `waterfall`). |
+| [`@azerothian/ormize-cache-ioredis`](../packages/ormize-cache-ioredis) | `packages/ormize-cache-ioredis` | `IORedisCacheStore`: a Redis/Valkey `CacheStore` for the ormize read cache, shared across processes. LRU index and eviction in Lua scripts. `ioredis` is an optional peer. |
 | [`@azerothian/graphql-types`](../packages/graphql-types) | `packages/graphql-types` | Custom GraphQL scalars (`json`, `date`, `bigint`, `ip`, `upload`) and `createQueryType`. A local copy of `@vostro/graphql-types`. |
 
 > **Runnable examples:** [`examples/gqlize-basic`](../examples/gqlize-basic) (GraphQL) and
@@ -271,9 +272,10 @@ Internal resolution methods invoked by generated resolvers:
 - `processCreate` / `processUpdate` / `processDelete` — mutation executors; run `processInputs`, translate global IDs (`replaceIdDeep`), fire the matching `Events.MUTATION_*` hook, delegate to adapter functions, then `processRelationshipMutation`.
 - `processRelationshipMutation` — the nested-mutation engine (see §5).
 
-> These internal resolution methods are invoked by gqlize's generated resolvers; they live in
-> `packages/ormize/src/manager.ts` (the `Ormize` class is backend-only) and are called from the
-> GraphQL layer in `packages/gqlize`.
+> These internal resolution methods are invoked by gqlize's generated resolvers. They are members of
+> the `Ormize` class (`packages/ormize/src/manager.ts`, backend-only), implemented in
+> `packages/ormize/src/engine/` (`resolution.ts` for reads, `mutations.ts` for writes), and called
+> from the GraphQL layer in `packages/gqlize`.
 
 ---
 
@@ -294,12 +296,86 @@ Page size is always clamped: absent → 100 (DEFAULT\_PAGE\_SIZE); above 1000 �
 
 A primary-key ASC tiebreaker is automatically appended when `orderBy` does not already end with the PK. This ensures deterministic pagination on all dialects — including Postgres, where an UPDATE may physically relocate a row. The tiebreaker is applied at the adapter level (`processListArgsToOptions`) for root and per-parent queries, and in `processIncludeStatement` for separate includes.
 
+### Read cache (`options.cache`)
+
+`new Ormize({cache: {store, ...}})` puts an LRU cache in front of the adapter reads `resolveFindAll`
+makes: the row fetch and every `count`. That covers every surface (GraphQL, REST, Temporal) and
+eager-loaded relations, since those arrive in the root fetch. It is off unless `cache` is set. The
+implementation is `packages/ormize/src/read-cache/`.
+
+| Option | Default | |
+| --- | --- | --- |
+| `store` | (required) | A `CacheStore`: `MemoryCacheStore` (ormize, per process) or `IORedisCacheStore` (`@azerothian/ormize-cache-ioredis`, shared). |
+| `ttl` | `60000` | Entry lifetime in ms. A definition's `cache.ttl` overrides it. |
+| `maxEntrySize` | 1 MiB | A larger serialised result is returned but not stored. `0` means no limit. |
+| `dedupe` | `true` | Concurrent identical reads share one adapter call. Each caller decodes its own copy. |
+| `exclude` | none | Model names, or `(request) => boolean` over `{defName, operation, context}`. |
+| `hooks` | `"bypass"` | `"cache"` also caches models with their own find/count hooks (see below). |
+| `vary` | none | `(context) => value`, mixed into the key, to partition by caller. |
+| `onError` | `console.warn` | Receives store failures. A failing store never fails a read. |
+
+Store-level limits (`maxEntries`, `maxSize` in bytes) are options of the store, which evicts the
+least recently used entry to stay within them.
+
+**Key.** The key is a SHA-256 of a canonical form of the *adapter-native* options, taken after the row
+scope, `definition.before` and every exposed-method `input` hook have run. Anything that changes
+which rows match is therefore in it. Symbol keys (Sequelize `Op`) and Sequelize helper objects are
+kept. `getGraphQLArgs`, `logging` and `benchmark` are left out. A model class is named. Any other
+function, or a cycle, makes the read uncacheable. `vary(context)` and the generations of the read's
+tags are appended.
+
+**Tags and invalidation.** A read's tags are its model, every eager-loaded target, and their join
+models. Invalidation is generational: `store.invalidate(tags)` increments a counter per tag, so keys
+built from the old counters are never looked up again and age out. Invalidation happens:
+
+- after every `process*` mutation, for the model plus all of its relationship targets and join models
+  (nested verbs write those), including when the mutation throws;
+- from the model hooks `afterCreate`/`afterUpdate`/`afterDestroy`/`afterRestore`/`afterSave`/
+  `afterUpsert` and their bulk forms, on the model that fired them. This catches writes made straight
+  through `orm.models.X`;
+- again after the commit, when the write was part of a transaction (`OrmizeTransaction.afterCommit`,
+  or the native transaction's `afterCommit` for a caller-supplied one). The first increment stops new
+  reads hitting old entries. The second removes anything a reader outside the transaction cached
+  before the commit made the write visible.
+
+Writes ormize never sees (raw SQL, another service, a userland association write to a join table
+with no definition) are only caught by TTL, or by calling `orm.readCache.invalidate([...])`.
+
+**Bypass.** A read is never cached, and nothing is stored, when it runs inside a transaction (ambient
+coordinator or `options.transaction`), when its model is excluded or has `cache: false`, or when its
+options can't be fingerprinted. It is also skipped when its model has its own `beforeFind`,
+`beforeFindAfterExpandIncludeAll`, `beforeFindAfterOptions` or `afterFind` (findAll) or
+`beforeCount` (count) hooks, defined on the model or globally, unless `hooks: "cache"` or the
+definition has a `cache` object. Those hooks run inside the adapter call, so on a hit they don't run
+and their output from the miss is what was stored. `afterCount` and an included model's `afterFind`
+are fired by ormize after the read, so they run on every hit.
+
+**Rows.** Rows are cached only for an adapter that implements the optional `snapshotRows` /
+`restoreRows` pair (§9). Otherwise only counts are cached. Values go through a JSON codec that keeps
+`Date`, `Buffer` and `bigint`.
+
+**Lookup.** A store may implement the optional `lookup(shape, tags)`, which reads the generations
+and the entry in one call. Without it a read is `versions` then `get`, which for a networked store is
+two round trips. Either way the entry key is `cacheEntryKey(shape, versions)`
+(`@azerothian/utilize/utils/cache-key`), `shape:v1.v2…`, kept plain so a store can build it
+server-side. `IORedisCacheStore` implements `lookup` in Lua, which halves the cost of a hit (0.55 ms
+to 0.29 ms against a local Redis).
+
+**Oversized results.** A result over `maxEntrySize` is returned and not stored, and its shape (the
+key without generations) is remembered for one TTL. Until then a miss on that shape skips the
+snapshot and encode, which are most of a miss's overhead, unless a deduplicated follower is waiting
+for its own copy.
+
+**Benchmark.** `packages/gqlize/__tests__/bench/read-cache.bench.ts` (opt-in, see AGENTS.md) prints
+median latency for uncached, missed and hit reads, the cost of each phase, cold-burst deduplication
+and write overhead.
+
 ---
 
 ## 4. Model Definition Schema
 
 A **Definition** is the plain object passed to `db.addDefinition`. The full type lives in
-`packages/utilize/src/types/index.ts` (`Definition`). The canonical, full-featured
+`packages/utilize/src/types/definitions.ts` (`Definition`). The canonical, full-featured
 example is `packages/gqlize/__tests__/helper/models/task.ts`.
 
 ### Fields
@@ -319,6 +395,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `deprecations` | Central deprecation map, mirroring `comments`: `deprecations.{fields,classMethods,instanceMethods}[key] = reason`. Wins over a `deprecated` written on the declaration itself, which is what lets a definition deprecate something it did not author — a relationship, an inherited column. See [Deprecation](#deprecation). |
 | `before` / `after` | gqlize-level transforms discriminated by the `Events` enum (see §8). |
 | `hooks` | Sequelize-style lifecycle `HookMap`. Merged with `options.hooks`; a hook named in both runs both, top-level first. |
+| `cache` | This model's part in the read cache (§3). `false` keeps every read of it out. `{ttl}` overrides the cache-wide TTL, and also opts in a model that has its own find/count hooks. |
 | `queries` | **Sequelize adapter only.** Raw create/drop DDL registered against the definition (`{ [name]: { create, drop } }`, each a string or a thunk). `initialise()` replays every `create`, and `reset()` replays the `drop`s then the `create`s. This is the adapter's only I/O in `initialise()`, which is why `initialise({ddl: false})` — the offline schema build — turns it off. |
 | `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
 
@@ -379,7 +456,7 @@ export default {
 
 ### Exposed methods
 
-An entry under `expose` is an `ExposedMethod` (`packages/utilize/src/types/index.ts`). Beyond
+An entry under `expose` is an `ExposedMethod` (`packages/utilize/src/types/definitions.ts`). Beyond
 the schema shape (`type`, `args`) and the hooks (`before`, `after`) every target understands,
 an entry may declare what the method *needs loaded* and how it *shapes the query it is selected
 in*. Those keys are read by `packages/utilize/src/exposed-methods.ts` — GraphQL-free, so
@@ -424,7 +501,7 @@ Rules the surface holds to:
 
 `expose.instanceMethods.mutations` is the write-side target: pre-commit transforms, surfaced as
 the mutation's `apply` argument (§5) and run by `applyInstanceTransforms`
-(`packages/ormize/src/manager.ts`) after `definition.before` and immediately before the adapter
+(`packages/ormize/src/engine/mutations.ts`) after `definition.before` and immediately before the adapter
 persists. On create the transform's `this` is the pending values object; on update it is the
 live row, wrapped in a recording proxy so direct writes (`this.name = …`) are captured and
 persisted alongside a returned partial — the Sequelize adapter's update path persists the values
@@ -571,7 +648,7 @@ inputs. The top-level model mutation exposes `create` / `update` / `delete` / **
 input object with one field per `expose.instanceMethods.mutations` entry, typed by that entry's
 `args` (or `Boolean` when it declares none), gated by `permission.mutationInstanceMethods`. For each
 association it also emits nested sub-fields, enabling deep writes, applied by
-`processRelationshipMutation` (`packages/ormize/src/manager.ts`) via the Sequelize association
+`processRelationshipMutation` (`packages/ormize/src/relationship-mutations.ts`) via the Sequelize association
 accessors (recursion depends on the graphql patch, see §12). The sub-fields per association type:
 
 - **hasMany / belongsToMany:** `create` (new records), `update` (`where`+`input` pairs),
@@ -589,7 +666,7 @@ found records** — no field write, no create/update/delete; scalar fields in `i
 Nested `select` is **relationship-scoped** (`source[accessors.get]({ where })`, firing
 `beforeFind`/`afterFind`); top-level `select` finds globally (`adapter.findAll`) and returns the
 found rows. Implemented by `processSelect` (top-level) and the `select` branch of
-`processRelationshipMutation` (`manager.ts`), which recurse without calling
+`processRelationshipMutation` (`relationship-mutations.ts`), which recurse without calling
 `processCreate`/`processUpdate`/`processDelete` on the selected rows.
 
 ### Example query
@@ -628,7 +705,7 @@ mutation {
 
 ### Query resolution & eager loading
 
-For a top-level list query, `resolveFindAll` (`packages/ormize/src/manager.ts`) resolves the
+For a top-level list query, `resolveFindAll` (`packages/ormize/src/engine/resolution.ts`) resolves the
 requested relationships **at the root level** rather than lazily per parent. It builds a
 combined include tree from the GraphQL **selection set** — merged with any explicit `include`
 argument — via `packages/gqlize/src/graphql/utils/build-include-from-selection.ts`, then issues
@@ -737,7 +814,7 @@ Known limits, recorded because why something is absent is worth as much as what 
   and imposes nothing, and the same absence skips that entry's `afterFind` and its
   computed-`orderBy` expansion. The **join is still scoped**, because §13 works off the
   model on each native include rather than the portable descriptor; this is the backstop
-  doing its job, and `ormize/__tests__/scope.test.ts` pins it.
+  doing its job, and `ormize/__tests__/scope-enforcement.test.ts` pins it.
 - **`countOptions` carries the full include array without `distinct: true`**, so a
   `hasMany` fan-out would inflate `total` on a dialect with no inline count. Latent only:
   the inline-count expression covers postgres, mssql and sqlite.
@@ -818,7 +895,7 @@ byte-for-byte what earlier versions emitted:
   `signedCursorCodec` (HMAC over the index) and `fallbackCursorCodec(next, ...previous)`, which
   mints in the first format and reads any of them — the rolling-deploy path.
 
-The interfaces are declared in `packages/utilize/src/types/index.ts`, which stays graphql-free;
+The interfaces are declared in `packages/utilize/src/types/codecs.ts`, which stays graphql-free;
 the implementations live in gqlize because `relayIdCodec` delegates to `graphql-relay`. `decode`
 returns `null` for a value the codec does not recognise and never throws: one caller turns that
 `null` into `GraphQLError("Invalid cursor")` and another — the nested-relation offset planner —
@@ -847,7 +924,7 @@ served without them resolves perfectly well, in the wrong format. See §5 and
 ## 7. Permissions
 
 Permissions are configured via `options.permission` (type `GqlizeOptions.permission` in
-`packages/utilize/src/types/index.ts`). All but one are **build-time** callbacks, consulted
+`packages/utilize/src/types/options.ts`). All but one are **build-time** callbacks, consulted
 throughout `packages/gqlize/src/graphql/*`: each returns a boolean, and returning falsy omits the
 corresponding schema element. `scope` is the exception on both counts — it returns a filter rather
 than a decision, and it is consulted per request rather than per schema.
@@ -891,7 +968,8 @@ not reach it in the role-based helper: an absent `scope` means unscoped, because
 every deployment that does not set one.
 
 Enforcement is deliberately layered (issue #40 decision 8). The engine merges the resolved filter at
-its read and write chokepoints in `packages/ormize/src/manager.ts`; on sequelize a second copy is
+its read and write chokepoints in `packages/ormize/src/engine/` (`resolution.ts`, `mutations.ts`, via
+`scope-bridge.ts`); on sequelize a second copy is
 imposed by model hooks in `packages/ormize/src/scope-hooks.ts`, which sit below the paths the engine
 cannot see; a post-write re-check refuses a write that would move a row out of scope; and an
 instance-level `beforeQuery` refuses a raw statement bound to a scoped model that did not come
@@ -939,7 +1017,7 @@ gqlize has two distinct hook systems.
 ### 1. Sequelize-style lifecycle hooks
 
 The manager recognizes Sequelize's lifecycle hook names, split across two lists in
-`packages/ormize/src/manager.ts` by where the hook actually fires.
+`packages/ormize/src/engine/constants.ts` by where the hook actually fires.
 
 **Model hooks** (`hookList`) are registered on the model: `beforeValidate`/`afterValidate`,
 `validationFailed`, `beforeCreate`/`afterCreate`, `beforeUpdate`/`afterUpdate`,
@@ -1012,8 +1090,9 @@ per-definition hook map so `runHook` can fire it after a count, but it is withhe
 ## 9. Adapter Contract
 
 Any data source is integrated by implementing the `GqlizeAdapter` interface
-(`packages/utilize/src/types/index.ts`). The Sequelize adapter
-(`packages/ormize-adapter-sequelize/src/index.ts`) is the reference implementation. The
+(`packages/utilize/src/types/adapter.ts`). The Sequelize adapter
+(`packages/ormize-adapter-sequelize/src/index.ts`, a thin class delegating to `reads.ts`, `writes.ts`,
+`model-creation.ts`, `introspection.ts` and siblings) is the reference implementation. The
 contract groups into:
 
 - **Lifecycle:** `createModel`, `initialise(options?)`, `sync`, `reset`. `initialise` takes an
@@ -1031,6 +1110,14 @@ contract groups into:
   `getInlineCount`, `processFilterArgument`, `replaceIdInArgs`.
 - **Mutations:** `getCreateFunction`, `getUpdateFunction`, `getDeleteFunction`, `update`, and
   optionally `getRestoreFunction`.
+- **Read cache (optional):** `snapshotRows(defName, rows, options)` turns a `findAll` result into
+  JSON-safe values. `restoreRows(defName, snapshot, options)` rebuilds fresh rows from them, as close
+  as possible to what `findAll` with the same options returns. Both or neither. Without them, the read
+  cache (§3) stores counts only. The Sequelize adapter snapshots `dataValues` recursively (not getter
+  output, which would go through the getter twice) and restores with `bulkBuild({raw: true,
+  isNewRecord: false, include})` over a clone of the include tree, then re-marks windowed includes.
+  It validates that tree once and passes `includeValidated: true`, as `findAll` does. `bulkBuild`
+  alone re-validates it for every root row, which doubled the cost of a restore.
 - **Soft delete (optional):** `softDeletes(defName)` reports whether a model can answer for a
   deleted row; `getRestoreFunction(defName, whereOperators)` clears the deletion. Both are
   optional in the same way `computedOrderableFields` is — a backend without soft delete (valkey,
@@ -1233,7 +1320,7 @@ is:
   — so streaming would over-fetch rather than break.
 - Federation: no trace in the tree, and out of scope unless asked for.
 - DataLoader-style batching is largely moot for same-adapter reads, since the selection-set-driven
-  `include` builder (`ormize/src/manager.ts`) collapses the N+1 in SQL. The live gap is the
+  `include` builder (`ormize/src/engine/resolution.ts`) collapses the N+1 in SQL. The live gap is the
   cross-adapter batching listed above, which is an ormize concern rather than a gqlize one.
 
 ---

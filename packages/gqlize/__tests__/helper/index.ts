@@ -1,3 +1,4 @@
+import { graphql, type GraphQLSchema } from "graphql";
 
 import { Ormize as Database } from "@azerothian/ormize";
 
@@ -91,5 +92,18 @@ export function validateResult(result: {errors?: readonly unknown[] | null}) {
  * Call {@link validateResult} first — this does not check `errors`.
  */
 export function resultData<T>(result: {data?: unknown}): T {
+  return result.data as T;
+}
+
+/**
+ * Run an operation and hand back its data, or throw with the operation text
+ * and every error message. For table-driven suites, where the failing row has
+ * to be identifiable from the failure alone.
+ */
+export async function ask<T = Record<string, unknown>>(schema: GraphQLSchema, source: string, contextValue: unknown = {}): Promise<T> {
+  const result = await graphql({schema, source, contextValue});
+  if (result.errors?.length) {
+    throw new Error(`${source}\n${result.errors.map((e) => e.message).join("\n")}`);
+  }
   return result.data as T;
 }
