@@ -1,161 +1,20 @@
+// The SequelizeAdapter class: the public surface of this package. Each
+// non-trivial method delegates to a free function in a cohesive module —
+// model-creation, introspection, relationships, id-translation, reads, writes,
+// and query-options — keeping this file a thin routing layer.
+
 import {
-  Model,
-  ModelAttributeColumnOptions,
-  ModelAttributeColumnReferencesOptions,
   ModelAttributes,
   ModelCtor,
-  ModelOptions,
+  Model,
   Op,
-  QueryTypes,
   Sequelize,
-  Utils,
-  type Association as NativeAssociation,
-  type Options as SequelizeOptions,
 } from "sequelize";
-import logger from "@azerothian/utilize/utils/logger";
-import { isFieldExposed, scopeParametersIn, bindScopeParameters } from "@azerothian/utilize/gate";
-import { copyDefine, copyField, copyModelOptions } from "@azerothian/utilize/utils/copy-on-write";
-import { lowercase } from "@azerothian/utilize/utils/word";
-import type { ResolvedScope } from "@azerothian/utilize/gate";
+import { isFieldExposed } from "@azerothian/utilize/gate";
 import typeMapper from "./type-mapper";
-import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import { replaceDefWhereOperators } from "./utils/where-operators";
-import { computedOrderableFields as computedOrderableFieldsFor, definitionMethods } from "@azerothian/utilize/exposed-methods";
-const log = logger("gqlize::adapter::sequelize::");
-
-/**
- * A model prototype viewed as the plain object it is at runtime. Sequelize types
- * it as `Model<any, any>`, which has no index signature — but installing
- * relationship accessors and definition instance methods onto it *by name* is
- * exactly what this adapter does.
- */
-function prototypeOf(model: { prototype: unknown }): Record<string, unknown> {
-  return model.prototype as Record<string, unknown>;
-}
-
-/**
- * The statics of a model class, by name — the counterpart of {@link prototypeOf}.
- * A definition's `classMethods` are installed onto the class by name, which
- * `ModelCtor` (no index signature, and rightly so) cannot describe.
- */
-function staticsOf(model: SequelizeModelClass): Record<string, unknown> {
-  return model as unknown as Record<string, unknown>;
-}
-
-/**
- * A fetched row seen as the plain object it is at runtime. Relationship
- * accessors (`getTasks`, `countTasks`) and eager-loaded relationship values are
- * reached off an instance by name, and they exist only once Sequelize has wired
- * the association — so `Model` has no index signature describing them.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- genuinely untyped ORM boundary: values reached off it are read as plain data (`dataValues`), called as Sequelize-generated accessors (`getTasks(...)`), or spread as eager-loaded rows/arrays, and none of those shapes is knowable from a name that only exists once Sequelize wires the association.
-function rowFields(row: SequelizeRow): Record<string, any> {
-  return row;
-}
-
-
-
-
-/**
- * A column as ormize authors one: Sequelize's own attribute options plus the two
- * flags this project adds. Declared here rather than as a module augmentation
- * because they are read by this adapter, never by Sequelize.
- */
-type OrmizeColumnOptions = ModelAttributeColumnOptions & {
-  /** Keeps the column out of relay global-id translation — see `getGlobalKeys`. */
-  ignoreGlobalKey?: boolean;
-  /** Opts a primary/foreign key back into client-writable mutation input. */
-  writable?: boolean;
-  /**
-   * GraphQL args for the field and a resolver hung off it by the author. Typed
-   * off the shared meta rather than restated, so the two cannot drift.
-   */
-  args?: DefinitionFieldMeta["args"];
-  resolve?: DefinitionFieldMeta["resolve"];
-  /** The GraphQL field description; `comment` is the Sequelize-native spelling. */
-  description?: string;
-  /** The `@deprecated` reason for the generated field. Meaningless to Sequelize. */
-  deprecated?: string;
-};
-
-/**
- * A live Sequelize association plus the three members its public typings omit.
- * `accessors` exists on every association at runtime (it is how Sequelize names
- * the generated `getTasks`/`countTasks` methods). `sourceKey`/`targetKey` exist
- * only on the association kinds that have one — a `hasMany` has a source key, a
- * `belongsTo` a target key — which is why both are optional here and defaulted
- * where they are read.
- */
-type NativeAssociationInternals = NativeAssociation & {
-  accessors: Association["accessors"];
-  sourceKey?: string;
-  targetKey?: string;
-  /** The resolved column name behind `identifier`, when they differ. */
-  identifierField?: string;
-};
-
-/**
- * This adapter's own options — the first constructor argument. Closed, so a
- * misspelled key is a compile error rather than a setting that silently does
- * nothing; everything Sequelize itself understands belongs in the *second*
- * argument.
- */
-export type SequelizeAdapterOptions = {
-  /**
-   * Attributes merged *under* every definition's own `define` map, so a
-   * definition that declares the same column name wins. A shared audit column
-   * (`tenantId`) belongs here rather than being repeated on every model.
-   */
-  defaultAttr?: ModelAttributes;
-  /**
-   * Model options merged *under* every definition's own `options`, so a
-   * definition's own value wins and one can opt out of the default outright.
-   * The merge order is what makes "all or some" expressible with one setting:
-   *
-   * ```ts
-   * new SequelizeAdapter({defaultModel: {timestamps: true, paranoid: true}}, {dialect: "sqlite"})
-   * // every model soft deletes…
-   * db.addDefinition({name: "AuditLog", define: {…}, options: {paranoid: false}});
-   * // …except this one.
-   * ```
-   *
-   * Per-adapter, so a multi-adapter setup sets it on each Sequelize adapter it
-   * registers. Note that `paranoid` needs `timestamps` — see the warning
-   * `createModel` emits when the two disagree.
-   */
-  defaultModel?: ModelOptions;
-  /** Skip the window-function row count even on a dialect that supports it. */
-  disableInlineCount?: boolean;
-  /** Opt in to the regex where-operators — see the ReDoS note in `createQueryConfig`. */
-  enableRegexpOperators?: boolean;
-};
-
-/**
- * The argument list forwarded verbatim to Sequelize's own constructor. Sequelize
- * declares it as a set of positional overloads, and a spread argument cannot be
- * resolved against overloads — so the accepted shapes are named here, where a
- * caller's arguments are still checked against them.
- */
-export type SequelizeConnection =
-  | []
-  | [options: SequelizeOptions]
-  | [uri: string, options?: SequelizeOptions]
-  | [database: string, username: string, options?: SequelizeOptions]
-  | [database: string, username: string, password?: string, options?: SequelizeOptions];
-
-/**
- * An attribute map as it arrives at `resolveAttributeTypes`: either Sequelize's
- * own {@link ModelAttributes} or a definition's fields carrying abstract ormize
- * type tokens, whose `type` is deliberately `unknown`.
- */
-export type AuthoredAttributes = { [fieldName: string]: unknown };
-
-
-
-
-
-
-
+import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothian/utilize/exposed-methods";
+import { copyDefine, copyModelOptions } from "@azerothian/utilize/utils/copy-on-write";
 
 import { type QueryTypeConfig } from "@azerothian/graphql-types/query";
 import {
@@ -171,7 +30,6 @@ import {
   SQL_ARRAY_FUNCS,
   SQL_ARRAY_VALUES,
 } from "@azerothian/graphql-types/operators";
-import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 
 import {
   GraphQLBoolean,
@@ -179,7 +37,6 @@ import {
   type GraphQLInputType,
 } from "graphql";
 import {
-  authoredDataType,
   type AdapterCreateFunction,
   type AdapterDeleteFunction,
   type AdapterListOptions,
@@ -188,10 +45,9 @@ import {
   type AdapterRelationshipRequest,
   type AdapterRelationshipPage,
   type AdapterRestoreFunction,
-  type AdapterRow,
-  type AdapterUpdateFunction,
   type AdapterTransaction,
   type AdapterTransactionHandle,
+  type AdapterUpdateFunction,
   type AdapterWhere,
   type Association,
   type DataTypeDescriptor,
@@ -199,12 +55,10 @@ import {
   type DefinitionFieldMeta,
   type DeletedFilter,
   type HookMap,
-  type IncludeDescriptor,
   type IncludeMap,
   type InitialiseOptions,
   type NativeDataType,
   type Permission,
-  type RequestContext,
   type Relationship,
   type Selection,
   type IdTranslation,
@@ -212,57 +66,76 @@ import {
 } from '@azerothian/utilize/types/index';
 import type { GqlizeAdapter } from '@azerothian/gqlize/types/gqlize-adapter';
 import { mapDataType as mapDataTypeImpl, toNativeType as toNativeTypeImpl } from "./data-type-mapper";
-import { SequelizeDefinition, SqlClassMethod } from "./types";
+import { SequelizeDefinition } from "./types";
 import type {
-  ListArgs,
   RunHook,
   SequelizeModelClass,
   SequelizeOrder,
   SequelizeOrderPrefix,
-  SequelizeInclude,
   SequelizeRow,
 } from "./types/query";
 import {
   INLINE_COUNT_EXPRESSION,
-  deletedOverlay,
   processIncludeStatement,
   processListArgsToOptions,
-  type QueryOptionsHost,
 } from "./query-options";
 // The query-shape types moved to `./types/query` so the option builders could be
 // built over them; they stay exported from here, which is where they have always
 // been imported from.
 export type * from "./types/query";
-import { replaceWhereOperators, normalizeWhereForDialect, reservedOperatorNames } from "./utils/where-ops";
+import { replaceWhereOperators, normalizeWhereForDialect } from "./utils/where-ops";
 import { fixNestedThroughJoin, keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
-import { throughForeignKey, throughOtherKey } from "@azerothian/utilize/utils/join-keys";
 
-// Pagination safety bounds. This is the central backstop that bounds every list
-// query (GraphQL relay connections and REST list routes both funnel through
-// `processListArgsToOptions`). Without it, an absent `first`/`last` produced an
-// unbounded `findAll` (full-table dump) and an over-large value was passed
-// straight through — a trivial DoS / data-exfiltration vector.
-// Re-exported because they have been part of this package's public surface
-// since the backstop landed; the implementation is shared with every other
-// list path in `@azerothian/utilize`.
+// Re-export types that were declared in this file and are part of the public surface.
+export type { SequelizeAdapterOptions, SequelizeConnection, AuthoredAttributes } from "./adapter-types";
+
+// Pagination safety bounds — re-exported as they have been part of this
+// package's public surface since the backstop landed.
 export {DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
 
-function safeStringify(value: unknown) {
-  const seen = new Set<unknown>();
-  return JSON.stringify(
-    value,
-    (k, v) => {
-      if (seen.has(v) || k === "sequelize") {
-        return "...";
-      }
-      if (typeof v === "object") {
-        seen.add(v);
-      }
-      return v;
-    },
-    2
-  );
-}
+// --- Delegated module imports ---
+import {
+  prototypeOf,
+  staticsOf,
+  createModelImpl,
+  createSQLFunctionImpl,
+  generateSQLFunctionImpl,
+  resolveAttributeTypesImpl,
+} from "./model-creation";
+import {
+  getFieldsImpl,
+  getAssociationsImpl,
+} from "./introspection";
+import {
+  createRelationshipImpl,
+  createFunctionForFindImpl,
+} from "./relationships";
+import {
+  getGlobalKeysImpl,
+  replaceIdInWhereImpl,
+  replaceIdInIncludeImpl,
+  replaceIdInArgsImpl,
+} from "./id-translation";
+import {
+  findAllImpl,
+  countImpl,
+  snapshotRowsImpl,
+  restoreRowsImpl,
+  resolveSingleRelationshipImpl,
+  countRelationshipImpl,
+  resolveManyRelationshipImpl,
+  getInlineCountImpl,
+  asInstanceImpl,
+} from "./reads";
+import {
+  getCreateFunctionImpl,
+  getUpdateFunctionImpl,
+  getDeleteFunctionImpl,
+  getRestoreFunctionImpl,
+} from "./writes";
+import { rowFields, isEmptyWhere, mergeFilterStatement as mergeFilterStatementImpl } from "./row-helpers";
+
+import type { SequelizeAdapterOptions, SequelizeConnection } from "./adapter-types";
 
 export default class SequelizeAdapter implements GqlizeAdapter {
   adapterName: string;
@@ -410,156 +283,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   getTypeMapper = () => {
     return typeMapper;
   };
-  /**
-   * The model owning the table an attribute's `references` names, or undefined.
-   *
-   * `references.model` is a *table* name (or a `{tableName, schema}` pair), which
-   * is not the model name the id codec types keys with — sequelize pluralises by
-   * default, and `options.tableName` may be anything. Matching on
-   * `getTableName()` is the only mapping back that holds for both.
-   */
-  private modelNameForTable = (
-    references: string | ModelAttributeColumnReferencesOptions | undefined,
-  ) => {
-    // `references` admits a bare table name, and `references.model` a name, a
-    // model class or a `{tableName, schema}` pair.
-    const model = typeof references === "string" ? references : references?.model;
-    const table = typeof model === "string"
-      ? model
-      : (model as {tableName?: string} | undefined)?.tableName;
-    if (!table) {
-      return undefined;
-    }
-    // `getTableName()` answers with a `{tableName, schema, delimiter}` triple on a
-    // schema-qualified model and a bare string otherwise.
-    return Object.keys(this.sequelize.models).find((name) => {
-      const qualified = this.sequelize.models[name].getTableName();
-      return (typeof qualified === "string" ? qualified : qualified.tableName) === table;
-    });
-  };
   getFields = (modelName: string): { [fieldName: string]: DefinitionFieldMeta } => {
-    const Model = this.sequelize.models[modelName];
-    //TODO add filter for excluding or including fields
-    if (!this.getMetaObj(modelName, "fields")) {
-      const fieldNames = Object.keys(Model.rawAttributes);
-      const fields = fieldNames.reduce((fields, key) => {
-        const attr = Model.rawAttributes[key] as OrmizeColumnOptions;
-        // `_dataTypeChanges` is a Sequelize internal (a column whose declared
-        // type the dialect had to rewrite), so it is absent from the public
-        // typings; a missing one simply means no column was rewritten.
-        const dataTypeChanges = (Model as unknown as {
-          _dataTypeChanges?: { [fieldName: string]: unknown };
-        })._dataTypeChanges;
-        const autoPopulated =
-          attr.autoIncrement === true ||
-          attr.defaultValue !== undefined ||
-          !!dataTypeChanges?.[key];
-        const allowNull = attr.allowNull === true;
-        const foreignKey = !!attr.references;
-        let foreignTarget;
-        if (foreignKey) {
-          foreignTarget = Object.keys(Model.associations)
-            .filter((assocKey) => {
-              const assoc = Model.associations[assocKey] as NativeAssociationInternals;
-              return assoc.identifier === key || assoc.identifierField === key;
-            })
-            .map((assocKey) => {
-              return Model.associations[assocKey].target.name;
-            })[0];
-          // A `belongsToMany` through model that was not given its own
-          // `belongsTo` relationships has an empty `associations` map: sequelize
-          // builds the join model's two `BelongsTo`s with `new BelongsTo(...)`,
-          // which never registers them on the through model. The attribute still
-          // carries the table it references, so name the model that owns that
-          // table rather than failing to type the key at all (#65).
-          if (!foreignTarget) {
-            foreignTarget = this.modelNameForTable(attr.references);
-          }
-          if (!foreignTarget) {
-            //TODO: better error logging
-            let message = `An error has occurred with relationships on model - ${modelName} - ${key}`;
-            if (process.env.NODE_ENV !== "production") {
-              const jsonAssociations = safeStringify(Model.associations);
-              const jsonRelationships = safeStringify(
-                (Model as SequelizeModelClass).relationships
-              );
-              message = `Model: ${modelName} - Unable to find ${key} identifier field association in the model associations \n ---Associations--- ${jsonAssociations}\n ---Relationships--- ${jsonRelationships}`;
-            }
-            throw new Error(message);
-          }
-        }
-
-        fields[key] = {
-          name: key,
-          type: attr.type,
-          primaryKey: attr.primaryKey === true,
-          allowNull,
-          // `comment` is the Sequelize spelling and the one that reaches the
-          // database; `description` is what `DefinitionField` documents, so it
-          // is honoured too and wins. Same precedence as the valkey adapter.
-          description: attr.description ?? attr.comment,
-          deprecated: attr.deprecated,
-          defaultValue: attr.defaultValue,
-          foreignKey,
-          foreignTarget,
-          autoPopulated,
-          ignoreGlobalKey: attr.ignoreGlobalKey,
-          // Opt-in that lets a pk/fk be set from client input (default: excluded
-          // to prevent mass-assignment — see isStructurallyWritable). Left
-          // undefined when unauthored, so an explicit `false` can still opt a
-          // column out of `writableForeignKeys`.
-          writable: typeof attr.writable === "boolean" ? attr.writable : undefined,
-          // `args`/`resolve` are authored on the field and are meaningless to
-          // Sequelize, which carries unknown attribute keys through `define`
-          // onto `rawAttributes` untouched (the same escape hatch the two flags
-          // above ride on). Read back explicitly rather than spreading
-          // `rawAttributes`: Sequelize also hangs a circular `Model`
-          // back-reference, internals like `_modelAttribute`, and a `unique`
-          // normalised to a shape `DefinitionFieldMeta.unique` does not
-          // describe — and `getFields` memoises, so all of it would be retained
-          // per field forever. See `passes authored args/resolve through` in
-          // `__tests__/define-model.test.ts` for the canary on the passthrough.
-          args: attr.args,
-          resolve: attr.resolve,
-        };
-        return fields;
-      }, {} as { [key: string]: DefinitionFieldMeta });
-      this.setMetaObj(modelName, "fields", fields);
-    }
-    return this.getMetaObj(modelName, "fields");
+    return getFieldsImpl(this, modelName);
   };
   getAssociations = (modelName: string): { [relName: string]: Association } => {
-    const Model = this.sequelize.models[modelName];
-    let associations: { [relName: string]: Association } = this.getMetaObj(modelName, "associations");
-    if (associations) {
-      return associations;
-    }
-    associations = Object.keys(Model.associations).reduce(
-      (rels, key) => {
-        const assoc = Model.associations[key] as NativeAssociationInternals;
-        const { associationType } = assoc;
-        rels[key] = {
-          name: key,
-          target: assoc.target.name,
-          source: assoc.source.name,
-          associationType: lowercase(associationType),
-          foreignKey: assoc.foreignKey,
-          // Sequelize defines these only on the association kinds that have one:
-          // a `hasMany` carries a source key, a `belongsTo` a target key. An
-          // {@link Association} reports *resolved* keys, so an absent one falls
-          // back to the primary key of the model it names — which is exactly what
-          // Sequelize itself defaults to when the author omits it.
-          targetKey: assoc.targetKey || assoc.target.primaryKeyAttribute,
-          sourceKey: assoc.sourceKey || assoc.source.primaryKeyAttribute,
-          accessors: assoc.accessors,
-        };
-        return rels;
-      },
-      {} as { [relName: string]: Association }
-    );
-    this.setMetaObj(modelName, "associations", associations);
-    return associations;
-    
+    return getAssociationsImpl(this, modelName);
   };
   getAssociation = (modelName: string, assocName: string) => {
     const rels = this.getAssociations(modelName);
@@ -574,95 +302,8 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * native Sequelize types. Native types (e.g. `Sequelize.STRING`) and fields
    * without a token `type` pass through unchanged (backward compatible).
    */
-  resolveAttributeTypes = (attributes: AuthoredAttributes): ModelAttributes => {
-    const out: AuthoredAttributes = {};
-    for (const key of Object.keys(attributes)) {
-      const attr = attributes[key];
-      // Shorthand form: `field: DataTypes.String`, or the bare-constructor
-      // spelling `field: String`. `authoredDataType` is the shared table, so the
-      // set of spellings a definition may use is the same on every backend — the
-      // constructor form used to be accepted by the valkey adapter and passed
-      // through untouched here, where `sequelize.define` turned it into a
-      // `String` wrapper object and failed later, in DDL generation.
-      const shorthand = authoredDataType(attr);
-      if (shorthand) {
-        out[key] = this.toNativeType(shorthand);
-      } else if (attr && typeof attr === "object") {
-        // Object form: `field: { type: DataTypes.String, allowNull: false }`
-        //
-        // Always a copy, including the native-type branch that used to pass the
-        // descriptor straight through. `sequelize.define` hands these to
-        // `Model.init`, which rewrites `type`/`defaultValue`/`references.model`
-        // in place and then hangs `Model` (a *circular* back-reference),
-        // `fieldName`, `field` and `_modelAttribute` on every attribute. Passing
-        // the caller's object through made their definition unserializable and
-        // carried one build's state into the next.
-        const { type } = attr as { type?: unknown };
-        const copy = copyField(attr) as { type?: unknown };
-        const authored = authoredDataType(type);
-        if (authored) {
-          copy.type = this.toNativeType(authored);
-        }
-        out[key] = copy;
-      } else {
-        out[key] = attr;
-      }
-    }
-    // Every entry is now either untouched — already a Sequelize attribute — or
-    // one whose token `type` has just been converted to a native one. The
-    // compiler cannot see that: what came in were `DefinitionField`s, whose
-    // `type` is `unknown` by design (see {@link AuthoredAttributes}).
-    return out as ModelAttributes;
-  };
-  /**
-   * Warn about columns whose name collides with a reserved where-operator:
-   * `replaceWhereOperators` would silently reinterpret a filter on such a column
-   * as the operator instead of an equality filter — a hard-to-diagnose footgun.
-   */
-  private warnReservedFieldNames = (defName: string, define: SequelizeDefinition["define"]) => {
-    for (const fieldName of Object.keys(define || {})) {
-      if (reservedOperatorNames.has(fieldName)) {
-        log.error(
-          `Model "${defName}" field "${fieldName}" collides with a reserved where-operator; ` +
-          `filters on this column may be misinterpreted. Consider renaming it.`,
-        );
-      }
-    }
-  };
-  /** Collect a definition's raw create/drop DDL, replayed by {@link initialise}. */
-  private registerStartupQueries = (queries: SequelizeDefinition["queries"]) => {
-    const startupQueries = queries || {};
-    Object.keys(startupQueries).forEach((k) => {
-      const q = startupQueries[k];
-      if (q.drop) {
-        this.startup.drop += `${typeof q.drop === "function" ? q.drop() : q.drop}\n`;
-      }
-      if (q.create) {
-        this.startup.create += `${typeof q.create === "function" ? q.create() : q.create}\n`;
-      }
-    });
-  };
-  private installClassMethods = async (defName: string, classMethods: {[name: string]: unknown}) => {
-    const statics = staticsOf(this.model(defName));
-    await Promise.all(
-      Object.keys(classMethods).map(async (classMethod) => {
-        if (typeof classMethods[classMethod] === "function") {
-          statics[classMethod] = classMethods[classMethod];
-          return;
-        }
-        // Not a function, so it is a {@link SqlClassMethod} descriptor — a raw
-        // query or a Postgres function call — compiled into a static here.
-        // `Definition.classMethods` names only the function form, so the
-        // descriptor form is narrowed at this one branch.
-        statics[classMethod] = await this.generateSQLFunction(classMethods[classMethod] as SqlClassMethod, defName);
-      })
-    );
-  };
-  private installInstanceMethods = (defName: string, instanceMethods: {[name: string]: unknown}) => {
-    const proto = prototypeOf(this.sequelize.models[defName]);
-    Object.keys(instanceMethods).forEach((instanceMethod) => {
-      proto[instanceMethod] = instanceMethods[instanceMethod];
-    });
+  resolveAttributeTypes = (attributes: import("./adapter-types").AuthoredAttributes): ModelAttributes => {
+    return resolveAttributeTypesImpl(this.toNativeType, attributes);
   };
   /**
    * The model hooks ormize installs do fire here, which is what §13's
@@ -686,74 +327,8 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   };
 
   createModel = async (def: SequelizeDefinition, hooks?: HookMap): Promise<SequelizeModelClass> => {
-    const { defaultAttr, defaultModel } = this.options;
-    // `copyModelOptions` rather than a bare spread: the spread makes a new
-    // options object but leaves `options.indexes` pointing at the caller's array
-    // of the caller's objects, and sequelize writes on both — `_conformIndex`
-    // defaults `type`/`parser` onto each entry (and for a unique index sets
-    // `unique` and deletes `type`), then `nameIndex` stamps a `name` derived
-    // from the table name, so a definition reused against a second table
-    // carried the first one's index name.
-    const newDef = Object.assign({}, def, {
-      options: Object.assign({}, copyModelOptions(defaultModel), copyModelOptions(def.options), {
-        hooks,
-      }),
-    });
-    // `SequelizeDefinition` declares `tableName` at the top level as well as
-    // under `options`, but only `options` reaches `sequelize.define` — so the
-    // top-level one type-checked and was then ignored, and the table took the
-    // default name. The nested one wins when both are given.
-    if (newDef.options.tableName === undefined && def.tableName !== undefined) {
-      newDef.options.tableName = def.tableName;
-    }
-    if(!newDef.name) {
-      throw new Error("Unable to create model with no name");
-    }
-    const defName = newDef.name;
-    this.warnReservedFieldNames(defName, newDef.define);
-    // Sequelize accepts `{paranoid: true, timestamps: false}`, reports
-    // `options.paranoid === true` for it, and then defines no `deletedAt` column
-    // — deletes from such a model are hard, silently. Easy to reach by accident
-    // now that `defaultModel` can turn paranoid on for every model at once.
-    if (newDef.options?.paranoid && newDef.options?.timestamps === false) {
-      // `console.warn`, not the package's `debug`-based logger: `debug` is
-      // silent unless `DEBUG` is set, which would make a silently-hard delete an
-      // invisible event — the exact thing this check exists to surface.
-      // eslint-disable-next-line no-console
-      console.warn(
-        `Model "${defName}": options.paranoid is set but timestamps are off, so there is no deletedAt column — deletes will be permanent. Enable timestamps, or drop paranoid.`,
-      );
-    }
-    this.sequelize.define(
-      defName,
-      this.resolveAttributeTypes(Object.assign({}, defaultAttr, newDef.define)),
-      newDef.options
-    );
-    this.registerStartupQueries(newDef.queries);
-
-    if (newDef.disablePrimaryKey) {
-      this.sequelize.models[defName].removeAttribute("id");
-    }
-    (newDef.removeAttributes || []).forEach((attr) => {
-      this.sequelize.models[defName].removeAttribute(attr);
-    });
-    // Both spellings, merged — the nested `options.*` one wins a name both
-    // declare. Picking one bag or the other dropped every top-level method
-    // from a definition that also had an `options.instanceMethods` (#72).
-    const classMethods = definitionMethods(newDef, "classMethods");
-    const instanceMethods = definitionMethods(newDef, "instanceMethods");
-    if (Object.keys(classMethods).length > 0) {
-      await this.installClassMethods(defName, classMethods);
-    }
-    if (Object.keys(instanceMethods).length > 0) {
-      this.installInstanceMethods(defName, instanceMethods);
-    }
-
-    const model = this.model(defName);
-    prototypeOf(model).Model = model;
-    model.definition = newDef;
-
-    return model;
+    return createModelImpl(this, def, hooks, (sqlFunc, scopeModel) =>
+      this.generateSQLFunction(sqlFunc, scopeModel));
   };
   /**
    * @param modelName the model rows are mapped onto, which is often absent.
@@ -762,88 +337,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    *   results are mapped to. Those are usually the same and need not be: a
    *   statement mapped onto nothing at all is still a read of *some* model.
    */
-  // eslint-disable-next-line @typescript-eslint/require-await -- a public method whose published signature returns a Promise; the body builds the closure synchronously, but dropping `async` narrows the return type and is a breaking change for anyone calling it directly
   createSQLFunction = async (query: string, modelName: string | undefined, args: string[], scopeModel?: string) => {
-    // Read once, at build: the parameter list is a property of the statement,
-    // and re-parsing it per call would be work done on every request to learn
-    // something that cannot have changed.
-    const scopeParameters = scopeParametersIn(query, args);
-    const label = scopeModel ? `${scopeModel}'s raw SQL` : "a raw SQL class method";
-    return async (a: { [argName: string]: unknown }, context: RequestContext) => {
-      // security check?
-      const opts = {
-        replacements: args.reduce(
-          (o: { [argName: string]: unknown }, ar: string) => {
-            o[ar] = a[ar] ? a[ar] : null;
-            return o;
-          },
-          {}
-        ),
-        type: QueryTypes.SELECT,
-      } as {
-        model: ModelCtor<Model>;
-        replacements: { [argName: string]: unknown };
-        type: QueryTypes;
-      };
-      if (scopeParameters.length > 0) {
-        // §12: the engine cannot rewrite a statement that is already text, so a
-        // reserved parameter is the whole of its reach into one. The audit
-        // guarantees the parameter is there; this puts the value in it.
-        //
-        // `scopeFor` arrives on the context from `resolveClassMethod`. A static
-        // called straight off the model has none, and binds nulls — which the
-        // documented `(:scopeOwnerId IS NULL OR …)` idiom reads as unconstrained.
-        // That path is closed by its runtime twin, the instance-level
-        // `beforeQuery`, not here: this layer cannot tell "no scope configured"
-        // from "the engine was bypassed", and guessing either way is worse than
-        // letting the layer that knows decide.
-        const scopeOf = (context as { scopeFor?: (m: string, o: string) => Promise<ResolvedScope> } | undefined)?.scopeFor;
-        const resolved = scopeModel && typeof scopeOf === "function"
-          ? await scopeOf(scopeModel, "read")
-          : undefined;
-        const bound = bindScopeParameters(query, args, resolved, label);
-        if (bound === false) {
-          // Denied outright. An empty page is what a caller with no matching
-          // rows already sees, and a read has nothing louder to say that would
-          // not itself confirm the rows exist.
-          return [];
-        }
-        // After the argument reduction, never before it: `args` is caller-supplied
-        // and a request that named `scopeOwnerId` among them would otherwise be
-        // choosing the value that decides what it may read.
-        Object.assign(opts.replacements, bound);
-      }
-      if (modelName) {
-        opts.model = this.sequelize.models[modelName];
-      }
-      return this.sequelize.query(query, opts);
-    };
+    return createSQLFunctionImpl(this.sequelize, query, modelName, args, scopeModel);
   };
-  generateSQLFunction = async (sqlFunc: SqlClassMethod, scopeModel?: string) => {
-    // PostgreSQL supported only atm?
-    const {
-      type = "query",
-      schema = "public",
-      functionName,
-      query,
-      modelName,
-      args = [],
-    } = sqlFunc;
-    let q = "";
-    switch (type) {
-      case "query":
-        q = query ?? "";
-        break;
-      case "sqlfunction":
-        if (query) {
-          q = query;
-        } else {
-          q = `SELECT * FROM "${schema}"."${functionName}"(${args
-            .map((s) => `:${s}`)
-            .join(",")});`;
-        }
-    }
-    return this.createSQLFunction(q, modelName, args, scopeModel);
+  generateSQLFunction = async (sqlFunc: import("./types").SqlClassMethod, scopeModel?: string) => {
+    return generateSQLFunctionImpl(this.sequelize, sqlFunc, scopeModel);
   };
   // Permission object captured at schema-build time. The GraphQL filter/order/
   // include type builders below fall back to it when no explicit permission is
@@ -925,107 +423,15 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   };
   createRelationship = (
     targetModel: string,
-    sourceModel: string ,
+    sourceModel: string,
     name: string,
     type: string,
     options: Relationship["options"] = {}
   ) => {
-    const model = this.model(targetModel);
-    if (!model.relationships) {
-      model.relationships = {};
-    }
-    try {
-      // `name` is the relationship's identity everywhere else — the include
-      // input, permissions, `model.relationships`, ormize and the valkey adapter
-      // all key by it — so it is the alias here too. Letting `options.as` win
-      // registered the association under a second name, and an `include` naming
-      // the relationship then reached for an association that did not exist.
-      if (options.as !== undefined && options.as !== name) {
-        // eslint-disable-next-line no-console -- see the paranoid warning in `createModel`: `debug` is silent unless enabled, and this changes which name a client must use
-        console.warn(
-          `Relationship "${targetModel}.${name}": options.as "${options.as}" is ignored; the relationship is named by "name".`,
-        );
-      }
-      const opts: Record<string, unknown> = Object.assign({}, options, { as: name });
-      // `through` may also be a bare model name, which Sequelize accepts as-is.
-      // Only the object form carries a `model` to resolve.
-      //
-      // Resolved into `opts`, never back into `options`: `options` is the
-      // caller's `rel.options`, handed here unchanged by the manager, and
-      // `Relationship["options"].through.model` is declared `string`. Writing
-      // the model class back over the name corrupted the definition for every
-      // later build and silently broke the three readers that correctly expect
-      // a name — `Ormize.resolveCrossAdapterJoin`, `Ormize.deriveOtherKey`, and
-      // the valkey adapter's own `deriveOtherKey`, which stopped matching and
-      // fell back to a guessed key.
-      //
-      // The object-form copy is unconditional: sequelize's association builders
-      // write back onto the options bag they are handed (`BelongsToMany`
-      // normalises `through` and writes `foreignKey`/`otherKey`), so a shallow
-      // `opts` is not deep enough at `through` even when there is no name to
-      // resolve.
-      if (typeof options.through === "object" && options.through) {
-        opts.through = options.through.model
-          ? { ...options.through, model: this.sequelize.models[options.through.model] }
-          : { ...options.through };
-      }
-      // Sequelize reads a belongsToMany's keys off the association options only,
-      // never off `through`. Both spellings are typed, and ormize and the valkey
-      // adapter honour the `through` one, so hoist it — the top-level key still
-      // wins — or this backend joins on a guessed column the others do not use.
-      if (type === "belongsToMany") {
-        if (opts.foreignKey === undefined && throughForeignKey(options.through) !== undefined) {
-          opts.foreignKey = throughForeignKey(options.through);
-        }
-        if (opts.otherKey === undefined && throughOtherKey(options.through) !== undefined) {
-          opts.otherKey = throughOtherKey(options.through);
-        }
-      }
-      // `type` names one of Sequelize's association builders (`belongsTo`,
-      // `hasMany`, ...) and is called by name off the model class, so the lookup
-      // is dynamic — see {@link staticsOf}. An unknown one is a definition error
-      // and is reported by the `catch` below.
-      const build = staticsOf(model)[type];
-      if (typeof build !== "function") {
-        throw new Error(`SequelizeAdapter: "${type}" is not a relationship type`);
-      }
-      model.relationships[name] = {
-        name: name,
-        type: type,
-        source: sourceModel,
-        target: targetModel,
-        options: opts,
-        rel: build.call(model, this.sequelize.models[sourceModel], opts),
-      };
-    } catch (err) {
-      log.error("Error Mapping relationship", {
-        model,
-        sourceModel,
-        name,
-        type,
-        options,
-        err,
-      });
-      // Fail fast at boot rather than silently booting with a missing/broken
-      // association — downstream query scoping and relationship resolution
-      // assume the association exists, so swallowing this hides real defects.
-      throw err;
-    }
-    this.sequelize.models[targetModel] = model;
+    createRelationshipImpl(this.sequelize, targetModel, sourceModel, name, type, options);
   };
   createFunctionForFind = (modelName: string) => {
-    const model = this.sequelize.models[modelName];
-    return function(value: unknown, filterKey: string, singular: boolean) {
-      return (options: AdapterQueryOptions = {}) => {
-        const opts = Object.assign({}, options, {
-          where: mergeFilterStatement(filterKey, value, true, options.where),
-        });
-        if (!singular) {
-          return model.findAll(opts);
-        }
-        return model.findOne(opts);
-      };
-    };
+    return createFunctionForFindImpl(this.sequelize, modelName);
   };
   getPrimaryKeyNameForModel = (modelName: string) => {
     const model = this.sequelize.models[modelName];
@@ -1065,7 +471,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    *
    * Both halves are checked, and that is not belt-and-braces: Sequelize accepts
    * `{paranoid: true, timestamps: false}`, reports `options.paranoid === true`
-   * for it, and then defines no `deletedAt` column at all \u2014 deletes from such a
+   * for it, and then defines no `deletedAt` column at all — deletes from such a
    * model are hard. Trusting `options.paranoid` alone would put a `deleted`
    * argument and a `restore` mutation on a table that has neither, and leave the
    * `ONLY` filter naming `undefined` as a column.
@@ -1080,7 +486,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return model._timestampAttributes?.deletedAt;
   };
-  /** Whether this model soft-deletes \u2014 see {@link deletedAtColumn}. */
+  /** Whether this model soft-deletes — see {@link deletedAtColumn}. */
   softDeletes = (defName: string): boolean => this.deletedAtColumn(defName) !== undefined;
   /** An include is a JOIN, and a model may be joined more than once per query. */
   readonly includeIsList = true;
@@ -1099,17 +505,8 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     return Boolean(INLINE_COUNT_EXPRESSION[this.sequelize.getDialect()]);
   };
-  // eslint-disable-next-line @typescript-eslint/require-await -- OrmAdapter.getInlineCount is declared `Promise<number>`; this reads synchronously but must stay async to satisfy that return type
   getInlineCount = async(values: SequelizeRow[]) => {
-    // The count rides along as a `full_count` column on every row of the page
-    // (a window function — see `processListArgsToOptions`), so the first row is
-    // enough. It is not a declared attribute, hence the plain-object view.
-    const first = values[0] ? rowFields(values[0]) : undefined;
-    const row = first ? (first.dataValues || first) : undefined;
-    if (!row || !row.full_count) {
-      return 0;
-    }
-    return parseInt(row.full_count, 10);
+    return getInlineCountImpl(values);
   };
   /**
    * Build the fetch (and count) options for one list request. The steps live in
@@ -1144,20 +541,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   getAllArgsToReplaceId() {
     return ["where", "include"];
   }
-  getGlobalKeys = (defName: string) => globalKeysFromFields(this.getFields(defName));
-  /**
-   * Each hop re-derives `targets` for the model it is about to decode against,
-   * rather than carrying the caller's down: a nested relation's `where` filters
-   * the *target's* keys, and typing them with the parent's map is how a
-   * cross-type id would slip through the check it exists to make.
-   */
-  private idTranslation(defName: string, translation?: IdTranslation): IdTranslation {
-    return {
-      ...translation,
-      defName,
-      targets: globalKeyTargets(this.getFields(defName), defName),
-    };
-  }
+  getGlobalKeys = (defName: string) => getGlobalKeysImpl(this, defName);
   // Not a contract method (unlike `replaceIdInInclude`/`replaceIdInArgs` below),
   // so `variableValues` can be narrowed to what it actually is here: forwarded
   // straight to `replaceIdDeep`, which itself declares it `unknown` — never read.
@@ -1167,8 +551,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     variableValues?: unknown,
     translation?: IdTranslation
   ) => {
-    const globalKeys = this.getGlobalKeys(defName);
-    return replaceIdDeep(where, globalKeys, variableValues, this.idTranslation(defName, translation));
+    return replaceIdInWhereImpl(this, where, defName, variableValues, translation);
   };
   // `GqlizeAdapter.replaceIdInInclude` declares `variableValues` with this exact
   // permissive shape, so it stays here rather than narrowing to `unknown` the
@@ -1180,32 +563,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     variableValues?: {[name: string]: any},
     translation?: IdTranslation
   ) => {
-    return (arrIncludeVar || []).map(
-      (iv) => {
-        return Object.keys(iv).reduce((o, relName) => {
-          const { include, where, ...rest } = iv[relName];
-          o[relName] = rest;
-          const rel = this.getAssociation(defName, relName);
-          if (where) {
-            o[relName].where = this.replaceIdInWhere(
-              where,
-              rel.target,
-              variableValues,
-              translation
-            );
-          }
-          if (include) {
-            o[relName].include = this.replaceIdInInclude(
-              include,
-              rel.target,
-              variableValues,
-              translation
-            );
-          }
-          return o;
-        }, {} as { [relName: string]: IncludeDescriptor });
-      }
-    );
+    return replaceIdInIncludeImpl(this, arrIncludeVar, defName, variableValues, translation);
   };
   // `GqlizeAdapter.replaceIdInArgs` declares both `args` and `variableValues`
   // with this exact permissive shape — kept to match.
@@ -1217,28 +575,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     variableValues?: {[name: string]: any},
     translation?: IdTranslation
   ) => {
-    const { where, include, ...rest } = args;
-    if (include) {
-      rest.include = this.replaceIdInInclude(include, defName, variableValues, translation);
-    }
-    if (where) {
-      rest.where = this.replaceIdInWhere(where, defName, variableValues, translation);
-    }
-    return rest;
+    return replaceIdInArgsImpl(this, args, defName, variableValues, translation);
   };
 
   findAll = async (defName: string, options: AdapterQueryOptions): Promise<SequelizeRow[]> => {
-    const Model = this.sequelize.models[defName];
-    const rows = await Model.findAll(options);
-    markWindowedIncludes(rows, (options as {include?: SequelizeInclude[]}).include);
-    return rows;
+    return findAllImpl(this.sequelize, defName, options);
   };
   count = (defName: string, options: AdapterQueryOptions): Promise<number> => {
-    const Model = this.sequelize.models[defName];
-    // Sequelize's `count` is declared to return a grouped row array when the
-    // options carry a `group`; ormize never counts by group, so the number
-    // overload is the only one this can produce.
-    return Model.count(options);
+    return countImpl(this.sequelize, defName, options);
   };
   /**
    * Reads `dataValues`, not `get()`. A getter's output would otherwise go
@@ -1246,7 +590,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * `belongsToMany` through row are instances inside `dataValues`, so this
    * recurses into them. An inline `full_count` is a plain value there too.
    */
-  snapshotRows = (_defName: string, rows: SequelizeRow[]): unknown[] => rows.map(snapshotRow);
+  snapshotRows = (_defName: string, rows: SequelizeRow[]): unknown[] => snapshotRowsImpl(_defName, rows);
   /**
    * Builds rows the way Sequelize builds a query result: `raw`, not new, over
    * the same include tree. That puts every relation where the resolvers read
@@ -1254,39 +598,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * options belong to the caller.
    */
   restoreRows = (defName: string, snapshot: unknown[], options: AdapterQueryOptions): SequelizeRow[] => {
-    const {include, attributes} = options as {include?: SequelizeInclude[], attributes?: unknown};
-    const Model = this.sequelize.models[defName];
-    const buildOptions: Record<string, unknown> = {
-      isNewRecord: false,
-      raw: true,
-      include: include ? Utils.cloneDeep(include) : undefined,
-      // Only the list form. `{include, exclude}` is resolved inside `findAll`,
-      // and `bulkBuild` would try to `map` it.
-      ...(Array.isArray(attributes) ? {attributes: [...attributes as unknown[]]} : {}),
-    };
-    // Validate the include tree once, as `findAll` does before it builds a
-    // result. `bulkBuild` validates its own copy and never marks it validated,
-    // so each root row's constructor validated the whole tree again. That was
-    // more than half the cost of a restore on a page of eager-loaded rows. These
-    // statics are Sequelize internals: without them, fall back to the slow path.
-    const internals = Model as unknown as Partial<{
-      _conformIncludes(options: object, model: unknown): void;
-      _expandIncludeAll(options: object): void;
-      _validateIncludedElements(options: object): void;
-    }>;
-    if (include && internals._conformIncludes && internals._expandIncludeAll && internals._validateIncludedElements) {
-      // Sequelize's own sequence (`bulkBuild`, `findAll`): conforming deletes an
-      // empty `include`, which is then not expanded or validated.
-      internals._conformIncludes(buildOptions, Model);
-      if (buildOptions.include) {
-        internals._expandIncludeAll(buildOptions);
-        internals._validateIncludedElements(buildOptions);
-      }
-      buildOptions.includeValidated = true;
-    }
-    const rows = Model.bulkBuild(snapshot as Record<string, unknown>[], buildOptions);
-    markWindowedIncludes(rows, include);
-    return rows;
+    return restoreRowsImpl(this.sequelize, defName, snapshot, options);
   };
   // `OrmAdapter.update` declares `i` with this exact permissive shape — kept to match.
   update = (
@@ -1298,100 +610,25 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     return source.update(input, options);
   };
   getCreateFunction = (defName: string): AdapterCreateFunction => {
-    const Model = this.sequelize.models[defName];
-    return (input, options) => {
-      return Model.create(input, options);
-    };
+    return getCreateFunctionImpl(this.sequelize, defName);
   };
   getUpdateFunction = (defName: string, whereOperators: WhereOperators | undefined): AdapterUpdateFunction => {
-    const Model = this.sequelize.models[defName];
-    return async (where, processInput, options) => {
-      const items = await Model.findAll({
-        where: await this.processFilterArgument(where, whereOperators, options),
-        ...options,
-      });
-      return Promise.all(
-        items.map(async (i) => {
-          const input = await processInput(i);
-          if (Object.keys(input).length > 0) {
-            return i.update(input, options);
-          }
-          return i;
-        })
-      );
-    };
+    return getUpdateFunctionImpl(this, this.sequelize, defName, whereOperators);
   };
-  /**
-   * The shared body of {@link getDeleteFunction} and {@link getRestoreFunction}:
-   * find the matching rows, then run one Sequelize instance verb over each.
-   *
-   * Serially, and awaited — this is the load-bearing part, and the reason the two
-   * were worth merging rather than left as near-copies carrying the same warning
-   * twice. Returning the array of un-awaited promises previously let callers (and
-   * subsequent queries) run before the writes had landed, which was both a
-   * correctness bug and a flake.
-   *
-   * `buildFind` is a callback rather than an options overlay because the two
-   * verbs compose their find options in a different *order* — delete puts the
-   * caller's `options` last, restore puts them first — and quietly normalising
-   * that would change which side wins a key present in both.
-   */
-  private rowVerbFunction(
-    defName: string,
-    whereOperators: WhereOperators | undefined,
-    verb: "destroy" | "restore",
-    buildFind: (nativeWhere: AdapterWhere, options: AdapterQueryOptions) => AdapterQueryOptions,
-  ) {
-    const Model = this.sequelize.models[defName];
-    return async (
-      where: AdapterWhere,
-      options: AdapterQueryOptions,
-      before: (row: AdapterRow) => Promise<AdapterRow> | AdapterRow,
-      after: (row: AdapterRow) => Promise<AdapterRow> | AdapterRow,
-    ): Promise<AdapterRow[]> => {
-      const native = await this.processFilterArgument(where, whereOperators, options);
-      const items = await Model.findAll(buildFind(native, options) as object);
-      const results: AdapterRow[] = [];
-      for (const item of items) {
-        // `before`/`after` are declared over the contract's opaque
-        // {@link AdapterRow}, not this adapter's row: they are arrow-syntax
-        // aliases, so a narrowed *return* would not survive the variance flip.
-        // What comes back is still the row that went in.
-        const row = (await before(item)) as SequelizeRow;
-        await row[verb](options);
-        results.push(await after(row));
-      }
-      return results;
-    };
-  }
   getDeleteFunction = (defName: string, whereOperators: WhereOperators | undefined): AdapterDeleteFunction => {
-    return this.rowVerbFunction(defName, whereOperators, "destroy",
-      (native, options) => ({ where: native, ...options }));
+    return getDeleteFunctionImpl(this, this.sequelize, defName, whereOperators);
   };
   /**
    * The mirror of {@link getDeleteFunction} for a paranoid model.
    *
-   * The find runs with `paranoid: false` \u2014 otherwise it could not see the rows
-   * it is meant to bring back \u2014 and is narrowed to rows that are actually soft
+   * The find runs with `paranoid: false` — otherwise it could not see the rows
+   * it is meant to bring back — and is narrowed to rows that are actually soft
    * deleted, so restoring an already-live row is a no-op rather than a touch.
    * That is the same narrowing the relationship-level `restore` sub-mutation
    * already does.
    */
   getRestoreFunction = (defName: string, whereOperators: WhereOperators | undefined): AdapterRestoreFunction => {
-    const column = this.deletedAtColumn(defName);
-    const run = this.rowVerbFunction(defName, whereOperators, "restore", (native, options) => ({
-      ...options,
-      // `deletedOverlay(..., "ONLY", ...)` is exactly this narrowing, and is
-      // already what every read path uses — reusing it keeps one spelling of a
-      // security-adjacent filter rather than a second hand-rolled `Op.and`.
-      ...deletedOverlay(this, defName, "ONLY", native),
-    }));
-    return (async (where, options, before, after) => {
-      if (!column) {
-        throw new Error(`restore is not available for ${defName}: the model does not soft delete`);
-      }
-      return run(where, options, before, after);
-    });
+    return getRestoreFunctionImpl(this, this.sequelize, defName, whereOperators);
   };
   mergeFilterStatement(
     fieldName: string,
@@ -1424,31 +661,15 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * whatever primary and foreign keys it carries.
    */
   asInstance(defName: string, row: SequelizeRow): SequelizeRow {
-    if (row && typeof (row as {get?: unknown}).get === "function") {
-      return row;
-    }
-    return this.sequelize.models[defName].build(row as unknown as Record<string, unknown>, {isNewRecord: false});
+    return asInstanceImpl(this.sequelize, defName, row);
   }
-  // eslint-disable-next-line @typescript-eslint/require-await -- `OrmAdapter.resolveSingleRelationship` is declared `Promise<AdapterRow>` (utilize/src/types/index.ts:313); the eager-loaded branch returns synchronously, so `async` is what satisfies the contract's return type
   resolveSingleRelationship = async (
     _defName: string,
     relationship: Association,
     source: SequelizeRow,
     request: AdapterRelationshipRequest,
   ): Promise<SequelizeRow> => {
-    const options = request.options || {};
-    // Both the eager-loaded value and the generated accessor are reached off the
-    // instance by name — see {@link rowFields}.
-    const fields = rowFields(source);
-    // `!== undefined`, not truthy. A relation that was eager-loaded and matched
-    // nothing is `null` on the instance, and a truthy test read that as "not
-    // loaded" and issued the accessor query anyway — which returned the same
-    // null after a wasted round trip, once per parent row. Absent means absent;
-    // `null` is an answer.
-    if (fields[relationship.name] !== undefined) {
-      return fields[relationship.name];
-    }
-    return rowFields(this.asInstance(relationship.source, source))[relationship.accessors.get](options);
+    return resolveSingleRelationshipImpl(this, _defName, relationship, source, request);
   };
   // Count a relationship for its `total`. For hasMany, count the target directly
   // with the foreign-key filter so the child's beforeCount hook fires (Sequelize's
@@ -1461,28 +682,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     options: AdapterQueryOptions,
     deleted?: DeletedFilter,
   ): Promise<number> => {
-    // Both branches build their own options bag from scratch, so the soft-delete
-    // overlay has to be applied to each of them explicitly. Miss it and a nested
-    // connection reports a `total` counting live rows only while its `edges`
-    // return deleted ones.
-    const overlay = deletedOverlay(this, relationship.target, deleted, where);
-    const countWhere = overlay && overlay.where !== undefined ? overlay.where : where;
-    const paranoid = overlay ? { paranoid: false } : {};
-    if (relationship.associationType === "hasMany") {
-      const TargetModel = this.sequelize.models[relationship.target];
-      const filter = Object.assign({}, countWhere, {
-        [relationship.foreignKey]: this.asInstance(relationship.source, source).get(relationship.sourceKey),
-      });
-      // `getGraphQLArgs` is this project's own addition to the options bag — the
-      // hooks read it off `options`; Sequelize itself ignores it.
-      return TargetModel.count(Object.assign({
-        where: filter,
-        getGraphQLArgs: options?.getGraphQLArgs,
-      }, paranoid) as AdapterQueryOptions);
-    }
-    return rowFields(this.asInstance(relationship.source, source))[relationship.accessors.count](
-      Object.assign({ where: countWhere, getGraphQLArgs: options?.getGraphQLArgs }, paranoid),
-    );
+    return countRelationshipImpl(this, relationship, source, where, options, deleted);
   };
   resolveManyRelationship = async (
     defName: string,
@@ -1490,157 +690,8 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     source: SequelizeRow,
     request: AdapterRelationshipRequest,
   ): Promise<AdapterRelationshipPage> => {
-    const {whereOperators, options = {}, countOnly} = request;
-    const args = (request.args || {}) as ListArgs;
-    // The eager-loaded value and the generated accessors are reached off the
-    // instance by name — see {@link rowFields}.
-    const fields = rowFields(source);
-    if (countOnly && !(fields[relationship.name] !== undefined && fields[relationship.name] !== null)) {
-      // Only `total` requested: run a count instead of fetching rows.
-      const where = await this.processFilterArgument(args.where || {}, whereOperators, options);
-      const total = await this.countRelationship(relationship, source, where, options, args.deleted);
-      return { total, models: [] };
-    }
-    if (fields[relationship.name] !== undefined && fields[relationship.name] !== null) {
-      // Eager-loaded at the root level (JOIN or `separate:true`). The rows are
-      // already filtered and sorted, so return them — but when a per-parent
-      // limit was applied the loaded length is the page size, not the true total,
-      // so fetch an accurate count (fires the child's beforeCount natively).
-      const val = fields[relationship.name];
-      let models = Array.isArray(val) ? val : [val];
-      // ...and "already limited" holds only on the `separate` path, where the
-      // window went into SQL. A `required` relation keeps its INNER JOIN even
-      // when paginated — the join is what filters the parents, and a per-parent
-      // query cannot do that — so its window has to be applied here instead.
-      //
-      // Unconditional because it is a no-op whenever SQL already did the work:
-      // that page is at most `limit` rows starting at `offset`. Doing it only
-      // for the cases believed to need it is how the bound got lost in the
-      // first place.
-      const window = args.first != null ? args.first : args.last;
-      if (window != null && models.length > 0) {
-        // A `separate` include already applied the window in SQL — those rows
-        // *are* the page, and slicing them again dropped rows whenever the page
-        // held more rows than the cursor's offset. Only rows a JOIN loaded in
-        // full (a `required` relation) are windowed here.
-        if (!isWindowed(val)) {
-          const start = request.offset || 0;
-          models = models.slice(start, start + window);
-        }
-      }
-      let total = models.length;
-      if (args && (args.first != null || args.last != null)) {
-        try {
-          const where = await this.processFilterArgument(args.where || {}, whereOperators, options);
-          total = await this.countRelationship(relationship, source, where, options, args.deleted);
-        } catch (e) {
-          // Fall back to the already-loaded page length, but surface the error —
-          // silently returning a plausible-but-wrong count hides real defects
-          // (e.g. a bug in filter processing) behind a valid-looking response.
-          log.error("countRelationship failed; falling back to loaded page length", {
-            relationship: relationship.name,
-            err: e,
-          });
-          total = models.length;
-        }
-      }
-      return {
-        total,
-        models,
-      };
-    }
-    // Forwards the whole request: the positional form this replaced passed six of
-    // eight arguments, so `selectedFields` and `runHook` were dropped here and a
-    // JOIN-include `beforeFind` never fired on the relationship path.
-    const { getOptions, countOptions } = await this.processListArgsToOptions(defName, request);
-    const instance = rowFields(this.asInstance(relationship.source, source));
-    const models = await instance[relationship.accessors.get](getOptions);
-    let total;
-    if (this.hasInlineCountFeature()) {
-      total = await this.getInlineCount(models);
-    } else {
-      total = await instance[relationship.accessors.count](countOptions);
-    }
-    return {
-      total,
-      models,
-    };
+    return resolveManyRelationshipImpl(this, defName, relationship, source, request);
   };
-}
-
-/**
- * Marks a relation's rows that a `separate` include loaded with its own
- * `limit`/`offset`, so `resolveManyRelationship` knows the page is already cut.
- * Non-enumerable: it never reaches serialised output.
- */
-const WINDOWED = Symbol("ormize-adapter-sequelize:windowed");
-
-function isWindowed(rows: unknown): boolean {
-  return Array.isArray(rows) && Boolean((rows as unknown as {[WINDOWED]?: boolean})[WINDOWED]);
-}
-
-/**
- * Drop repeated rows from a windowed page, keeping the first of each key.
- *
- * Sequelize's grouped limit takes one `ORDER BY … LIMIT` subquery per parent
- * *key*, and when several loaded parents share a key — every root pointing at
- * the same belongsTo row — it repeats that key. Over `UNION ALL` (Postgres) the
- * page then came back with every row several times; SQLite's plain UNION
- * happened to collapse them. In place, because the instance holds this array.
- */
-function dedupeInPlace(rows: SequelizeRow[], pk: string): void {
-  const seen = new Set<unknown>();
-  let write = 0;
-  for (const row of rows) {
-    const key = rowFields(row)[pk];
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    rows[write++] = row;
-  }
-  rows.length = write;
-}
-
-/** Walk the loaded rows alongside the include tree, marking each windowed `separate` result. */
-function snapshotRow(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(snapshotRow);
-  }
-  if (value instanceof Model) {
-    return Object.fromEntries(Object.entries(value.dataValues as Record<string, unknown>).map(([k, v]) => [k, snapshotRow(v)]));
-  }
-  return value;
-}
-
-function markWindowedIncludes(rows: SequelizeRow[], includes: SequelizeInclude[] | undefined): void {
-  if (!includes || includes.length === 0) {
-    return;
-  }
-  for (const inc of includes) {
-    const as = inc.as;
-    if (!as) {
-      continue;
-    }
-    const windowed = Boolean(inc.separate) && (inc.limit != null || inc.offset != null);
-    const pk = (inc.model as {primaryKeyAttribute?: string} | undefined)?.primaryKeyAttribute;
-    for (const row of rows) {
-      const value = row ? rowFields(row)[as] : undefined;
-      if (windowed && Array.isArray(value)) {
-        Object.defineProperty(value, WINDOWED, { value: true, enumerable: false });
-        if (pk) {
-          dedupeInPlace(value as SequelizeRow[], pk);
-        }
-      }
-      const children = Array.isArray(value) ? value : value ? [value] : [];
-      markWindowedIncludes(children as SequelizeRow[], inc.include);
-    }
-  }
-}
-
-/** True when a where object carries no own properties (string or symbol). */
-function isEmptyWhere(w: AdapterWhere): boolean {
-  return Object.getOwnPropertyNames(w).length + Object.getOwnPropertySymbols(w).length === 0;
 }
 
 export function mergeFilterStatement(
@@ -1649,20 +700,7 @@ export function mergeFilterStatement(
   match = true,
   originalWhere?: AdapterWhere
 ): AdapterWhere {
-  const targetOp = Array.isArray(value)
-    ? (match ? Op.in : Op.notIn)
-    : (match ? Op.eq : Op.ne);
-  const filter = {
-    [fieldName]: {
-      [targetOp]: value,
-    },
-  };
-  if (originalWhere) {
-    return {
-      [Op.and]: [originalWhere, filter],
-    };
-  }
-  return filter;
+  return mergeFilterStatementImpl(fieldName, value, match, originalWhere);
 }
 
 // Typed-models API (definition typesystem). See ./types/orm.
