@@ -1,4 +1,4 @@
-import { isFieldExposed } from "./gate";
+import { isFieldExposed, LOGICAL_OPERATORS } from "./gate";
 import type { Permission } from "./types/index";
 
 /**
@@ -100,8 +100,8 @@ export function assertFilterAllowed(
   }
 }
 
-/** Combinators whose values are nested clauses, not field names. */
-const LOGICAL_OPERATORS = new Set(["and", "or", "not"]);
+// `LOGICAL_OPERATORS` is imported from `./gate` — one set for both the scope
+// normaliser and the filter/order validators.
 
 /** Validate that every `orderBy` field is permitted for the model. */
 export function assertOrderAllowed(

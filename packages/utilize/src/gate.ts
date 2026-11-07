@@ -544,14 +544,13 @@ export function scopeDispositionOf(value: unknown): ScopeDisposition {
   return aware ? "aware" : (opted ? "unscoped" : undefined);
 }
 
-/** Logical combinators in the portable vocabulary, in the casing `guards.ts` matches. */
-const PORTABLE_LOGICAL_OPERATORS = ["and", "or", "not"];
-
-const LOGICAL_BY_LOWER: { [lower: string]: string } = PORTABLE_LOGICAL_OPERATORS
-  .reduce((o: { [lower: string]: string }, op) => {
-    o[op] = op;
-    return o;
-  }, {});
+/**
+ * Logical combinators in the portable filter vocabulary, lowercased.
+ *
+ * Shared with `guards.ts` (which validates caller-supplied filters against the
+ * same set) so the two cannot drift apart.
+ */
+export const LOGICAL_OPERATORS = new Set(["and", "or", "not"]);
 
 /**
  * Rewrite `AND` / `Or` / `NOT` to lowercase throughout a portable filter.
@@ -572,9 +571,9 @@ export function normaliseScopeWhere<T>(where: T): T {
   const clause = where as { [key: string]: unknown };
   const out: { [key: string]: unknown } = {};
   for (const key of Object.keys(clause)) {
-    const canonical = LOGICAL_BY_LOWER[key.toLowerCase()];
-    if (canonical) {
-      out[canonical] = normaliseScopeWhere(clause[key]);
+    const lower = key.toLowerCase();
+    if (LOGICAL_OPERATORS.has(lower)) {
+      out[lower] = normaliseScopeWhere(clause[key]);
     } else {
       out[key] = clause[key];
     }
