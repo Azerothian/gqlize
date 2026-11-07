@@ -127,10 +127,6 @@ export class NestizeService {
     return id;
   }
 
-  private toPlain(v: unknown): unknown {
-    return guards.toPlain(v);
-  }
-
   /**
    * Serialize an ORM instance/list to plain JSON, keeping only the fields the
    * model's generated `entity` schema exposes — which is exactly the set that
@@ -343,7 +339,7 @@ export class NestizeService {
       throw new ForbiddenException(`Method '${method}' not allowed for ${name}`);
     }
     const result = await this.orm.resolveClassMethod(name, method, args, { req });
-    return this.toPlain(result);
+    return guards.toPlain(result);
   }
 
   async callInstanceMethod(resource: string, id: unknown, method: string, args: unknown, req: RestRequest): Promise<unknown> {
@@ -414,6 +410,6 @@ export class NestizeService {
       throw new NotFoundException(`Unknown method '${method}' on ${name}`);
     }
     const result = await instanceMethod.call(row, args, { req });
-    return this.toPlain(result);
+    return guards.toPlain(result);
   }
 }
