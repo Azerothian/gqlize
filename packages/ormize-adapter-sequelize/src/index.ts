@@ -393,17 +393,18 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   private model = (modelName: string): SequelizeModelClass => {
     return this.sequelize.models[modelName] as SequelizeModelClass;
   };
-  getMetaObj = <T>(modelName: string, metaName: string): T => {
-    if(!this.meta[modelName]) {
+  /** Lazily initialise and return the per-model meta bag. */
+  private ensureMeta = (modelName: string): { [key: string]: unknown } => {
+    if (!this.meta[modelName]) {
       this.meta[modelName] = {};
     }
-    return this.meta[modelName][metaName] as T;
+    return this.meta[modelName];
+  };
+  getMetaObj = <T>(modelName: string, metaName: string): T => {
+    return this.ensureMeta(modelName)[metaName] as T;
   };
   setMetaObj = (modelName: string, metaName: string, value: unknown) => {
-    if(!this.meta[modelName]) {
-      this.meta[modelName] = {};
-    }
-    this.meta[modelName][metaName] = value;
+    this.ensureMeta(modelName)[metaName] = value;
   };
   getTypeMapper = () => {
     return typeMapper;
@@ -644,7 +645,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     const statics = staticsOf(this.model(defName));
     await Promise.all(
       Object.keys(classMethods).map(async (classMethod) => {
-        if (isFunction(classMethods[classMethod])) {
+        if (typeof classMethods[classMethod] === "function") {
           statics[classMethod] = classMethods[classMethod];
           return;
         }
@@ -1407,10 +1408,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     return mergeFilterStatement(fieldName, value, match, originalWhere);
   }
   andFilterStatements(a: AdapterWhere | undefined, b: AdapterWhere | undefined): AdapterWhere | undefined {
-    if (!a || Object.getOwnPropertyNames(a).length + Object.getOwnPropertySymbols(a).length === 0) {
+    if (!a || isEmptyWhere(a)) {
       return b;
     }
-    if (!b || Object.getOwnPropertyNames(b).length + Object.getOwnPropertySymbols(b).length === 0) {
+    if (!b || isEmptyWhere(b)) {
       return a;
     }
     // A fresh `Op.and` rather than a spread, for the same reason
@@ -1643,6 +1644,11 @@ function markWindowedIncludes(rows: SequelizeRow[], includes: SequelizeInclude[]
   }
 }
 
+/** True when a where object carries no own properties (string or symbol). */
+function isEmptyWhere(w: AdapterWhere): boolean {
+  return Object.getOwnPropertyNames(w).length + Object.getOwnPropertySymbols(w).length === 0;
+}
+
 export function mergeFilterStatement(
   fieldName: string,
   value: unknown,
@@ -1663,14 +1669,6 @@ export function mergeFilterStatement(
     };
   }
   return filter;
-}
-
-function isFunction(functionToCheck: unknown) {
-  if (functionToCheck) {
-    const type = {}.toString.call(functionToCheck);
-    return type === "[object Function]" || type === "[object AsyncFunction]";
-  }
-  return false;
 }
 
 // Typed-models API (definition typesystem). See ./types/orm.

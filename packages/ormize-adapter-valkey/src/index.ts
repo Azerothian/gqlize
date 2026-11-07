@@ -708,27 +708,29 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     };
   };
 
-  findAll = async (defName: string, options: AdapterQueryOptions = {}) => {
-    const model = this.model(defName);
-    const { ex, finish } = this.execFor(options);
-    const now = Date.now();
-    const where = await processFilterArgument(options.where || {}, options.whereOperators, options);
-    let objs = await executeQuery(ex, this.keys, model, where, now);
-    objs = this.sortObjects(objs, options.order);
-    const offset = options.offset || 0;
-    if (offset || options.limit != null) {
-      objs = objs.slice(offset, options.limit != null ? offset + options.limit : undefined);
-    }
-    await finish();
-    return this.tagAll(objs, defName);
-  };
-
-  count = async (defName: string, options: AdapterQueryOptions = {}) => {
+  /** Run index resolution and filter matching, returning raw unordered/unpaginated objects. */
+  private async resolveQuery(defName: string, options: AdapterQueryOptions): Promise<{ objs: ValkeyRow[]; finish: () => Promise<void> }> {
     const model = this.model(defName);
     const { ex, finish } = this.execFor(options);
     const now = Date.now();
     const where = await processFilterArgument(options.where || {}, options.whereOperators, options);
     const objs = await executeQuery(ex, this.keys, model, where, now);
+    return { objs, finish };
+  }
+
+  findAll = async (defName: string, options: AdapterQueryOptions = {}) => {
+    const resolved = await this.resolveQuery(defName, options);
+    let objs = this.sortObjects(resolved.objs, options.order);
+    const offset = options.offset || 0;
+    if (offset || options.limit != null) {
+      objs = objs.slice(offset, options.limit != null ? offset + options.limit : undefined);
+    }
+    await resolved.finish();
+    return this.tagAll(objs, defName);
+  };
+
+  count = async (defName: string, options: AdapterQueryOptions = {}) => {
+    const { objs, finish } = await this.resolveQuery(defName, options);
     await finish();
     return objs.length;
   };
@@ -852,6 +854,19 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     return rows[0] || null;
   };
 
+  /**
+   * Build the FK equality filter for a hasMany/hasOne relationship and merge it
+   * with an optional additional `where`. Used by both `resolveManyRelationship`
+   * and `countRelationship` to avoid duplicating the sourceKey resolution and
+   * merge logic.
+   */
+  private fkWhere(association: ValkeyAssociation, source: ValkeyRow, extraWhere?: AdapterWhere): AdapterWhere {
+    const sourceModel = this.model(association.source);
+    const sourceKey = association.sourceKey || sourceModel.primaryKey;
+    const fkFilter = { [association.foreignKey]: source[sourceKey] };
+    return extraWhere && Object.keys(extraWhere).length ? { and: [fkFilter, extraWhere] } : fkFilter;
+  }
+
   resolveManyRelationship = async (
     _defName: string, association: ValkeyAssociation, source: ValkeyRow, request: AdapterRelationshipRequest,
   ) => {
@@ -866,10 +881,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       const start = offset || 0;
       return { total, models: limit != null ? models.slice(start, start + limit) : models.slice(start) };
     }
-    const sourceModel = this.model(association.source);
-    const sourceKey = association.sourceKey || sourceModel.primaryKey;
-    const fkFilter = { [association.foreignKey]: source[sourceKey] };
-    const where = args?.where ? { and: [fkFilter, args.where] } : fkFilter;
+    const where = this.fkWhere(association, source, args?.where);
     const listOptions = { where, whereOperators, order: args?.orderBy, limit, offset: offset || 0, transaction: options?.transaction };
     const total = await this.count(association.target, { where, whereOperators, transaction: options?.transaction });
     if (countOnly) return { total, models: [] };
@@ -883,10 +895,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       if (where && Object.keys(where).length) models = models.filter((m) => matchWhere(m, where));
       return models.length;
     }
-    const sourceModel = this.model(association.source);
-    const sourceKey = association.sourceKey || sourceModel.primaryKey;
-    const fkFilter = { [association.foreignKey]: source[sourceKey] };
-    const merged = where && Object.keys(where).length ? { and: [fkFilter, where] } : fkFilter;
+    const merged = this.fkWhere(association, source, where);
     return this.count(association.target, { where: merged, transaction: options?.transaction });
   };
 
