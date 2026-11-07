@@ -230,27 +230,23 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   if (!carriesType) {
     log.warn("gqlize: the configured id codec sets `carriesType: false`, so a global id cannot be resolved back to a type - the root `node(id:)` field has been omitted from the schema.");
   }
+  /** Attach a container field when the field map is non-empty. */
+  const addContainer = (target: GqlFieldMap, key: string, name: string, fields: GqlFieldMap) => {
+    if (Object.keys(fields).length > 0) {
+      target[key] = bindField({
+        type: new GraphQLObjectType({name, fields}),
+      }, {kind: "container"}, bindingContext);
+    }
+  };
+
   let queryRootFields: GqlFieldMap = carriesType ? {
     // The relay node field closes over a live id-fetcher that re-checks
     // permissions per request; it is always rebuilt, never serialized.
     node: bindField(nodeField, {kind: "nodeField"}, bindingContext),
   } : {};
   let mutationRootFields: GqlFieldMap = {};
-  if (Object.keys(queryLists).length > 0) {
-    queryRootFields.models = bindField({
-      type: new GraphQLObjectType({
-        name: "QueryModels",
-        fields() {
-          return queryLists;
-        },
-      }),
-    }, {kind: "container"}, bindingContext);
-  }
-  if (Object.keys(classMethodQueries).length > 0) {
-    queryRootFields.classMethods = bindField({
-      type: new GraphQLObjectType({name: "QueryClassMethods", fields: classMethodQueries}),
-    }, {kind: "container"}, bindingContext);
-  }
+  addContainer(queryRootFields, "models", "QueryModels", queryLists);
+  addContainer(queryRootFields, "classMethods", "QueryClassMethods", classMethodQueries);
   queryRootFields = await applyExtendFields(queryRootFields, extend?.query, "query", options, bindingContext, ledger);
   if (Object.keys(queryRootFields).length > 0) {
     rootSchema.query = new GraphQLObjectType({
@@ -259,16 +255,8 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     });
   }
 
-  if (Object.keys(mutationCollection).length > 0) {
-    mutationRootFields.models = bindField({
-      type: new GraphQLObjectType({name: "MutationModels", fields: mutationCollection}),
-    }, {kind: "container"}, bindingContext);
-  }
-  if (Object.keys(classMethodMutations).length > 0) {
-    mutationRootFields.classMethods = bindField({
-      type: new GraphQLObjectType({name: "MutationClassMethods", fields: classMethodMutations}),
-    }, {kind: "container"}, bindingContext);
-  }
+  addContainer(mutationRootFields, "models", "MutationModels", mutationCollection);
+  addContainer(mutationRootFields, "classMethods", "MutationClassMethods", classMethodMutations);
   mutationRootFields = await applyExtendFields(mutationRootFields, extend?.mutation, "mutation", options, bindingContext, ledger);
   if (Object.keys(mutationRootFields).length > 0) {
     rootSchema.mutation = new GraphQLObjectType({
