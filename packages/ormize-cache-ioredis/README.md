@@ -47,8 +47,15 @@ and the store opens its own (which `store.quit()` then closes).
 | `{prefix}:clock` | counter | The LRU score source. It is a counter, not a timestamp, so processes with skewed clocks still agree on the order. |
 | `{prefix}:v:<model>` | counter | A model's generation. A write increments it. |
 
+An entry's key is `{prefix}:e:<shape>:<generations>`, where `<generations>` is the version of each
+model the read touched, joined with `.`.
+
+A read is one round trip: `lookup` reads the model generations and the entry in the same Lua
+script, building the entry key server-side exactly as the cache would (`shape:v1.v2…`, see
+`cacheEntryKey` in `@azerothian/utilize/utils/cache-key`).
+
 `set` and `get` are Lua scripts, so updating the LRU index and evicting are atomic with the read or
-write. An entry that expires by TTL leaves its index rows behind until a `get` misses on it or
+write. An entry that expires by TTL leaves its index rows behind until a `get` or `lookup` misses on it or
 eviction reaches it. Until then the totals overstate what is held, which only means something gets
 evicted a little early.
 

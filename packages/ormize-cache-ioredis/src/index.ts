@@ -94,6 +94,36 @@ redis.call('ZREM', KEYS[2], KEYS[1])
 return false
 `;
 
+// The generations and the entry in one round trip. Builds the entry key the way
+// `cacheEntryKey` (utilize/utils/cache-key) does, `shape:v1.v2...`, from the
+// generation counters, then does what GET does with it. The entry key is computed
+// here rather than declared in KEYS, which is why every key shares the prefix's
+// hash tag: it is in the same slot as the declared ones.
+//
+// KEYS: lru, sizes, bytes, clock, then one generation counter per tag
+// ARGV: the entry key prefix, `{prefix}:e:<shape>:`
+// Returns {suffix, value} on a hit, {suffix} on a miss.
+const LOOKUP = `
+local parts = {}
+for i = 5, #KEYS do
+  parts[#parts + 1] = tostring(tonumber(redis.call('GET', KEYS[i]) or '0'))
+end
+local suffix = table.concat(parts, '.')
+local entry = ARGV[1] .. suffix
+local v = redis.call('GET', entry)
+if v then
+  redis.call('ZADD', KEYS[1], 'XX', redis.call('INCR', KEYS[4]), entry)
+  return {suffix, v}
+end
+local s = redis.call('HGET', KEYS[2], entry)
+if s then
+  redis.call('HDEL', KEYS[2], entry)
+  redis.call('DECRBY', KEYS[3], s)
+end
+redis.call('ZREM', KEYS[1], entry)
+return {suffix}
+`;
+
 // KEYS: one generation counter per tag
 const INVALIDATE = `
 for i = 1, #KEYS do
@@ -104,7 +134,7 @@ return #KEYS
 
 type Script = {source: string, sha: string};
 const script = (source: string): Script => ({source, sha: createHash("sha1").update(source).digest("hex")});
-const scripts = {set: script(SET), get: script(GET), invalidate: script(INVALIDATE)};
+const scripts = {set: script(SET), get: script(GET), lookup: script(LOOKUP), invalidate: script(INVALIDATE)};
 
 function looksLikeClient(x: unknown): x is CacheRedisClient {
   const c = x as Partial<CacheRedisClient> | null | undefined;
@@ -125,6 +155,8 @@ export class IORedisCacheStore implements CacheStore {
   readonly client: CacheRedisClient;
   private ownsClient = false;
   private prefix: string;
+  /** The LRU index, size hash, byte total and clock: KEYS 1-4 of the lookup script. */
+  private index: string[];
   private maxEntries: number;
   private maxSize: number;
 
@@ -138,6 +170,7 @@ export class IORedisCacheStore implements CacheStore {
       this.ownsClient = true;
     }
     this.prefix = `{${options.prefix ?? "ormize-cache"}}`;
+    this.index = ["lru", "sizes", "bytes", "clock"].map((name) => `${this.prefix}:${name}`);
     this.maxEntries = options.maxEntries ?? 10_000;
     this.maxSize = options.maxSize ?? 256 * 1024 * 1024;
   }
@@ -148,6 +181,12 @@ export class IORedisCacheStore implements CacheStore {
     }
     const values = await this.client.mget(...tags.map(this.versionKey));
     return values.map((v) => (v === null ? 0 : Number(v)));
+  };
+
+  /** `versions` and `get` in one round trip (see {@link CacheStore.lookup}). */
+  lookup = async(shape: string, tags: string[]): Promise<{key: string, value: string | undefined}> => {
+    const [suffix, value] = await this.run(scripts.lookup, [...this.index, ...tags.map(this.versionKey)], `${this.entryKey(shape)}:`) as [string, string?];
+    return {key: `${shape}:${suffix}`, value: typeof value === "string" ? value : undefined};
   };
 
   get = async(key: string): Promise<string | undefined> => {
@@ -191,8 +230,11 @@ export class IORedisCacheStore implements CacheStore {
 
   private versionKey = (tag: string) => `${this.prefix}:v:${tag}`;
 
+  private entryKey = (key: string) => `${this.prefix}:e:${key}`;
+
+  /** What the get and set scripts take: the entry, then the LRU index keys. */
   private indexKeys(key: string): string[] {
-    return [`${this.prefix}:e:${key}`, `${this.prefix}:lru`, `${this.prefix}:sizes`, `${this.prefix}:bytes`, `${this.prefix}:clock`];
+    return [this.entryKey(key), ...this.index];
   }
 
   /** EVALSHA, loading the script with EVAL the first time a server hasn't seen it. */

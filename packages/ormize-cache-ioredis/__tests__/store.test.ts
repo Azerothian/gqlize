@@ -1,5 +1,6 @@
 import {describe, it, expect, beforeEach, afterAll} from "@jest/globals";
 import type IORedis from "ioredis";
+import {cacheEntryKey} from "@azerothian/utilize/utils/cache-key";
 import {IORedisCacheStore} from "../src";
 import {flush, makeClient, shutdown} from "./helper/redis";
 
@@ -69,6 +70,33 @@ describe("IORedisCacheStore", () => {
     expect(await one.versions(["B", "A"])).toEqual([1, 2]);
     expect(await other.versions(["A"])).toEqual([0]);
     expect(await one.versions([])).toEqual([]);
+  });
+
+  it("looks up generations and the entry in one call, under the key the cache would build", async() => {
+    const store = new IORedisCacheStore(client);
+    await store.invalidate(["B"]);
+    await store.invalidate(["B"]);
+    const miss = await store.lookup("Shape", ["A", "B"]);
+    expect(miss).toEqual({key: cacheEntryKey("Shape", await store.versions(["A", "B"])), value: undefined});
+    expect(miss.key).toBe("Shape:0.2");
+    await store.set(miss.key, "rows", 60_000);
+    expect(await store.lookup("Shape", ["A", "B"])).toEqual({key: "Shape:0.2", value: "rows"});
+    await store.invalidate(["A"]);
+    expect(await store.lookup("Shape", ["A", "B"])).toEqual({key: "Shape:1.2", value: undefined});
+  });
+
+  it("counts a lookup hit as a use, and settles an expired entry on a lookup miss", async() => {
+    const store = new IORedisCacheStore(client, {prefix: "t", maxEntries: 2});
+    await store.set("a:0", "1", 60_000);
+    await store.set("b:0", "2", 60_000);
+    expect((await store.lookup("a", ["T"])).value).toBe("1"); // `b` is now the oldest
+    await store.set("c:0", "3", 60_000);
+    expect((await store.lookup("a", ["T"])).value).toBe("1");
+    expect((await store.lookup("b", ["T"])).value).toBeUndefined();
+    await client.del("{t}:e:a:0"); // as if it had expired
+    expect((await store.lookup("a", ["T"])).value).toBeUndefined();
+    expect(Number(await client.get("{t}:bytes"))).toBe("{t}:e:c:0".length + 1);
+    expect(await client.zcard("{t}:lru")).toBe(1);
   });
 
   it("reloads its scripts after the server forgets them", async() => {

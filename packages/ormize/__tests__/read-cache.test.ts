@@ -5,6 +5,7 @@ import ReadCache from "../src/read-cache";
 import {encode, decode} from "../src/read-cache/codec";
 import {fingerprint} from "../src/read-cache/fingerprint";
 import OrmizeTransaction from "../src/transaction";
+import {cacheEntryKey} from "@azerothian/utilize/utils/cache-key";
 import type Ormize from "../src/manager";
 
 describe("MemoryCacheStore", () => {
@@ -204,6 +205,37 @@ describe("ReadCache", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(a).toEqual(b);
     expect(a).not.toBe(b);
+  });
+
+  it("uses a store's single-call lookup instead of versions and get", async() => {
+    const inner = new MemoryCacheStore();
+    const lookup = jest.fn(async(shape: string, tags: string[]) => {
+      const key = cacheEntryKey(shape, await inner.versions(tags));
+      return {key, value: await inner.get(key)};
+    });
+    const store = Object.assign(inner, {lookup});
+    const versions = jest.spyOn(store, "versions");
+    const get = jest.spyOn(store, "get");
+    const cache = new ReadCache({store}, host);
+    const fetch = jest.fn(() => Promise.resolve({n: 1}));
+    await cache.read(request(), fetch, codec);
+    await cache.read(request(), fetch, codec);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    // Only from inside the stand-in lookup, never by the cache itself.
+    expect(versions).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads uncached when the store's lookup fails", async() => {
+    const errors: unknown[] = [];
+    const store = Object.assign(new MemoryCacheStore(), {lookup: () => Promise.reject(new Error("down"))});
+    const cache = new ReadCache({store, onError: (e) => errors.push(e)}, host);
+    const fetch = jest.fn(() => Promise.resolve({n: 1}));
+    expect(await cache.read(request(), fetch, codec)).toEqual({n: 1});
+    await cache.read(request(), fetch, codec);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(errors).toHaveLength(2);
   });
 
   it("does not cache an options bag it cannot fingerprint", async() => {

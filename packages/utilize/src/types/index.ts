@@ -766,6 +766,17 @@ export interface CacheStore {
   invalidate(tags: string[]): Promise<void>;
   /** Drop every entry and every generation. */
   clear(): Promise<void>;
+  /**
+   * Optional: `versions` and `get` in one step, for a store where each call is a
+   * network round trip. Reads the current generation of each tag, builds the
+   * entry key from them, and returns that key with the entry's value, if any.
+   *
+   * The key has to be exactly what the cache builds without this method,
+   * `cacheEntryKey(shape, versions)` from `@azerothian/utilize/utils/cache-key`.
+   * The cache `set`s the result under the returned key, so a store whose key
+   * disagrees would never hit.
+   */
+  lookup?(shape: string, tags: string[]): Promise<{key: string, value: string | undefined}>;
 }
 
 /** One read the cache is deciding about. Passed to {@link CacheOptions.exclude}. */

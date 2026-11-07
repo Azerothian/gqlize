@@ -57,6 +57,8 @@ The read-cache benchmark is opt-in and not part of `pnpm test`:
 ```bash
 pnpm --filter @azerothian/gqlize exec jest --selectProjects sqlite \
   --testMatch '**/__tests__/bench/*.bench.ts' --coverage=false
+pnpm --filter @azerothian/ormize-cache-ioredis exec jest \
+  --testMatch '**/__tests__/bench/*.bench.ts' --coverage=false
 ```
 
 CI (`.github/workflows/ci.yml`) runs typecheck → lint → build → test → schema drift. Do them in that
@@ -111,6 +113,9 @@ order: lint needs a program that compiles.
 - **Read cache invalidation.** The read cache (`ormize/src/read-cache/`) can only invalidate writes it
   sees: `mutationEntry` in `manager.ts` and the adapter's `after*` write hooks (`WRITE_HOOKS`). A new
   write path outside both has to call `readCache.invalidate`, or cached reads stay stale until TTL.
+- **Cache key format.** `cacheEntryKey` (`utilize/src/utils/cache-key.ts`) and the `LOOKUP` Lua script
+  in `ormize-cache-ioredis` build the same entry key independently. Change both together, or the Redis
+  store never hits.
 - **Lint ceiling.** Warnings are a ratchet. Never raise the limit; fix the code or lower it.
 
 ## Code style

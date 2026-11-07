@@ -353,6 +353,13 @@ are fired by ormize after the read, so they run on every hit.
 `restoreRows` pair (§9). Otherwise only counts are cached. Values go through a JSON codec that keeps
 `Date`, `Buffer` and `bigint`.
 
+**Lookup.** A store may implement the optional `lookup(shape, tags)`, which reads the generations
+and the entry in one call. Without it a read is `versions` then `get`, which for a networked store is
+two round trips. Either way the entry key is `cacheEntryKey(shape, versions)`
+(`@azerothian/utilize/utils/cache-key`), `shape:v1.v2…`, kept plain so a store can build it
+server-side. `IORedisCacheStore` implements `lookup` in Lua, which halves the cost of a hit (0.55 ms
+to 0.29 ms against a local Redis).
+
 **Oversized results.** A result over `maxEntrySize` is returned and not stored, and its shape (the
 key without generations) is remembered for one TTL. Until then a miss on that shape skips the
 snapshot and encode, which are most of a miss's overhead, unless a deduplicated follower is waiting

@@ -1,5 +1,6 @@
 import type { AdapterQueryOptions, CacheOptions, CacheRequest, CacheStore } from "@azerothian/utilize/types/index";
 import { getStore } from "../context";
+import { cacheEntryKey } from "@azerothian/utilize/utils/cache-key";
 import { fingerprint, hash } from "./fingerprint";
 
 export { MemoryCacheStore } from "./memory-store";
@@ -65,19 +66,20 @@ export default class ReadCache {
   }
 
   read = async <T>(request: CachedRead, fetch: () => Promise<T>, codec: ResultCodec<T>): Promise<T> => {
-    const keys = await this.keyFor(request);
-    if (keys === undefined) {
+    const shaped = this.shapeOf(request);
+    const found = shaped && await this.find(shaped.shape, shaped.tags);
+    if (!shaped || !found) {
       return fetch();
     }
-    const {key, shape} = keys;
-    try {
-      const hit = await this.store.get(key);
-      if (hit !== undefined) {
+    const {shape} = shaped;
+    const {key, value: hit} = found;
+    if (hit !== undefined) {
+      try {
         return codec.decode(hit);
+      } catch (e) {
+        // A corrupt entry is a miss, and the fresh result below overwrites it.
+        this.reportError(e);
       }
-    } catch (e) {
-      // A corrupt or unreadable entry is a miss, and the fresh result below overwrites it.
-      this.reportError(e);
     }
     const joined = this.dedupe ? this.inflight.get(key) as Flight<T> | undefined : undefined;
     if (joined) {
@@ -149,8 +151,12 @@ export default class ReadCache {
 
   clear = (): Promise<void> => this.store.clear();
 
-  /** `key` addresses the entry. `shape` is the same read without generations. */
-  private keyFor = async(request: CachedRead): Promise<{key: string, shape: string} | undefined> => {
+  /**
+   * The read without its generations: everything that decides its result, and
+   * the tags whose generations complete the key. `undefined` when the read
+   * can't be cached at all.
+   */
+  private shapeOf = (request: CachedRead): {shape: string, tags: string[]} | undefined => {
     const {defName, operation, context, options} = request;
     if (options.transaction || getStore()?.transaction) {
       return undefined;
@@ -179,19 +185,41 @@ export default class ReadCache {
         return undefined;
       }
     }
-    const tags = [...new Set(request.tags)].sort();
-    let versions: number[];
+    return {
+      shape: `${defName}:${operation}:${hash(`${described}|${vary}`)}`,
+      tags: [...new Set(request.tags)].sort(),
+    };
+  };
+
+  /**
+   * The entry key under the current generations, and the entry if there is one.
+   * One call to a store with `lookup`, otherwise `versions` then `get`.
+   * `undefined` when the generations can't be read: without them a hit can't
+   * be told from a stale entry, so the read goes uncached.
+   */
+  private find = async(shape: string, tags: string[]): Promise<{key: string, value: string | undefined} | undefined> => {
+    if (this.store.lookup) {
+      try {
+        return await this.store.lookup(shape, tags);
+      } catch (e) {
+        this.reportError(e);
+        return undefined;
+      }
+    }
+    let key: string;
     try {
-      versions = await this.store.versions(tags);
+      key = cacheEntryKey(shape, await this.store.versions(tags));
     } catch (e) {
-      // Without generations a hit can't be told from a stale entry.
       this.reportError(e);
       return undefined;
     }
-    const generations = tags.map((tag, i) => `${tag}=${versions[i]}`).join(",");
-    // The long fingerprint is hashed once; the key is the hash of that plus generations.
-    const shape = `${defName}:${operation}:${hash(`${described}|${vary}`)}`;
-    return {key: `${shape}:${hash(generations)}`, shape};
+    try {
+      return {key, value: await this.store.get(key)};
+    } catch (e) {
+      // An unreadable entry is a miss; the key is still good for storing a fresh one.
+      this.reportError(e);
+      return {key, value: undefined};
+    }
   };
 
   /** Try storing it again after `ttl`: the result may have shrunk by then. */
