@@ -245,3 +245,52 @@ describe("gqlize - row-level scope through the schema", () => {
     expect(result.data.models.Doc.edges[0].node.notes.total).toEqual(0);
   });
 });
+
+describe("gqlize - row-level scope on a restore", () => {
+  // The pre-write check looks the row up under the scope. A restored row is
+  // soft-deleted by definition, so a lookup that skipped deleted rows refused
+  // every restore, the principal's own included.
+  const MemoDef: Definition = {
+    name: "Memo",
+    define: {
+      body: { type: Sequelize.STRING },
+      ownerId: { type: Sequelize.STRING, allowNull: true, writable: true },
+    },
+    options: { paranoid: true },
+  };
+
+  async function memos() {
+    const db = new Database({ permission: { scope: owned } });
+    const { adapter, name, teardown } = await createAdapterForDialect();
+    registerTeardown(teardown);
+    db.registerAdapter(adapter, name);
+    await db.addDefinition(MemoDef);
+    await db.initialise();
+    await db.sync();
+    const schema = await createSchema(db);
+    const run = (source: string, user: string) =>
+      graphql({ schema, source, contextValue: { user } }) as unknown as Promise<{errors?: readonly {message: string}[], data: {models: {Memo: {body: string}[] | {edges: {node: {body: string}}[]}}}}>;
+    for (const [user, body] of [["u1", "mine"], ["u2", "theirs"]]) {
+      expect((await run(`mutation { models { Memo(create: {body: "${body}"}) { id } } }`, user)).errors).toBeUndefined();
+      expect((await run(`mutation { models { Memo(delete: {body: {eq: "${body}"}}) { id } } }`, user)).errors).toBeUndefined();
+    }
+    return run;
+  }
+
+  it("restores the principal's own soft-deleted row", async() => {
+    const run = await memos();
+    const restored = await run(`mutation { models { Memo(restore: {body: {eq: "mine"}}) { body } } }`, "u1");
+    expect(restored.errors).toBeUndefined();
+    expect(restored.data.models.Memo).toEqual([{ body: "mine" }]);
+    const listed = await run("query { models { Memo { edges { node { body } } } } }", "u1");
+    expect(listed.data.models.Memo).toEqual({ edges: [{ node: { body: "mine" } }] });
+  });
+
+  it("still cannot restore someone else's row", async() => {
+    const run = await memos();
+    const restored = await run(`mutation { models { Memo(restore: {body: {eq: "theirs"}}) { body } } }`, "u1");
+    expect(restored.data.models.Memo).toEqual([]);
+    const theirs = await run("query { models { Memo(deleted: ONLY) { edges { node { body } } } } }", "u2");
+    expect(theirs.data.models.Memo).toEqual({ edges: [{ node: { body: "theirs" } }] });
+  });
+});

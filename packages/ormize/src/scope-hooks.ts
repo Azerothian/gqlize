@@ -236,7 +236,7 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       if (!request || !row) {
         return row;
       }
-      if (!await writable(host, defName, host.getModelAdapter(defName), row, operation, options)) {
+      if (!await writable(host, defName, host.getModelAdapter(defName), row, operation, options, hookName === "beforeRestore")) {
         // An instance write has no filter to narrow and no empty page to hand
         // back: `instance.save()` either happens or it does not. So this refuses
         // loudly whatever `onScopeMiss` says — the quiet alternative here is not
