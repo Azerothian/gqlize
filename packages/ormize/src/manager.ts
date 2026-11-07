@@ -145,6 +145,29 @@ const gqlizeHookList = [
 export type HookFunction = (value: any, ...args: any[]) => any;
 
 /**
+ * Run a hook entry — a single function or an array of them — through a
+ * waterfall. `makeArgs(waterfallValue)` builds the argument list for each call,
+ * so the same helper serves both definition hooks `(value, ...args)` and global
+ * hooks `(defName, value, ...args)`.
+ */
+/**
+ * `HookFunction` returns `any`, which is possibly-async. `waterfall` always
+ * returns a `Promise`. Callers always `await`, so both paths settle correctly.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- relays the `any` contract of `HookFunction` above
+function runHookEntry(entry: HookFunction | HookFunction[] | undefined, value: any, makeArgs: (v: any) => [any, ...any[]]) {
+  if (!entry) {
+    return value;
+  }
+  if (Array.isArray(entry)) {
+    return entry.length > 0
+      ? waterfall(entry, (hook: HookFunction, f: unknown) => hook(...makeArgs(f)), value)
+      : value;
+  }
+  return entry(...makeArgs(value));
+}
+
+/**
  * A relationship after ormize has wired it, as stored in {@link Ormize.relationships}.
  *
  * `internal` says whether the source and target share an adapter — a `true`
@@ -718,33 +741,12 @@ export default class Ormize<
     // declared return type above), rather than repeating its `any`s here.
     return async(first, ...args) => {
       const hooks = await this.getDefinitionHooks(def.name as string);
-      let v = first;
-      if (hooks[hookName]) {
-        const hook = hooks[hookName];
-        if (Array.isArray(hook)) {
-          if (hooks[hookName].length > 0) {
-            // Forwards to `hook`, whose own return may or may not be a promise —
-            // `waterfall`'s `.then()` chain adopts it either way, so this callback
-            // does not need to be `async` itself.
-            v = await waterfall(hook, (hook: HookFunction, f) => {
-              return hook(f, ...args);
-            }, v);
-          }
-        } else  if (hook instanceof Function) {
-          v = await hook(v, ...args);
-        }
-      }
-      if (this.globalHooks[hookName]) {
-        if (this.globalHooks[hookName] instanceof Function) {
-          v = await (this.globalHooks[hookName])(def.name, v, ...args);
-        } else if (Array.isArray(this.globalHooks[hookName])) {
-          if (this.globalHooks[hookName].length > 0) {
-            v = await waterfall(this.globalHooks[hookName], (hook: HookFunction, f) => {
-              return hook(def.name, f, ...args);
-            }, v);
-          }
-        }
-      }
+      // Definition hooks: `hook(value, ...args)`.
+      // Forwards to `hook`, whose own return may or may not be a promise —
+      // `waterfall`'s `.then()` chain adopts it either way.
+      let v = await runHookEntry(hooks[hookName], first, (f) => [f, ...args]);
+      // Global hooks: `hook(defName, value, ...args)`.
+      v = await runHookEntry(this.globalHooks[hookName], v, (f) => [def.name, f, ...args]);
       // §13, and structurally last: not registered through `globalHooks`, so no
       // hook a deployment adds — before or after `initialise()`, at either
       // level — can run after this one or replace it. A definition hook that
@@ -2110,14 +2112,15 @@ export default class Ormize<
       }
       input = await this.applyInstanceTransforms(defName, definition, args.apply, undefined, input, args, context, selection?.raw);
       if (Object.keys(input).length > 0) {
-        let result = await processCreate(input, createResolveContext(context, selection, source));
+        const resolveContext = createResolveContext(context, selection, source);
+        let result = await processCreate(input, resolveContext);
         if (result !== undefined && result !== null) {
           result = await this.processRelationshipMutation(defName, result, args.input, context, selection);
           // F6. `processInputs` forced whatever the create scope's `set` names,
           // but `definition.before`, `override.input` and the nested `add`/`set`
           // verbs all run after it — the last of those re-points a foreign key
           // nobody named. Cheaper to look than to reason about the ordering.
-          await this.assertRowsInScope(defName, "create", context, [result], createResolveContext(context, selection, source));
+          await this.assertRowsInScope(defName, "create", context, [result], resolveContext);
           return [result];
         }
       }
@@ -2217,19 +2220,12 @@ export default class Ormize<
         scopeMiss(defName, "delete", this.onScopeMiss);
         return [];
       }
-      const where = scoped as MutationFilter;
-      const before = (model: AdapterRow) => {
-        if (!definition.before) {
-          return model;
-        }
-        return definition.before({
-          params: model, args, context, info: selection?.raw,
-          model, modelDefinition: definition,
-          type: Events.MUTATION_DELETE,
-        });
-      };
-      const after = (model: AdapterRow) => model;
-      return processDelete(where, createResolveContext(context, selection, source), before, after);
+      return processDelete(
+        scoped as MutationFilter,
+        createResolveContext(context, selection, source),
+        makeDefinitionBeforeHook(definition, args, context, selection, Events.MUTATION_DELETE),
+        identityRow,
+      );
     });
   }
   /**
@@ -2252,31 +2248,47 @@ export default class Ormize<
         scopeMiss(defName, "update", this.onScopeMiss);
         return [];
       }
-      const where = scoped as MutationFilter;
-      const before = (model: AdapterRow) => {
-        if (!definition.before) {
-          return model;
-        }
-        // `Events.MUTATION_UPDATE` rather than an event of its own: a new member
-        // is a surface change every exhaustive hook has to learn, and treating a
-        // restore as an update is already this codebase's position everywhere
-        // else it has had to choose.
-        return definition.before({
-          params: model, args, context, info: selection?.raw,
-          model, modelDefinition: definition,
-          type: Events.MUTATION_UPDATE,
-        });
-      };
-      const after = (model: AdapterRow) => model;
-      const results = await processRestore(where, createResolveContext(context, selection, source), before, after);
+      const resolveContext = createResolveContext(context, selection, source);
+      // `Events.MUTATION_UPDATE` rather than an event of its own: a new member
+      // is a surface change every exhaustive hook has to learn, and treating a
+      // restore as an update is already this codebase's position everywhere
+      // else it has had to choose.
+      const results = await processRestore(
+        scoped as MutationFilter, resolveContext,
+        makeDefinitionBeforeHook(definition, args, context, selection, Events.MUTATION_UPDATE),
+        identityRow,
+      );
       // The same re-check `processUpdate` makes, for the same reason: the filter
       // decided which rows could be written, this decides whether the write left
       // them where it found them.
-      await this.assertRowsInScope(defName, "update", context, results, createResolveContext(context, selection, source));
+      await this.assertRowsInScope(defName, "update", context, results, resolveContext);
       return results;
     });
   }
 
+}
+
+/** No-op row transform shared by processDelete and processRestore. */
+const identityRow = (model: AdapterRow) => model;
+
+/**
+ * Build the `before` callback processDelete and processRestore both hand to the
+ * adapter's delete/restore function. Returns `model` unchanged when the
+ * definition has no `before` hook; otherwise fires it with the given event type.
+ */
+function makeDefinitionBeforeHook(
+  definition: Definition, args: unknown, context: RequestContext,
+  selection: Selection | undefined, type: Events,
+) {
+  return (model: AdapterRow) => {
+    if (!definition.before) {
+      return model;
+    }
+    return definition.before({
+      params: model, args, context, info: selection?.raw,
+      model, modelDefinition: definition, type,
+    });
+  };
 }
 
 /**
