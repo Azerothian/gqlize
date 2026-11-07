@@ -308,39 +308,29 @@ export default function createMutationInput(instance: GQLManager, defName: strin
     return generateInputFields(instance, defName, definition, fields, associations, inputTypes, schemaCache, true, options);
   }, schemaCache, "") : undefined;
   const filterType = instance.getFilterGraphQLType(defName);
+  // `update` and `select` share the same where/limit/input shape — only the
+  // name and descriptions differ.
+  const whereInputObject = (name: string, whereDesc: string, limitDesc: string, inputDesc: string) =>
+    new GraphQLList(createGQLInputObject(name, {
+      where: { type: filterType, description: whereDesc },
+      limit: { type: GraphQLInt, description: limitDesc },
+      input: { type: optional!, description: inputDesc },
+    }, schemaCache, ""));
   return {
     required, optional,
     create: required ? new GraphQLList(required) : undefined,
-    update: optional ? new GraphQLList(createGQLInputObject(`${defName}UpdateInput`, {
-      where: {
-        type: filterType,
-        description: "If provided this will restrict to changes to only the elements that match",
-      },
-      limit: {
-        type: GraphQLInt,
-        description: "If provided this will restrict the changes to only the first amount of ${limit}",
-      },
-      input: {
-        type: optional,
-        description: "This is the input for the data",
-      },
-    }, schemaCache, "")) : undefined,
+    update: optional ? whereInputObject(`${defName}UpdateInput`,
+      "If provided this will restrict to changes to only the elements that match",
+      "If provided this will restrict the changes to only the first amount of ${limit}",
+      "This is the input for the data",
+    ) : undefined,
     // `select` finds matching elements and runs relationship mutations on them
     // (via `input`) without modifying the elements themselves.
-    select: optional ? new GraphQLList(createGQLInputObject(`${defName}SelectInput`, {
-      where: {
-        type: filterType,
-        description: "Filter used to find the existing elements to run relationship mutations on",
-      },
-      limit: {
-        type: GraphQLInt,
-        description: "If provided this will restrict the selection to only the first amount of ${limit}",
-      },
-      input: {
-        type: optional,
-        description: "Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified",
-      },
-    }, schemaCache, "")) : undefined,
+    select: optional ? whereInputObject(`${defName}SelectInput`,
+      "Filter used to find the existing elements to run relationship mutations on",
+      "If provided this will restrict the selection to only the first amount of ${limit}",
+      "Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified",
+    ) : undefined,
     delete: new GraphQLList(filterType),
   };
 }
