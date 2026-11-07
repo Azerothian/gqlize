@@ -55,7 +55,11 @@ import {
   getContext as _getContext,
   withTransaction as _withTransaction,
 } from "./engine";
-import type { HookFunction, WiredRelationship } from "./engine";
+import type { HookFunction, HookHost, MutationEntryHost, ReadCacheHost, RelationshipHost, ResolutionHost, ScopeHost,
+  TransactionHost, WiredRelationship } from "./engine";
+
+/** Every host interface the engine modules declare; see `Ormize.engine`. */
+type EngineHost = HookHost & ScopeHost & ReadCacheHost & RelationshipHost & ResolutionHost & MutationEntryHost & TransactionHost;
 import { getStore } from "./context";
 
 // Re-export the public symbols that used to live in this file.
@@ -82,10 +86,10 @@ export default class Ormize<
   /** Definitions queued by the typed fluent `define()`; created in `initialise()`. */
   private _pendingDefs: { def: Definition; adapterName?: string }[] = [];
   /** Join models a cross-adapter `belongsToMany` needs and nobody registered; created in `initialise()`. */
-  _joinModels: {[name: string]: {source: string, target: string, foreignKey: string, otherKey: string, sourceKey: string, targetKey: string}} = {};
+  private _joinModels: {[name: string]: {source: string, target: string, foreignKey: string, otherKey: string, sourceKey: string, targetKey: string}} = {};
   relationships: {[defName: string]: {[relName: string]: WiredRelationship}};
   /** Adapters whose instance-level hooks are already installed; see `installInstanceHooks`. */
-  instanceHookedAdapters = new Set<string>();
+  private _instanceHookedAdapters = new Set<string>();
   /** Whether `initialise()` has run, so a later `setPermission` knows to re-audit. */
   private _initialised = false;
   /**
@@ -95,8 +99,8 @@ export default class Ormize<
    * reaches here. `scope` is the exception, which is why the engine needs the
    * bag at all — see `RESOLUTION_TIME_PERMISSION_KEYS` in `@azerothian/utilize`.
    */
-  permission: Permission | undefined;
-  onScopeMiss: ScopeMissBehaviour;
+  private permission: Permission | undefined;
+  private onScopeMiss: ScopeMissBehaviour;
   /** See `GqlizeOptions.writableForeignKeys`; applied in `getFields`. */
   private writableForeignKeys: boolean;
   /**
@@ -107,13 +111,13 @@ export default class Ormize<
    * nothing can register into is what makes "last" a property of the code rather
    * than of the order a deployment happened to call `addHook` in.
    */
-  scopeHooks: {[hookName: string]: ScopeHook};
+  private scopeHooks: {[hookName: string]: ScopeHook};
   /**
    * The same arrangement one layer up, on the hooks that fire off the Sequelize
    * *instance* rather than a model — §12's runtime twin. Held apart from
    * `globalHooks` for the same reason `scopeHooks` is.
    */
-  scopeInstanceHooks: {[hookName: string]: (...args: unknown[]) => unknown};
+  private scopeInstanceHooks: {[hookName: string]: (...args: unknown[]) => unknown};
   hooks: {[defName: string]: HookMap};
   globalHooks: {[hookName: string]: HookFunction[] | HookFunction};
   cache:  Cache;
@@ -308,7 +312,7 @@ export default class Ormize<
   }
 
   /** The lenient form of {@link requireAdapter}, for the call sites that treat a missing adapter as "not applicable". */
-  findAdapter(datasource: string | undefined): OrmAdapter | undefined {
+  private findAdapter(datasource: string | undefined): OrmAdapter | undefined {
     return datasource === undefined ? undefined : this.adapters[datasource];
   }
 
@@ -318,7 +322,7 @@ export default class Ormize<
   }
 
   /** The definition of `defName`, or a message naming the models that *are* defined. */
-  requireDefinition(defName: string, subject: string): Definition {
+  private requireDefinition(defName: string, subject: string): Definition {
     const def = this.defs[defName];
     if (def) {
       return def;
@@ -367,11 +371,11 @@ export default class Ormize<
     // Native Sequelize hooks are registered on the model; gqlize-only hooks
     // (e.g. afterCount) are composed for `runHook` but withheld from the adapter.
     const nativeHooks = hookList.reduce((o, hookName) => {
-      o[hookName] = createHook(this._hookHost, hookName, owned);
+      o[hookName] = createHook(this.engine, hookName, owned);
       return o;
     }, {} as HookMap);
     this.hooks[defName] = gqlizeHookList.reduce((o, hookName) => {
-      o[hookName] = createHook(this._hookHost, hookName, owned);
+      o[hookName] = createHook(this.engine, hookName, owned);
       return o;
     }, { ...nativeHooks });
 
@@ -441,7 +445,7 @@ export default class Ormize<
    * Re-point an options (or context) object's transaction handle from one model's
    * adapter at another's.
    */
-  optionsForAdapter = async <T extends AdapterQueryOptions | undefined>(fromDefName: string, toDefName: string, options: T): Promise<T> => {
+  private optionsForAdapter = async <T extends AdapterQueryOptions | undefined>(fromDefName: string, toDefName: string, options: T): Promise<T> => {
     if (this.defsAdapters[fromDefName] === this.defsAdapters[toDefName] || !options || options.transaction === undefined) {
       return options;
     }
@@ -477,8 +481,7 @@ export default class Ormize<
    * private, and a private member cannot satisfy a structurally-required public
    * one — see {@link MutationHost}.
    */
-  /** @internal — the host facade the engine sub-modules are written against. */
-  host: MutationHost = {
+  private host: MutationHost = {
     getModelAdapter: (modelName) => this.getModelAdapter(modelName),
     optionsForAdapter: (fromDefName, toDefName, options) => this.optionsForAdapter(fromDefName, toDefName, options),
     getAssociations: (defName) => this.getAssociations(defName),
@@ -489,34 +492,66 @@ export default class Ormize<
     processCreate: (defName, source, args, context, selection) => this.processCreate(defName, source, args, context, selection),
     processDelete: (defName, source, args, context, selection) => this.processDelete(defName, source, args, context, selection),
     processRelationshipMutation: (defName, source, input, context, selection) => this.processRelationshipMutation(defName, source, input, context, selection),
-    resolveScope: (defName, operation, context) => resolveRowScope(this, defName, operation, context),
+    resolveScope: (defName, operation, context) => resolveRowScope(this.engine, defName, operation, context),
     scopeMiss: (defName, operation) => scopeMiss(defName, operation, this.onScopeMiss),
-    scopedWhere: (defName, operation, context, where, options) => scopeNativeWhere(this, defName, operation, context, where, options),
-    assertRowsInScope: (defName, operation, context, rows, options) => assertRowsInScope(this, defName, operation, context, rows, options),
+    scopedWhere: (defName, operation, context, where, options) => scopeNativeWhere(this.engine, defName, operation, context, where, options),
+    assertRowsInScope: (defName, operation, context, rows, options) => assertRowsInScope(this.engine, defName, operation, context, rows, options),
   };
 
   /**
-   * The hook host interface, for the hook composition module.
-   * Exposed as a getter so it reads live state.
+   * The slice of this manager the engine modules (`./engine/*`) are written
+   * against: every host interface they declare, in one object.
+   *
+   * Not `this`. Most of what they read is private here (the permission bag,
+   * the §13 scope hooks, the join-model table), and a class can only satisfy an
+   * interface with public members. Widening those to public would let any
+   * caller assign `orm.permission` past `setPermission`'s re-audit, or swap out
+   * the scope hooks that are private precisely so nothing can register after
+   * them.
+   *
+   * Every field is a getter, not a copy. A hook is built once per model and
+   * keeps this object for the life of the process, so it has to see what the
+   * manager holds *now*: a `setPermission` after models exist must reach the
+   * §13 hooks they already carry.
    */
-  private get _hookHost() {
-    // Returns `this` directly — the class satisfies the HookHost interface
-    // structurally, with the field visibility widened by the engine modules.
+  private engine: EngineHost = (() => {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- the getters below run with the facade as `this`, so the manager has to be named
+    const orm = this;
     return {
-      defs: this.defs,
-      hooks: this.hooks,
-      globalHooks: this.globalHooks,
-      permission: this.permission,
-      scopeHooks: this.scopeHooks,
-      scopeInstanceHooks: this.scopeInstanceHooks,
-      readCache: this.readCache,
-      instanceHookedAdapters: this.instanceHookedAdapters,
-      getDefinitionHooks: (defName: string) => this.getDefinitionHooks(defName),
+      get defs() { return orm.defs; },
+      get defsAdapters() { return orm.defsAdapters; },
+      get adapters() { return orm.adapters; },
+      get relationships() { return orm.relationships; },
+      get _joinModels() { return orm._joinModels; },
+      get defaultAdapter() { return orm.defaultAdapter; },
+      get hooks() { return orm.hooks; },
+      get globalHooks() { return orm.globalHooks; },
+      get permission() { return orm.permission; },
+      get onScopeMiss() { return orm.onScopeMiss; },
+      get scopeHooks() { return orm.scopeHooks; },
+      get scopeInstanceHooks() { return orm.scopeInstanceHooks; },
+      get readCache() { return orm.readCache; },
+      get instanceHookedAdapters() { return orm._instanceHookedAdapters; },
+      get host() { return orm.host; },
+      getDefinitionHooks: (defName: string) => orm.getDefinitionHooks(defName),
+      getModelAdapter: (modelName: string) => orm.getModelAdapter(modelName),
+      getDefinition: (defName: string) => orm.getDefinition(defName),
+      getAssociations: (defName: string) => orm.getAssociations(defName),
+      getFields: (defName: string) => orm.getFields(defName),
+      getGlobalKeys: (defName: string) => orm.getGlobalKeys(defName),
+      getGlobalKeyTargets: (defName: string) => orm.getGlobalKeyTargets(defName),
+      addDefinition: (def: Definition, adapterName?: string) => orm.addDefinition(def, adapterName),
+      requireDefinition: (defName: string, subject: string) => orm.requireDefinition(defName, subject),
+      findAdapter: (datasource: string | undefined) => orm.findAdapter(datasource),
+      optionsForAdapter: <T extends AdapterQueryOptions | undefined>(fromDefName: string, toDefName: string, options: T) =>
+        orm.optionsForAdapter(fromDefName, toDefName, options),
+      withTransaction: <T>(defName: string, context: RequestContext, fn: (ctx: RequestContext) => Promise<T>) =>
+        orm.withTransaction(defName, context, fn),
     };
-  }
+  })();
 
   processRelationship = async(def: Definition, sourceAdapter: OrmAdapter , rel: Relationship) => {
-    return processRelationship(this, def, sourceAdapter, rel);
+    return processRelationship(this.engine, def, sourceAdapter, rel);
   }
 
   // -------------------------------------------------------------------------
@@ -558,13 +593,13 @@ export default class Ormize<
       const def = this.defs[defName];
       const sourceAdapter = this.getModelAdapter(defName);
       return waterfall(def.relationships, async(rel: Relationship) =>
-        processRelationship(this, def, sourceAdapter, rel));
+        processRelationship(this.engine, def, sourceAdapter, rel));
     }));
-    await generateJoinModels(this);
-    validateCrossAdapterKeys(this);
+    await generateJoinModels(this.engine);
+    validateCrossAdapterKeys(this.engine);
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
-      installInstanceHooks(this._hookHost, adapterName, adapter);
+      installInstanceHooks(this.engine, adapterName, adapter);
       return adapter.initialise(options);
     }));
     this._initialised = true;
@@ -589,11 +624,11 @@ export default class Ormize<
   // -------------------------------------------------------------------------
 
   runHook = async <T = unknown>(defName: string, hookName: string, value: T, ...args: unknown[]): Promise<T> => {
-    return runHook(this._hookHost, defName, hookName, value, ...args);
+    return runHook(this.engine, defName, hookName, value, ...args);
   }
 
   applyEagerAfterFind = async(planMap: import("@azerothian/utilize/types/index").IncludeMap | undefined, instances: AdapterRow[], options: AdapterQueryOptions): Promise<void> => {
-    return applyEagerAfterFind(this._hookHost, planMap, instances, options);
+    return applyEagerAfterFind(this.engine, planMap, instances, options);
   }
 
   // -------------------------------------------------------------------------
@@ -609,19 +644,19 @@ export default class Ormize<
   resolveClassMethod = async(defName: string, methodName: string, args: unknown, context: RequestContext,
     before?: (args: unknown, context: RequestContext) => unknown,
     after?: (result: unknown, context: RequestContext) => unknown) => {
-    return _resolveClassMethod(this, defName, methodName, args, context, before, after);
+    return _resolveClassMethod(this.engine, defName, methodName, args, context, before, after);
   }
 
   resolveManyRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) => {
-    return _resolveManyRelationship(this, defName, association, source, args, context, selection);
+    return _resolveManyRelationship(this.engine, defName, association, source, args, context, selection);
   }
 
   resolveSingleRelationship = async(defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) => {
-    return _resolveSingleRelationship(this, defName, association, source, args, context, selection);
+    return _resolveSingleRelationship(this.engine, defName, association, source, args, context, selection);
   }
 
   resolveFindAll = async(defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection, scope?: {field: string, value: unknown}) => {
-    return _resolveFindAll(this, defName, source, args, context, selection, scope);
+    return _resolveFindAll(this.engine, defName, source, args, context, selection, scope);
   }
 
   // -------------------------------------------------------------------------
@@ -629,31 +664,31 @@ export default class Ormize<
   // -------------------------------------------------------------------------
 
   processInputs = async(defName: string, input: MutationInputTree, args: unknown, context: RequestContext, info: unknown, model?: AdapterRow, operationHint?: ScopeOperation): Promise<MutationInput> => {
-    return _processInputs(this, defName, input, args, context, info, model, operationHint);
+    return _processInputs(this.engine, defName, input, args, context, info, model, operationHint);
   }
 
   processRelationshipMutation = async(defName: string, source: AdapterRow, input: MutationInputTree | undefined, context: RequestContext, selection?: Selection): Promise<AdapterRow> => {
-    return _processRelationshipMutation(this, defName, source, input, context, selection);
+    return _processRelationshipMutation(this.engine, defName, source, input, context, selection);
   }
 
   processCreate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return _processCreate(this, defName, source, args, context, selection);
+    return _processCreate(this.engine, defName, source, args, context, selection);
   }
 
   processUpdate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return _processUpdate(this, defName, source, args, context, selection);
+    return _processUpdate(this.engine, defName, source, args, context, selection);
   }
 
   processSelect = async(defName: string, source: AdapterRow, args: { input?: MutationInputTree; where?: MutationFilter; limit?: number }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return _processSelect(this, defName, source, args, context, selection);
+    return _processSelect(this.engine, defName, source, args, context, selection);
   }
 
   processDelete = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return _processDelete(this, defName, source, args, context, selection);
+    return _processDelete(this.engine, defName, source, args, context, selection);
   }
 
   processRestore = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
-    return _processRestore(this, defName, source, args, context, selection);
+    return _processRestore(this.engine, defName, source, args, context, selection);
   }
 
   // -------------------------------------------------------------------------
@@ -673,6 +708,6 @@ export default class Ormize<
   }
 
   withTransaction = async <T>(defName: string, context: RequestContext, fn: (ctx: RequestContext) => Promise<T>): Promise<T> => {
-    return _withTransaction(this, this, defName, context, fn);
+    return _withTransaction(this.engine, this, defName, context, fn);
   }
 }

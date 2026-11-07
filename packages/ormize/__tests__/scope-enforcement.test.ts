@@ -2,7 +2,7 @@
 // out (F6), the adapter hooks (section 13), the surfaces the engine cannot reach
 // (section 12), raw SQL (section 12), raw SQL class methods (section 12), and the
 // instance-level backstop (section 12).
-// Split from scope.test.ts for readability.
+// Shared models and seeding: `helper/scope-fixtures.ts`.
 
 import { describe, it, expect, jest } from "@jest/globals";
 import type { ScopePredicate, ResolvedScope } from "@azerothian/utilize/gate";
@@ -191,6 +191,17 @@ describe("ormize - row-level scope, the adapter hooks (§13)", () => {
   it("scopes a query issued straight off the model", async () => {
     const db = await buildOrm({ scope: ownedBy(1) });
     await seed(db);
+    const rows = await db.models.Doc.findAll(asRequest(1)) as NamedRow[];
+    expect(rows.map((r) => r.name).sort()).toEqual(["mine-1", "mine-2"]);
+  });
+
+  it("scopes a query off the model when the permission arrives after the build", async () => {
+    // The hooks were installed when the model was created, with no scope in
+    // sight. `setPermission` has to reach them anyway: they ask for the
+    // permission at call time, not at install time.
+    const db = await buildOrm();
+    await seed(db);
+    db.setPermission({ scope: ownedBy(1) });
     const rows = await db.models.Doc.findAll(asRequest(1)) as NamedRow[];
     expect(rows.map((r) => r.name).sort()).toEqual(["mine-1", "mine-2"]);
   });
