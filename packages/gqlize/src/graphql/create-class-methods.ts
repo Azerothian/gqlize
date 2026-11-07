@@ -46,9 +46,10 @@ export default function createClassMethods(instance: GQLManager, definitions: De
 
 export function createClassMethodFields(instance: GQLManager, defName: string, definition: Definition, query: ExposedMethods, options: GqlizeOptions, schemaCache: SchemaCache, targetName: string): Promise<GqlFieldMap> {
   return waterfall(Object.keys(query), (methodName: string, o: GqlFieldMap) => {
-    const gate = options.permission && (targetName === "query"
-      ? options.permission.queryClassMethods
-      : options.permission.mutationClassMethods);
+    // Only the two targets have a gate; any other name is ungated, as before.
+    const gate = targetName === "query" ? options.permission?.queryClassMethods
+      : targetName === "mutations" ? options.permission?.mutationClassMethods
+        : undefined;
     if (gate && !gate(defName, methodName, options.permission!.options)) {
       return o;
     }

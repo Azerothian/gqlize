@@ -149,10 +149,9 @@ export type HookFunction = (value: any, ...args: any[]) => any;
  * waterfall. `makeArgs(waterfallValue)` builds the argument list for each call,
  * so the same helper serves both definition hooks `(value, ...args)` and global
  * hooks `(defName, value, ...args)`.
- */
-/**
- * `HookFunction` returns `any`, which is possibly-async. `waterfall` always
- * returns a `Promise`. Callers always `await`, so both paths settle correctly.
+ *
+ * May return a promise or a plain value (a lone hook's own return); callers
+ * always `await` it.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- relays the `any` contract of `HookFunction` above
 function runHookEntry(entry: HookFunction | HookFunction[] | undefined, value: any, makeArgs: (v: any) => [any, ...any[]]) {
@@ -2112,15 +2111,14 @@ export default class Ormize<
       }
       input = await this.applyInstanceTransforms(defName, definition, args.apply, undefined, input, args, context, selection?.raw);
       if (Object.keys(input).length > 0) {
-        const resolveContext = createResolveContext(context, selection, source);
-        let result = await processCreate(input, resolveContext);
+        let result = await processCreate(input, createResolveContext(context, selection, source));
         if (result !== undefined && result !== null) {
           result = await this.processRelationshipMutation(defName, result, args.input, context, selection);
           // F6. `processInputs` forced whatever the create scope's `set` names,
           // but `definition.before`, `override.input` and the nested `add`/`set`
           // verbs all run after it — the last of those re-points a foreign key
           // nobody named. Cheaper to look than to reason about the ordering.
-          await this.assertRowsInScope(defName, "create", context, [result], resolveContext);
+          await this.assertRowsInScope(defName, "create", context, [result], createResolveContext(context, selection, source));
           return [result];
         }
       }
@@ -2248,20 +2246,19 @@ export default class Ormize<
         scopeMiss(defName, "update", this.onScopeMiss);
         return [];
       }
-      const resolveContext = createResolveContext(context, selection, source);
       // `Events.MUTATION_UPDATE` rather than an event of its own: a new member
       // is a surface change every exhaustive hook has to learn, and treating a
       // restore as an update is already this codebase's position everywhere
       // else it has had to choose.
       const results = await processRestore(
-        scoped as MutationFilter, resolveContext,
+        scoped as MutationFilter, createResolveContext(context, selection, source),
         makeDefinitionBeforeHook(definition, args, context, selection, Events.MUTATION_UPDATE),
         identityRow,
       );
       // The same re-check `processUpdate` makes, for the same reason: the filter
       // decided which rows could be written, this decides whether the write left
       // them where it found them.
-      await this.assertRowsInScope(defName, "update", context, results, resolveContext);
+      await this.assertRowsInScope(defName, "update", context, results, createResolveContext(context, selection, source));
       return results;
     });
   }

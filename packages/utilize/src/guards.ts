@@ -100,9 +100,6 @@ export function assertFilterAllowed(
   }
 }
 
-// `LOGICAL_OPERATORS` is imported from `./gate` — one set for both the scope
-// normaliser and the filter/order validators.
-
 /** Validate that every `orderBy` field is permitted for the model. */
 export function assertOrderAllowed(
   permission: Permission | undefined, name: string, orderBy: unknown, fail: Fail,

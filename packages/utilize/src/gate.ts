@@ -550,7 +550,7 @@ export function scopeDispositionOf(value: unknown): ScopeDisposition {
  * Shared with `guards.ts` (which validates caller-supplied filters against the
  * same set) so the two cannot drift apart.
  */
-export const LOGICAL_OPERATORS = new Set(["and", "or", "not"]);
+export const LOGICAL_OPERATORS: ReadonlySet<string> = new Set(["and", "or", "not"]);
 
 /**
  * Rewrite `AND` / `Or` / `NOT` to lowercase throughout a portable filter.
