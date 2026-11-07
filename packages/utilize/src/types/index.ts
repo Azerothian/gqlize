@@ -305,6 +305,22 @@ export interface OrmAdapter {
   findAll(defName: string, options: AdapterQueryOptions): Promise<AdapterRow[]>;
   /** Row count carried alongside the rows by backends that support it (`hasInlineCountFeature`). */
   getInlineCount(models: AdapterRow[]): Promise<number>;
+  /**
+   * Optional: the rows a `findAll(defName, options)` returned, as plain values
+   * that can go through JSON. Should hold the stored values, not getter
+   * output, along with anything `restoreRows` needs to rebuild what the
+   * resolvers read: eager-loaded relations, an inline count column.
+   *
+   * The read cache stores rows only for an adapter that implements this
+   * together with `restoreRows`. Without them it still caches `count`.
+   */
+  snapshotRows?(defName: string, rows: AdapterRow[], options: AdapterQueryOptions): unknown[];
+  /**
+   * Optional: rows rebuilt from a `snapshotRows` result, as indistinguishable as
+   * possible from what `findAll` with the same `options` would have returned.
+   * Each call must hand back fresh rows, because callers are free to mutate them.
+   */
+  restoreRows?(defName: string, snapshot: unknown[], options: AdapterQueryOptions): AdapterRow[];
   count(defName: string, options: AdapterQueryOptions): Promise<number>;
   /** `where` may be absent — an operation with no filter — which every adapter reads as "match everything". */
   processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): AdapterWhere | Promise<AdapterWhere>;
@@ -719,6 +735,91 @@ export type GqlizeOptions = {
    * profiles per process may prefer to pay it once in CI, via `gqlize check`).
    */
   validate?: boolean
+  /**
+   * An LRU cache in front of adapter reads (`findAll` and `count`), off unless
+   * this is set. Read by the `Ormize` constructor. See {@link CacheOptions}.
+   */
+  cache?: CacheOptions
+}
+
+/**
+ * Where the read cache keeps its entries. Two implementations ship:
+ * `MemoryCacheStore` in ormize, and `IORedisCacheStore` in
+ * `@azerothian/ormize-cache-ioredis`.
+ *
+ * Values are opaque strings. The cache serialises a result before calling
+ * `set`, so a store never holds a live row and never has to know what one is.
+ *
+ * Invalidation works by generation, not by listing keys. Each tag (a model
+ * name) has a counter, every key embeds the counters of the tags its read
+ * touched, and `invalidate` increments them. An entry written before the
+ * increment is never looked up again and ages out through the store's LRU or
+ * TTL. Because of this, a write in one process invalidates reads another
+ * process cached, and the store never tracks which keys belong to which model.
+ */
+export interface CacheStore {
+  /** The current generation of each tag, in the order given. A tag that has never been invalidated is 0. */
+  versions(tags: string[]): Promise<number[]>;
+  get(key: string): Promise<string | undefined>;
+  /** Keep `value` for `ttl` ms. The store may evict it sooner to stay within its size limits. */
+  set(key: string, value: string, ttl: number): Promise<void>;
+  invalidate(tags: string[]): Promise<void>;
+  /** Drop every entry and every generation. */
+  clear(): Promise<void>;
+}
+
+/** One read the cache is deciding about. Passed to {@link CacheOptions.exclude}. */
+export type CacheRequest = {
+  defName: string;
+  operation: "findAll" | "count";
+  context: RequestContext;
+};
+
+export type CacheOptions = {
+  store: CacheStore;
+  /** How long an entry lives, in ms. Default: 60 000. A definition's `cache.ttl` overrides it. */
+  ttl?: number;
+  /**
+   * The largest serialised result that gets stored, in bytes. A larger one is
+   * returned but not cached, so one huge page can't push everything else out of
+   * the LRU. Default: 1 MiB. `0` means no limit.
+   */
+  maxEntrySize?: number;
+  /**
+   * Concurrent identical reads share one adapter call instead of all missing
+   * at the same moment. Each caller still gets its own copy of the rows.
+   * Default: `true`.
+   */
+  dedupe?: boolean;
+  /**
+   * Reads that are never cached: model names, or a predicate per read. A
+   * definition can also opt itself out with `cache: false`.
+   */
+  exclude?: string[] | ((request: CacheRequest) => boolean);
+  /**
+   * What to do with a model that has its own find/count hooks (`beforeFind`,
+   * `afterFind`, `beforeCount`, defined on the model or globally).
+   *
+   * Those hooks run inside the adapter call. On a hit they don't run, and their
+   * output is what got stored. That is only safe when they behave the same for
+   * every caller, and nothing here can check that. So `"bypass"`, the default,
+   * leaves such a model uncached. `"cache"` caches it anyway. Use that when
+   * the hooks don't depend on who is asking, or when `vary` covers whatever
+   * they do depend on.
+   */
+  hooks?: "bypass" | "cache";
+  /**
+   * Partition entries by something about the caller that the query itself
+   * doesn't show. The return value goes into the key, so it has to be
+   * JSON-serialisable and stable. A row scope doesn't need this: it is merged
+   * into the filter, and the filter is already part of the key.
+   */
+  vary?: (context: RequestContext) => unknown;
+  /**
+   * A failing store never fails a read. The read goes to the adapter, and the
+   * error comes here. Default: `console.warn`.
+   */
+  onError?: (error: unknown) => void;
 }
 
 export type Association = {
@@ -1053,6 +1154,14 @@ export type Definition = {
     [name: string]: DefinitionMethod;
   }
   hooks?: HookMap;
+  /**
+   * This model's part in the read cache ({@link GqlizeOptions.cache}). `false`
+   * keeps every read of it out. An object overrides the cache-wide `ttl`, and
+   * also opts in a model the cache would otherwise skip because it has its own
+   * find/count hooks (see {@link CacheOptions.hooks}). This is an explicit
+   * statement that those hooks give every caller the same result.
+   */
+  cache?: false | {ttl?: number};
   options?: DefinitionOptions
 };
 

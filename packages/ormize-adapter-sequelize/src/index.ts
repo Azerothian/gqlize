@@ -8,6 +8,7 @@ import {
   Op,
   QueryTypes,
   Sequelize,
+  Utils,
   type Association as NativeAssociation,
   type Options as SequelizeOptions,
 } from "sequelize";
@@ -1244,6 +1245,54 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // overload is the only one this can produce.
     return Model.count(options);
   };
+  /**
+   * Reads `dataValues`, not `get()`. A getter's output would otherwise go
+   * through the getter again on the way back. Eager-loaded relations and a
+   * `belongsToMany` through row are instances inside `dataValues`, so this
+   * recurses into them. An inline `full_count` is a plain value there too.
+   */
+  snapshotRows = (_defName: string, rows: SequelizeRow[]): unknown[] => rows.map(snapshotRow);
+  /**
+   * Builds rows the way Sequelize builds a query result: `raw`, not new, over
+   * the same include tree. That puts every relation where the resolvers read
+   * it. The tree is cloned because building validates it in place, and the
+   * options belong to the caller.
+   */
+  restoreRows = (defName: string, snapshot: unknown[], options: AdapterQueryOptions): SequelizeRow[] => {
+    const {include, attributes} = options as {include?: SequelizeInclude[], attributes?: unknown};
+    const Model = this.sequelize.models[defName];
+    const buildOptions: Record<string, unknown> = {
+      isNewRecord: false,
+      raw: true,
+      include: include ? Utils.cloneDeep(include) : undefined,
+      // Only the list form. `{include, exclude}` is resolved inside `findAll`,
+      // and `bulkBuild` would try to `map` it.
+      ...(Array.isArray(attributes) ? {attributes: [...attributes as unknown[]]} : {}),
+    };
+    // Validate the include tree once, as `findAll` does before it builds a
+    // result. `bulkBuild` validates its own copy and never marks it validated,
+    // so each root row's constructor validated the whole tree again. That was
+    // more than half the cost of a restore on a page of eager-loaded rows. These
+    // statics are Sequelize internals: without them, fall back to the slow path.
+    const internals = Model as unknown as Partial<{
+      _conformIncludes(options: object, model: unknown): void;
+      _expandIncludeAll(options: object): void;
+      _validateIncludedElements(options: object): void;
+    }>;
+    if (include && internals._conformIncludes && internals._expandIncludeAll && internals._validateIncludedElements) {
+      // Sequelize's own sequence (`bulkBuild`, `findAll`): conforming deletes an
+      // empty `include`, which is then not expanded or validated.
+      internals._conformIncludes(buildOptions, Model);
+      if (buildOptions.include) {
+        internals._expandIncludeAll(buildOptions);
+        internals._validateIncludedElements(buildOptions);
+      }
+      buildOptions.includeValidated = true;
+    }
+    const rows = Model.bulkBuild(snapshot as Record<string, unknown>[], buildOptions);
+    markWindowedIncludes(rows, include);
+    return rows;
+  };
   // `OrmAdapter.update` declares `i` with this exact permissive shape — kept to match.
   update = (
     source: SequelizeRow,
@@ -1559,6 +1608,16 @@ function dedupeInPlace(rows: SequelizeRow[], pk: string): void {
 }
 
 /** Walk the loaded rows alongside the include tree, marking each windowed `separate` result. */
+function snapshotRow(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(snapshotRow);
+  }
+  if (value instanceof Model) {
+    return Object.fromEntries(Object.entries(value.dataValues as Record<string, unknown>).map(([k, v]) => [k, snapshotRow(v)]));
+  }
+  return value;
+}
+
 function markWindowedIncludes(rows: SequelizeRow[], includes: SequelizeInclude[] | undefined): void {
   if (!includes || includes.length === 0) {
     return;

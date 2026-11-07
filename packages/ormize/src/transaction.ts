@@ -18,6 +18,7 @@ import type Ormize from "./manager";
  */
 export default class OrmizeTransaction {
   private txs = new Map<string, AdapterTransaction>();
+  private committed: (() => unknown)[] = [];
 
   // `Ormize`'s own generics (TModels/TBase) aren't relevant to what this class
   // needs off it (just `adapters`), so the bare (defaulted) type is enough.
@@ -42,6 +43,16 @@ export default class OrmizeTransaction {
     return tx.handle;
   }
 
+  /**
+   * Run `fn` after every adapter has committed. Nothing runs on rollback. A
+   * failing callback doesn't fail the commit, because the data is already
+   * written by then. The read cache uses this to invalidate what other callers
+   * cached while the transaction was still open.
+   */
+  afterCommit(fn: () => unknown): void {
+    this.committed.push(fn);
+  }
+
   /** True once at least one adapter transaction has been opened. */
   get isEmpty(): boolean {
     return this.txs.size === 0;
@@ -62,10 +73,20 @@ export default class OrmizeTransaction {
       const remaining = all.filter((t) => !committed.includes(t));
       await Promise.allSettled(remaining.map((t) => t.rollback()));
       throw e;
+    } finally {
+      // A partial commit still changed data, so the callbacks run whenever any
+      // adapter committed.
+      const callbacks = this.committed.splice(0);
+      if (committed.length > 0 || all.length === 0) {
+        // `Promise.resolve().then` so a callback that throws synchronously is a
+        // rejection `allSettled` absorbs, not an exception out of `commit`.
+        await Promise.allSettled(callbacks.map((fn) => Promise.resolve().then(fn)));
+      }
     }
   }
 
   async rollback(): Promise<void> {
+    this.committed = [];
     const all = [...this.txs.values()];
     this.txs.clear();
     await Promise.allSettled(all.map((t) => t.rollback()));

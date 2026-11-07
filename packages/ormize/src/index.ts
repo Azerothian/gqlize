@@ -4,3 +4,5 @@ export type { HookFunction, MutationFilter, MutationInput, MutationInputTree,
 export { createRoleBasedPermissions } from "@azerothian/utilize";
 export { default as Events } from "./events";
 export * from "./types";
+export { MemoryCacheStore } from "./read-cache";
+export type { default as ReadCache, MemoryCacheStoreOptions } from "./read-cache";

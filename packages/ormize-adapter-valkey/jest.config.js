@@ -12,6 +12,7 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/model-api.test.ts',
   '<rootDir>/__tests__/ormize.test.ts',
   '<rootDir>/__tests__/scope.test.ts',
+  '<rootDir>/__tests__/read-cache.test.ts',
 ];
 
 module.exports = {

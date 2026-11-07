@@ -27,6 +27,9 @@ import { addProxyAccessor, btmGetter, createProxyFunction, filterMerger, joinSco
 import { applyRelationshipMutations } from "./relationship-mutations";
 import Events from "./events";
 import OrmizeTransaction from "./transaction";
+import ReadCache from "./read-cache";
+import type { CachedRead } from "./read-cache";
+import { encode as encodeCached, decode as decodeCached } from "./read-cache/codec";
 import { store, getStore } from "./context";
 
 /** The relationship types ormize knows how to wire; `Relationship.type` is a widened string. */
@@ -37,6 +40,29 @@ const relationshipTypes: string[] = Object.values(RelationshipType);
  * `getAuthor`, not `getAuthors`. Everything else pluralises.
  */
 const SINGULAR_ACCESSOR = new Set<string>([RelationshipType.BelongsTo, RelationshipType.HasOne]);
+
+/**
+ * Model hooks that fire after an adapter wrote rows. Each one invalidates the
+ * read cache for the model it fired on. This catches writes that never go
+ * through a `process*` entry point: userland calling `db.models.X.create`, or
+ * a Sequelize association writing its join table.
+ */
+const WRITE_HOOKS = new Set([
+  "afterCreate", "afterDestroy", "afterRestore", "afterUpdate", "afterSave", "afterUpsert",
+  "afterBulkCreate", "afterBulkDestroy", "afterBulkRestore", "afterBulkUpdate",
+]);
+
+/**
+ * Hooks that run inside the adapter call a cached read stands in for. On a hit
+ * they don't run, so a model with any of them isn't cached by default (see
+ * `CacheOptions.hooks`). `afterCount` and an included model's `afterFind` are
+ * not here, because ormize fires those itself after the read returns, hit or
+ * miss.
+ */
+const OPAQUE_READ_HOOKS = {
+  findAll: ["beforeFind", "beforeFindAfterExpandIncludeAll", "beforeFindAfterOptions", "afterFind"],
+  count: ["beforeCount"],
+};
 
 const hookList = [
   "beforeValidate",
@@ -198,6 +224,12 @@ export default class Ormize<
   hooks: {[defName: string]: HookMap};
   globalHooks: {[hookName: string]: HookFunction[] | HookFunction};
   cache:  Cache;
+  /**
+   * The read cache from `GqlizeOptions.cache`, or `undefined` when it is off.
+   * Public so a host that writes behind ormize's back (raw SQL, another
+   * service) can call `invalidate([modelName])` or `clear()` itself.
+   */
+  readCache: ReadCache | undefined;
   defaultAdapter: string | undefined;
   constructor(options: GqlizeOptions = {}) {
     this.defs = {};
@@ -221,6 +253,14 @@ export default class Ormize<
     this.permission = options.permission;
     this.onScopeMiss = options.onScopeMiss || "empty";
     this.writableForeignKeys = options.writableForeignKeys === true;
+    this.readCache = options.cache ? new ReadCache(options.cache, {
+      definitionCache: (defName) => this.defs[defName]?.cache,
+      hasOpaqueHooks: (defName, operation) => OPAQUE_READ_HOOKS[operation].some((hookName) => {
+        const own = definitionHooks(this.defs[defName])[hookName];
+        const global = this.globalHooks[hookName];
+        return [own, global].some((h) => Array.isArray(h) ? h.length > 0 : Boolean(h));
+      }),
+    }) : undefined;
     // Built unconditionally: whether a scope is configured is asked at call
     // time, so a `setPermission` after `initialise()` reaches the models that
     // already exist. Field initialisers have all run by here, so `this.host`
@@ -713,8 +753,89 @@ export default class Ormize<
       if (enforce && typeof this.permission?.scope === "function") {
         v = await enforce(def.name as string, v, ...args);
       }
+      if (this.readCache && WRITE_HOOKS.has(hookName)) {
+        // A bulk hook is handed the options bag. An instance hook is handed the
+        // row, and the options come after it.
+        const options = (hookName.startsWith("afterBulk") ? first : args[0]) as {transaction?: unknown} | undefined;
+        await this.readCache.invalidate([def.name as string], options?.transaction);
+      }
       return v;
     };
+  }
+
+  /**
+   * Add a relationship's target and join model to `tags`, and return the target.
+   *
+   * Looked up through `this.getAssociations`, not the adapter's. Only the
+   * engine's view includes cross-adapter relationships, which no single adapter
+   * knows about, so footprints and tags cover relationships that cross adapters
+   * too. A name that isn't a definition (an implicit join table reached through
+   * a native include) has no associations of its own.
+   */
+  private tagRelation(tags: Set<string>, defName: string, relName: string): string | undefined {
+    const association = this.defs[defName] ? this.getAssociations(defName)[relName] : undefined;
+    if (association) {
+      tags.add(association.target);
+      if (association.through) {
+        tags.add(association.through);
+      }
+    }
+    return association?.target;
+  }
+
+  /**
+   * The models a mutation on `defName` may have written: the model itself, plus
+   * every relationship target and join model, because nested verbs write
+   * those. Over-invalidating is cheap with generations. Under-invalidating
+   * serves stale rows.
+   */
+  private writeFootprint(defName: string): string[] {
+    const tags = new Set([defName]);
+    for (const relName of Object.keys(this.getAssociations(defName))) {
+      this.tagRelation(tags, defName, relName);
+    }
+    return [...tags];
+  }
+
+  /**
+   * Every model a read touches: the root, each eager-loaded target and its join
+   * model from the portable plan, and any model class in the native options'
+   * `include`. The native walk covers includes a `before` hook added after the
+   * plan was built.
+   */
+  private readTags(defName: string, plan: IncludeMap[] | undefined, nativeOptions: AdapterQueryOptions): string[] {
+    const tags = new Set([defName]);
+    const walkPlan = (parent: string, maps: IncludeMap[] | undefined) => {
+      for (const map of maps || []) {
+        for (const [relName, descriptor] of Object.entries(map)) {
+          tags.add(descriptor.target);
+          this.tagRelation(tags, parent, relName);
+          walkPlan(descriptor.target, descriptor.include);
+        }
+      }
+    };
+    walkPlan(defName, plan);
+    const walkNative = (parent: string, include: unknown) => {
+      for (const entry of Array.isArray(include) ? include : []) {
+        const {model, through, association, include: nested} = (entry || {}) as
+          {model?: unknown, through?: {model?: unknown}, association?: unknown, include?: unknown};
+        let target: string | undefined;
+        for (const m of [model, through?.model]) {
+          if (typeof m === "function" && m.name) {
+            tags.add(m.name);
+            target = target ?? m.name;
+          }
+        }
+        // `{association: "reviews"}` is the other legal Sequelize include form,
+        // and it names no model class. Resolve it through the parent's associations.
+        if (typeof association === "string") {
+          target = target ?? this.tagRelation(tags, parent, association);
+        }
+        walkNative(target ?? parent, nested);
+      }
+    };
+    walkNative(defName, nativeOptions.include);
+    return [...tags];
   }
 
   /**
@@ -1502,6 +1623,45 @@ export default class Ormize<
     });
     return changed ? mapped : include;
   }
+  /**
+   * `adapter.count`, through the read cache when there is one. `plan` is the
+   * portable include plan the options were built from, which gives the read its
+   * tags.
+   */
+  private cachedCount = (defName: string, adapter: OrmAdapter, context: RequestContext, plan: IncludeMap[] | undefined, options: AdapterQueryOptions): Promise<number> => {
+    if (!this.readCache) {
+      return adapter.count(defName, options);
+    }
+    return this.readCache.read(
+      this.cachedRead(defName, "count", context, plan, options),
+      () => adapter.count(defName, options),
+      {encode: (total) => String(total), decode: (text) => Number(text)},
+    );
+  }
+  /**
+   * `adapter.findAll`, through the read cache when there is one and the adapter
+   * can snapshot its rows. One that can't still has its counts cached.
+   */
+  private cachedFindAll = (defName: string, adapter: OrmAdapter, context: RequestContext, plan: IncludeMap[] | undefined, options: AdapterQueryOptions): Promise<AdapterRow[]> => {
+    if (!this.readCache || !adapter.snapshotRows || !adapter.restoreRows) {
+      return adapter.findAll(defName, options);
+    }
+    // Both were just checked, and nothing replaces an adapter's methods mid-read.
+    const snapshotRows = (rows: AdapterRow[]) => adapter.snapshotRows!(defName, rows, options);  
+    const restoreRows = (snapshot: unknown[]) => adapter.restoreRows!(defName, snapshot, options);  
+    return this.readCache.read(
+      this.cachedRead(defName, "findAll", context, plan, options),
+      () => adapter.findAll(defName, options),
+      {
+        encode: (rows) => encodeCached(snapshotRows(rows)),
+        decode: (text) => restoreRows(decodeCached(text) as unknown[]),
+      },
+    );
+  }
+  private cachedRead(defName: string, operation: CachedRead["operation"], context: RequestContext, plan: IncludeMap[] | undefined, options: AdapterQueryOptions): CachedRead {
+    const own = this.defs[defName]?.cache;
+    return {defName, operation, context, options, tags: this.readTags(defName, plan, options), ttl: own ? own.ttl : undefined};
+  }
   resolveFindAll = async(defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection, scope?: {field: string, value: unknown}) => {
     const definition = this.getDefinition(defName);
     const adapter = this.getModelAdapter(defName);
@@ -1608,13 +1768,11 @@ export default class Ormize<
     // of the total ordered set". We need the total count to compute the right
     // offset. For adapters with inline count this is an extra round-trip; for the
     // `before`+`last` case the offset was already computed by `cursorOffset`.
+    const includePlan = a.include as IncludeMap[] | undefined;
+    const count = (countWith: AdapterQueryOptions) => this.cachedCount(defName, adapter, context, includePlan, countWith);
     const lastArgs = args as Record<string, unknown>;
     if (lastArgs.last != null && !args.after && !args.before) {
-      const {limit: _l, offset: _o, order: _ord, attributes: _a, ...countable} = getOptions;
-      const lastCountOpts = countOptions || Object.assign({}, countable, {
-        include: (getOptions.include || []).filter((i: {required?: boolean, separate?: boolean}) => i.required && !i.separate),
-      });
-      const preTotal = await adapter.count(defName, lastCountOpts);
+      const preTotal = await count(countOptions || countableFrom(getOptions));
       getOptions.offset = Math.max(0, preTotal - (getOptions.limit ?? preTotal));
     }
     // -----------------------------------------------------------------------
@@ -1622,26 +1780,18 @@ export default class Ormize<
     // Count-only: the connection selects `total` but not `edges`/rows — skip the
     // findAll and run a count (fires beforeCount natively + afterCount manually).
     if (selection?.countOnly) {
-      // Derive the count bag by *removing* the keys that mean nothing to a count,
-      // rather than whitelisting the few that do. A whitelist silently drops any
-      // adapter-specific key that decides which rows match — Sequelize's
-      // `paranoid` is one — and then `total` answers from a different row set
-      // than `edges` would have returned.
-      const {limit: _l, offset: _o, order: _ord, attributes: _a, ...countable} = getOptions;
-      const countOnlyOptions = countOptions || Object.assign({}, countable, {
-        include: (getOptions.include || []).filter((i: {required?: boolean, separate?: boolean}) => i.required && !i.separate),
-      });
-      let total = await adapter.count(defName, countOnlyOptions);
+      const countOnlyOptions = countOptions || countableFrom(getOptions);
+      let total = await count(countOnlyOptions);
       total = await this.runHook(defName, "afterCount", total, countOnlyOptions);
       return { total, models: [] };
     }
-    const models = (await adapter.findAll(defName, getOptions)).filter((m) => (m !== undefined && m !== null));
+    const models = (await this.cachedFindAll(defName, adapter, context, includePlan, getOptions)).filter((m) => (m !== undefined && m !== null));
 
     // Sequelize does not fire a child model's afterFind for JOIN-loaded includes.
     // Walk the built include plan and fire afterFind for each JOIN (non-separate)
     // relation on the loaded instances before the nested field resolvers read them;
     // separate/cross-adapter relations fire it natively via their own query.
-    const plan = (a.include as IncludeMap[] | undefined)?.[0];
+    const plan = includePlan?.[0];
     if (plan) {
       await this.applyEagerAfterFind(plan, models, options);
     }
@@ -1654,10 +1804,7 @@ export default class Ormize<
       // returns 0 — but the connection total is still the true row count. Fall
       // back to a separate COUNT when this happens.
       if (total === 0 && models.length === 0 && (getOptions.offset ?? 0) > 0) {
-        const {limit: _l, offset: _o, order: _ord, attributes: _a, ...countable} = getOptions;
-        total = await adapter.count(defName, Object.assign({}, countable, {
-          include: (getOptions.include || []).filter((i: {required?: boolean, separate?: boolean}) => i.required && !i.separate),
-        }));
+        total = await count(countableFrom(getOptions));
       }
     } else {
       // `countOptions` is only optional for adapters that count inline; the two
@@ -1666,7 +1813,7 @@ export default class Ormize<
       if (!countOptions) {
         throw new Error(`Adapter '${adapter.adapterName}' has no inline count feature but returned no countOptions for '${defName}'`);
       }
-      total = await adapter.count(defName, countOptions);
+      total = await count(countOptions);
     }
     return {
       total, models,
@@ -1831,14 +1978,23 @@ export default class Ormize<
       translateFilter: NonNullable<Selection["translateFilter"]>;
     }) => Promise<T>,
   ): Promise<T> => {
-    return this.withTransaction(defName, context, (context: RequestContext) => fn({
-      context,
-      adapter: this.getModelAdapter(defName),
-      definition: this.getDefinition(defName),
-      globalKeys: this.getGlobalKeys(defName),
-      idTargets: this.getGlobalKeyTargets(defName),
-      translateFilter: selection?.translateFilter || (<W,>(w: W) => w),
-    }));
+    return this.withTransaction(defName, context, async(context: RequestContext) => {
+      try {
+        return await fn({
+          context,
+          adapter: this.getModelAdapter(defName),
+          definition: this.getDefinition(defName),
+          globalKeys: this.getGlobalKeys(defName),
+          idTargets: this.getGlobalKeyTargets(defName),
+          translateFilter: selection?.translateFilter || (<W,>(w: W) => w),
+        });
+      } finally {
+        // Also on a throw: a mutation that wrote some rows and then failed may
+        // have committed them on an adapter with no transaction to roll back.
+        // Inside a transaction, `invalidate` bumps again after the commit.
+        await this.readCache?.invalidate(this.writeFootprint(defName), context?.transaction);
+      }
+    });
   }
 
   /**
@@ -2121,6 +2277,23 @@ export default class Ormize<
     });
   }
 
+}
+
+/**
+ * A count over the same rows a fetch's options match, for a backend that counts
+ * inline and so built no `countOptions` of its own.
+ *
+ * Derived by *removing* the keys that mean nothing to a count, rather than
+ * whitelisting the few that do. A whitelist silently drops any adapter-specific
+ * key that decides which rows match (Sequelize's `paranoid` is one), and then
+ * `total` answers from a different row set than `edges` would have returned.
+ * Only includes that filter the parent (required, joined) are kept.
+ */
+function countableFrom(getOptions: AdapterQueryOptions): AdapterQueryOptions {
+  const {limit: _l, offset: _o, order: _ord, attributes: _a, ...countable} = getOptions;
+  return Object.assign({}, countable, {
+    include: (getOptions.include || []).filter((i: {required?: boolean, separate?: boolean}) => i.required && !i.separate),
+  });
 }
 
 // Build the resolve-context object passed to adapter fetch/mutation functions.

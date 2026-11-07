@@ -16,6 +16,7 @@ graphql-types + utilize  →  ormize  →  gqlize       (GraphQL schema, CLI, sc
                                     →  nestize      (NestJS REST + OpenAPI, uses ormize-zod4)
                                     →  temporalize  (Temporal activities/workers)
 adapters: ormize-adapter-sequelize (reference), ormize-adapter-valkey
+read-cache stores: MemoryCacheStore (in ormize), ormize-cache-ioredis
 ```
 
 | Path | Role |
@@ -24,6 +25,7 @@ adapters: ormize-adapter-sequelize (reference), ormize-adapter-valkey
 | `packages/ormize` | Backend manager: definitions, adapters, models, hooks, scopes, relationship mutations, cross-adapter transactions (`src/manager.ts` is the core). |
 | `packages/gqlize` | `createSchema(orm, options)`; builders in `src/graphql/create-*.ts`, resolvers in `src/graphql/resolvers/`, artifact build/load in `src/graphql/snapshot/`, CLI in `src/cli/`. |
 | `packages/ormize-adapter-*` | Data-source implementations. The sequelize adapter implements `GqlizeAdapter` from gqlize. |
+| `packages/ormize-cache-ioredis` | Redis/Valkey `CacheStore` for the read cache (`ormize/src/read-cache/`). |
 | `packages/test-fixtures` | Private. Shared model definitions plus the SQLite/PGlite test DB helper (`src/dialect.ts`). Never published. |
 | `examples/*` | Runnable consumers. `gqlize-basic/generated/` is committed and diffed by CI. |
 | `tools/lint` | ESLint flat config and the TypeScript the linter runs on. |
@@ -48,6 +50,13 @@ To run one package or one file:
 ```bash
 pnpm --filter @azerothian/gqlize test -- __tests__/mutation.test.ts
 pnpm --filter @azerothian/gqlize test -- __tests__/mutation.test.ts --selectProjects sqlite
+```
+
+The read-cache benchmark is opt-in and not part of `pnpm test`:
+
+```bash
+pnpm --filter @azerothian/gqlize exec jest --selectProjects sqlite \
+  --testMatch '**/__tests__/bench/*.bench.ts' --coverage=false
 ```
 
 CI (`.github/workflows/ci.yml`) runs typecheck → lint → build → test → schema drift. Do them in that
@@ -99,6 +108,9 @@ order: lint needs a program that compiles.
 - **Cyclic test fixtures.** `gqlize` and `ormize` tests import the sequelize adapter, but they can't
   declare it as a dependency because that would make a cycle. `turbo.json` lists its `src/` as a hash
   input instead. Copy that pattern if you add a similar edge.
+- **Read cache invalidation.** The read cache (`ormize/src/read-cache/`) can only invalidate writes it
+  sees: `mutationEntry` in `manager.ts` and the adapter's `after*` write hooks (`WRITE_HOOKS`). A new
+  write path outside both has to call `readCache.invalidate`, or cached reads stay stale until TTL.
 - **Lint ceiling.** Warnings are a ratchet. Never raise the limit; fix the code or lower it.
 
 ## Code style
