@@ -1,8 +1,7 @@
 // Read resolution: the engine that turns a `resolveFindAll` or a relationship
 // accessor call into adapter queries, counts, and pagination.
 //
-// Free functions over explicit host interfaces, extracted from the `Ormize`
-// class so the 300+ lines of resolution live in one readable module.
+// Free functions over explicit host interfaces (see `ResolutionHost`).
 
 import { whereOperatorsFor, expandOrderBy } from "@azerothian/utilize/exposed-methods";
 import { clampPageSize } from "@azerothian/utilize/utils/page-size";

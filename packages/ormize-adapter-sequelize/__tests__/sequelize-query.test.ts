@@ -1,5 +1,5 @@
 // Query building, inline count, relationship resolution, and write operations.
-// Split from `sequelize.test.ts` to keep each file well under 1000 lines.
+// Model lifecycle and introspection are in `sequelize.test.ts`.
 
 import SequelizeAdapter from "../src";
 import TaskModel from "./helper/models/task";

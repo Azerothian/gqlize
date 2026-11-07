@@ -1,5 +1,5 @@
-// Write operations: create, update, delete, and restore functions. Extracted
-// from `index.ts` so the adapter class delegates to these free functions.
+// Write operations: create, update, delete, and restore functions. The adapter
+// class in `index.ts` delegates here.
 
 import type { Sequelize } from "sequelize";
 import type {

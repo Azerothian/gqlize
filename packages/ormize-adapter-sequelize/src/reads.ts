@@ -1,6 +1,6 @@
 // Read operations: findAll, count, snapshot/restore, single and many
-// relationship resolution, and inline-count extraction. Extracted from
-// `index.ts` so the adapter class delegates to these free functions.
+// relationship resolution, and inline-count extraction. The adapter class in
+// `index.ts` delegates here.
 
 import { Utils, type Sequelize } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
@@ -120,7 +120,7 @@ export function restoreRowsImpl(
   return rows;
 }
 
-// eslint-disable-next-line @typescript-eslint/require-await -- `OrmAdapter.resolveSingleRelationship` is declared `Promise<AdapterRow>` (utilize/src/types/index.ts:313); the eager-loaded branch returns synchronously, so `async` is what satisfies the contract's return type
+// eslint-disable-next-line @typescript-eslint/require-await -- `OrmAdapter.resolveSingleRelationship` is declared `Promise<AdapterRow>` (utilize/src/types/adapter.ts); the eager-loaded branch returns synchronously, so `async` is what satisfies the contract's return type
 export async function resolveSingleRelationshipImpl(
   host: ReadHost,
   _defName: string,

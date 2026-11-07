@@ -1,7 +1,6 @@
 // Row-level helpers: snapshot/restore utilities, windowed-include marking,
 // and the module-level functions that operate on Sequelize model instances and
-// their eager-loaded include trees. Extracted from `index.ts` to keep the
-// adapter class focused on delegation.
+// their eager-loaded include trees.
 
 import { Model, Op } from "sequelize";
 import type { AdapterWhere } from "@azerothian/utilize/types/index";

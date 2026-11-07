@@ -1,5 +1,5 @@
 // Row-level scope tests: reads, writes, and the `set` directive.
-// Split from scope.test.ts for readability.
+// Shared models and seeding: `helper/scope-fixtures.ts`.
 
 import { describe, it, expect, jest } from "@jest/globals";
 import Events from "../src/events";

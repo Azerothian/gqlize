@@ -1,8 +1,7 @@
 // Mutation entry points: create, update, select, delete, restore.
 //
 // Each one opens (or joins) a transaction, runs the mutation body, and
-// invalidates the read cache on the way out. Extracted from the `Ormize` class
-// so all mutation logic lives in one module.
+// invalidates the read cache on the way out.
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import { isStructurallyWritable } from "@azerothian/utilize/gate";

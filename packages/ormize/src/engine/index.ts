@@ -1,5 +1,6 @@
-// Barrel re-export for the engine sub-modules. Each module was extracted from
-// `manager.ts` as a pure move: same logic, same order, same comments.
+// The engine behind the `Ormize` class: free functions over narrow host
+// interfaces, one module per concern. `../manager.ts` holds the class itself
+// (state, public API, delegation) and hands each function its `engine` facade.
 
 export { sequelizeHookList, hookList, gqlizeHookList, WRITE_HOOKS, OPAQUE_READ_HOOKS,
   sequelizeHookSet, relationshipTypes, SINGULAR_ACCESSOR, runHookEntry } from "./constants";

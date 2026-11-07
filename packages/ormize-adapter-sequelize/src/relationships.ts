@@ -1,6 +1,5 @@
 // Relationship wiring: creating Sequelize associations from ormize
-// relationship definitions. Extracted from `index.ts` to keep relationship
-// setup separate from the adapter class.
+// relationship definitions. The adapter class in `index.ts` delegates here.
 
 import type { Sequelize } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";

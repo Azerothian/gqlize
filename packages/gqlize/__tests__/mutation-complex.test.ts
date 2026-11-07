@@ -1,3 +1,6 @@
+// GraphQL mutations that reach across relationships: creating complex objects
+// (hasOne, belongsTo), add/remove, multiple ids, and two-degree nested writes.
+// The single-model basics are in `mutation-crud.test.ts`.
 import {createInstance, resultData, validateResult} from "./helper";
 import {graphql, GraphQLSchema} from "graphql";
 import Sequelize from "sequelize";

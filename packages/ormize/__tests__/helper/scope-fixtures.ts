@@ -1,5 +1,5 @@
-// Shared fixtures for the scope test suite, extracted from scope.test.ts so
-// the split test files do not duplicate the model and helper definitions.
+// Shared fixtures for the row-level scope suites (`scope-*.test.ts`): the
+// models, seeding and request-context helpers they all build on.
 
 import Database from "../../src/manager";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";

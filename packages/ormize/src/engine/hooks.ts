@@ -2,7 +2,8 @@
 //
 // The functions here build the composed hooks that `addDefinition` registers on
 // each model and `installInstanceHooks` registers on the Sequelize instance.
-// Extracted from the `Ormize` class so each concern lives in its own module.
+// A hook keeps its `HookHost` for the life of the process, which is why the
+// host `Ormize` passes in reads its state through getters (see `Ormize.engine`).
 
 import { definitionHooks } from "@azerothian/utilize/utils/definition-hooks";
 import type { OrmAdapter, AdapterRow, AdapterQueryOptions, IncludeMap } from "@azerothian/utilize/types/index";

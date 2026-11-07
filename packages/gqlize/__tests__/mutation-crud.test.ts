@@ -1,3 +1,6 @@
+// GraphQL mutations, the basics: create/update/delete, `override` inputs, null and
+// zero values, class-method mutations, hook variables and the generated input
+// fields. Relationship writes are in `mutation-complex.test.ts`.
 import {createInstance, resultData, validateResult} from "./helper";
 import {graphql} from "graphql";
 import Sequelize from "sequelize";

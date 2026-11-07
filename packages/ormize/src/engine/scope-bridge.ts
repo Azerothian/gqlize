@@ -1,8 +1,7 @@
 // Row-scope helpers that bridge the Ormize class to the scope module.
 //
 // These functions mediate between the class's state (permission, adapters,
-// definitions) and the pure scope logic in `../scope.ts`. Extracted from the
-// class so scope-related code is readable in one place.
+// definitions) and the pure scope logic in `../scope.ts`.
 
 import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";

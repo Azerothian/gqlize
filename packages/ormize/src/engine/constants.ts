@@ -1,8 +1,5 @@
-// Constants, hook lists, and lightweight types shared across the engine modules.
-//
-// Extracted from `manager.ts` so the file's 2300 lines could be read in
-// cohesive pieces. Nothing here is new — every symbol existed inside the class
-// or at module scope, and the split is a pure move.
+// Constants, hook lists, and lightweight types shared across the engine modules
+// and the `Ormize` class in `../manager.ts`.
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import type { OrmAdapter } from "@azerothian/utilize/types/index";

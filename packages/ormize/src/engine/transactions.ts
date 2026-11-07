@@ -2,8 +2,7 @@
 //
 // `transaction()` opens a coordinator, `withTransaction()` enrolls a mutation
 // in it, and `runWithContext`/`getContext` expose AsyncLocalStorage-backed
-// ambient state. Extracted from the class so transaction logic is readable
-// on its own.
+// ambient state.
 
 import { inheritScopeMemo } from "../scope";
 import OrmizeTransaction from "../transaction";

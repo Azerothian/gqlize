@@ -1,6 +1,6 @@
 // Row-level scope tests: nested relationship mutations, relationship reads (F4),
 // and cross-adapter proxies (F5).
-// Split from scope.test.ts for readability.
+// Shared models and seeding: `helper/scope-fixtures.ts`.
 
 import { describe, it, expect } from "@jest/globals";
 import { ScopeDeniedError } from "../src/scope";

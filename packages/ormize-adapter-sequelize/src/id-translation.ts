@@ -1,6 +1,5 @@
 // Relay global-id translation: decoding opaque IDs in where clauses and include
-// trees before they reach Sequelize. Extracted from `index.ts` so the adapter
-// class delegates to these free functions.
+// trees before they reach Sequelize. The adapter class in `index.ts` delegates here.
 
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import { globalKeysFromFields, globalKeyTargets } from "@azerothian/utilize/utils/global-keys";

@@ -1,9 +1,8 @@
 // Relationship wiring: validating, processing, and building the join models
 // that a cross-adapter `belongsToMany` needs.
 //
-// Extracted from the `Ormize` class. The relationship-mutation *verbs* live in
-// `../relationship-mutations.ts` (unchanged); this module is about the wiring
-// that makes those verbs possible.
+// The relationship-mutation *verbs* live in `../relationship-mutations.ts`;
+// this module is about the wiring that makes those verbs possible.
 
 import pluralize from "pluralize";
 import { relationshipAccessors } from "@azerothian/utilize/utils/relationship-accessors";

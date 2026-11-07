@@ -1,7 +1,6 @@
 // Field and association introspection: reading the columns and relationships a
 // model carries back from Sequelize's internal structures into the shapes the
-// rest of ormize consumes. Extracted from `index.ts` so the adapter class
-// delegates to these free functions.
+// rest of ormize consumes. The adapter class in `index.ts` delegates here.
 
 import type {
   ModelAttributeColumnReferencesOptions,
