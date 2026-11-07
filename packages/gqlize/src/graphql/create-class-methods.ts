@@ -46,18 +46,12 @@ export default function createClassMethods(instance: GQLManager, definitions: De
 
 export function createClassMethodFields(instance: GQLManager, defName: string, definition: Definition, query: ExposedMethods, options: GqlizeOptions, schemaCache: SchemaCache, targetName: string): Promise<GqlFieldMap> {
   return waterfall(Object.keys(query), (methodName: string, o: GqlFieldMap) => {
-    if (options.permission) {
-      if (options.permission.queryClassMethods && targetName === "query") {
-        const result = options.permission.queryClassMethods(defName, methodName, options.permission.options);
-        if (!result) {
-          return o;
-        }
-      } else if (options.permission.mutationClassMethods && targetName === "mutations") {
-        const result = options.permission.mutationClassMethods(defName, methodName, options.permission.options);
-        if (!result) {
-          return o;
-        }
-      }
+    // Only the two targets have a gate; any other name is ungated, as before.
+    const gate = targetName === "query" ? options.permission?.queryClassMethods
+      : targetName === "mutations" ? options.permission?.mutationClassMethods
+        : undefined;
+    if (gate && !gate(defName, methodName, options.permission!.options)) {
+      return o;
     }
     const {type, args, deprecated} = query[methodName];
     // `ExposedMethod.type` is `unknown`: a definition author supplies either a

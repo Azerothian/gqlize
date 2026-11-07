@@ -3,7 +3,7 @@ import waterfall from "@azerothian/utilize/utils/waterfall";
 import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
 import { processAfter } from "../utils/after";
 import Events from "../../events";
-import type { AdapterRow, RequestContext } from "../../types";
+import type { AdapterRow, Definition, RequestContext } from "../../types";
 import type { BindingContext, FieldBinding } from "./types";
 
 /**
@@ -22,6 +22,29 @@ type MutationModelArgs = {
   select?: { input?: MutationInputTree; where?: MutationFilter; limit?: number }[];
   apply?: { [methodName: string]: unknown };
 };
+
+/**
+ * Process a batch of mutation operations that each return an array of rows,
+ * running `processAfter` on every row. update/delete/restore/select all share
+ * this shape — each operation yields an array and every element gets the same
+ * post-processing.
+ */
+async function collectBatch<TArg>(
+  items: TArg[],
+  process: (arg: TArg) => Promise<AdapterRow[]>,
+  args: MutationModelArgs,
+  context: RequestContext,
+  info: GraphQLResolveInfo,
+  definition: Definition,
+  event: Events,
+  results: AdapterRow[],
+): Promise<AdapterRow[]> {
+  return waterfall(items, async (arg, arr) => {
+    const result = await process(arg);
+    const node = await waterfall(result, async (el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, event)), []);
+    return arr.concat(node);
+  }, results);
+}
 
 export function buildMutationModelResolver(
   binding: Extract<FieldBinding, { kind: "mutationModel" }>,
@@ -42,34 +65,26 @@ export function buildMutationModelResolver(
       }, results);
     }
     if (args.update) {
-      results = await waterfall(args.update, async(arg, arr) => {
-        const result = await instance.processUpdate(defName, source, {...arg, apply: args.apply}, context, info);
-        const node = await waterfall(result, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, Events.MUTATION_UPDATE)), []);
-        return arr.concat(node);
-      }, results);
+      results = await collectBatch(args.update,
+        (arg) => instance.processUpdate(defName, source, {...arg, apply: args.apply}, context, info),
+        args, context, info, definition, Events.MUTATION_UPDATE, results);
     }
     if (args.delete) {
-      results = await waterfall(args.delete, async(arg, arr) => {
-        const result = await instance.processDelete(defName, source, arg, context, info);
-        const node = await waterfall(result, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, Events.MUTATION_DELETE)), []);
-        return arr.concat(node);
-      }, results);
+      results = await collectBatch(args.delete,
+        (arg) => instance.processDelete(defName, source, arg, context, info),
+        args, context, info, definition, Events.MUTATION_DELETE, results);
     }
     if (args.restore) {
-      results = await waterfall(args.restore, async(arg, arr) => {
-        const result = await instance.processRestore(defName, source, arg, context, info);
-        // `MUTATION_UPDATE` rather than an event of its own — see the same
-        // choice in ormize's `processRestore`.
-        const node = await waterfall(result, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, Events.MUTATION_UPDATE)), []);
-        return arr.concat(node);
-      }, results);
+      // `MUTATION_UPDATE` rather than an event of its own — see the same
+      // choice in ormize's `processRestore`.
+      results = await collectBatch(args.restore,
+        (arg) => instance.processRestore(defName, source, arg, context, info),
+        args, context, info, definition, Events.MUTATION_UPDATE, results);
     }
     if (args.select) {
-      results = await waterfall(args.select, async(arg, arr) => {
-        const result = await instance.processSelect(defName, source, arg, context, info);
-        const node = await waterfall(result, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, Events.MUTATION_UPDATE)), []);
-        return arr.concat(node);
-      }, results);
+      results = await collectBatch(args.select,
+        (arg) => instance.processSelect(defName, source, arg, context, info),
+        args, context, info, definition, Events.MUTATION_UPDATE, results);
     }
     return results;
   };
