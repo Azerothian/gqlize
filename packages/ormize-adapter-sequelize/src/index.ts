@@ -159,6 +159,7 @@ export type AuthoredAttributes = { [fieldName: string]: unknown };
 
 import { type QueryTypeConfig } from "@azerothian/graphql-types/query";
 import {
+  clearPermissionDerivedMeta,
   getDefaultListArgs,
   getFilterGraphQLType,
   getIncludeGraphQLType,
@@ -851,17 +852,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
   _buildPermission: Permission | undefined = undefined;
   setBuildPermission = (permission: Permission | undefined) => {
     if (permission !== this._buildPermission) {
-      // The meta cache is keyed by model name alone, but these three types are
-      // derived from the permission bag. Building a second schema off the same
-      // adapter under a different permission must not hand back the previous
-      // build's types — that would silently re-expose denied fields and
-      // relationships. `fields`/`associations` are permission-independent and
-      // deliberately survive.
-      Object.keys(this.meta).forEach((modelName) => {
-        delete this.meta[modelName].queryType;
-        delete this.meta[modelName].orderByType;
-        delete this.meta[modelName].includeType;
-      });
+      // A second schema built off this adapter under a different permission must
+      // not be handed the previous build's types. `fields`/`associations` are
+      // permission-independent and deliberately survive.
+      clearPermissionDerivedMeta(this.meta);
     }
     this._buildPermission = permission;
   };

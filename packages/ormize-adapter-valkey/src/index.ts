@@ -21,6 +21,7 @@ import { mapDataType, toNativeType } from "./data-type-mapper";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import {
+  clearPermissionDerivedMeta,
   getDefaultListArgs,
   getFilterGraphQLType,
   getIncludeGraphQLType,
@@ -144,14 +145,9 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   _buildPermission: Permission | undefined = undefined;
   setBuildPermission = (permission: Permission | undefined) => {
     if (permission !== this._buildPermission) {
-      // These three types are derived from the permission bag but cached by
-      // model name alone — a second schema build under a different permission
-      // would otherwise reuse the previous build's (differently gated) types.
-      Object.keys(this.meta).forEach((model) => {
-        delete this.meta[model].queryType;
-        delete this.meta[model].orderByType;
-        delete this.meta[model].includeType;
-      });
+      // A second schema build under a different permission must not reuse the
+      // previous build's (differently gated) types.
+      clearPermissionDerivedMeta(this.meta);
     }
     this._buildPermission = permission;
   };
