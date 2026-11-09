@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { INestApplication } from "@nestjs/common";
 import type { Ormize } from "@azerothian/ormize";
 import { generateZodSchemas } from "@azerothian/ormize-zod4";
-import { isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize";
+import { isModelAllowed, isMutationAllowed, isMutationCsvAllowed, isRelationshipAllowed } from "@azerothian/utilize";
+import { CSV_OPERATIONS } from "./csv";
 import { OpenApiOptions } from "./types";
 
 /**
@@ -144,6 +145,44 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
       };
     }
     paths[collectionPath] = collection;
+
+    // CSV uploads: documented exactly when the route would accept one — CSV on
+    // for the model, `mutationCsv` allowed, and at least one operation the
+    // caller may perform (the enum lists only those).
+    const csvOperations = CSV_OPERATIONS.filter((op) => isMutationAllowed(permission, name, op)
+      && (op !== "create" || inputSchemas.create[name]) && (op !== "update" || inputSchemas.update[name]));
+    if (!readOnly && orm.csvLimits(name) && isMutationCsvAllowed(permission, name) && csvOperations.length > 0) {
+      paths[joinPath(pathPrefix, `${resource}/_csv/{operation}`)] = {
+        post: {
+          tags: [name],
+          summary: `Create, update or delete ${name} rows from a CSV file`,
+          description:
+            "One write per data row, all-or-nothing. The header names the fields. update and delete match rows on `keys` " +
+            "(default: the primary key); delete takes only those columns. An empty cell is left out; `\\N` is null.",
+          parameters: [
+            { name: "operation", in: "path", required: true, schema: { type: "string", enum: csvOperations } },
+            { name: "keys", in: "query", required: false, schema: { type: "string" }, description: "Comma-separated columns to match rows on" },
+            { name: "delimiter", in: "query", required: false, schema: { type: "string" }, description: "Field separator. Default `,`" },
+          ],
+          requestBody: {
+            required: true,
+            content: { "text/csv": { schema: { type: "string" } } },
+          },
+          responses: {
+            "200": {
+              description: `The ${name} rows written`,
+              content: {
+                "application/json": {
+                  schema: { type: "object", properties: { rows: { type: "array", items: ref(name) } } },
+                },
+              },
+            },
+            "400": { description: "The CSV, or one of its rows, was refused; nothing was written" },
+            "413": { description: "The CSV is over the byte or row limit" },
+          },
+        },
+      };
+    }
 
     // Advanced select. NOTE: when `input` is supplied this route performs
     // relationship create/update/delete on matched rows (it is not a pure read),

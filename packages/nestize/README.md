@@ -52,6 +52,7 @@ NestizeModule.forRootAsync({
 | `PATCH` | `/:resource?filter=…`                  | update matching rows                |
 | `DELETE`| `/:resource?filter=…`                  | delete matching rows                |
 | `POST`  | `/:resource/select`                    | select + relationship sub-mutations |
+| `POST`  | `/:resource/_csv/:operation`           | CSV create / update / delete ([below](#csv-uploads)) |
 | `GET`   | `/:resource/:id/:relation`             | fetch a relationship                |
 | `POST`  | `/:resource/:id/:relation`             | relationship mutation               |
 | `DELETE`| `/:resource/:id/:relation/:relId`      | disassociate a related record       |
@@ -79,6 +80,31 @@ but not asked for" only because it lists every exposed transform at once.)
 
 `expose.instanceMethods` defaults to **off** here; temporalize defaults it on.
 Nothing is reachable over REST until you opt in.
+
+## CSV uploads
+
+With CSV turned on for the ormize instance (`new Ormize({ csv: true })`, see the
+[guide](../../docs/guide.md#csv-uploads)), `POST /:resource/_csv/create`, `…/update` and `…/delete`
+apply a CSV body as one write per data row, all-or-nothing:
+
+```sh
+curl -X POST http://localhost:3000/task/_csv/create -H 'content-type: text/csv' --data-binary @tasks.csv
+curl -X POST 'http://localhost:3000/task/_csv/update?keys=name' -H 'content-type: text/csv' --data-binary @done.csv
+```
+
+- **Body.** Send it as `text/csv`. Nest's default parsers leave that type unread, so the route
+  streams the request itself. A body another parser already read (`express.text()`, a raw
+  parser) and a multer `FileInterceptor` file (`req.file`) also work. Under Fastify, register a
+  content-type parser for `text/csv`.
+- **Rows.** The header names the fields. Cells are converted by column type (numbers, `true`/`false`,
+  dates, JSON) and then validated by the same zod schema as `POST /:resource` (create) or
+  `PATCH /:resource` (update). An empty cell is left out, and `\N` is null.
+- **Matching.** `update` and `delete` match rows on the primary key, or on `?keys=a,b`. Matching on a
+  field is held to the same filter permission as `?filter=`. `delete` takes only key columns.
+- **Query.** `?delimiter=;` changes the separator.
+- **Response.** `200 { rows }`. A refused file or row is `400 { code, message, row?, column? }` and
+  nothing is written. Over the instance's row or byte limit is `413`. The route is a `404` for a model
+  without CSV, and a `403` when the operation's permission or `permission.mutationCsv` denies it.
 
 ## Options (`NestizeModule.forRoot(orm, options)`)
 

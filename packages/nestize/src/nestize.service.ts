@@ -11,12 +11,15 @@ import {
   isAllowed,
   isModelAllowed,
   isMutationAllowed,
+  isMutationCsvAllowed,
   isRelationshipAllowed,
 } from "@azerothian/utilize";
 import * as guards from "@azerothian/utilize/guards";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import type { AdapterWhere, Association, Fail, GuardFailure } from "@azerothian/utilize";
+import { CsvUploadError } from "@azerothian/ormize";
 import type { MutationInputTree, Ormize } from "@azerothian/ormize";
+import { csvHttpError, isCsvOperation, restCsvRequest } from "./csv";
 import { NestizeSchemaRegistry } from "./schema-registry";
 import {
   NESTIZE_OPTIONS,
@@ -243,6 +246,38 @@ export class NestizeService {
     this.assertScopedMutation(where, query?.all === "true" || query?.all === true);
     const deleted = await this.orm.processDelete(name, null, where, { req });
     return { deleted: this.present(name, deleted) };
+  }
+
+  /**
+   * `POST /:resource/_csv/:operation` — a CSV body applied as one create,
+   * update or delete per row, all-or-nothing (ormize's `processCsv`).
+   *
+   * 404 unless the instance has CSV on for the model, so the route is as
+   * absent as gqlize's `createCsv` argument would be. Then the same gates a
+   * JSON write passes, plus `mutationCsv`.
+   */
+  async csv(resource: string, operation: string, query: RestQuery, req: RestRequest): Promise<{ rows: unknown }> {
+    this.assertWritable();
+    const name = this.mustResolve(resource);
+    if (!isCsvOperation(operation) || !this.orm.csvLimits(name)) {
+      throw new NotFoundException(`Cannot POST /${resource}/_csv/${operation}`);
+    }
+    if (!isMutationAllowed(this.permission, name, operation)) {
+      throw new ForbiddenException(`${operation[0].toUpperCase()}${operation.slice(1)} not allowed for ${name}`);
+    }
+    if (!isMutationCsvAllowed(this.permission, name)) {
+      throw new ForbiddenException(`CSV uploads not allowed for ${name}`);
+    }
+    const request = restCsvRequest(this.orm, name, operation, req, query, {
+      input: operation === "create" ? this.registry.create(name) : operation === "update" ? this.registry.update(name) : undefined,
+      assertFilterAllowed: (where) => this.assertFilterAllowed(name, where),
+    });
+    try {
+      const rows = await this.orm.processCsv(name, operation, request, { req });
+      return { rows: this.present(name, rows) };
+    } catch (e) {
+      throw e instanceof CsvUploadError ? csvHttpError(e) : e;
+    }
   }
 
   async select(resource: string, body: SelectBody, req: RestRequest): Promise<{ rows: unknown }> {
