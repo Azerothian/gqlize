@@ -150,7 +150,9 @@ that yourself. `options` (permissions, hooks, naming) is unchanged from 6.x.
 | `import { GraphQLJSON } from "@vostro/graphql-types/lib/json"` | `from "@azerothian/graphql-types/json"` |
 
 Every package publishes ESM (`lib/index.mjs`), CJS (`cjs/index.js`) and types via an `exports` map,
-so deep `lib/...` paths are no longer needed — and mostly no longer resolve. Import from the package
+so deep `lib/...` paths are no longer needed — and mostly no longer resolve. On Node, `require()`
+loads the ESM build too (the `module-sync` condition), so CommonJS and ESM code in one process
+share one instance of every export. Import from the package
 root, or from a declared subpath in the case of `graphql-types`.
 
 ## 3. Behavioural changes
