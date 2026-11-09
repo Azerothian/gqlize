@@ -1,11 +1,13 @@
 import {GraphQLBoolean, GraphQLInputObjectType, GraphQLList, type GraphQLFieldConfigArgumentMap, type GraphQLInputFieldConfigMap} from "graphql";
-import { isMutationInstanceMethodAllowed } from "@azerothian/utilize/gate";
+import UploadType from "@azerothian/graphql-types/upload";
+import { isMutationCsvAllowed, isMutationInstanceMethodAllowed } from "@azerothian/utilize/gate";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import { capitalize } from "@azerothian/utilize/utils/word";
 import { deprecationFor } from "@azerothian/utilize/utils/deprecation";
 import GQLManager from '../manager';
 import { GqlizeOptions, SchemaCache } from '../types';
 import { bindField } from "./resolvers/bind";
+import CsvOptionsType from "./objects/csv-options";
 import { recordExternalType } from "./snapshot/ledger";
 
 /**
@@ -111,6 +113,26 @@ export default function createMutationModel(instance: GQLManager, defName: strin
       type: input.delete,
       description: `This will restore soft-deleted elements for ${defName}`,
     };
+  }
+  // CSV uploads ride on the same field as the JSON lists they stand in for, and
+  // only where that list is itself present: `createCsv` exists exactly when
+  // `create` does, so a caller denied the operation — or left with nothing
+  // writable — is denied it in both spellings. `mutationCsv` is the extra gate
+  // on top, and the instance has to have CSV on for the model at all.
+  if (instance.csvEnabled(defName) && isMutationCsvAllowed(options.permission, defName)) {
+    const csvArgs: [string, boolean, string][] = [
+      ["createCsv", Boolean(inp.create), `A CSV file of ${defName} rows to create, one per line, with field names as the header`],
+      ["updateCsv", Boolean(inp.update), `A CSV file of ${defName} rows to update, matched on the \`csv.keys\` columns (default: the primary key)`],
+      ["deleteCsv", Boolean(inp.delete), `A CSV file of ${defName} rows to delete, holding only the \`csv.keys\` columns (default: the primary key)`],
+    ];
+    for (const [name, present, description] of csvArgs) {
+      if (present) {
+        inp[name] = { type: UploadType, description };
+      }
+    }
+    if (inp.createCsv || inp.updateCsv || inp.deleteCsv) {
+      inp.csv = { type: CsvOptionsType, description: "How the CSV uploads are read" };
+    }
   }
   // Transforms reshape data on its way to a write, so they are only meaningful
   // alongside one. They run inside the mutation's own transaction, after

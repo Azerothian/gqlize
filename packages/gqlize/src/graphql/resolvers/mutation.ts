@@ -1,10 +1,12 @@
 import type { GraphQLResolveInfo } from "graphql";
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
+import { CsvUploadError } from "@azerothian/ormize";
+import type { CsvOperation, MutationFilter, MutationInputTree } from "@azerothian/ormize";
 import { processAfter } from "../utils/after";
 import Events from "../../events";
 import type { AdapterRow, Definition, RequestContext } from "../../types";
 import type { BindingContext, FieldBinding } from "./types";
+import { csvGraphQLError, csvRequest, type CsvArgs } from "./csv";
 
 /**
  * The generated model-mutation field's arguments — one list per operation, as
@@ -21,7 +23,19 @@ type MutationModelArgs = {
   restore?: MutationFilter[];
   select?: { input?: MutationInputTree; where?: MutationFilter; limit?: number }[];
   apply?: { [methodName: string]: unknown };
+  /** CSV uploads — whatever the host's multipart layer put in the `GQLTUpload` slot. */
+  createCsv?: unknown;
+  updateCsv?: unknown;
+  deleteCsv?: unknown;
+  csv?: CsvArgs;
 };
+
+/** Each CSV argument, the operation it carries, and the event its rows report. */
+const CSV_ARGS: [keyof MutationModelArgs, CsvOperation, Events][] = [
+  ["createCsv", "create", Events.MUTATION_CREATE],
+  ["updateCsv", "update", Events.MUTATION_UPDATE],
+  ["deleteCsv", "delete", Events.MUTATION_DELETE],
+];
 
 /**
  * Process a batch of mutation operations that each return an array of rows,
@@ -85,6 +99,22 @@ export function buildMutationModelResolver(
       results = await collectBatch(args.select,
         (arg) => instance.processSelect(defName, source, arg, context, info),
         args, context, info, definition, Events.MUTATION_UPDATE, results);
+    }
+    // After the JSON lists, in the same create → update → delete order. Each
+    // upload is one all-or-nothing unit (see ormize's `processCsv`); its rows
+    // then get the same `after` processing a JSON write's do.
+    for (const [argName, operation, event] of CSV_ARGS) {
+      const upload = args[argName];
+      if (upload === undefined || upload === null) {
+        continue;
+      }
+      let rows: AdapterRow[];
+      try {
+        rows = await instance.processCsv(defName, operation, csvRequest(operation, info, upload, args.csv, args.apply), context, info);
+      } catch (e) {
+        throw e instanceof CsvUploadError ? csvGraphQLError(e) : e;
+      }
+      results = await waterfall(rows, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, event)), results);
     }
     return results;
   };
