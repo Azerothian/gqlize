@@ -271,6 +271,10 @@ Internal resolution methods invoked by generated resolvers:
 - `resolveClassMethod` — invokes `Model[methodName](args, context)` with optional before/after.
 - `processCreate` / `processUpdate` / `processDelete` — mutation executors; run `processInputs`, translate global IDs (`replaceIdDeep`), fire the matching `Events.MUTATION_*` hook, delegate to adapter functions, then `processRelationshipMutation`.
 - `processRelationshipMutation` — the nested-mutation engine (see §5).
+- `csvLimits(defName)` / `processCsv(defName, operation, request, context, selection?)` — CSV uploads:
+  whether (and under what limits) a model takes them, and the all-or-nothing row-by-row executor
+  over the three above (`engine/csv.ts`, see [CSV uploads](#csv-uploads)). Called by gqlize's model
+  mutation resolver and nestize's `_csv` route.
 
 > These internal resolution methods are invoked by gqlize's generated resolvers. They are members of
 > the `Ormize` class (`packages/ormize/src/manager.ts`, backend-only), implemented in
@@ -557,7 +561,7 @@ Extra query fields may be injected via `options.extend.query`.
 
 | Field | Meaning |
 | --- | --- |
-| `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**; `restore` in addition on a soft-deleting model. |
+| `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**; `restore` in addition on a soft-deleting model; `createCsv` / `updateCsv` / `deleteCsv` when CSV uploads are on (see [CSV uploads](#csv-uploads)). |
 | `classMethods` | Per-model exposed **mutation** class methods (`MutationClassMethods`). |
 
 Extra mutation fields may be injected via `options.extend.mutation`. Subscriptions are not
@@ -668,6 +672,52 @@ Nested `select` is **relationship-scoped** (`source[accessors.get]({ where })`, 
 found rows. Implemented by `processSelect` (top-level) and the `select` branch of
 `processRelationshipMutation` (`relationship-mutations.ts`), which recurse without calling
 `processCreate`/`processUpdate`/`processDelete` on the selected rows.
+
+### CSV uploads
+
+`GqlizeOptions.csv` (read by the `Ormize` constructor, like `cache`) turns on CSV uploads: `true`
+for the default `CsvLimits` (`maxRows` 1000, `maxBytes` 5 MB), or an object overriding them. A
+definition's own `csv` either opts the model out (`false`) or overrides the limits; it cannot opt a
+model in when the instance has CSV off. `orm.csvLimits(defName)` resolves the two
+(`packages/ormize/src/csv/limits.ts`) and is what every surface asks.
+
+**Schema.** `create-mutation-model.ts` adds `createCsv`, `updateCsv` and `deleteCsv` (all
+`GQLTUpload`) beside `create`, `update` and `delete`, each only where its JSON twin is present, so the
+operation's own gates and the "nothing writable" omission carry over. A shared module-level
+`GQLTCsvOptions` input (`keys: [String!]`, `delimiter: String`) is added as `csv` when any of them
+is. Two further conditions: `orm.csvLimits(defName)` is set, and the build-time
+`permission.mutationCsv(defName)` allows it. Whether a model has CSV is part of the `models`
+fingerprint (recorded only when on, so existing artifacts stay current).
+
+**Engine.** `processCsv` (`packages/ormize/src/engine/csv.ts`) is a transport, not a write path:
+every row becomes one `processCreate` / `processUpdate` / `processDelete` call. The
+mass-assignment allow-list, `override.input`, scope, hooks, `apply` and read-cache invalidation
+therefore hold without being restated. The order of work is the CSV-specific part:
+
+1. `readCsv` (`src/csv/read.ts`) streams the upload through csv-parse, enforcing `maxBytes` across
+   chunks and `maxRows` as records arrive, and checks the header (present, no blank or repeated
+   names). `csvChunks` (`src/csv/source.ts`) accepts text, bytes, any async iterable (Node or web
+   stream), graphql-upload's `createReadStream()` / `promise`, and a web `File`/`Blob`.
+2. The header is split into key columns (update/delete; `csv.keys`, default the primary key) and
+   input columns. A delete takes only keys, and an update needs at least one input column.
+3. **Every row is converted before the first write.** The surface supplies `checkColumns` and
+   `toArgs`. An empty cell is omitted (on update: column untouched) and `\N` is `null`. A blank key
+   cell, or a `toArgs` that yields an empty `where`, is refused: either would act on the whole table.
+4. The writes run inside one `orm.transaction`. An update/delete row that changes nothing is
+   `CSV_ROW_NO_MATCH`, reported identically whether the row is absent or scoped out.
+
+Everything is reported as a `CsvUploadError` (`src/csv/errors.ts`) with a stable `code`, plus `row`
+(1-based, header excluded) and `column` where they apply. A failed write is wrapped as
+`CSV_ROW_FAILED` with the engine's error as `cause`.
+
+**Cell conversion is the surface's.** gqlize (`graphql/resolvers/csv.ts`) reads the input and where
+types off the field being resolved, not the schema cache, so a materialized artifact behaves the
+same. Each cell is converted by its field's type, then the row goes through graphql's
+`validateInputValue` / `coerceInputValue`. A CSV can therefore send nothing a JSON argument could
+not, and a column missing from the input type is a `CSV_HEADER` error. Errors become `GraphQLError`s
+with `code` / `row` / `column` (and `causeCode`) in `extensions`, deliberately without
+`originalError`: graphql-yoga masks a GraphQLError wrapping a plain `Error`. nestize
+(`src/csv.ts`) converts by column descriptor (`csvCellValue`) and validates with its zod schemas.
 
 ### Example query
 
@@ -934,6 +984,7 @@ than a decision, and it is consulted per request rather than per schema.
 | `model(defName, options)` | Whether the model type is generated at all. |
 | `query(defName, options)` | The list query for a model. |
 | `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. |
+| `mutationCsv(defName, options)` | The `createCsv` / `updateCsv` / `deleteCsv` arguments and nestize's `_csv` routes, *in addition to* the operation's own gate. Only consulted for a model with CSV on (§5). |
 | `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
 | `queryDeleted(defName, options)` | The `deleted` argument on a soft-deleting model's list fields and include input — i.e. whether this caller may read soft-deleted rows at all. Row-level visibility is still `scope`'s: a caller allowed deleted rows sees only the deleted rows inside their scope. |
@@ -1180,7 +1231,7 @@ each with its own subpath export:
 | `DateType` | `.../date` | Date/time values. |
 | `IPType` | `.../ip` | IP addresses. |
 | `JSONType` | `.../json` | Arbitrary JSON. |
-| `UploadType` | `.../upload` | File uploads. |
+| `UploadType` | `.../upload` | File uploads. The type of the CSV upload arguments (§5); gqlize parses no multipart itself — the host's layer fills the value. |
 | `createQueryType`, `defaultConfig` | `.../query` | Builds the `where`/filter input type used by adapters. |
 
 ---

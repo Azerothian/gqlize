@@ -32,6 +32,7 @@ Every example below is drawn from the behaviour exercised in the test suite
 7. [Mutations](#7-mutations)
    - [Create / update / delete](#create--update--delete)
    - [Restoring soft-deleted rows](#restoring-soft-deleted-rows)
+   - [CSV uploads](#csv-uploads)
    - [Nested relationship writes](#nested-relationship-writes)
    - [Class-method mutations](#class-method-mutations)
    - [Instance-method transforms (`apply`)](#instance-method-transforms-apply)
@@ -1204,6 +1205,82 @@ as updates, and `after` receives `Events.MUTATION_UPDATE`.
 `restore` is gated by the `mutationRestore` permission, and appears only on models that actually
 soft delete.
 
+### CSV uploads
+
+`create`, `update` and `delete` can also take a CSV file, one write per data row. It is off until
+the `Ormize` instance turns it on (the host has to be parsing multipart uploads for the argument to
+mean anything):
+
+```ts
+new Ormize({ csv: true })                                  // default limits: 1000 rows, 5 MB
+new Ormize({ csv: { maxRows: 10_000, maxBytes: 50e6 } })
+const Audit = { name: "Audit", csv: false, /* … */ }       // keep one model out
+const Bulk  = { name: "Bulk", csv: { maxRows: 50_000 } }   // or change its limits
+```
+
+Each model's mutation field then gains `createCsv`, `updateCsv` and `deleteCsv` (all `GQLTUpload`),
+and a `csv: GQLTCsvOptions` argument for how they are read:
+
+```graphql
+mutation ($file: GQLTUpload!) { models { Post(createCsv: $file) { id title } } }
+mutation ($file: GQLTUpload!) { models { Post(updateCsv: $file, csv: { keys: ["slug"] }) { id } } }
+mutation ($file: GQLTUpload!) { models { Post(deleteCsv: $file, csv: { delimiter: ";" }) { id } } }
+```
+
+The upload is sent the usual way, as a [GraphQL multipart request](https://github.com/jaydenseric/graphql-multipart-request-spec).
+gqlize reads whatever the host's multipart layer puts in the `GQLTUpload` slot: graphql-yoga's web
+`File`, graphql-upload's `Upload` / `FileUpload`, a stream, or the CSV text itself.
+
+```sh
+curl http://localhost:4000/graphql -H 'graphql-require-preflight: 1' \
+  -F operations='{"query":"mutation($f: GQLTUpload!){ models { Post(createCsv: $f) { id } } }","variables":{"f":null}}' \
+  -F map='{"0":["variables.f"]}' -F 0=@posts.csv
+```
+
+**The file.** The header row names the fields, the same names the JSON input uses. RFC 4180 quoting
+applies (commas and newlines inside `"…"`, `""` for a quote), and a leading BOM and CRLF line ends
+are fine. A cell is converted by its field's input type: `Int`/`Float` as numbers, `Boolean` as
+`true`/`false`, `1`/`0` or `yes`/`no`, list, input-object and `GQLTJson` fields as JSON, everything
+else (`ID`, `String`, enums, dates) as text. Primary and foreign keys are global ids, as in a JSON
+argument.
+
+**Empty cells and nulls.** An empty cell is left out of the row, so on an update it leaves the column
+alone. To write a null, put `\N` in the cell.
+
+**Matching rows.** `updateCsv` and `deleteCsv` find each row's target by equality on its key columns:
+the primary key by default, or the columns named in `csv.keys`. On an update the remaining columns
+are the input. A delete takes only its key columns. A row whose keys match nothing fails the upload,
+and so does a blank key cell.
+
+**All or nothing.** The whole file is read and every row converted before anything is written. The
+writes then run in one transaction, so a bad cell, a row the input type rejects, or a write that
+fails partway through leaves the database as it was. The error says which row and column:
+
+```json
+{ "message": "Row 2: \"rank\": \"one\" is not an integer",
+  "extensions": { "code": "CSV_ROW_INVALID", "row": 2, "column": "rank" } }
+```
+
+| `extensions.code` | Meaning |
+| --- | --- |
+| `CSV_UNSUPPORTED` | Not a readable file. |
+| `CSV_TOO_LARGE` / `CSV_TOO_MANY_ROWS` | Over `maxBytes` / `maxRows`. Checked while the file streams in. |
+| `CSV_PARSE` | Malformed CSV (an unclosed quote, a row with the wrong number of cells), or an unusable `delimiter`. |
+| `CSV_HEADER` | A missing, blank or repeated header, a key column that is absent, or a column the operation cannot take. |
+| `CSV_ROW_INVALID` | A cell that does not convert, or a row the input type rejects (a required field missing, say). |
+| `CSV_ROW_NO_MATCH` | An update or delete row that matched no row. |
+| `CSV_ROW_FAILED` | The write itself failed. `extensions.causeCode` carries the underlying code when there is one, such as `GLOBAL_ID_TYPE_MISMATCH`. |
+
+**Same rules as JSON.** A CSV row goes through the same write path as a JSON argument. Permissions,
+the [primary/foreign key guard](#writing-primary--foreign-keys), `override.input`, row scope, hooks,
+`apply` transforms and the read cache all behave as they do for one `create` or `update` entry. A
+column the input type does not have, because it is a primary key or a permission hides it, fails the
+upload with `CSV_HEADER` instead of being dropped without a word. `createCsv` exists only where
+`create` does (likewise `update` and `delete`). The `mutationCsv` permission can take CSV away from
+a caller who keeps the JSON arguments.
+
+nestize serves the same uploads over REST, at [`POST /:resource/_csv/:operation`](../packages/nestize/README.md#csv-uploads).
+
 ### Nested relationship writes
 
 A relationship field inside a create/update `input` accepts operations that vary by association
@@ -1390,6 +1467,7 @@ const schema = await createSchema(db, {
     mutationUpdate: (modelName) => true,
     mutationDelete: (modelName) => true,
     mutationRestore: (modelName) => true,                       // hide `restore` on a paranoid model
+    mutationCsv: (modelName) => true,                           // hide `createCsv` & co. (needs `csv` on the Ormize)
     mutationCreateInput: (modelName, fieldName) => true,        // hide a create-input field
     mutationUpdateInput: (modelName, fieldName) => true,
     queryDeleted: (modelName) => true,                          // hide the `deleted` argument
