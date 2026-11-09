@@ -445,6 +445,24 @@ type MutationModels {
 
     """This will delete a new element for Item"""
     delete: [GQLTQueryItemWhere]
+
+    """
+    A CSV file of Item rows to create, one per line, with field names as the header
+    """
+    createCsv: GQLTUpload
+
+    """
+    A CSV file of Item rows to update, matched on the `csv.keys` columns (default: the primary key)
+    """
+    updateCsv: GQLTUpload
+
+    """
+    A CSV file of Item rows to delete, holding only the `csv.keys` columns (default: the primary key)
+    """
+    deleteCsv: GQLTUpload
+
+    """How the CSV uploads are read"""
+    csv: GQLTCsvOptions
   ): [Item]
   Task(
     """This will create a new element for Task"""
@@ -460,6 +478,24 @@ type MutationModels {
 
     """This will delete a new element for Task"""
     delete: [GQLTQueryTaskWhere]
+
+    """
+    A CSV file of Task rows to create, one per line, with field names as the header
+    """
+    createCsv: GQLTUpload
+
+    """
+    A CSV file of Task rows to update, matched on the `csv.keys` columns (default: the primary key)
+    """
+    updateCsv: GQLTUpload
+
+    """
+    A CSV file of Task rows to delete, holding only the `csv.keys` columns (default: the primary key)
+    """
+    deleteCsv: GQLTUpload
+
+    """How the CSV uploads are read"""
+    csv: GQLTCsvOptions
   ): [Task]
 }
 
@@ -648,6 +684,22 @@ input ItemSelectInput {
   Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
   """
   input: ItemOptionalInput
+}
+
+"""
+The `Upload` scalar type represents a file upload promise that resolves an object containing `stream`, `filename`, `mimetype` and `encoding`.
+"""
+scalar GQLTUpload
+
+"""How a CSV upload is read"""
+input GQLTCsvOptions {
+  """
+  The columns an `updateCsv` or `deleteCsv` row is matched on. Default: the primary key
+  """
+  keys: [String!]
+
+  """The field separator. Default: a comma"""
+  delimiter: String
 }
 
 """"""

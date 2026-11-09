@@ -43,7 +43,10 @@ export async function buildOrmForSchema(): Promise<any> {
 
 /** The half both factories share: an adapter and the model definitions. */
 async function registerDefinitions(): Promise<any> {
-  const orm: any = new Ormize();
+  // `csv: true` adds `createCsv` / `updateCsv` / `deleteCsv` upload arguments to
+  // every model's mutation field. graphql-yoga parses multipart requests itself
+  // and hands the resolver a web `File`, which is one of the shapes ormize reads.
+  const orm: any = new Ormize({ csv: true });
   orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
 
   await orm.addDefinition(ItemDef);
