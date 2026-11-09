@@ -18,7 +18,7 @@ import { auditDefinitionScopeSurfaces, auditExtendFields, reportScopeSurfaces } 
 import type { ScopeHook } from "./scope-hooks";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, DataTypeDescriptor, InitialiseOptions, NativeDataType,
-  RequestContext, Selection, FindAllArgs, Association } from '@azerothian/utilize/types/index';
+  RequestContext, Selection, FindAllArgs, Association, CsvLimits, ResolvedCsvLimits } from '@azerothian/utilize/types/index';
 import type { MutationApply, MutationFilter, MutationHost, MutationInput,
   MutationInputTree } from "./types/engine";
 import ReadCache from "./read-cache";
@@ -54,7 +54,11 @@ import {
   runWithContext as _runWithContext,
   getContext as _getContext,
   withTransaction as _withTransaction,
+  // csv
+  processCsv as _processCsv,
 } from "./engine";
+import type { CsvHost, CsvOperation, CsvRequest } from "./engine";
+import { resolveCsvLimits } from "./csv/limits";
 import type { HookFunction, HookHost, MutationEntryHost, ReadCacheHost, RelationshipHost, ResolutionHost, ScopeHost,
   TransactionHost, WiredRelationship } from "./engine";
 
@@ -103,6 +107,8 @@ export default class Ormize<
   private onScopeMiss: ScopeMissBehaviour;
   /** See `GqlizeOptions.writableForeignKeys`; applied in `getFields`. */
   private writableForeignKeys: boolean;
+  /** `GqlizeOptions.csv`, folded with each definition's own by `csvLimits`. */
+  private csv: boolean | CsvLimits | undefined;
   /**
    * The row-level scope, re-imposed on the adapter's own model hooks (§13).
    *
@@ -150,6 +156,7 @@ export default class Ormize<
     this.permission = options.permission;
     this.onScopeMiss = options.onScopeMiss || "empty";
     this.writableForeignKeys = options.writableForeignKeys === true;
+    this.csv = options.csv;
     this.readCache = options.cache ? new ReadCache(options.cache, {
       definitionCache: (defName) => this.defs[defName]?.cache,
       hasOpaqueHooks: (defName, operation) => OPAQUE_READ_HOOKS[operation].some((hookName) => {
@@ -481,6 +488,20 @@ export default class Ormize<
    * private, and a private member cannot satisfy a structurally-required public
    * one — see {@link MutationHost}.
    */
+  /**
+   * What `processCsv` reads. Everything on it is public already, so unlike
+   * {@link engine} it is a plain forwarding object — kept anyway so the
+   * module is written against an interface rather than the whole class.
+   */
+  private csvHost: CsvHost = {
+    csvLimits: (defName) => this.csvLimits(defName),
+    getModelAdapter: (defName) => this.getModelAdapter(defName),
+    transaction: (fn) => this.transaction(fn),
+    processCreate: (defName, source, args, context, selection) => this.processCreate(defName, source, args, context, selection),
+    processUpdate: (defName, source, args, context, selection) => this.processUpdate(defName, source, args, context, selection),
+    processDelete: (defName, source, args, context, selection) => this.processDelete(defName, source, args, context, selection),
+  };
+
   private host: MutationHost = {
     getModelAdapter: (modelName) => this.getModelAdapter(modelName),
     optionsForAdapter: (fromDefName, toDefName, options) => this.optionsForAdapter(fromDefName, toDefName, options),
@@ -689,6 +710,24 @@ export default class Ormize<
 
   processRestore = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return _processRestore(this.engine, defName, source, args, context, selection);
+  }
+
+  /**
+   * The limits a CSV upload to `defName` runs under, or `undefined` when the
+   * model takes none — `GqlizeOptions.csv` is off, or the definition says
+   * `csv: false`. The surfaces read this to decide whether to offer CSV at all.
+   */
+  csvLimits = (defName: string): ResolvedCsvLimits | undefined => {
+    return resolveCsvLimits(this.csv, this.defs[defName]?.csv);
+  }
+
+  /**
+   * Apply a CSV upload as one create, update or delete per row, all-or-nothing.
+   * See `./engine/csv` — and note it only *transports* the rows: permission to
+   * perform the operation is the caller's to check, as for `processCreate`.
+   */
+  processCsv = async(defName: string, operation: CsvOperation, request: CsvRequest, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+    return _processCsv(this.csvHost, defName, operation, request, context, selection);
   }
 
   // -------------------------------------------------------------------------
