@@ -20,6 +20,7 @@ import type {
   ExposedMethodOrderBy,
   ExposedMethodWhere,
 } from "./selection";
+import type { CsvLimits } from "./csv";
 
 /**
  * A field's validation rules, keyed by validator name. The values are `unknown`
@@ -244,6 +245,12 @@ export type Definition = {
    * statement that those hooks give every caller the same result.
    */
   cache?: false | {ttl?: number};
+  /**
+   * This model's part in CSV mutation uploads ({@link GqlizeOptions.csv}).
+   * `false` keeps the model out; an object overrides the instance-wide limits.
+   * Has no effect while the instance has CSV off.
+   */
+  csv?: false | CsvLimits;
   options?: DefinitionOptions
 };
 

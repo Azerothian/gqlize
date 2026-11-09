@@ -64,6 +64,14 @@ export type Permission = {
    * adapter reports `softDeletes`.
    */
   mutationRestore?: (defName: string, options?: PermissionContext) => boolean;
+  /**
+   * Gates the CSV upload arguments (`createCsv` / `updateCsv` / `deleteCsv`)
+   * on a model's mutation field, and nestize's `/:resource/_csv/:kind` routes.
+   * An *extra* gate, not a replacement: a CSV create is still a create, so
+   * `mutationCreate` and the input-field predicates apply to it as well. Only
+   * consulted for a model the `Ormize` instance has CSV enabled on.
+   */
+  mutationCsv?: (defName: string, options?: PermissionContext) => boolean;
   mutationCreateInput?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
   mutationUpdateInput?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
   field?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
@@ -233,6 +241,14 @@ export function isMutationAllowed(permission: Permission | undefined, model: str
 }
 
 /**
+ * Whether a caller may send a mutation as a CSV upload (`permission.mutationCsv`).
+ * Checked alongside {@link isMutationAllowed} for the operation, never instead.
+ */
+export function isMutationCsvAllowed(permission: Permission | undefined, model: string): boolean {
+  return isAllowed(permission?.mutationCsv, model, permission?.options);
+}
+
+/**
  * Whether an input field is exposed for a create/update mutation
  * (`permission.mutationCreateInput` / `permission.mutationUpdateInput`). These
  * predicates are optional — when absent, the field is allowed.
@@ -308,6 +324,7 @@ export const BUILD_TIME_PERMISSION_KEYS = [
   "mutationUpdate",
   "mutationDelete",
   "mutationRestore",
+  "mutationCsv",
   "mutationCreateInput",
   "mutationUpdateInput",
   "field",

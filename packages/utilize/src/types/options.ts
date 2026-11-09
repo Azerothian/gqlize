@@ -5,6 +5,7 @@
 import type { Permission } from "../gate";
 import type { IdCodec, CursorCodec } from "./codecs";
 import type { CacheOptions } from "./cache";
+import type { CsvLimits } from "./csv";
 import type { HookMap } from "./definitions";
 
 /**
@@ -88,4 +89,15 @@ export type GqlizeOptions = {
    * this is set. Read by the `Ormize` constructor. See {@link CacheOptions}.
    */
   cache?: CacheOptions
+  /**
+   * Accept create/update/delete mutations as a CSV upload, off unless this is
+   * set: `true` for the default {@link CsvLimits}, or an object to change them.
+   * A model opts out with `definition.csv: false`.
+   *
+   * Read by the `Ormize` constructor, like `cache` and `writableForeignKeys`,
+   * so gqlize's `createCsv`/`updateCsv`/`deleteCsv` arguments and nestize's
+   * `_csv` routes agree on which models have it. Gated per caller by
+   * `permission.mutationCsv`.
+   */
+  csv?: boolean | CsvLimits
 }

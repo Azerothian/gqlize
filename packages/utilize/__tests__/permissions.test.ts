@@ -57,6 +57,7 @@ describe("utilize - createRoleBasedPermissions", () => {
       "mutationClassMethods",
       "mutationCreate",
       "mutationCreateInput",
+      "mutationCsv",
       "mutationDelete",
       "mutationExtension",
       "mutationInstanceMethods",
