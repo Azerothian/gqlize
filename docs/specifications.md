@@ -676,6 +676,9 @@ found rows. Implemented by `processSelect` (top-level) and the `select` branch o
 
 ### CSV uploads
 
+This section describes how CSV uploads are built. For using them, see [CSV uploads](csv.md); for
+the client-facing surface, see the [CSV API reference](csv-api.md).
+
 `GqlizeOptions.csv` (read by the `Ormize` constructor, like `cache`) turns on CSV uploads: `true`
 for the default `CsvLimits` (`maxRows` 1000, `maxBytes` 5 MB), or an object overriding them. A
 definition's own `csv` either opts the model out (`false`) or overrides the limits; it cannot opt a

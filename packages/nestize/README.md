@@ -84,6 +84,9 @@ Nothing is reachable over REST until you opt in.
 
 ## CSV uploads
 
+For a full walkthrough see [CSV uploads](../../docs/csv.md), and for every status, part and error
+code the [CSV API reference](../../docs/csv-api.md#rest-routes).
+
 With CSV turned on for the ormize instance (`new Ormize({ csv: true })`, see the
 [guide](../../docs/guide.md#csv-uploads)), `POST /:resource/_csv/create`, `…/update` and `…/delete`
 apply a CSV body as one write per data row, all-or-nothing:

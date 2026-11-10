@@ -1207,176 +1207,43 @@ soft delete.
 
 ### CSV uploads
 
-`create`, `update` and `delete` can also take a CSV file, one write per data row. It is off until
-the `Ormize` instance turns it on (the host has to be parsing multipart uploads for the argument to
-mean anything):
+`create`, `update` and `delete` can also take a CSV file, applied as one write per data row, all or
+nothing. Several linked files can go in one import. It is off until the `Ormize` instance turns it
+on:
 
 ```ts
-new Ormize({ csv: true })                                  // default limits: 1000 rows, 5 MB
-new Ormize({ csv: { maxRows: 10_000, maxBytes: 50e6, maxFiles: 5 } })  // maxFiles: per import, default 10
-const Audit = { name: "Audit", csv: false, /* … */ }       // keep one model out
-const Bulk  = { name: "Bulk", csv: { maxRows: 50_000 } }   // or change its limits
+new Ormize({ csv: true })                                              // 1000 rows, 5 MB, 10 files
+new Ormize({ csv: { maxRows: 10_000, maxBytes: 50e6, maxFiles: 5 } })
+const Audit = { name: "Audit", csv: false, /* … */ }                   // keep one model out
 ```
-
-Each model's mutation field then gains `createCsv`, `updateCsv` and `deleteCsv` (all `GQLTUpload`),
-and a `csv: GQLTCsvOptions` argument for how they are read:
 
 ```graphql
 mutation ($file: GQLTUpload!) { models { Post(createCsv: $file) { id title } } }
 mutation ($file: GQLTUpload!) { models { Post(updateCsv: $file, csv: { keys: ["slug"] }) { id } } }
-mutation ($file: GQLTUpload!) { models { Post(deleteCsv: $file, csv: { delimiter: ";" }) { id } } }
-```
-
-The upload is sent the usual way, as a [GraphQL multipart request](https://github.com/jaydenseric/graphql-multipart-request-spec).
-gqlize reads whatever the host's multipart layer puts in the `GQLTUpload` slot: graphql-yoga's web
-`File`, graphql-upload's `Upload` / `FileUpload`, a stream, or the CSV text itself.
-
-```sh
-curl http://localhost:4000/graphql -H 'graphql-require-preflight: 1' \
-  -F operations='{"query":"mutation($f: GQLTUpload!){ models { Post(createCsv: $f) { id } } }","variables":{"f":null}}' \
-  -F map='{"0":["variables.f"]}' -F 0=@posts.csv
-```
-
-**The file.** The header row names the fields, the same names the JSON input uses. RFC 4180 quoting
-applies (commas and newlines inside `"…"`, `""` for a quote), and a leading BOM and CRLF line ends
-are fine. A cell is converted by its field's input type: `Int`/`Float` as numbers, `Boolean` as
-`true`/`false`, `1`/`0` or `yes`/`no`, list, input-object and `GQLTJson` fields as JSON, everything
-else (`ID`, `String`, enums, dates) as text. Primary and foreign keys are global ids, as in a JSON
-argument.
-
-**Empty cells and nulls.** An empty cell is left out of the row, so on an update it leaves the column
-alone. To write a null, put `\N` in the cell.
-
-**Matching rows.** `updateCsv` and `deleteCsv` find each row's target by its key columns: equality
-on the primary key by default, or on the columns named in `csv.keys`. A `where.<field>[op]` column
-matches with any filter operator instead, and its presence replaces the primary-key default. On an
-update the remaining columns are the input. A delete takes only its key columns. A row whose keys
-match nothing fails the upload, and so does a blank key cell.
-
-```csv
-where.title[startsWith],published
-draft-,true
-```
-
-**Relationships and filters in the header.** A dotted header is a path into the same input a JSON
-argument takes, so a row can drive the [nested relationship writes](#nested-relationship-writes)
-below:
-
-| Header | Same as the JSON |
-| --- | --- |
-| `author.create.name` | `author: { create: { name } }` |
-| `author.set.name` (or `author.set.where.name`) | `author: { set: { name: { eq } } }` |
-| `tags.add.name[in]` | `tags: { add: [{ name: { in } }] }` |
-| `tags.add.through` | `tags: { add: [{ through }] }` (JSON cell, belongsToMany) |
-| `comments.update.where.body[like]` | `comments: { update: [{ where: { body: { like } } }] }` |
-| `comments.update.body` | `comments: { update: [{ input: { body } }] }` |
-| `comments.create[1].body` | a second `create` entry |
-| `where.or[0].title[like]` | top-level `where: { or: [{ title: { like } }] }` |
-
-- A filter field without an `[op]` means `eq`. `[Op.in]` and `[in]` are the same. Any operator the
-  field's filter type offers works, `or`/`and` included (index them: `or[0]`, `or[1]`).
-- **Columns under one verb merge into one entry.** `tags.add.name[startsWith]` and `tags.add.name[ne]`
-  build one filter, and `tags.add.name[in]` beside `tags.add.through` is one `add`. A `[n]` after
-  the verb starts a separate entry. An entry whose cells are all empty on a row is left out.
-- The `input` of an `update`/`select` and the `where` of a belongsToMany `add`/`set` can be left out
-  of the path. Writing `where` on a verb whose entry is already a filter is allowed, so a header reads
-  the same on every verb.
-- A list operator (`in`, `notIn`, `between`, …) takes `a|b|c` or a JSON array.
-- `?` can stand in for `.`, as in `author.set.where?name`.
-
-A header that does not resolve against the input type (an unknown verb, an operator on a value, two
-headers writing the same place) fails the upload with `CSV_HEADER` before anything is written. Every
-nested write runs inside the upload's one transaction.
-
-Permissions hold as they do for the JSON argument, since a header can only name what the input type
-offers. The following are all refused as `CSV_HEADER`:
-
-- a relationship denied by `mutationCreateInput` / `mutationUpdateInput`;
-- a verb the related model's `mutationCreate` / `mutationUpdate` / `mutationDelete` /
-  `mutationRestore` denies;
-- a related model hidden by `model`;
-- a filter field hidden by `field`.
-
-Row `scope` applies to every related row a verb reaches, so a row outside it is never linked,
-updated or deleted.
-
-**All or nothing.** The whole file is read and every row converted before anything is written. The
-writes then run in one transaction, so a bad cell, a row the input type rejects, or a write that
-fails partway through leaves the database as it was. The error says which row and column:
-
-```json
-{ "message": "Row 2: \"rank\": \"one\" is not an integer",
-  "extensions": { "code": "CSV_ROW_INVALID", "row": 2, "column": "rank" } }
-```
-
-| `extensions.code` | Meaning |
-| --- | --- |
-| `CSV_UNSUPPORTED` | Not a readable file. |
-| `CSV_TOO_LARGE` / `CSV_TOO_MANY_ROWS` | Over `maxBytes` / `maxRows`. Checked while the file streams in. |
-| `CSV_TOO_MANY_FILES` | A multi-file import over `maxFiles`. |
-| `CSV_PARSE` | Malformed CSV (an unclosed quote, a row with the wrong number of cells), or an unusable `delimiter`. |
-| `CSV_HEADER` | A missing, blank or repeated header, a key column that is absent, or a column the operation cannot take. |
-| `CSV_ROW_INVALID` | A cell that does not convert, or a row the input type rejects (a required field missing, say). |
-| `CSV_ROW_NO_MATCH` | An update or delete row that matched no row. |
-| `CSV_ROW_FAILED` | The write itself failed. `extensions.causeCode` carries the underlying code when there is one, such as `GLOBAL_ID_TYPE_MISMATCH`. |
-
-**Same rules as JSON.** A CSV row goes through the same write path as a JSON argument. Permissions,
-the [primary/foreign key guard](#writing-primary--foreign-keys), `override.input`, row scope, hooks,
-`apply` transforms and the read cache all behave as they do for one `create` or `update` entry. A
-column the input type does not have, because it is a primary key or a permission hides it, fails the
-upload with `CSV_HEADER` instead of being dropped without a word. `createCsv` exists only where
-`create` does (likewise `update` and `delete`). The `mutationCsv` permission can take CSV away from
-a caller who keeps the JSON arguments.
-
-nestize serves the same uploads over REST, at [`POST /:resource/_csv/:operation`](../packages/nestize/README.md#csv-uploads).
-
-#### Several files at once
-
-`csvImport` takes several files, each a `create` or an `update` on its own model, and applies them
-as one unit. Rows in one file can point at rows another file writes:
-
-```graphql
-mutation ($files: [CsvImportFile!]!) {
-  csvImport(files: $files) { files { name model count ids } refs }
-}
-# variables: { "files": [
-#   { "model": "Post",   "operation": "create", "file": <posts.csv> },
-#   { "model": "Author", "operation": "create", "file": <authors.csv> },
-#   { "model": "Tag",    "operation": "create", "file": <tags.csv> } ] }
+mutation ($files: [CsvImportFile!]!) { csvImport(files: $files) { files { name count } refs } }
 ```
 
 ```csv
-authors.csv          tags.csv           posts.csv
-@ref,name            @ref,name          @ref,title,author.@ref,tags.@ref
-a1,Ann               t1,red             p1,Hello,a1,t1|t2
-a2,Bob               t2,blue            p2,Bye,a2,
+title,rank,author.set.name,tags.add.name[in]
+Hello,1,Ann,red|blue
 ```
 
-- **Labels.** A file's `@ref` column names its rows. Labels are unique across the whole import. An
-  update row can carry one too, naming the row it matched (it must match exactly one).
-- **References.** A header ending in `.@ref` points at labelled rows. Its cell holds one label, or
-  `a|b` / a JSON array for several:
+- A header names a field, or a dotted path into the same input a JSON mutation takes:
+  [relationship verbs](#nested-relationship-writes) (`author.set.name`) and filter operators
+  (`where.rank[gte]`).
+- An empty cell leaves a column alone, and `\N` writes `null`.
+- In a multi-file import, an `@ref` column labels rows, and `author.@ref` points at them from another
+  file.
+- Permissions, the [key guard](#writing-primary--foreign-keys), row scope and hooks hold exactly as
+  for JSON. The `mutationCsv` permission can take CSV away on top.
+- nestize serves the same uploads at `POST /:resource/_csv/:operation` and `POST /_csv`.
 
-  | Header | Means |
-  | --- | --- |
-  | `ownerId.@ref` | Write the labelled row's id into a writable foreign-key column. |
-  | `author.@ref` | `author: { set: … }` on a to-one relationship. |
-  | `tags.@ref` | `tags: { add: … }` on a to-many relationship. It adds and never unlinks. |
-  | `tags.set.@ref`, `tags.add[1].@ref`, `post.update.@ref` | That verb or entry, filtering on the primary key. |
+**Read next:**
 
-- **Order.** Files run in the order their references need, so the list order does not matter.
-  Otherwise they keep the order given. Files that refer to each other in a cycle are refused. Within
-  a file, rows run top to bottom, so a row may point at an earlier row of its own file but not a
-  later one.
-- **All or nothing.** Every file is read and every row converted before the first write. All the
-  writes run in one transaction. Errors carry the file in `extensions.file`, which is its `name`
-  (default `<model>.<operation>`).
-- **Gates.** A file is taken only where the model's own field offers `createCsv` / `updateCsv`, so
-  every gate on those holds. References resolve through the same input types, so the relationship
-  permissions above hold too. A reference cannot be a match column.
-
-The result lists, per file, the ids written in file order, and `refs` maps each label to its row's
-id. nestize serves the same import at [`POST /_csv`](../packages/nestize/README.md#multi-file-import).
+- [CSV uploads](csv.md): how to use it, from the first upload to linked multi-file imports, error
+  handling and server setup.
+- [CSV API reference](csv-api.md): every option, schema type, route, header rule, conversion and
+  error code.
 
 ### Nested relationship writes
 
