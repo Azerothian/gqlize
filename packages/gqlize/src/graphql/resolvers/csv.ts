@@ -8,6 +8,10 @@
 // CSV can therefore send nothing a JSON argument could not: a column the
 // permissions or the mass-assignment guard keep off the input type is simply
 // not there to name.
+//
+// A header is a path into that argument (ormize's `csv/header.ts`), so a row
+// reaches relationship verbs and every filter operator the input types offer,
+// and the columns sharing a path prefix build one nested object between them.
 
 import {
   GraphQLError, coerceInputValue, getNamedType, getNullableType, isInputObjectType, isListType,
@@ -15,7 +19,7 @@ import {
 } from "graphql";
 import type { GraphQLField, GraphQLInputObjectType, GraphQLInputType, GraphQLResolveInfo } from "graphql";
 import JSONType from "@azerothian/graphql-types/json";
-import { CsvUploadError, csvBoolean, csvJson, csvNumber } from "@azerothian/ormize";
+import { CSV_WHERE, CsvUploadError, csvBoolean, csvJson, csvList, csvNumber, isCsvWhereHeader, parseCsvHeader } from "@azerothian/ormize";
 import type { CsvCells, CsvOperation, CsvRequest, CsvRowCells, MutationFilter, MutationInputTree } from "@azerothian/ormize";
 
 /** The `input` and `where` types one operation's rows are held to. */
@@ -53,12 +57,19 @@ function csvTypes(field: GraphQLField<unknown, unknown> | undefined, operation: 
  * is not a string need converting; everything else — `ID`, `String`, enums,
  * dates, big integers — is the string the scalar's own `parseValue` expects.
  */
-function cellValue(raw: string | null, type: GraphQLInputType): unknown {
-  if (raw === null) {
-    return null;
+function cellValue(raw: unknown, type: GraphQLInputType): unknown {
+  if (raw === null || typeof raw !== "string") {
+    // `null` is the `\N` cell; anything else is an item a JSON list already typed.
+    return raw;
   }
   const nullable = getNullableType(type);
-  if (isListType(nullable) || isInputObjectType(nullable)) {
+  if (isListType(nullable)) {
+    const item = nullable.ofType;
+    // A list of objects is only ever JSON; a list of values (`in`, `between`)
+    // may also be written `a|b|c`.
+    return isInputObjectType(getNullableType(item)) ? csvJson(raw) : csvList(raw).map((v) => cellValue(v, item));
+  }
+  if (isInputObjectType(nullable)) {
     return csvJson(raw);
   }
   if (isScalarType(nullable)) {
@@ -101,33 +112,148 @@ function validated(value: { [key: string]: unknown }, type: GraphQLInputObjectTy
   return coerceInputValue(value, type);
 }
 
-/**
- * A key column's filter: equality, through the field's `eq` operator when the
- * where type has the per-field operator objects the built-in adapters generate,
- * or the bare value when an adapter's where takes one.
- */
-function keyFilter(raw: string | null, type: GraphQLInputType): unknown {
+/** A per-field operator object (`{eq, ne, in, …}`), which is what a filter field's type is. */
+function operatorObject(type: GraphQLInputType): GraphQLInputObjectType | undefined {
   const nullable = getNullableType(type);
-  const eq = isInputObjectType(nullable) ? nullable.getFields().eq : undefined;
-  return eq ? { eq: cellValue(raw, eq.type) } : cellValue(raw, type);
+  return isInputObjectType(nullable) && nullable.getFields().eq ? nullable : undefined;
 }
 
-function buildInput(cells: CsvCells, type: GraphQLInputObjectType): MutationInputTree {
-  const fields = type.getFields();
-  const value: { [key: string]: unknown } = {};
-  for (const column of Object.keys(cells)) {
-    value[column] = inColumn(column, () => cellValue(cells[column], fields[column].type));
-  }
-  return validated(value, type) as MutationInputTree;
+/** A `where` type: it combines with `and`/`or`, or holds operator objects. */
+function isFilterType(type: GraphQLInputObjectType): boolean {
+  const fields = Object.values(type.getFields());
+  return fields.some((f) => f.name === "and" || f.name === "or" || operatorObject(f.type) !== undefined);
 }
 
-function buildWhere(cells: CsvCells, type: GraphQLInputObjectType): MutationFilter {
-  const fields = type.getFields();
-  const value: { [key: string]: unknown } = {};
-  for (const column of Object.keys(cells)) {
-    value[column] = inColumn(column, () => keyFilter(cells[column], fields[column].type));
+/** Where one header puts its cell: a path into the row's argument, and the type the cell becomes. */
+type CsvTarget = { path: (string | number)[]; type: GraphQLInputType };
+
+/**
+ * Resolve a header against the type its row's argument has, walking one
+ * segment per level (see ormize's `csv/header.ts` for the grammar).
+ *
+ * Two levels may be left out because they carry no choice: the `input` of an
+ * `update`/`select` entry (`tags.update.done`, not `tags.update.input.done`),
+ * and the `where` of an `add`/`set` entry on a many-to-many relationship. And
+ * `where` may be written where the entry is a filter already (`owner.set.where.name`
+ * means `owner.set.name`), so the same header reads the same on every verb.
+ */
+function resolveTarget(root: GraphQLInputObjectType, header: string, unknown: (segment: string) => string): CsvTarget {
+  const { segments, op } = parseCsvHeader(header);
+  const bad = (why: string): never => {
+    throw new CsvUploadError("CSV_HEADER", `"${header}" ${why}`, { column: header });
+  };
+  const path: (string | number)[] = [];
+  let type: GraphQLInputObjectType = root;
+  let leaf: GraphQLInputType | undefined;
+  segments.forEach((segment, i) => {
+    const last = i === segments.length - 1;
+    let fields = type.getFields();
+    if (!fields[segment.name]) {
+      if (segment.name === "where" && !last && segment.index === undefined && isFilterType(type)) {
+        return;
+      }
+      const via = ["input", "where"].find((hop) => fields[hop] && inputObject(fields[hop].type)?.getFields()[segment.name]);
+      if (!via) {
+        return bad(i === 0 ? unknown(segment.name) : `reaches "${segment.name}", which ${type.name} does not have`);
+      }
+      path.push(via);
+      type = inputObject(fields[via].type) as GraphQLInputObjectType;
+      fields = type.getFields();
+    }
+    path.push(segment.name);
+    let fieldType: GraphQLInputType = fields[segment.name].type;
+    const nullable = getNullableType(fieldType);
+    if (isListType(nullable)) {
+      const item = nullable.ofType;
+      const itemObject = isInputObjectType(getNullableType(item));
+      if (itemObject && (!last || segment.index !== undefined)) {
+        path.push(segment.index ?? 0);
+        fieldType = item;
+      } else if (segment.index !== undefined) {
+        bad(`indexes "${segment.name}", which is a list of values, not of entries`);
+      }
+    } else if (segment.index !== undefined) {
+      bad(`indexes "${segment.name}", which is not a list`);
+    }
+    if (last) {
+      leaf = fieldType;
+      return;
+    }
+    const next = getNullableType(fieldType);
+    if (!isInputObjectType(next)) {
+      bad(`goes past "${segment.name}", which holds a value`);
+    }
+    type = next as GraphQLInputObjectType;
+  });
+  const operators = operatorObject(leaf as GraphQLInputType);
+  if (op !== undefined) {
+    const operator = operators?.getFields()[op];
+    if (!operator) {
+      bad(operators ? `names "${op}", which is not an operator ${operators.name} offers` : "names an operator on something that is not a filter field");
+    }
+    return { path: [...path, op], type: (operator as { type: GraphQLInputType }).type };
   }
-  return validated(value, type) as MutationFilter;
+  if (operators) {
+    return { path: [...path, "eq"], type: operators.getFields().eq.type };
+  }
+  return { path, type: leaf as GraphQLInputType };
+}
+
+/** Two headers that write the same place, or one inside the other's value, cannot both be honoured. */
+function assertDistinct(targets: Map<string, CsvTarget>) {
+  const seen: { header: string; key: string }[] = [];
+  for (const [header, { path }] of targets) {
+    const key = path.join("\u0000");
+    const clash = seen.find((s) => s.key === key || s.key.startsWith(`${key}\u0000`) || key.startsWith(`${s.key}\u0000`));
+    if (clash) {
+      throw new CsvUploadError("CSV_HEADER", `"${header}" and "${clash.header}" write the same value`, { column: header });
+    }
+    seen.push({ header, key });
+  }
+}
+
+function place(tree: { [key: string]: unknown }, path: (string | number)[], value: unknown) {
+  let node: { [key: string | number]: unknown } = tree;
+  path.forEach((key, i) => {
+    if (i === path.length - 1) {
+      node[key] = value;
+      return;
+    }
+    if (node[key] === undefined) {
+      node[key] = typeof path[i + 1] === "number" ? [] : {};
+    }
+    node = node[key] as { [key: string | number]: unknown };
+  });
+}
+
+/**
+ * Drop the holes an index leaves: `tags.add[1]` filled on a row whose
+ * `tags.add[0]` cells are all empty is that row's only entry. The index groups
+ * columns into an entry; it is not a position anyone is counting on.
+ */
+function compact(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.filter((v) => v !== undefined).map(compact);
+  }
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, compact(v)]));
+  }
+  return value;
+}
+
+/** A row's cells, each placed at its header's target, as the value of `type`. */
+function buildArgument(cells: CsvCells, type: GraphQLInputObjectType, targets: Map<string, CsvTarget>): unknown {
+  const tree: { [key: string]: unknown } = {};
+  for (const column of Object.keys(cells)) {
+    const target = targets.get(column) as CsvTarget;
+    place(tree, target.path, inColumn(column, () => cellValue(cells[column], target.type)));
+  }
+  return validated(compact(tree) as { [key: string]: unknown }, type);
+}
+
+/** A top-level `where.name` key column is a path into the where type itself. */
+function keyHeader(column: string): string {
+  return isCsvWhereHeader(column) ? column.slice(CSV_WHERE.length + 1) : column;
 }
 
 /**
@@ -139,29 +265,33 @@ export function csvRequest(
   apply: { [methodName: string]: unknown } | undefined,
 ): CsvRequest {
   const types = csvTypes(info.parentType.getFields()[info.fieldName], operation);
+  const inputTargets = new Map<string, CsvTarget>();
+  const keyTargets = new Map<string, CsvTarget>();
+  const resolveAll = ({ input, keys }: { input: string[]; keys: string[] }) => {
+    for (const column of input) {
+      if (!types.input) {
+        throw new CsvUploadError("CSV_HEADER", `"${column}" is not a field this ${operation} can write`, { column });
+      }
+      inputTargets.set(column, resolveTarget(types.input, column, () => `is not a field this ${operation} can write`));
+    }
+    for (const column of keys) {
+      if (!types.where) {
+        throw new CsvUploadError("CSV_HEADER", `"${column}" is not a field rows can be matched on`, { column });
+      }
+      keyTargets.set(column, resolveTarget(types.where, keyHeader(column), () => "is not a field rows can be matched on"));
+    }
+    assertDistinct(inputTargets);
+    assertDistinct(keyTargets);
+  };
   return {
     upload,
     keys: args?.keys || undefined,
     delimiter: args?.delimiter ?? undefined,
     apply,
-    checkColumns: ({ input, keys }) => {
-      const inputFields = types.input?.getFields() || {};
-      const whereFields = types.where?.getFields() || {};
-      for (const column of input) {
-        if (!inputFields[column]) {
-          throw new CsvUploadError("CSV_HEADER", `"${column}" is not a field this ${operation} can write`, { column });
-        }
-      }
-      for (const column of keys) {
-        // `or`/`and` are where-type fields too, and nothing a cell can fill.
-        if (!whereFields[column] || column === "or" || column === "and") {
-          throw new CsvUploadError("CSV_HEADER", `"${column}" is not a field rows can be matched on`, { column });
-        }
-      }
-    },
+    checkColumns: resolveAll,
     toArgs: ({ input, keys }: CsvRowCells) => ({
-      input: types.input ? buildInput(input, types.input) : undefined,
-      where: types.where ? buildWhere(keys, types.where) : undefined,
+      input: types.input ? buildArgument(input, types.input, inputTargets) as MutationInputTree : undefined,
+      where: types.where ? buildArgument(keys, types.where, keyTargets) as MutationFilter : undefined,
     }),
   };
 }
