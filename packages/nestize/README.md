@@ -99,8 +99,12 @@ curl -X POST 'http://localhost:3000/task/_csv/update?keys=name' -H 'content-type
 - **Rows.** The header names the fields. Cells are converted by column type (numbers, `true`/`false`,
   dates, JSON) and then validated by the same zod schema as `POST /:resource` (create) or
   `PATCH /:resource` (update). An empty cell is left out, and `\N` is null.
-- **Matching.** `update` and `delete` match rows on the primary key, or on `?keys=a,b`. Matching on a
-  field is held to the same filter permission as `?filter=`. `delete` takes only key columns.
+- **Matching.** `update` and `delete` match rows on the primary key, or on `?keys=a,b`.
+  - A `where.<field>[op]` column matches with that operator instead, for example `where.name[startsWith]`
+    or `where.id[in]` with a cell of `3|4`.
+  - Matching on a field is held to the same filter permission as `?filter=`.
+  - `delete` takes only key columns.
+  - Relationship columns (`item.set.label`) are only accepted by the GraphQL upload.
 - **Query.** `?delimiter=;` changes the separator.
 - **Response.** `200 { rows }`. A refused file or row is `400 { code, message, row?, column? }` and
   nothing is written. Over the instance's row or byte limit is `413`. The route is a `404` for a model

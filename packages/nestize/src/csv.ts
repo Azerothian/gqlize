@@ -9,7 +9,7 @@
 // descriptors, because the zod schemas want a `number` and a `Date`, not text.
 
 import { BadRequestException, HttpException, HttpStatus } from "@nestjs/common";
-import { CsvUploadError, csvCellValue } from "@azerothian/ormize";
+import { CSV_LIST_OPERATORS, CSV_WHERE, CsvUploadError, csvCellValue, csvList, isCsvWhereHeader, parseCsvHeader } from "@azerothian/ormize";
 import type { CsvCells, CsvOperation, CsvRequest, CsvRowCells, Ormize } from "@azerothian/ormize";
 import type { z } from "zod";
 import type { RestQuery, RestRequest } from "./types";
@@ -63,8 +63,40 @@ export type CsvSchemas = {
 };
 
 /**
+ * The field and operator a key column matches with. A plain column is `eq`;
+ * a `where.<field>[op]` column names its own. REST's filter is flat, so the
+ * path stops at one field: no `or`/`and`, no relationship.
+ */
+function keyFilter(column: string): { field: string; op: string } {
+  if (!isCsvWhereHeader(column)) {
+    return { field: column, op: "eq" };
+  }
+  const { segments, op } = parseCsvHeader(column.slice(CSV_WHERE.length + 1));
+  if (segments.length !== 1 || segments[0].index !== undefined) {
+    throw new CsvUploadError("CSV_HEADER", `"${column}": over REST a filter column names one field, as where.<field>[op]`, { column });
+  }
+  return { field: segments[0].name, op: op ?? "eq" };
+}
+
+/** Pin a column-less conversion error on `column`. */
+function inColumn<T>(column: string, fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    if (e instanceof CsvUploadError && e.column === undefined) {
+      throw new CsvUploadError(e.code, `"${column}": ${e.message}`, { column });
+    }
+    throw e;
+  }
+}
+
+/**
  * The REST half of an ormize `CsvRequest` for one model: `?keys=a,b` and
  * `?delimiter=;` off the query string, header checks, and per-row conversion.
+ *
+ * Relationship columns (`author.set.name`) are the GraphQL upload's: the REST
+ * create/update bodies are validated by zod schemas that hold columns only,
+ * so there is no nested input here for such a column to fill.
  */
 export function restCsvRequest(
   orm: Ormize, name: string, operation: CsvOperation, req: RestRequest, query: RestQuery, schemas: CsvSchemas,
@@ -77,16 +109,21 @@ export function restCsvRequest(
   const convert = (cells: CsvCells) => {
     const out: { [column: string]: unknown } = {};
     for (const column of Object.keys(cells)) {
-      try {
-        out[column] = csvCellValue(cells[column], descriptor(column));
-      } catch (e) {
-        if (e instanceof CsvUploadError) {
-          throw new CsvUploadError(e.code, `"${column}": ${e.message}`, { column });
-        }
-        throw e;
-      }
+      out[column] = inColumn(column, () => csvCellValue(cells[column], descriptor(column)));
     }
     return out;
+  };
+  const buildWhere = (cells: CsvCells) => {
+    const where: { [field: string]: { [op: string]: unknown } } = {};
+    for (const column of Object.keys(cells)) {
+      const { field, op } = keyFilter(column);
+      const raw = cells[column];
+      const value = inColumn(column, () => (CSV_LIST_OPERATORS.has(op) && raw !== null
+        ? csvList(raw).map((item) => (typeof item === "string" ? csvCellValue(item, descriptor(field)) : item))
+        : csvCellValue(raw, descriptor(field))));
+      where[field] = { ...where[field], [op]: value };
+    }
+    return where;
   };
   const delimiter = typeof query?.delimiter === "string" ? query.delimiter : undefined;
   return {
@@ -96,22 +133,28 @@ export function restCsvRequest(
     checkColumns: ({ input, keys }) => {
       const shape = schemas.input?.shape || {};
       for (const column of input) {
+        if (/[.?[]/.test(column)) {
+          throw new CsvUploadError("CSV_HEADER", `"${column}": relationship columns are only taken by the GraphQL upload`, { column });
+        }
         if (!(column in shape)) {
           throw new CsvUploadError("CSV_HEADER", `"${column}" is not a field this ${operation} can write`, { column });
         }
       }
+      const filter: { [field: string]: { [op: string]: null } } = {};
       for (const column of keys) {
-        if (!fields[column]) {
+        const { field, op } = keyFilter(column);
+        if (!fields[field]) {
           throw new CsvUploadError("CSV_HEADER", `"${column}" is not a field rows can be matched on`, { column });
         }
+        filter[field] = { ...filter[field], [op]: null };
       }
       // The same rule a `?filter=` is held to: matching on a field is reading it.
       if (keys.length > 0) {
-        schemas.assertFilterAllowed(Object.fromEntries(keys.map((k) => [k, { eq: null }])));
+        schemas.assertFilterAllowed(filter);
       }
     },
     toArgs: ({ input, keys }: CsvRowCells) => {
-      const where = Object.fromEntries(Object.entries(convert(keys)).map(([k, v]) => [k, { eq: v }]));
+      const where = buildWhere(keys);
       if (operation === "delete") {
         return { where };
       }

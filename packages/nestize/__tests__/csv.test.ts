@@ -74,6 +74,26 @@ describe("nestize - CSV uploads", () => {
     expect((await tasks(http)).filter((r) => r.name.startsWith("del-"))).toEqual([]);
   });
 
+  it("matches on `where.<field>[op]` columns, list operators taking a|b", async () => {
+    const created = await postCsv(http, "/task/_csv/create", "name\nops-a\nops-b\nops-c\n");
+    const ids = (created.body.rows as TaskRow[]).map((r) => r.id);
+    expect((await postCsv(http, "/task/_csv/update", "where.name[startsWith],done\nops-a,true\n")).status).toBe(200);
+    const deleted = await postCsv(http, "/task/_csv/delete", `where.id[Op.in]\n${ids[1]}|${ids[2]}\n`);
+    expect(deleted.status).toBe(200);
+    expect(deleted.body.rows).toHaveLength(2);
+    expect((await tasks(http)).filter((r) => r.name.startsWith("ops-"))).toEqual([
+      expect.objectContaining({ name: "ops-a", done: true }),
+    ]);
+  });
+
+  it("leaves relationship columns to the GraphQL upload", async () => {
+    const res = await postCsv(http, "/task/_csv/create", "name,item.set.label\nrel-a,box\n");
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "CSV_HEADER", column: "item.set.label" });
+    const nested = await postCsv(http, "/task/_csv/update", "where.item.label,done\nbox,true\n");
+    expect(nested.body).toMatchObject({ code: "CSV_HEADER", column: "where.item.label" });
+  });
+
   it("refuses a bad row with its row and column, writing nothing", async () => {
     const res = await postCsv(http, "/task/_csv/create", "name,done\nbad-a,true\nbad-b,maybe\n");
     expect(res.status).toBe(400);
