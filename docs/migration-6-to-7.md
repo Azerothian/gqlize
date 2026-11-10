@@ -641,6 +641,18 @@ The rows written were always correct — only the mutation's own return value wa
 that read `data.models.Post[0]` after a single-row filter is unaffected; code that counted the
 returned array, or that tested for `[null]` to detect "nothing matched", needs updating.
 
+### Nested `delete` / `restore` follow the target's permission
+
+A relationship's nested `delete` and `restore` verbs (`comments: { delete: [...] }`) are now generated
+only when `mutationDelete` / `mutationRestore` allow them on the **related** model. Before, they were
+built from the target's filter type alone. A caller denied `mutationDelete` on `Comment` could still
+delete comments by reaching them through `Post`. Nested `create` and `update` were already gated this
+way, because the target's create and update inputs do not exist when those permissions are denied.
+
+A schema whose permissions deny delete or restore on a model that another model relates to loses
+those two fields on the relationship input. A client that sent them gets a validation error instead
+of a write. To keep the old behaviour, allow the operation on the target.
+
 ### Adapters agree on enum type names and enum value names
 
 Enum handling had drifted between the two shipped adapters. The sequelize adapter capitalised the
@@ -820,6 +832,8 @@ Not required for migration, but this is what the split bought:
 - [ ] Mutations that wrote primary keys or foreign keys audited — either moved to nested relationship
       inputs or opted in with `writable: true` / `writableForeignKeys`.
 - [ ] Callers that relied on unpaginated lists updated to page explicitly.
+- [ ] Nested `delete` / `restore` through a relationship checked against the target's
+      `mutationDelete` / `mutationRestore`; they are no longer offered when it denies them.
 - [ ] `enableRegexpOperators: true` set if you use `$regexp` and friends.
 - [ ] `where` / `orderBy` usage checked against your permission config.
 - [ ] Backward pagination (`last`/`before`) avoided — see the known issue above.

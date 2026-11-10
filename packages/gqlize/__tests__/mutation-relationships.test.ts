@@ -152,6 +152,25 @@ describe("relationship mutations", () => {
     expect(bodies).toEqual(["commenttwo"]);
   });
 
+  it("delete/restore: not offered on a relationship whose target the caller may not delete/restore", async () => {
+    const db = await build();
+    const {Post, Comment} = db.models;
+    const post = await Post.create({title: "post1"});
+    await Comment.create({body: "commentone", postId: post.get("id")});
+    const notComment = (defName: string) => defName !== "Comment";
+    const schema = await createSchema(db, {permission: {
+      ...schemaOpts.permission, mutationDelete: notComment, mutationRestore: notComment,
+    }});
+
+    for (const verb of ["delete", "restore"]) {
+      const res = await graphql({schema, source: `mutation { models {
+        Post(update: { where: { title: { eq: "post1" } }, input: { comments: { ${verb}: [{ body: { eq: "commentone" } }] } } }) { id }
+      } }`});
+      expect(res.errors?.[0]?.message).toMatch(new RegExp(`unknown field "${verb}"`));
+    }
+    expect(await Comment.count()).toEqual(1);
+  });
+
   it("restore: undeletes soft-deleted (paranoid) related records", async () => {
     const db = await build();
     const {Post, Comment} = db.models;

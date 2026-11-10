@@ -210,7 +210,8 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
     // against each other. They must agree: a verb offered here that the engine
     // does not implement is a field that silently does nothing.
     //
-    // `available` gates a verb on the input type it needs existing at all;
+    // `available` gates a verb on the input type it needs existing at all, or
+    // on the target's own operation permission where it needs no input type;
     // `singular` is absent for `add`, which a to-one relationship does not offer.
     const VERBS: {
       name: string;
@@ -255,12 +256,19 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         singular: { type: GraphQLBoolean, description: `When true, this will disassociate the current ${relName} from the ${defName}` },
       },
       {
+        // `delete` and `restore` take only the target's filter type, so unlike
+        // `create`/`update` there is no target input whose absence would gate
+        // them: they are gated on the target's own operation here, or a caller
+        // denied `mutationDelete` on a model could still delete its rows by
+        // reaching them through a relationship.
         name: "delete",
+        available: isMutationAllowed(options.permission, association.target, "delete"),
         collection: { type: list(filterType), description: `This will delete any matching elements that have a relationship with the current ${defName}` },
         singular: { type: filterType, description: `This will delete any matching elements that have a relationship with the current ${defName}` },
       },
       {
         name: "restore",
+        available: isMutationAllowed(options.permission, association.target, "restore"),
         collection: { type: list(filterType), description: `This will restore any soft-deleted matching elements related to the current ${defName}` },
         singular: { type: filterType, description: `This will restore the soft-deleted ${relName} related to the current ${defName}` },
       },
