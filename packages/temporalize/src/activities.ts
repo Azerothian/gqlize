@@ -1,4 +1,4 @@
-import { isAllowed, isModelAllowed } from "@azerothian/utilize";
+import { isAllowed, isModelAllowed, regexOperatorsEnabled } from "@azerothian/utilize";
 import { definitionMethods, mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import type { Definition, Permission, PermissionContext } from "@azerothian/utilize";
 import type { Ormize } from "@azerothian/ormize";
@@ -100,7 +100,7 @@ export function createActivities(
   /** Public `{ limit, offset }` -> the engine's cursor arg shape (`first` / `after.index`). */
   const listArgs = (name: string, call: Call, req: FindArgs) => {
     assertPagination(req.limit, req.offset);
-    assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name));
+    assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name), regexOperatorsEnabled(orm.getModelAdapter(name)));
     assertOrderAllowed(call.permission, name, req.orderBy, orm.getDefinition(name));
     // The engine's cursor shape, not the public one: `first`/`after.index` rather
     // than `limit`/`offset`.
@@ -207,7 +207,7 @@ export function createActivities(
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "update");
         assertScopedMutation(req.where, req.all);
-        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name));
+        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name), regexOperatorsEnabled(orm.getModelAdapter(name)));
         assertPagination(req.limit, undefined);
         const input = validate ? validateInput(call.schemas, name, "update", req.input) : req.input;
         const rows = await orm.processUpdate(name, null, { input, where: req.where || {}, limit: req.limit }, call.context);
@@ -218,7 +218,7 @@ export function createActivities(
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "destroy");
         assertScopedMutation(req.where, req.all);
-        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name));
+        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name), regexOperatorsEnabled(orm.getModelAdapter(name)));
         const rows = await orm.processDelete(name, null, req.where || {}, call.context);
         return present(call.schemas, name, rows);
       });
@@ -231,7 +231,7 @@ export function createActivities(
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "select");
         assertScopedMutation(req.where, req.all);
-        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name));
+        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name), regexOperatorsEnabled(orm.getModelAdapter(name)));
         assertPagination(req.limit, undefined);
         const rows = await orm.processSelect(
           name,
