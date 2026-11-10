@@ -68,6 +68,10 @@ export function buildCsvImportResolver(ctx: BindingContext) {
       Object.entries(instance.getAssociations(name) || {}).map(([rel, a]) => [rel, a.target]),
     ),
     primaryKey,
+    foreignTarget: (name, field) => {
+      const fields = instance.getFields(name) || {};
+      return Object.hasOwn(fields, field) ? fields[field].foreignTarget : undefined;
+    },
   });
   /** A written row's id, encoded as every other id in the schema is. */
   const globalId = (defName: string, row: AdapterRow): string => {

@@ -124,8 +124,11 @@ function isFilterType(type: GraphQLInputObjectType): boolean {
   return fields.some((f) => f.name === "and" || f.name === "or" || operatorObject(f.type) !== undefined);
 }
 
-/** Where one header puts its cell: a path into the row's argument, and the type the cell becomes. */
-type CsvTarget = { path: (string | number)[]; type: GraphQLInputType };
+/**
+ * Where one header puts its cell: a path into the row's argument, and the type
+ * the cell becomes. A reference also records the model its labels must name.
+ */
+type CsvTarget = { path: (string | number)[]; type: GraphQLInputType; refModel?: string };
 
 /**
  * What resolving a `….@ref` header needs to know about the models a path
@@ -139,6 +142,8 @@ export type CsvModels = {
   associations: (defName: string) => { [relName: string]: string };
   /** The single primary key a reference filters on, if the model has one. */
   primaryKey: (defName: string) => string | undefined;
+  /** The model a foreign-key column points at, if it is one. */
+  foreignTarget: (defName: string, field: string) => string | undefined;
 };
 
 type Walked = { path: (string | number)[]; leaf: GraphQLInputType; model: string | undefined };
@@ -224,10 +229,12 @@ function refTarget(walked: Walked, bad: (why: string) => never, models: CsvModel
   const path = [...walked.path];
   const leaf = getNullableType(walked.leaf);
   if (isScalarType(leaf)) {
-    if (leaf.name !== "ID") {
-      bad("points labelled rows at a field that is not an id");
+    const field = path[path.length - 1];
+    const target = walked.model !== undefined && typeof field === "string" ? models.foreignTarget(walked.model, field) : undefined;
+    if (leaf.name !== "ID" || target === undefined) {
+      bad("points labelled rows at a field that is not a foreign key");
     }
-    return { path, type: walked.leaf };
+    return { path, type: walked.leaf, refModel: target };
   }
   let entry: GraphQLInputType = leaf;
   if (isListType(entry)) {
@@ -259,7 +266,7 @@ function refTarget(walked: Walked, bad: (why: string) => never, models: CsvModel
     return bad(`cannot point at ${walked.model ?? "that model"}'s rows: it has no single primary key a filter can name`);
   }
   const op = operators.getFields().in ? "in" : "eq";
-  return { path: [...path, pk as string, op], type: operators.getFields()[op].type };
+  return { path: [...path, pk as string, op], type: operators.getFields()[op].type, refModel: walked.model };
 }
 
 /** Resolve a header against the type its row's argument has. */
@@ -307,38 +314,66 @@ function assertDistinct(targets: Map<string, CsvTarget>) {
   }
 }
 
-function place(tree: { [key: string]: unknown }, path: (string | number)[], value: unknown) {
-  let node: { [key: string | number]: unknown } = tree;
+/**
+ * A list being filled in by index. A Map rather than an array: `[999999999]`
+ * in a header must cost one entry, not a billion-slot sparse array for every
+ * later pass to walk.
+ */
+class Slots {
+  readonly entries = new Map<number, unknown>();
+}
+
+/** An object being filled in. No prototype, so a key can never reach `Object.prototype`. */
+type Node = { [key: string]: unknown };
+const node = (): Node => Object.create(null) as Node;
+
+function place(tree: Node, path: (string | number)[], value: unknown) {
+  let at: Node | Slots = tree;
   path.forEach((key, i) => {
+    const get = (): unknown => (at instanceof Slots ? at.entries.get(key as number) : at[key as string]);
+    const set = (v: unknown) => {
+      if (at instanceof Slots) {
+        at.entries.set(key as number, v);
+      } else {
+        at[key as string] = v;
+      }
+    };
     if (i === path.length - 1) {
-      node[key] = value;
+      set(value);
       return;
     }
-    if (node[key] === undefined) {
-      node[key] = typeof path[i + 1] === "number" ? [] : {};
+    if (get() === undefined) {
+      set(typeof path[i + 1] === "number" ? new Slots() : node());
     }
-    node = node[key] as { [key: string | number]: unknown };
+    at = get() as Node | Slots;
   });
 }
 
 /**
- * Drop the holes an index leaves: `tags.add[1]` filled on a row whose
- * `tags.add[0]` cells are all empty is that row's only entry. The index groups
- * columns into an entry; it is not a position anyone is counting on.
+ * Turn the built tree into the plain value graphql validates: each list's
+ * entries in index order, holes gone. The index groups columns into an entry;
+ * it is not a position anyone is counting on, so `tags.add[1]` filled on a row
+ * whose `tags.add[0]` cells are all empty is that row's only entry.
  */
 function compact(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.filter((v) => v !== undefined).map(compact);
+  if (value instanceof Slots) {
+    return [...value.entries.entries()].sort(([a], [b]) => a - b).map(([, v]) => compact(v));
   }
-  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, compact(v)]));
+  if (Array.isArray(value)) {
+    return value.map(compact);
+  }
+  if (value && typeof value === "object") {
+    const proto = Object.getPrototypeOf(value) as object | null;
+    if (proto === null || proto === Object.prototype) {
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, compact(v)]));
+    }
   }
   return value;
 }
 
 /** A row's cells, each placed at its header's target, as the value of `type`. */
 function buildArgument(cells: CsvCells, type: GraphQLInputObjectType, targets: Map<string, CsvTarget>): unknown {
-  const tree: { [key: string]: unknown } = {};
+  const tree = node();
   for (const column of Object.keys(cells)) {
     const target = targets.get(column) as CsvTarget;
     place(tree, target.path, inColumn(column, () => cellValue(cells[column], target.type)));
@@ -384,6 +419,7 @@ export function csvRequest(
     delimiter: args?.delimiter ?? undefined,
     apply,
     checkColumns: resolveAll,
+    refTarget: (column) => inputTargets.get(column)?.refModel,
     toArgs: ({ input, keys }: CsvRowCells) => ({
       input: types.input ? buildArgument(input, types.input, inputTargets) as MutationInputTree : undefined,
       where: types.where ? buildArgument(keys, types.where, keyTargets) as MutationFilter : undefined,
