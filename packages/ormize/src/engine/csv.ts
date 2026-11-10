@@ -16,6 +16,7 @@ import type { MutationApply, MutationFilter, MutationInputTree } from "../types/
 
 import { CsvUploadError } from "../csv/errors";
 import { readCsv, type CsvCells } from "../csv/read";
+import { isCsvWhereHeader } from "../csv/header";
 import type { CsvUpload } from "../csv/source";
 
 /** The three operations a CSV can carry. Restore and select stay JSON-only. */
@@ -33,8 +34,9 @@ export type CsvRowArgs = { input?: MutationInputTree; where?: MutationFilter };
 export type CsvRequest = {
   upload: CsvUpload;
   /**
-   * The columns an update or delete row is matched on. Default: the model's
-   * primary key. Ignored on a create.
+   * The columns an update or delete row is matched on, alongside any
+   * `where.…` columns in the header. Default, when there are neither: the
+   * model's primary key. Ignored on a create.
    */
   keys?: string[];
   /** The field separator. Default `,`. */
@@ -76,11 +78,19 @@ function atRow(e: unknown, row: number, fallbackCode: "CSV_ROW_INVALID" | "CSV_R
 
 /** Split the header into key and input columns, refusing what the operation cannot take. */
 function columnsFor(host: CsvHost, defName: string, operation: CsvOperation, header: string[], requested: string[] | undefined) {
+  // `where.<field>[op]` columns (see `csv/header.ts`) are match columns
+  // wherever they appear; they stand in for the primary key default rather
+  // than adding to it, since a file that spells out its filter means that one.
+  const filters = header.filter(isCsvWhereHeader);
   if (operation === "create") {
+    if (filters.length > 0) {
+      throw new CsvUploadError("CSV_HEADER", `A create matches no rows; "${filters[0]}" has nothing to filter`, { column: filters[0] });
+    }
     return { keys: [], input: header };
   }
-  const keys = requested && requested.length > 0
-    ? requested
+  const named = requested && requested.length > 0 ? requested : [];
+  const keys = named.length > 0 || filters.length > 0
+    ? [...named.filter((k) => !filters.includes(k)), ...filters]
     : host.getModelAdapter(defName).getPrimaryKeyNameForModel(defName) || [];
   if (keys.length === 0) {
     throw new CsvUploadError("CSV_HEADER", `${defName} has no primary key; name the columns to match rows on`);

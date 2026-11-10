@@ -49,6 +49,20 @@ export function csvJson(raw: string): unknown {
 }
 
 /**
+ * A cell holding a list — the value of an `in`, `notIn` or `between` filter.
+ * A JSON array when it starts with `[`; otherwise the items between `|`s, so
+ * `a|b|c` is what a spreadsheet user types. Each item is left as text for the
+ * caller to convert by the list's item type.
+ */
+export function csvList(raw: string): unknown[] {
+  if (raw.trimStart().startsWith("[")) {
+    const value = csvJson(raw);
+    return Array.isArray(value) ? value : invalid(raw, "a list");
+  }
+  return raw.split("|");
+}
+
+/**
  * The value a cell holds for a column of `descriptor`'s type. `null` (the
  * `\N` cell) stays `null`; an unknown or textual type keeps the string, for
  * the surface's own validation to judge.

@@ -5,7 +5,8 @@ import {describe, it, expect} from "@jest/globals";
 
 import {readCsv} from "../src/csv/read";
 import {resolveCsvLimits, DEFAULT_CSV_LIMITS} from "../src/csv/limits";
-import {csvCellValue} from "../src/csv/cells";
+import {csvCellValue, csvList} from "../src/csv/cells";
+import {isCsvWhereHeader, parseCsvHeader} from "../src/csv/header";
 import {CsvUploadError} from "../src/csv/errors";
 import {DataTypes} from "@azerothian/utilize/types/index";
 
@@ -67,6 +68,37 @@ describe("readCsv", () => {
       }
     })();
     expect((await refusal(readCsv(endless, {maxRows: 1e9, maxBytes: 100}))).code).toBe("CSV_TOO_LARGE");
+  });
+});
+
+describe("parseCsvHeader", () => {
+  it("reads segments, indexes and a trailing operator", () => {
+    expect(parseCsvHeader("name")).toEqual({segments: [{name: "name"}], op: undefined});
+    expect(parseCsvHeader("tags.add[1].where?name[Op.in]")).toEqual({
+      segments: [{name: "tags"}, {name: "add", index: 1}, {name: "where"}, {name: "name"}],
+      op: "in",
+    });
+    expect(parseCsvHeader("where.or[0].title[like]").segments[1]).toEqual({name: "or", index: 0});
+  });
+
+  it("refuses a malformed path", () => {
+    for (const header of ["a..b", "a.", "a[in].b", "a[x y]", "a[0][1]", "a]b"]) {
+      expect(() => parseCsvHeader(header)).toThrow(CsvUploadError);
+    }
+  });
+
+  it("tells a top-level filter column apart", () => {
+    expect(isCsvWhereHeader("where.name")).toBe(true);
+    expect(isCsvWhereHeader("where?name")).toBe(true);
+    expect(isCsvWhereHeader("whereabouts")).toBe(false);
+  });
+});
+
+describe("csvList", () => {
+  it("reads a JSON array or a|b", () => {
+    expect(csvList("[1,\"a|b\"]")).toEqual([1, "a|b"]);
+    expect(csvList("a|b")).toEqual(["a", "b"]);
+    expect(() => csvList("[1")).toThrow(CsvUploadError);
   });
 });
 
