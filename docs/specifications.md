@@ -736,7 +736,9 @@ separated by `.` or `?`, each optionally indexed (`add[1]`), with an optional tr
   - takes entry `0` of a list of objects when no index is given;
   - defaults a filter field's operator to `eq`.
 
-  Rows are then built by placing each cell at its path. Paths sharing a prefix therefore build one
+  Rows are then built by placing each cell at its path. Object nodes have no prototype, and list
+  entries are held in a map by index until they are compacted, so a header's `[n]` costs one entry
+  whatever `n` is. Paths sharing a prefix therefore build one
   object, which is how columns under one verb merge into one entry. List holes left by entries whose
   cells were all empty are compacted out. Two headers resolving to the same path, or one inside the
   other, are a `CSV_HEADER` error. A list-of-values leaf takes `csvList` (`a|b` or a JSON array).
@@ -759,7 +761,9 @@ helpers (`columnsFor`, `planRow`, `write`). The additions are:
 3. **Order.** Files run in a dependency order (`writeOrder`) that keeps the given order where it is
    free. A cycle is a `CSV_HEADER` error.
 4. **Placeholders.** Before conversion, every reference cell is replaced with tokens
-   (`\u0000csv-ref:<label>`). Every row of every file is converted, through the surface's `toArgs`,
+   (`\u0000csv-ref:<nonce>:<label>`). The nonce is random per import, so a cell cannot spell out a
+   token and have an id swapped into a field of its choosing. When the surface supplies
+   `request.refTarget(column)`, a label of any other model is refused here, before any write. Every row of every file is converted, through the surface's `toArgs`,
    before the transaction opens. Inside it, just before a row is written, `resolveTokens` swaps each
    token for `request.refValue(defName, row)` of the row it names. That is a global id in gqlize and
    the raw key in nestize. A token in a single-valued field holding several labels is refused.

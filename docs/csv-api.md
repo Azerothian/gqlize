@@ -322,9 +322,9 @@ The target model must have a single primary key. A reference in a single-file up
 
 | Header | Accepted |
 | --- | --- |
-| `<field>` | When it is in the operation's zod input schema. |
-| `where.<field>[op]` | One field, any operator name; the value is converted by the field's column type, and the operators in `CSV_LIST_OPERATORS` take a list. |
-| `<field>.@ref` | Import only; `<field>` must be in the input schema (a writable foreign key). |
+| `<field>` | When it is an own key of the operation's zod input schema (so `constructor`, `toString` and the like are refused). |
+| `where.<field>[op]` | One field, and an operator from the allow-list `CSV_VALUE_OPERATORS` ∪ `CSV_LIST_OPERATORS`. Anything else is `CSV_HEADER`, because the adapter would turn any `Op` name, `col` included, into that operator. The value is converted by the field's column type; list operators take a list. |
+| `<field>.@ref` | Import only; `<field>` must be in the input schema (a writable foreign key), and every label in it must name a row of the key's target model. |
 | Anything else with `.`, `?` or `[` | `CSV_HEADER`: relationship headers are GraphQL-only. |
 
 ## Cell conversion
@@ -380,7 +380,7 @@ class CsvUploadError extends Error {
 | `CSV_TOO_MANY_FILES` | More than `maxFiles` files in an import. | 413 |
 | `CSV_PARSE` | Malformed CSV, or an unusable delimiter. | 400 |
 | `CSV_HEADER` | Any of: <ul><li>a missing, blank or repeated header;</li><li>a missing key column, or a model with no primary key and no keys given;</li><li>a column the operation can't take;</li><li>a header that doesn't resolve;</li><li>two headers writing one place;</li><li>a `where.` column on a create, or a non-key column on a delete;</li><li>a reference outside an import, or as a key;</li><li>two import files with one name, or files that refer to each other in a cycle.</li></ul> | 400 |
-| `CSV_ROW_INVALID` | Any of: <ul><li>a cell that doesn't convert;</li><li>a row the input type or zod schema rejects;</li><li>a blank key cell, or keys that make no filter;</li><li>an unknown, repeated or later-row label;</li><li>several labels in a single-id field;</li><li>a labelled update row matching other than one row.</li></ul> | 400 |
+| `CSV_ROW_INVALID` | Any of: <ul><li>a cell that doesn't convert;</li><li>a row the input type or zod schema rejects;</li><li>a blank key cell, or keys that make no filter;</li><li>an unknown, repeated or later-row label, or a label of the wrong model;</li><li>several labels in a single-id field;</li><li>a labelled update row matching other than one row.</li></ul> | 400 |
 | `CSV_ROW_NO_MATCH` | An update or delete row whose keys matched no row it may touch. | 400 |
 | `CSV_ROW_FAILED` | The write itself failed. `cause` is the engine's error. | 400 |
 
@@ -424,6 +424,8 @@ type CsvRequest = {
   checkColumns?: (columns: { input: string[]; keys: string[] }) => void;
   /** Convert one row's string cells into the arguments of its write. */
   toArgs: (cells: CsvRowCells, row: number) => CsvRowArgs | Promise<CsvRowArgs>;
+  /** Import only: the model a ….@ref column's labels must name. Others are refused before any write. */
+  refTarget?: (column: string) => string | undefined;
 };
 
 type CsvRowCells = { input: CsvCells; keys: CsvCells };          // cells split by role
@@ -479,6 +481,11 @@ several. The token is a string, so it passes conversion and validation as an id 
 swapped for `refValue(…)` of the labelled row just before the referencing row is written, so
 `toArgs` must carry a reference cell's value through unchanged, at the place the header names.
 
+The token's prefix carries a random nonce chosen per import, so a cell that spells out a token is
+text, never a reference. A surface that knows which model a reference column points at should
+supply `refTarget`. gqlize and nestize both do, so a label of the wrong model is a `CSV_ROW_INVALID`
+naming the column, rather than a write of another model's key.
+
 ### Helpers
 
 | Export | Signature | Does |
@@ -494,6 +501,7 @@ swapped for `refValue(…)` of the labelled row just before the referencing row 
 | `CSV_NULL` | `"\\N"` | The null cell. |
 | `CSV_REF` | `"@ref"` | The label column, and the reference marker. |
 | `CSV_WHERE` | `"where"` | The match-column prefix. |
+| `CSV_VALUE_OPERATORS` | `ReadonlySet<string>` | The single-value filter operators a surface with no typed filter may pass on (`eq`, `ne`, `like`, …; not the regex ones). With `CSV_LIST_OPERATORS`, an allow-list. Kept in step with graphql-types' `CORE_VALUE_FUNCS`. |
 | `CSV_LIST_OPERATORS` | `ReadonlySet<string>` | Operator names whose value is a list (`in`, `notIn`, `between`, …). Kept in step with graphql-types' `SQL_ARRAY_VALUES`. |
 | `DEFAULT_CSV_LIMITS` | `{ maxRows: 1000, maxBytes: 5242880 }` | |
 | `DEFAULT_CSV_MAX_FILES` | `10` | |

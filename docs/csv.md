@@ -352,6 +352,10 @@ Which operators exist depends on the adapter and the field, exactly as for a JSO
 operators (`regexp` and friends) are only there if your adapter enables them. An operator the field
 doesn't offer is refused with `CSV_HEADER`.
 
+Over REST, a `where.` column takes one field and an operator from a fixed allow-list: the
+single-value ones above (no regex), and the list ones. ORM internals such as `col` are refused, so
+a filter can't compare against another column.
+
 ## Importing several files at once
 
 When the data spans several models, such as authors, their posts, and tags on the posts, send it as
