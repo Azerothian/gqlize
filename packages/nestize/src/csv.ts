@@ -10,7 +10,7 @@
 
 import { BadRequestException, HttpException, HttpStatus } from "@nestjs/common";
 import {
-  CSV_LIST_OPERATORS, CSV_WHERE, CsvUploadError, csvCellValue, csvList, isCsvRefHeader, isCsvWhereHeader, parseCsvHeader,
+  CSV_LIST_OPERATORS, CSV_VALUE_OPERATORS, CSV_WHERE, CsvUploadError, csvCellValue, csvList, isCsvRefHeader, isCsvWhereHeader, parseCsvHeader,
 } from "@azerothian/ormize";
 import type { CsvCells, CsvOperation, CsvRequest, CsvRowCells, Ormize } from "@azerothian/ormize";
 import type { z } from "zod";
@@ -77,7 +77,13 @@ function keyFilter(column: string): { field: string; op: string } {
   if (segments.length !== 1 || segments[0].index !== undefined) {
     throw new CsvUploadError("CSV_HEADER", `"${column}": over REST a filter column names one field, as where.<field>[op]`, { column });
   }
-  return { field: segments[0].name, op: op ?? "eq" };
+  const operator = op ?? "eq";
+  if (!CSV_VALUE_OPERATORS.has(operator) && !CSV_LIST_OPERATORS.has(operator)) {
+    // An allow-list, not a pass-through: the adapter turns any `Op` name into
+    // that operator, `col` and friends included.
+    throw new CsvUploadError("CSV_HEADER", `"${column}": "${operator}" is not a filter operator`, { column });
+  }
+  return { field: segments[0].name, op: operator };
 }
 
 /**
@@ -91,7 +97,7 @@ function refField(column: string, shape: { [field: string]: unknown }, allowed: 
   }
   const { segments } = parseCsvHeader(column);
   const field = segments[0].name;
-  if (segments.length !== 2 || segments[0].index !== undefined || !(field in shape)) {
+  if (segments.length !== 2 || segments[0].index !== undefined || !Object.hasOwn(shape, field)) {
     throw new CsvUploadError("CSV_HEADER", `"${column}": over REST a reference fills one writable foreign-key column, as <field>.@ref`, { column });
   }
   return field;
@@ -123,7 +129,7 @@ export function restCsvRequest(
 ): CsvRequest {
   const fields = orm.getFields(name) || {};
   const descriptor = (column: string) => {
-    const meta = fields[column];
+    const meta = Object.hasOwn(fields, column) ? fields[column] : undefined;
     return meta?.type === undefined ? undefined : orm.mapDataType(meta.type, orm.defsAdapters[name]);
   };
   const convert = (cells: CsvCells) => {
@@ -148,6 +154,12 @@ export function restCsvRequest(
   const delimiter = typeof query?.delimiter === "string" ? query.delimiter : undefined;
   return {
     upload,
+    refTarget: (column) => {
+      // Only a foreign key says which model it points at; a header that isn't
+      // one is refused by `refField` before any reference is resolved.
+      const field = parseCsvHeader(column).segments[0]?.name;
+      return field !== undefined && Object.hasOwn(fields, field) ? fields[field].foreignTarget : undefined;
+    },
     keys: queryList(query?.keys),
     delimiter,
     checkColumns: ({ input, keys }) => {
@@ -160,14 +172,14 @@ export function restCsvRequest(
         if (/[.?[]/.test(column)) {
           throw new CsvUploadError("CSV_HEADER", `"${column}": relationship columns are only taken by the GraphQL upload`, { column });
         }
-        if (!(column in shape)) {
+        if (!Object.hasOwn(shape, column)) {
           throw new CsvUploadError("CSV_HEADER", `"${column}" is not a field this ${operation} can write`, { column });
         }
       }
       const filter: { [field: string]: { [op: string]: null } } = {};
       for (const column of keys) {
         const { field, op } = keyFilter(column);
-        if (!fields[field]) {
+        if (!Object.hasOwn(fields, field)) {
           throw new CsvUploadError("CSV_HEADER", `"${column}" is not a field rows can be matched on`, { column });
         }
         filter[field] = { ...filter[field], [op]: null };
