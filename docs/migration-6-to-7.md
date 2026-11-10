@@ -641,17 +641,68 @@ The rows written were always correct — only the mutation's own return value wa
 that read `data.models.Post[0]` after a single-row filter is unaffected; code that counted the
 returned array, or that tested for `[null]` to detect "nothing matched", needs updating.
 
-### Nested `delete` / `restore` follow the target's permission
+### Nested relationship verbs follow the target's permissions
 
-A relationship's nested `delete` and `restore` verbs (`comments: { delete: [...] }`) are now generated
-only when `mutationDelete` / `mutationRestore` allow them on the **related** model. Before, they were
-built from the target's filter type alone. A caller denied `mutationDelete` on `Comment` could still
-delete comments by reaching them through `Post`. Nested `create` and `update` were already gated this
-way, because the target's create and update inputs do not exist when those permissions are denied.
+A nested relationship write now needs the **related** model's own permission for what it does to
+that model's rows. That holds in gqlize, by what the relationship input offers, and in nestize, by a
+check on the nested body.
 
-A schema whose permissions deny delete or restore on a model that another model relates to loses
-those two fields on the relationship input. A client that sent them gets a validation error instead
-of a write. To keep the old behaviour, allow the operation on the target.
+| Verb | Needs, on the related model |
+| --- | --- |
+| `create` | `mutationCreate` (already true: its create input) |
+| `update`, `select` | `mutationUpdate` (already true: its update input) |
+| `add`, `set`, `remove` on a `hasMany` / `hasOne` | `mutationUpdate`. **New**: they rewrite the related row's foreign key. |
+| `add`, `set`, `remove` on a `belongsTo` / `belongsToMany` | nothing more: they write the source's own key or a join row |
+| `delete` | `mutationDelete`. **New**. |
+| `restore` | `mutationRestore`. **New**. |
+
+Before, these verbs were offered without asking. A caller denied `mutationDelete` on `Comment` could
+still delete comments by reaching them through `Post`.
+
+**What changes for you:**
+
+- **gqlize.** A schema that denies those permissions on a related model loses the matching fields on
+  the relationship input. A client that sent them gets a validation error instead of a write. A
+  relationship whose verbs are all denied is left off the input. A model left with nothing writable
+  loses its create/update input, as one with no writable columns already did. To keep the old
+  behaviour, allow the operation on the related model.
+- **nestize.** `POST /:resource/:id/:relation`, `DELETE /:resource/:id/:relation/:relId` and
+  `POST /:resource/select` with an `input` used to pass the nested body straight to the engine. Now:
+
+  | Body problem | Answer |
+  | --- | --- |
+  | A verb the related model's permissions deny | `403` |
+  | An unknown verb or key | `400` |
+  | A column the related model's create or update schema leaves out (checked strictly) | `400` |
+  | A filter on a hidden field, or with an operator outside the allow-list below | `400` |
+
+### REST and Temporal filters take filter operators only
+
+nestize's `?filter=` and every other REST filter, and temporalize's `where`, are now checked
+operator by operator. Inside a field, only the operators gqlize's filter types offer are accepted:
+
+- `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `not`, `is`;
+- `like`, `notLike`, `iLike`, `notILike`;
+- `startsWith`, `endsWith`, `substring`;
+- `in`, `notIn`, `between`, `notBetween`;
+- Postgres' array and range operators.
+
+Before, any key was passed through, and the sequelize adapter turns every Sequelize `Op` name into
+that operator. `{"name": {"col": "passwordHash"}}` therefore compared `name` against a column the
+caller may not filter on, which is a way to read it.
+
+**Refused now:**
+
+- ORM internals such as `col`, `raw`, `values`, `any`, `all` and `match`, and `or` / `and` inside a
+  field;
+- the regex operators (`regexp`, `iRegexp`, …), unless the model's adapter has
+  `enableRegexpOperators`, as gqlize already required;
+- Sequelize's nested JSON-path filters (`{"meta": {"video": {"url": …}}}`), which gqlize never
+  offered.
+
+A definition's own `whereOperators` keep taking whatever value their handler reads. The lists are
+exported from `@azerothian/utilize` (`FILTER_VALUE_OPERATORS`, `FILTER_LIST_OPERATORS`,
+`FILTER_REGEX_OPERATORS`).
 
 ### Adapters agree on enum type names and enum value names
 
@@ -832,8 +883,10 @@ Not required for migration, but this is what the split bought:
 - [ ] Mutations that wrote primary keys or foreign keys audited — either moved to nested relationship
       inputs or opted in with `writable: true` / `writableForeignKeys`.
 - [ ] Callers that relied on unpaginated lists updated to page explicitly.
-- [ ] Nested `delete` / `restore` through a relationship checked against the target's
-      `mutationDelete` / `mutationRestore`; they are no longer offered when it denies them.
+- [ ] Nested relationship verbs checked against the related model's own permissions (`delete` /
+      `restore`, and `add` / `set` / `remove` on a `hasMany` / `hasOne` needing its update).
+- [ ] REST / Temporal filters use filter operators only (no `col`, nested JSON paths, or regex unless
+      the adapter enables it).
 - [ ] `enableRegexpOperators: true` set if you use `$regexp` and friends.
 - [ ] `where` / `orderBy` usage checked against your permission config.
 - [ ] Backward pagination (`last`/`before`) avoided — see the known issue above.

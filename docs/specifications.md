@@ -1063,7 +1063,7 @@ than a decision, and it is consulted per request rather than per schema.
 | --- | --- |
 | `model(defName, options)` | Whether the model type is generated at all. |
 | `query(defName, options)` | The list query for a model. |
-| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. They gate the nested relationship verbs on the **target** model too: `create` / `update` / `select` disappear with the target's input types, and `delete` / `restore` are checked directly against the target. |
+| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. They gate the nested relationship verbs on the **target** model too, by `isRelationshipVerbAllowed` (utilize): `create` needs its create; `update` / `select` its update; `add` / `set` / `remove` on a `hasMany` / `hasOne` its update (they rewrite its foreign key); `delete` / `restore` its delete / restore. gqlize offers only the allowed verbs and leaves out a relationship with none; nestize refuses a nested body that uses a denied one. |
 | `mutationCsv(defName, options)` | The `createCsv` / `updateCsv` / `deleteCsv` arguments and nestize's `_csv` routes, *in addition to* the operation's own gate. Only consulted for a model with CSV on (§5). |
 | `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
