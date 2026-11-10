@@ -17,10 +17,10 @@ import {
   GraphQLError, coerceInputValue, getNamedType, getNullableType, isInputObjectType, isListType,
   isScalarType, validateInputValue,
 } from "graphql";
-import type { GraphQLField, GraphQLInputObjectType, GraphQLInputType, GraphQLResolveInfo } from "graphql";
+import type { GraphQLField, GraphQLInputObjectType, GraphQLInputType } from "graphql";
 import JSONType from "@azerothian/graphql-types/json";
-import { CSV_WHERE, CsvUploadError, csvBoolean, csvJson, csvList, csvNumber, isCsvWhereHeader, parseCsvHeader } from "@azerothian/ormize";
-import type { CsvCells, CsvOperation, CsvRequest, CsvRowCells, MutationFilter, MutationInputTree } from "@azerothian/ormize";
+import { CSV_REF, CSV_WHERE, CsvUploadError, csvBoolean, csvJson, csvList, csvNumber, isCsvWhereHeader, parseCsvHeader } from "@azerothian/ormize";
+import type { CsvCells, CsvOperation, CsvPathSegment, CsvRequest, CsvRowCells, MutationFilter, MutationInputTree } from "@azerothian/ormize";
 
 /** The `input` and `where` types one operation's rows are held to. */
 type CsvTypes = { input?: GraphQLInputObjectType; where?: GraphQLInputObjectType };
@@ -128,8 +128,24 @@ function isFilterType(type: GraphQLInputObjectType): boolean {
 type CsvTarget = { path: (string | number)[]; type: GraphQLInputType };
 
 /**
- * Resolve a header against the type its row's argument has, walking one
- * segment per level (see ormize's `csv/header.ts` for the grammar).
+ * What resolving a `….@ref` header needs to know about the models a path
+ * passes through, which the input types alone do not say: which model a
+ * relationship leads to, and that model's primary key. Only a multi-file
+ * import passes it; without it a reference header is refused.
+ */
+export type CsvModels = {
+  defName: string;
+  /** Relationship name to target model, for one model. */
+  associations: (defName: string) => { [relName: string]: string };
+  /** The single primary key a reference filters on, if the model has one. */
+  primaryKey: (defName: string) => string | undefined;
+};
+
+type Walked = { path: (string | number)[]; leaf: GraphQLInputType; model: string | undefined };
+
+/**
+ * Walk a header's segments down from `root` (see ormize's `csv/header.ts` for
+ * the grammar), returning where the last segment lands.
  *
  * Two levels may be left out because they carry no choice: the `input` of an
  * `update`/`select` entry (`tags.update.done`, not `tags.update.input.done`),
@@ -137,14 +153,14 @@ type CsvTarget = { path: (string | number)[]; type: GraphQLInputType };
  * `where` may be written where the entry is a filter already (`owner.set.where.name`
  * means `owner.set.name`), so the same header reads the same on every verb.
  */
-function resolveTarget(root: GraphQLInputObjectType, header: string, unknown: (segment: string) => string): CsvTarget {
-  const { segments, op } = parseCsvHeader(header);
-  const bad = (why: string): never => {
-    throw new CsvUploadError("CSV_HEADER", `"${header}" ${why}`, { column: header });
-  };
+function walk(
+  root: GraphQLInputObjectType, segments: CsvPathSegment[], bad: (why: string) => never,
+  unknown: (segment: string) => string, models: CsvModels | undefined,
+): Walked {
   const path: (string | number)[] = [];
   let type: GraphQLInputObjectType = root;
   let leaf: GraphQLInputType | undefined;
+  let model = models?.defName;
   segments.forEach((segment, i) => {
     const last = i === segments.length - 1;
     let fields = type.getFields();
@@ -159,6 +175,12 @@ function resolveTarget(root: GraphQLInputObjectType, header: string, unknown: (s
       path.push(via);
       type = inputObject(fields[via].type) as GraphQLInputObjectType;
       fields = type.getFields();
+    }
+    // A relationship field of a model's input leads into the related model; a
+    // filter's fields never change which model a path is in.
+    const target = model !== undefined && !isFilterType(type) ? models?.associations(model)[segment.name] : undefined;
+    if (target !== undefined) {
+      model = target;
     }
     path.push(segment.name);
     let fieldType: GraphQLInputType = fields[segment.name].type;
@@ -183,9 +205,82 @@ function resolveTarget(root: GraphQLInputObjectType, header: string, unknown: (s
     if (!isInputObjectType(next)) {
       bad(`goes past "${segment.name}", which holds a value`);
     }
-    type = next as GraphQLInputObjectType;
+    type = next;
   });
-  const operators = operatorObject(leaf as GraphQLInputType);
+  return { path, leaf: leaf as GraphQLInputType, model };
+}
+
+/**
+ * Where a `….@ref` header points: the labelled rows' ids, at the place the
+ * path before `@ref` names.
+ *
+ * - a foreign-key column (`ownerId.@ref`): the id itself;
+ * - a relationship (`author.@ref`, `tags.@ref`): its `set` when it is to-one,
+ *   its `add` when it is to-many, so a reference never unlinks anything;
+ * - a verb or an entry (`tags.set.@ref`, `tags.add[1].@ref`): that entry's
+ *   filter, as `<primary key> in [ids]`.
+ */
+function refTarget(walked: Walked, bad: (why: string) => never, models: CsvModels): CsvTarget {
+  const path = [...walked.path];
+  const leaf = getNullableType(walked.leaf);
+  if (isScalarType(leaf)) {
+    if (leaf.name !== "ID") {
+      bad("points labelled rows at a field that is not an id");
+    }
+    return { path, type: walked.leaf };
+  }
+  let entry: GraphQLInputType = leaf;
+  if (isListType(entry)) {
+    path.push(0);
+    entry = getNullableType(entry.ofType);
+  }
+  if (isInputObjectType(entry) && !isFilterType(entry)) {
+    const verbs = entry.getFields();
+    const verb = verbs.add ? "add" : verbs.set ? "set" : undefined;
+    if (verb) {
+      path.push(verb);
+      entry = getNullableType(verbs[verb].type);
+      if (isListType(entry)) {
+        path.push(0);
+        entry = getNullableType(entry.ofType);
+      }
+    }
+  }
+  if (isInputObjectType(entry) && !isFilterType(entry) && entry.getFields().where) {
+    path.push("where");
+    entry = getNullableType(entry.getFields().where.type);
+  }
+  if (!isInputObjectType(entry) || !isFilterType(entry)) {
+    return bad("points labelled rows at something that neither is an id nor selects rows");
+  }
+  const pk = walked.model !== undefined ? models.primaryKey(walked.model) : undefined;
+  const operators = pk !== undefined ? operatorObject(entry.getFields()[pk]?.type) : undefined;
+  if (!operators) {
+    return bad(`cannot point at ${walked.model ?? "that model"}'s rows: it has no single primary key a filter can name`);
+  }
+  const op = operators.getFields().in ? "in" : "eq";
+  return { path: [...path, pk as string, op], type: operators.getFields()[op].type };
+}
+
+/** Resolve a header against the type its row's argument has. */
+function resolveTarget(
+  root: GraphQLInputObjectType, header: string, unknown: (segment: string) => string, models?: CsvModels,
+): CsvTarget {
+  const { segments, op } = parseCsvHeader(header);
+  const bad = (why: string): never => {
+    throw new CsvUploadError("CSV_HEADER", `"${header}" ${why}`, { column: header });
+  };
+  if (segments[segments.length - 1].name === CSV_REF) {
+    if (!models) {
+      return bad("names labelled rows, which only a multi-file import has");
+    }
+    if (op !== undefined || segments.length < 2) {
+      return bad("is not a reference: write <field>.@ref or <relationship>[.<verb>].@ref");
+    }
+    return refTarget(walk(root, segments.slice(0, -1), bad, unknown, models), bad, models);
+  }
+  const { path, leaf } = walk(root, segments, bad, unknown, models);
+  const operators = operatorObject(leaf);
   if (op !== undefined) {
     const operator = operators?.getFields()[op];
     if (!operator) {
@@ -196,7 +291,7 @@ function resolveTarget(root: GraphQLInputObjectType, header: string, unknown: (s
   if (operators) {
     return { path: [...path, "eq"], type: operators.getFields().eq.type };
   }
-  return { path, type: leaf as GraphQLInputType };
+  return { path, type: leaf };
 }
 
 /** Two headers that write the same place, or one inside the other's value, cannot both be honoured. */
@@ -261,10 +356,10 @@ function keyHeader(column: string): string {
  * checks and row conversion against that field's own argument types.
  */
 export function csvRequest(
-  operation: CsvOperation, info: GraphQLResolveInfo, upload: unknown, args: CsvArgs | undefined,
-  apply: { [methodName: string]: unknown } | undefined,
+  operation: CsvOperation, field: GraphQLField<unknown, unknown> | undefined, upload: unknown, args: CsvArgs | undefined,
+  apply: { [methodName: string]: unknown } | undefined, models?: CsvModels,
 ): CsvRequest {
-  const types = csvTypes(info.parentType.getFields()[info.fieldName], operation);
+  const types = csvTypes(field, operation);
   const inputTargets = new Map<string, CsvTarget>();
   const keyTargets = new Map<string, CsvTarget>();
   const resolveAll = ({ input, keys }: { input: string[]; keys: string[] }) => {
@@ -272,7 +367,7 @@ export function csvRequest(
       if (!types.input) {
         throw new CsvUploadError("CSV_HEADER", `"${column}" is not a field this ${operation} can write`, { column });
       }
-      inputTargets.set(column, resolveTarget(types.input, column, () => `is not a field this ${operation} can write`));
+      inputTargets.set(column, resolveTarget(types.input, column, () => `is not a field this ${operation} can write`, models));
     }
     for (const column of keys) {
       if (!types.where) {
@@ -311,6 +406,9 @@ export function csvGraphQLError(e: CsvUploadError): GraphQLError {
   }
   if (e.column !== undefined) {
     extensions.column = e.column;
+  }
+  if (e.file !== undefined) {
+    extensions.file = e.file;
   }
   if (typeof causeCode === "string") {
     extensions.causeCode = causeCode;

@@ -9,6 +9,7 @@ import {
 } from "./model-field";
 import { buildClassMethodResolver, buildInstanceMethodResolver } from "./methods";
 import { buildMutationModelResolver } from "./mutation";
+import { buildCsvImportResolver } from "./csv-import";
 import { buildContainerResolver } from "./misc";
 import type { BindingContext, FieldBinding } from "./types";
 
@@ -42,6 +43,8 @@ export function buildResolver(
       return buildClassMethodResolver(binding, ctx);
     case "mutationModel":
       return buildMutationModelResolver(binding, ctx);
+    case "csvImport":
+      return buildCsvImportResolver(ctx) as GraphQLFieldResolver<AdapterRow, RequestContext>;
     case "container":
       return buildContainerResolver();
     case "nodeField":

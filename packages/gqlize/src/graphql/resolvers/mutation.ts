@@ -110,7 +110,7 @@ export function buildMutationModelResolver(
       }
       let rows: AdapterRow[];
       try {
-        rows = await instance.processCsv(defName, operation, csvRequest(operation, info, upload, args.csv, args.apply), context, info);
+        rows = await instance.processCsv(defName, operation, csvRequest(operation, info.parentType.getFields()[info.fieldName], upload, args.csv, args.apply), context, info);
       } catch (e) {
         throw e instanceof CsvUploadError ? csvGraphQLError(e) : e;
       }
