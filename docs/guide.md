@@ -1213,7 +1213,7 @@ mean anything):
 
 ```ts
 new Ormize({ csv: true })                                  // default limits: 1000 rows, 5 MB
-new Ormize({ csv: { maxRows: 10_000, maxBytes: 50e6 } })
+new Ormize({ csv: { maxRows: 10_000, maxBytes: 50e6, maxFiles: 5 } })  // maxFiles: per import, default 10
 const Audit = { name: "Audit", csv: false, /* … */ }       // keep one model out
 const Bulk  = { name: "Bulk", csv: { maxRows: 50_000 } }   // or change its limits
 ```
@@ -1313,6 +1313,7 @@ fails partway through leaves the database as it was. The error says which row an
 | --- | --- |
 | `CSV_UNSUPPORTED` | Not a readable file. |
 | `CSV_TOO_LARGE` / `CSV_TOO_MANY_ROWS` | Over `maxBytes` / `maxRows`. Checked while the file streams in. |
+| `CSV_TOO_MANY_FILES` | A multi-file import over `maxFiles`. |
 | `CSV_PARSE` | Malformed CSV (an unclosed quote, a row with the wrong number of cells), or an unusable `delimiter`. |
 | `CSV_HEADER` | A missing, blank or repeated header, a key column that is absent, or a column the operation cannot take. |
 | `CSV_ROW_INVALID` | A cell that does not convert, or a row the input type rejects (a required field missing, say). |
@@ -1328,6 +1329,54 @@ upload with `CSV_HEADER` instead of being dropped without a word. `createCsv` ex
 a caller who keeps the JSON arguments.
 
 nestize serves the same uploads over REST, at [`POST /:resource/_csv/:operation`](../packages/nestize/README.md#csv-uploads).
+
+#### Several files at once
+
+`csvImport` takes several files, each a `create` or an `update` on its own model, and applies them
+as one unit. Rows in one file can point at rows another file writes:
+
+```graphql
+mutation ($files: [CsvImportFile!]!) {
+  csvImport(files: $files) { files { name model count ids } refs }
+}
+# variables: { "files": [
+#   { "model": "Post",   "operation": "create", "file": <posts.csv> },
+#   { "model": "Author", "operation": "create", "file": <authors.csv> },
+#   { "model": "Tag",    "operation": "create", "file": <tags.csv> } ] }
+```
+
+```csv
+authors.csv          tags.csv           posts.csv
+@ref,name            @ref,name          @ref,title,author.@ref,tags.@ref
+a1,Ann               t1,red             p1,Hello,a1,t1|t2
+a2,Bob               t2,blue            p2,Bye,a2,
+```
+
+- **Labels.** A file's `@ref` column names its rows. Labels are unique across the whole import. An
+  update row can carry one too, naming the row it matched (it must match exactly one).
+- **References.** A header ending in `.@ref` points at labelled rows. Its cell holds one label, or
+  `a|b` / a JSON array for several:
+
+  | Header | Means |
+  | --- | --- |
+  | `ownerId.@ref` | Write the labelled row's id into a writable foreign-key column. |
+  | `author.@ref` | `author: { set: … }` on a to-one relationship. |
+  | `tags.@ref` | `tags: { add: … }` on a to-many relationship. It adds and never unlinks. |
+  | `tags.set.@ref`, `tags.add[1].@ref`, `post.update.@ref` | That verb or entry, filtering on the primary key. |
+
+- **Order.** Files run in the order their references need, so the list order does not matter.
+  Otherwise they keep the order given. Files that refer to each other in a cycle are refused. Within
+  a file, rows run top to bottom, so a row may point at an earlier row of its own file but not a
+  later one.
+- **All or nothing.** Every file is read and every row converted before the first write. All the
+  writes run in one transaction. Errors carry the file in `extensions.file`, which is its `name`
+  (default `<model>.<operation>`).
+- **Gates.** A file is taken only where the model's own field offers `createCsv` / `updateCsv`, so
+  every gate on those holds. References resolve through the same input types, so the relationship
+  permissions above hold too. A reference cannot be a match column.
+
+The result lists, per file, the ids written in file order, and `refs` maps each label to its row's
+id. nestize serves the same import at [`POST /_csv`](../packages/nestize/README.md#multi-file-import).
 
 ### Nested relationship writes
 

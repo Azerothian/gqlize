@@ -96,7 +96,7 @@ design property they all serve is **one resolver implementation, two callers**:
 
 | Path | Responsibility |
 | --- | --- |
-| `src/graphql/resolvers/` | Every resolver body, keyed by `kind` (`connection`, `singleRelationship`, `globalId`, `modelField`, `overrideOutput`, `instanceMethod`, `classMethod`, `mutationModel`, `container`, `nodeField`, `extend`). `bind.ts` exports `bindField(config, binding, ctx)` — the **single** point at which any resolver is attached to any field, and the place the `FieldBinding` descriptor is stamped onto `extensions.gqlize`. |
+| `src/graphql/resolvers/` | Every resolver body, keyed by `kind` (`connection`, `singleRelationship`, `globalId`, `modelField`, `overrideOutput`, `instanceMethod`, `classMethod`, `mutationModel`, `csvImport`, `container`, `nodeField`, `extend`). `bind.ts` exports `bindField(config, binding, ctx)` — the **single** point at which any resolver is attached to any field, and the place the `FieldBinding` descriptor is stamped onto `extensions.gqlize`. |
 | `src/graphql/snapshot/` | `ir.ts` (the serialisable `SchemaSnapshot`), `snapshot.ts` (`GraphQLSchema` → IR), `materialize.ts` (IR → `GraphQLSchema`), `fingerprint.ts`, `scalar-registry.ts`, `type-ref.ts`, `reachability.ts`, `ledger.ts`, `load.ts`. |
 | `src/cli/` | `args.ts` (`node:util.parseArgs`), `config.ts` (discovery + loading), `profiles.ts`, `commands/{build,print,check}.ts`, and `index.ts` — the shebang shell that turns `run()`'s return value into an exit status. |
 
@@ -563,6 +563,7 @@ Extra query fields may be injected via `options.extend.query`.
 | --- | --- |
 | `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**; `restore` in addition on a soft-deleting model; `createCsv` / `updateCsv` / `deleteCsv` when CSV uploads are on (see [CSV uploads](#csv-uploads)). |
 | `classMethods` | Per-model exposed **mutation** class methods (`MutationClassMethods`). |
+| `csvImport` | Several CSV files, each a create or an update on its own model, applied as one unit with `@ref` labels linking rows across them. Present when at least one model's field takes `createCsv` or `updateCsv` (see [Multi-file imports](#multi-file-imports)). |
 
 Extra mutation fields may be injected via `options.extend.mutation`. Subscriptions are not
 generated: `options.subscriptions` is accepted and ignored (the generator is commented out —
@@ -709,8 +710,8 @@ therefore hold without being restated. The order of work is the CSV-specific par
    `CSV_ROW_NO_MATCH`, reported identically whether the row is absent or scoped out.
 
 Everything is reported as a `CsvUploadError` (`src/csv/errors.ts`) with a stable `code`, plus `row`
-(1-based, header excluded) and `column` where they apply. A failed write is wrapped as
-`CSV_ROW_FAILED` with the engine's error as `cause`.
+(1-based, header excluded), `column` and, in a multi-file import, `file` where they apply. A failed
+write is wrapped as `CSV_ROW_FAILED` with the engine's error as `cause`.
 
 **Cell conversion is the surface's.** gqlize (`graphql/resolvers/csv.ts`) reads the input and where
 types off the field being resolved, not the schema cache, so a materialized artifact behaves the
@@ -739,6 +740,57 @@ separated by `.` or `?`, each optionally indexed (`add[1]`), with an optional tr
 - **nestize** takes only single-field `where.<field>[op]` key columns. It uses `CSV_LIST_OPERATORS`
   to know which operators take lists, and refuses relationship columns: its zod input schemas hold
   columns only.
+
+### Multi-file imports
+
+`processCsvImport` (`packages/ormize/src/engine/csv-import.ts`) applies several uploads, each a
+create or an update on its own model, as one unit. `GqlizeOptions.csv.maxFiles` caps the file count
+(default 10, `resolveCsvMaxFiles`). Each file is read, split and converted with the one-file
+helpers (`columnsFor`, `planRow`, `write`). The additions are:
+
+1. **Labels.** A file's `@ref` column (`CSV_REF`) labels its rows. Labels are unique across the
+   import. A label on an update row names the row it matched, which must be exactly one.
+2. **References.** A header ending in `.@ref` (`isCsvRefHeader`) names labelled rows. A reference
+   to another file is a dependency edge. A reference within a file must point at an earlier row. A
+   reference may not be a match column.
+3. **Order.** Files run in a dependency order (`writeOrder`) that keeps the given order where it is
+   free. A cycle is a `CSV_HEADER` error.
+4. **Placeholders.** Before conversion, every reference cell is replaced with tokens
+   (`\u0000csv-ref:<label>`). Every row of every file is converted, through the surface's `toArgs`,
+   before the transaction opens. Inside it, just before a row is written, `resolveTokens` swaps each
+   token for `request.refValue(defName, row)` of the row it names. That is a global id in gqlize and
+   the raw key in nestize. A token in a single-valued field holding several labels is refused.
+5. **Selection.** `request.selection(defName)` supplies each model's write selection. gqlize's carries
+   the `translateFilter` that decodes global ids, references included. Without it they would reach
+   the adapter encoded.
+
+**gqlize.** `csvImport(files: [CsvImportFile!]!)`. `CsvImportFile` has:
+
+- `model`, a per-schema enum `CsvImportModel` of every model whose `models.<Model>` field takes
+  `createCsv` or `updateCsv`;
+- `operation` (`GQLTCsvImportOperation`);
+- `file`, `name`, `keys` and `delimiter`.
+
+The resolver (`graphql/resolvers/csv-import.ts`, binding kind `csvImport`) refuses a file whose
+model field lacks the `<operation>Csv` argument, so every build-time gate on that argument holds. It
+then converts against that field's input types with `csvRequest`, handing it a `CsvModels` (each
+relationship's target, each model's single primary key). The path walker uses that to resolve
+`….@ref`:
+
+- an `ID` leaf takes the id;
+- a relationship takes its `add` (to-many) or `set` (to-one);
+- an entry takes its filter as `<pk>: { in: [...] }`.
+
+`GQLTCsvImportResult` lists each file's name, model, operation, count and ids, plus `refs` (label to
+id). Rows get `processAfter` with their model's definition, as a model field's CSV rows do.
+
+**nestize.** `POST /_csv` reads a multipart body (`src/csv-multipart.ts`). It takes the files a
+multer interceptor left on `req.files`, or reads the stream with busboy. Each file is metered against
+its model's `maxBytes`, and the part count against `maxFiles`. File parts are named
+`<resource>.<operation>`, and text parts `<part>.keys` / `<part>.delimiter` set a file's options.
+Each part's resource, CSV switch and permissions are checked as it arrives. A reference fills one
+writable foreign-key column (`<field>.@ref`). Its cell is set aside from zod validation and written
+with the referenced row's key.
 
 ### Example query
 

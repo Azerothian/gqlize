@@ -161,6 +161,7 @@ Where the core logic lives:
 | Relationship wiring and cross-adapter join models | `ormize/src/engine/relationships.ts`, `cross-adapter.ts` |
 | Read-cache tagging / the cache itself | `ormize/src/engine/read-cache-bridge.ts`, `read-cache/` |
 | CSV mutation uploads: reading under limits / row-by-row writes / per-surface cell conversion | `ormize/src/csv/`, `ormize/src/engine/csv.ts`, `gqlize/src/graphql/resolvers/csv.ts`, `nestize/src/csv.ts` |
+| Multi-file CSV imports: labels, ordering, placeholder swap / GraphQL root field / REST multipart | `ormize/src/engine/csv-import.ts`, `gqlize/src/graphql/resolvers/csv-import.ts` + `objects/csv-import.ts`, `nestize/src/csv-multipart.ts` |
 | Sequelize reads / writes / model creation | `ormize-adapter-sequelize/src/reads.ts`, `writes.ts`, `model-creation.ts` |
 
 ## Code style
