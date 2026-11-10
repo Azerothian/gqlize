@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=24"
   },
-  "description": "Generate a NestJS REST API + Swagger/OpenAPI from an @azerothian/ormize instance \u2014 the REST analogue of @azerothian/gqlize (GraphQL)",
+  "description": "Generate a NestJS REST API + Swagger/OpenAPI from an @azerothian/ormize instance — the REST analogue of @azerothian/gqlize (GraphQL)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Azerothian/gqlize.git",
@@ -38,6 +38,7 @@
   },
   "dependencies": {
     "@azerothian/utilize": "workspace:*",
+    "busboy": "^1.6.0",
     "zod": "^4.0.0"
   },
   "peerDependencies": {
@@ -65,15 +66,16 @@
     "@swc/cli": "catalog:",
     "@swc/core": "catalog:",
     "@swc/jest": "catalog:",
+    "@types/busboy": "^1.5.5",
     "@types/jest": "catalog:",
     "@types/node": "catalog:",
     "@types/supertest": "catalog:",
     "copyfiles": "catalog:",
     "jest": "catalog:",
     "npm-run-all2": "catalog:",
+    "pg": "catalog:",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0",
-    "pg": "catalog:",
     "sequelize": "^6.37.7",
     "sqlite3": "catalog:",
     "supertest": "catalog:",

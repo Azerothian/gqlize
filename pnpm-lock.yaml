@@ -478,6 +478,9 @@ importers:
       '@azerothian/utilize':
         specifier: workspace:*
         version: link:../utilize
+      busboy:
+        specifier: ^1.6.0
+        version: 1.6.0
       zod:
         specifier: ^4.0.0
         version: 4.4.3
@@ -527,6 +530,9 @@ importers:
       '@swc/jest':
         specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
+      '@types/busboy':
+        specifier: ^1.5.5
+        version: 1.5.5
       '@types/jest':
         specifier: 'catalog:'
         version: 30.0.0
@@ -2505,6 +2511,9 @@ packages:
 
   '@types/babel__traverse@7.28.0':
     resolution: {integrity: sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==}
+
+  '@types/busboy@1.5.5':
+    resolution: {integrity: sha512-IwqrfVFxWa23c4WeE7uZswssCqGfvnl5Q7b1pdshbT3HaQDa3UIbJx5BAxtcj9nZYX9tVDArM9TUv9SpvORbpQ==}
 
   '@types/cookiejar@2.1.5':
     resolution: {integrity: sha512-he+DHOWReW0nghN24E1WUqM0efK4kI9oTqDm6XmK8ZPe2djZ90BSNdGnIyCLzCPw7/pogPlGbzI2wHGGmi4O/Q==}
@@ -7101,6 +7110,10 @@ snapshots:
   '@types/babel__traverse@7.28.0':
     dependencies:
       '@babel/types': 7.29.7
+
+  '@types/busboy@1.5.5':
+    dependencies:
+      '@types/node': 24.13.3
 
   '@types/cookiejar@2.1.5': {}
 

@@ -9,7 +9,9 @@
 // descriptors, because the zod schemas want a `number` and a `Date`, not text.
 
 import { BadRequestException, HttpException, HttpStatus } from "@nestjs/common";
-import { CSV_LIST_OPERATORS, CSV_WHERE, CsvUploadError, csvCellValue, csvList, isCsvWhereHeader, parseCsvHeader } from "@azerothian/ormize";
+import {
+  CSV_LIST_OPERATORS, CSV_WHERE, CsvUploadError, csvCellValue, csvList, isCsvRefHeader, isCsvWhereHeader, parseCsvHeader,
+} from "@azerothian/ormize";
 import type { CsvCells, CsvOperation, CsvRequest, CsvRowCells, Ormize } from "@azerothian/ormize";
 import type { z } from "zod";
 import type { RestQuery, RestRequest } from "./types";
@@ -78,6 +80,23 @@ function keyFilter(column: string): { field: string; op: string } {
   return { field: segments[0].name, op: op ?? "eq" };
 }
 
+/**
+ * The column a `<field>.@ref` header fills. REST has no nested relationship
+ * input, so a reference here is a foreign-key column the input schema takes:
+ * the referenced row's key is written into it.
+ */
+function refField(column: string, shape: { [field: string]: unknown }, allowed: boolean | undefined): string {
+  if (!allowed) {
+    throw new CsvUploadError("CSV_HEADER", `"${column}" names labelled rows, which only a multi-file import (POST /_csv) has`, { column });
+  }
+  const { segments } = parseCsvHeader(column);
+  const field = segments[0].name;
+  if (segments.length !== 2 || segments[0].index !== undefined || !(field in shape)) {
+    throw new CsvUploadError("CSV_HEADER", `"${column}": over REST a reference fills one writable foreign-key column, as <field>.@ref`, { column });
+  }
+  return field;
+}
+
 /** Pin a column-less conversion error on `column`. */
 function inColumn<T>(column: string, fn: () => T): T {
   try {
@@ -99,7 +118,8 @@ function inColumn<T>(column: string, fn: () => T): T {
  * so there is no nested input here for such a column to fill.
  */
 export function restCsvRequest(
-  orm: Ormize, name: string, operation: CsvOperation, req: RestRequest, query: RestQuery, schemas: CsvSchemas,
+  orm: Ormize, name: string, operation: CsvOperation, upload: unknown, query: RestQuery, schemas: CsvSchemas,
+  options: { refs?: boolean } = {},
 ): CsvRequest {
   const fields = orm.getFields(name) || {};
   const descriptor = (column: string) => {
@@ -127,12 +147,16 @@ export function restCsvRequest(
   };
   const delimiter = typeof query?.delimiter === "string" ? query.delimiter : undefined;
   return {
-    upload: csvUploadOf(req),
+    upload,
     keys: queryList(query?.keys),
     delimiter,
     checkColumns: ({ input, keys }) => {
       const shape = schemas.input?.shape || {};
       for (const column of input) {
+        if (isCsvRefHeader(column)) {
+          refField(column, shape, options.refs);
+          continue;
+        }
         if (/[.?[]/.test(column)) {
           throw new CsvUploadError("CSV_HEADER", `"${column}": relationship columns are only taken by the GraphQL upload`, { column });
         }
@@ -158,28 +182,46 @@ export function restCsvRequest(
       if (operation === "delete") {
         return { where };
       }
-      const values = convert(input);
-      const parsed = schemas.input ? schemas.input.safeParse(values) : { success: true as const, data: values };
+      // A reference cell holds a placeholder until the row it names is
+      // written, so it is set aside from conversion and validation and put
+      // back after; the engine swaps in the key before this row is written.
+      const refs: { [field: string]: unknown } = {};
+      const plain: CsvCells = {};
+      for (const column of Object.keys(input)) {
+        if (isCsvRefHeader(column)) {
+          refs[refField(column, schemas.input?.shape || {}, options.refs)] = input[column];
+        } else {
+          plain[column] = input[column];
+        }
+      }
+      const values = convert(plain);
+      const schema = schemas.input && Object.keys(refs).length > 0
+        ? schemas.input.omit(Object.fromEntries(Object.keys(refs).map((f) => [f, true])))
+        : schemas.input;
+      const parsed = schema ? schema.safeParse(values) : { success: true as const, data: values };
       if (!parsed.success) {
         const issue = parsed.error.issues[0];
         const column = typeof issue?.path[0] === "string" ? issue.path[0] : undefined;
         throw new CsvUploadError("CSV_ROW_INVALID", column ? `"${column}": ${issue.message}` : issue?.message || "Validation failed", { column });
       }
-      return { input: parsed.data, where: operation === "update" ? where : undefined };
+      return { input: { ...parsed.data, ...refs }, where: operation === "update" ? where : undefined };
     },
   };
 }
 
-/** A refused upload as the HTTP error a client gets: 413 for size, 400 for everything else. */
+/** A refused upload as the HTTP error a client gets: 413 for size, row or file count, 400 for everything else. */
 export function csvHttpError(e: CsvUploadError): HttpException {
   const body: { [key: string]: unknown } = { message: e.message, code: e.code };
+  if (e.file !== undefined) {
+    body.file = e.file;
+  }
   if (e.row !== undefined) {
     body.row = e.row;
   }
   if (e.column !== undefined) {
     body.column = e.column;
   }
-  if (e.code === "CSV_TOO_LARGE" || e.code === "CSV_TOO_MANY_ROWS") {
+  if (e.code === "CSV_TOO_LARGE" || e.code === "CSV_TOO_MANY_ROWS" || e.code === "CSV_TOO_MANY_FILES") {
     return new HttpException({ statusCode: HttpStatus.PAYLOAD_TOO_LARGE, ...body }, HttpStatus.PAYLOAD_TOO_LARGE);
   }
   return new BadRequestException({ statusCode: HttpStatus.BAD_REQUEST, ...body });

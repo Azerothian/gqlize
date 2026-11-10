@@ -18,8 +18,9 @@ import * as guards from "@azerothian/utilize/guards";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import type { AdapterWhere, Association, Fail, GuardFailure } from "@azerothian/utilize";
 import { CsvUploadError } from "@azerothian/ormize";
-import type { MutationInputTree, Ormize } from "@azerothian/ormize";
-import { csvHttpError, isCsvOperation, restCsvRequest } from "./csv";
+import type { CsvImportFile, CsvImportOperation, MutationInputTree, Ormize } from "@azerothian/ormize";
+import { csvHttpError, csvUploadOf, isCsvOperation, restCsvRequest } from "./csv";
+import { readCsvParts } from "./csv-multipart";
 import { NestizeSchemaRegistry } from "./schema-registry";
 import {
   NESTIZE_OPTIONS,
@@ -33,6 +34,16 @@ import { parseListQuery, parseWhere } from "./query";
 
 /** A list response: `total` always, `rows` unless the caller asked to count only. */
 export type ListResult = { total: number; rows?: unknown };
+
+function isImportOperation(operation: string): operation is CsvImportOperation {
+  return operation === "create" || operation === "update";
+}
+
+/** What `POST /_csv` answers: each file's written rows, and each label's key. */
+export type CsvImportResponse = {
+  files: { name: string; resource: string; operation: CsvImportOperation; rows: unknown }[];
+  refs: { [label: string]: unknown };
+};
 
 /** Kind of `_actions` call, derived from the HTTP verb (GET → query, POST → mutation). */
 export type MethodKind = "query" | "mutation";
@@ -268,13 +279,93 @@ export class NestizeService {
     if (!isMutationCsvAllowed(this.permission, name)) {
       throw new ForbiddenException(`CSV uploads not allowed for ${name}`);
     }
-    const request = restCsvRequest(this.orm, name, operation, req, query, {
+    const request = restCsvRequest(this.orm, name, operation, csvUploadOf(req), query, {
       input: operation === "create" ? this.registry.create(name) : operation === "update" ? this.registry.update(name) : undefined,
       assertFilterAllowed: (where) => this.assertFilterAllowed(name, where),
     });
     try {
       const rows = await this.orm.processCsv(name, operation, request, { req });
       return { rows: this.present(name, rows) };
+    } catch (e) {
+      throw e instanceof CsvUploadError ? csvHttpError(e) : e;
+    }
+  }
+
+  /**
+   * `POST /_csv`: several CSV files in one multipart body, each a create or an
+   * update on its own model, applied as one all-or-nothing unit with `@ref`
+   * labels linking rows across them.
+   *
+   * A file part's field name says what it is: `<resource>.create` or
+   * `<resource>.update` (a bare `<resource>` creates). Text parts named
+   * `<field>.keys` and `<field>.delimiter` set that file's options. Each file
+   * passes the gates its own `POST /:resource/_csv/:operation` would, checked
+   * as its part arrives, so a refused file is not even buffered.
+   */
+  async csvImport(req: RestRequest): Promise<CsvImportResponse> {
+    this.assertWritable();
+    const maxFiles = this.orm.csvMaxFiles();
+    if (maxFiles === undefined) {
+      throw new NotFoundException("Cannot POST /_csv");
+    }
+    const targets = new Map<string, { resource: string; name: string; operation: CsvImportOperation }>();
+    const target = (field: string) => {
+      const known = targets.get(field);
+      if (known) {
+        return known;
+      }
+      const [resource, operation = "create", ...rest] = field.split(".");
+      if (rest.length > 0 || !isImportOperation(operation)) {
+        throw new CsvUploadError("CSV_UNSUPPORTED", `"${field}": name a file part <resource>.create or <resource>.update`, { file: field });
+      }
+      let name: string;
+      try {
+        name = this.mustResolve(resource);
+      } catch {
+        throw new CsvUploadError("CSV_UNSUPPORTED", `"${field}": there is no resource "${resource}"`, { file: field });
+      }
+      if (!this.orm.csvLimits(name)) {
+        throw new CsvUploadError("CSV_UNSUPPORTED", `"${field}": ${name} does not accept CSV uploads`, { file: field });
+      }
+      if (!isMutationAllowed(this.permission, name, operation)) {
+        throw new ForbiddenException(`"${field}": ${operation[0].toUpperCase()}${operation.slice(1)} not allowed for ${name}`);
+      }
+      if (!isMutationCsvAllowed(this.permission, name)) {
+        throw new ForbiddenException(`"${field}": CSV uploads not allowed for ${name}`);
+      }
+      const found = { resource, name, operation };
+      targets.set(field, found);
+      return found;
+    };
+    try {
+      const parts = await readCsvParts(req, {
+        maxFiles,
+        maxBytes: (field) => (this.orm.csvLimits(target(field).name) as { maxBytes: number }).maxBytes,
+      });
+      const files: CsvImportFile[] = parts.files.map((part) => {
+        const { name, operation } = target(part.field);
+        const query = { keys: parts.fields[`${part.field}.keys`], delimiter: parts.fields[`${part.field}.delimiter`] };
+        return {
+          name: part.field,
+          defName: name,
+          operation,
+          request: restCsvRequest(this.orm, name, operation, part.data, query, {
+            input: operation === "create" ? this.registry.create(name) : this.registry.update(name),
+            assertFilterAllowed: (where) => this.assertFilterAllowed(name, where),
+          }, { refs: true }),
+        };
+      });
+      const key = (defName: string, row: unknown) => this.orm.getValueFromInstance(defName, row, this.pkName(defName));
+      const result = await this.orm.processCsvImport({ files, refValue: key }, { req });
+      return {
+        files: result.files.map((file) => ({
+          name: file.name,
+          resource: targets.get(file.name)?.resource ?? file.defName,
+          operation: file.operation,
+          rows: this.present(file.defName, file.rows),
+        })),
+        refs: Object.fromEntries(Object.entries(result.refs).map(([label, ref]) => [label, key(ref.defName, ref.row)])),
+      };
     } catch (e) {
       throw e instanceof CsvUploadError ? csvHttpError(e) : e;
     }

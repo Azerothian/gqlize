@@ -34,6 +34,14 @@ import { ZodExceptionFilter } from "../zod-exception.filter";
 export class NestizeController {
   constructor(private readonly service: NestizeService) {}
 
+  // 0. literal `_csv` before `POST /:resource`, which would take it as a
+  // resource name. 200 rather than 201: an import may update as well as create.
+  @Post("_csv")
+  @HttpCode(200)
+  csvImport(@Req() req: RestRequest) {
+    return this.service.csvImport(req);
+  }
+
   // 1. literal `select` before `/:resource/:id`
   @Post(":resource/select")
   select(@Param("resource") resource: string, @Body() body: SelectBody, @Req() req: RestRequest) {

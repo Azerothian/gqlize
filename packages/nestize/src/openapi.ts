@@ -58,6 +58,8 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
   const components: { schemas: Record<string, JsonObject> } = { schemas: {} };
   const paths: Record<string, JsonObject> = {};
   const tags: { name: string }[] = [];
+  /** The `<resource>.<operation>` file parts `POST /_csv` would take. */
+  const importParts: string[] = [];
 
   const defs = orm.getDefinitions() || {};
   const names = Object.keys(defs).filter((n) => isModelAllowed(permission, n));
@@ -152,6 +154,11 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
     const csvOperations = CSV_OPERATIONS.filter((op) => isMutationAllowed(permission, name, op)
       && (op !== "create" || inputSchemas.create[name]) && (op !== "update" || inputSchemas.update[name]));
     if (!readOnly && orm.csvLimits(name) && isMutationCsvAllowed(permission, name) && csvOperations.length > 0) {
+      for (const op of csvOperations) {
+        if (op !== "delete") {
+          importParts.push(`${resource}.${op}`);
+        }
+      }
       paths[joinPath(pathPrefix, `${resource}/_csv/{operation}`)] = {
         post: {
           tags: [name],
@@ -291,6 +298,62 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
         }
       }
     }
+  }
+
+  // The multi-file import: documented when at least one file part would be taken.
+  if (importParts.length > 0) {
+    paths[joinPath(pathPrefix, "_csv")] = {
+      post: {
+        tags: ["CSV"],
+        summary: "Create or update rows of several resources from CSV files, as one unit",
+        description:
+          "multipart/form-data, one file part per CSV, named `<resource>.create` or `<resource>.update` (a bare " +
+          "`<resource>` creates). Text parts `<part>.keys` and `<part>.delimiter` set a file's options. A file's `@ref` " +
+          "column labels its rows; a `<foreignKey>.@ref` column in any file writes a labelled row's key. Files run in the " +
+          "order their references need, all-or-nothing. Parts: " + importParts.join(", "),
+        requestBody: {
+          required: true,
+          content: {
+            "multipart/form-data": {
+              schema: {
+                type: "object",
+                properties: Object.fromEntries(importParts.map((part) => [part, { type: "string", format: "binary" }])),
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "What each file wrote, and each label's key",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    files: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          name: { type: "string" },
+                          resource: { type: "string" },
+                          operation: { type: "string", enum: ["create", "update"] },
+                          rows: { type: "array", items: { type: "object" } },
+                        },
+                      },
+                    },
+                    refs: { type: "object", additionalProperties: true },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "A file, row or reference was refused; nothing was written" },
+          "403": { description: "A file's resource or operation is not allowed" },
+          "413": { description: "Too many files, or a file over its byte or row limit" },
+        },
+      },
+    };
   }
 
   return {
