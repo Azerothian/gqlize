@@ -68,16 +68,16 @@ export interface CsvHost {
 }
 
 /** Give a row-less error the row it came from, keeping its code and column. */
-function atRow(e: unknown, row: number, fallbackCode: "CSV_ROW_INVALID" | "CSV_ROW_FAILED"): CsvUploadError {
+export function atRow(e: unknown, row: number, fallbackCode: "CSV_ROW_INVALID" | "CSV_ROW_FAILED"): CsvUploadError {
   if (e instanceof CsvUploadError) {
-    return e.row !== undefined ? e : new CsvUploadError(e.code, `Row ${row}: ${e.message}`, { row, column: e.column, cause: e.cause });
+    return e.row !== undefined ? e : new CsvUploadError(e.code, `Row ${row}: ${e.message}`, { row, column: e.column, file: e.file, cause: e.cause });
   }
   const message = e instanceof Error ? e.message : String(e);
   return new CsvUploadError(fallbackCode, `Row ${row}: ${message}`, { row, cause: e });
 }
 
 /** Split the header into key and input columns, refusing what the operation cannot take. */
-function columnsFor(host: CsvHost, defName: string, operation: CsvOperation, header: string[], requested: string[] | undefined) {
+export function columnsFor(host: CsvHost, defName: string, operation: CsvOperation, header: string[], requested: string[] | undefined) {
   // `where.<field>[op]` columns (see `csv/header.ts`) are match columns
   // wherever they appear; they stand in for the primary key default rather
   // than adding to it, since a file that spells out its filter means that one.
@@ -110,7 +110,7 @@ function columnsFor(host: CsvHost, defName: string, operation: CsvOperation, hea
   return { keys, input };
 }
 
-function pick(cells: CsvCells, columns: string[]): CsvCells {
+export function pick(cells: CsvCells, columns: string[]): CsvCells {
   const out: CsvCells = {};
   for (const column of columns) {
     if (column in cells) {
@@ -118,6 +118,35 @@ function pick(cells: CsvCells, columns: string[]): CsvCells {
     }
   }
   return out;
+}
+
+/**
+ * One row's cells as the arguments of its write: split by role, converted by
+ * the surface, and refused when its match would be blank or empty.
+ */
+export async function planRow(
+  request: CsvRequest, operation: CsvOperation, columns: { keys: string[]; input: string[] }, row: number, cells: CsvCells,
+): Promise<CsvRowArgs> {
+  const keys = pick(cells, columns.keys);
+  for (const key of columns.keys) {
+    // A blank key would be a `where` that matches on nothing — or, dropped,
+    // on everything. Neither is what the row meant.
+    if (keys[key] === undefined || keys[key] === null) {
+      throw new CsvUploadError("CSV_ROW_INVALID", `Row ${row}: the "${key}" key cell is empty`, { row, column: key });
+    }
+  }
+  let args: CsvRowArgs;
+  try {
+    args = await request.toArgs({ keys, input: pick(cells, columns.input) }, row);
+  } catch (e) {
+    throw atRow(e, row, "CSV_ROW_INVALID");
+  }
+  // Checked here rather than trusted to every surface's `toArgs`: an update
+  // or delete handed an empty `where` acts on the whole table.
+  if (operation !== "create" && (!args.where || Object.keys(args.where).length === 0)) {
+    throw new CsvUploadError("CSV_ROW_INVALID", `Row ${row}: its key columns produced no filter`, { row });
+  }
+  return args;
 }
 
 /**
@@ -145,26 +174,7 @@ export async function processCsv(
 
   const planned: { row: number; args: CsvRowArgs }[] = [];
   for (const { row, cells } of records) {
-    const keys = pick(cells, columns.keys);
-    for (const key of columns.keys) {
-      // A blank key would be a `where` that matches on nothing — or, dropped,
-      // on everything. Neither is what the row meant.
-      if (keys[key] === undefined || keys[key] === null) {
-        throw new CsvUploadError("CSV_ROW_INVALID", `Row ${row}: the "${key}" key cell is empty`, { row, column: key });
-      }
-    }
-    let args: CsvRowArgs;
-    try {
-      args = await request.toArgs({ keys, input: pick(cells, columns.input) }, row);
-    } catch (e) {
-      throw atRow(e, row, "CSV_ROW_INVALID");
-    }
-    // Checked here rather than trusted to every surface's `toArgs`: an update
-    // or delete handed an empty `where` acts on the whole table.
-    if (operation !== "create" && (!args.where || Object.keys(args.where).length === 0)) {
-      throw new CsvUploadError("CSV_ROW_INVALID", `Row ${row}: its key columns produced no filter`, { row });
-    }
-    planned.push({ row, args });
+    planned.push({ row, args: await planRow(request, operation, columns, row, cells) });
   }
 
   return host.transaction(async() => {
@@ -188,7 +198,7 @@ export async function processCsv(
   });
 }
 
-function write(
+export function write(
   host: CsvHost, defName: string, operation: CsvOperation, args: CsvRowArgs, apply: MutationApply | undefined,
   context: RequestContext, selection: Selection | undefined,
 ): Promise<AdapterRow[]> {

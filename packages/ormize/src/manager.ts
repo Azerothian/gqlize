@@ -18,7 +18,7 @@ import { auditDefinitionScopeSurfaces, auditExtendFields, reportScopeSurfaces } 
 import type { ScopeHook } from "./scope-hooks";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, DataTypeDescriptor, InitialiseOptions, NativeDataType,
-  RequestContext, Selection, FindAllArgs, Association, CsvLimits, ResolvedCsvLimits } from '@azerothian/utilize/types/index';
+  RequestContext, Selection, FindAllArgs, Association, CsvOptions, ResolvedCsvLimits } from '@azerothian/utilize/types/index';
 import type { MutationApply, MutationFilter, MutationHost, MutationInput,
   MutationInputTree } from "./types/engine";
 import ReadCache from "./read-cache";
@@ -56,9 +56,10 @@ import {
   withTransaction as _withTransaction,
   // csv
   processCsv as _processCsv,
+  processCsvImport as _processCsvImport,
 } from "./engine";
-import type { CsvHost, CsvOperation, CsvRequest } from "./engine";
-import { resolveCsvLimits } from "./csv/limits";
+import type { CsvImportHost, CsvImportRequest, CsvImportResult, CsvOperation, CsvRequest } from "./engine";
+import { resolveCsvLimits, resolveCsvMaxFiles } from "./csv/limits";
 import type { HookFunction, HookHost, MutationEntryHost, ReadCacheHost, RelationshipHost, ResolutionHost, ScopeHost,
   TransactionHost, WiredRelationship } from "./engine";
 
@@ -108,7 +109,7 @@ export default class Ormize<
   /** See `GqlizeOptions.writableForeignKeys`; applied in `getFields`. */
   private writableForeignKeys: boolean;
   /** `GqlizeOptions.csv`, folded with each definition's own by `csvLimits`. */
-  private csv: boolean | CsvLimits | undefined;
+  private csv: boolean | CsvOptions | undefined;
   /**
    * The row-level scope, re-imposed on the adapter's own model hooks (§13).
    *
@@ -493,8 +494,9 @@ export default class Ormize<
    * {@link engine} it is a plain forwarding object — kept anyway so the
    * module is written against an interface rather than the whole class.
    */
-  private csvHost: CsvHost = {
+  private csvHost: CsvImportHost = {
     csvLimits: (defName) => this.csvLimits(defName),
+    csvMaxFiles: () => this.csvMaxFiles(),
     getModelAdapter: (defName) => this.getModelAdapter(defName),
     transaction: (fn) => this.transaction(fn),
     processCreate: (defName, source, args, context, selection) => this.processCreate(defName, source, args, context, selection),
@@ -721,6 +723,9 @@ export default class Ormize<
     return resolveCsvLimits(this.csv, this.defs[defName]?.csv);
   }
 
+  /** How many files one multi-file CSV import may carry, or `undefined` when CSV is off. */
+  csvMaxFiles = (): number | undefined => resolveCsvMaxFiles(this.csv);
+
   /**
    * Apply a CSV upload as one create, update or delete per row, all-or-nothing.
    * See `./engine/csv` — and note it only *transports* the rows: permission to
@@ -728,6 +733,16 @@ export default class Ormize<
    */
   processCsv = async(defName: string, operation: CsvOperation, request: CsvRequest, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return _processCsv(this.csvHost, defName, operation, request, context, selection);
+  }
+
+  /**
+   * Apply several CSV uploads, each a create or an update on its own model, as
+   * one all-or-nothing unit, rows in one file referring to rows another writes
+   * through `@ref` labels. See `./engine/csv-import`. As with `processCsv`,
+   * permission to perform each file's operation is the caller's to check.
+   */
+  processCsvImport = async(request: CsvImportRequest, context: RequestContext): Promise<CsvImportResult> => {
+    return _processCsvImport(this.csvHost, request, context);
   }
 
   // -------------------------------------------------------------------------

@@ -33,6 +33,18 @@ export type CsvHeaderPath = {
   op?: string;
 };
 
+/**
+ * The reference marker of a multi-file import. Alone, it is the column that
+ * labels a file's rows; as the last segment of a path (`author.@ref`,
+ * `tags.add.@ref`, `ownerId.@ref`) it names labelled rows to point at.
+ */
+export const CSV_REF = "@ref";
+
+/** Whether a header points at labelled rows (`….@ref`), as opposed to being the label column itself. */
+export function isCsvRefHeader(header: string): boolean {
+  return header !== CSV_REF && /[.?]@ref$/.test(header);
+}
+
 /** The top-level filter prefix: `where.<field>` columns match the rows an update or delete touches. */
 export const CSV_WHERE = "where";
 

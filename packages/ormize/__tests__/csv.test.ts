@@ -4,9 +4,9 @@
 import {describe, it, expect} from "@jest/globals";
 
 import {readCsv} from "../src/csv/read";
-import {resolveCsvLimits, DEFAULT_CSV_LIMITS} from "../src/csv/limits";
+import {resolveCsvLimits, resolveCsvMaxFiles, DEFAULT_CSV_LIMITS, DEFAULT_CSV_MAX_FILES} from "../src/csv/limits";
 import {csvCellValue, csvList} from "../src/csv/cells";
-import {isCsvWhereHeader, parseCsvHeader} from "../src/csv/header";
+import {isCsvRefHeader, isCsvWhereHeader, parseCsvHeader} from "../src/csv/header";
 import {CsvUploadError} from "../src/csv/errors";
 import {DataTypes} from "@azerothian/utilize/types/index";
 
@@ -87,6 +87,13 @@ describe("parseCsvHeader", () => {
     }
   });
 
+  it("tells a reference column from the label column", () => {
+    expect(isCsvRefHeader("author.@ref")).toBe(true);
+    expect(isCsvRefHeader("tags.add?@ref")).toBe(true);
+    expect(isCsvRefHeader("@ref")).toBe(false);
+    expect(isCsvRefHeader("note@ref")).toBe(false);
+  });
+
   it("tells a top-level filter column apart", () => {
     expect(isCsvWhereHeader("where.name")).toBe(true);
     expect(isCsvWhereHeader("where?name")).toBe(true);
@@ -108,6 +115,12 @@ describe("resolveCsvLimits", () => {
     expect(resolveCsvLimits(false, undefined)).toBeUndefined();
     expect(resolveCsvLimits(true, false)).toBeUndefined();
     expect(resolveCsvLimits(true, undefined)).toEqual(DEFAULT_CSV_LIMITS);
+  });
+
+  it("counts files only when the instance has CSV on", () => {
+    expect(resolveCsvMaxFiles(undefined)).toBeUndefined();
+    expect(resolveCsvMaxFiles(true)).toBe(DEFAULT_CSV_MAX_FILES);
+    expect(resolveCsvMaxFiles({maxFiles: 3})).toBe(3);
   });
 
   it("lets the definition override the instance's numbers", () => {

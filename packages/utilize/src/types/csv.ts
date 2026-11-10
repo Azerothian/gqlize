@@ -16,5 +16,14 @@ export type CsvLimits = {
   maxBytes?: number;
 };
 
+/**
+ * What `GqlizeOptions.csv` takes: the per-file {@link CsvLimits}, plus the
+ * limits only an instance can set because they span several models.
+ */
+export type CsvOptions = CsvLimits & {
+  /** Files in one multi-file import (`csvImport`, `POST /_csv`). Default `10`. */
+  maxFiles?: number;
+};
+
 /** {@link CsvLimits} with every default applied — what the engine enforces. */
 export type ResolvedCsvLimits = Required<CsvLimits>;

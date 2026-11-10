@@ -10,6 +10,8 @@ export type CsvUploadErrorCode =
   | "CSV_TOO_LARGE"
   /** More data rows than `maxRows`. */
   | "CSV_TOO_MANY_ROWS"
+  /** More files in one multi-file import than `maxFiles`. */
+  | "CSV_TOO_MANY_FILES"
   /** Malformed CSV — an unclosed quote, a row with the wrong number of cells. */
   | "CSV_PARSE"
   /** The header is missing, has a blank or repeated name, or names a column the operation cannot take. */
@@ -30,12 +32,15 @@ export class CsvUploadError extends Error {
   readonly row?: number;
   /** The header name of the offending column, when there is one. */
   readonly column?: string;
+  /** Which file of a multi-file import, by the name the caller gave it. */
+  readonly file?: string;
 
-  constructor(code: CsvUploadErrorCode, message: string, at: { row?: number; column?: string; cause?: unknown } = {}) {
+  constructor(code: CsvUploadErrorCode, message: string, at: { row?: number; column?: string; file?: string; cause?: unknown } = {}) {
     super(message, at.cause === undefined ? undefined : { cause: at.cause });
     this.name = "CsvUploadError";
     this.code = code;
     this.row = at.row;
     this.column = at.column;
+    this.file = at.file;
   }
 }

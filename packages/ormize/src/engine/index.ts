@@ -32,6 +32,10 @@ export { mutationEntry, processInputs, processRelationshipMutation,
 export type { MutationEntryHost } from "./mutations";
 
 export { processCsv } from "./csv";
+export { processCsvImport } from "./csv-import";
+export type {
+  CsvImportFile, CsvImportFileResult, CsvImportHost, CsvImportOperation, CsvImportRequest, CsvImportResult,
+} from "./csv-import";
 export type { CsvHost, CsvOperation, CsvRequest, CsvRowArgs, CsvRowCells } from "./csv";
 
 export { transaction, runWithContext, getContext, withTransaction } from "./transactions";
