@@ -22,6 +22,7 @@
 // actually has is the surface's work (gqlize walks its GraphQL input types),
 // since only it knows which segment is a relationship, a verb or a field.
 
+import { FILTER_LIST_OPERATORS, FILTER_VALUE_OPERATORS } from "@azerothian/utilize/filter-operators";
 import { CsvUploadError } from "./errors";
 
 /** One step of a header path: a field name, and which list entry when the field is a list. */
@@ -50,29 +51,21 @@ export const CSV_WHERE = "where";
 
 /**
  * The filter operators whose value is a list, for a surface with no typed
- * filter to read that off (nestize). The same names as `SQL_ARRAY_VALUES` in
- * graphql-types' `operators.ts`, which gqlize reads through its input types
- * instead; add an operator there and here together.
+ * filter to read that off (nestize). utilize's `FILTER_LIST_OPERATORS`, which
+ * a gqlize test pins to graphql-types' `SQL_ARRAY_VALUES`.
  */
-export const CSV_LIST_OPERATORS: ReadonlySet<string> = new Set([
-  "in", "notIn", "contains", "contained", "between", "notBetween",
-  "overlap", "adjacent", "strictLeft", "strictRight", "noExtendRight", "noExtendLeft",
-]);
+export const CSV_LIST_OPERATORS: ReadonlySet<string> = new Set(FILTER_LIST_OPERATORS);
 
 /**
  * The single-value filter operators a surface with no typed filter (nestize)
- * accepts: the same names as `CORE_VALUE_FUNCS` in graphql-types'
- * `operators.ts`. Together with {@link CSV_LIST_OPERATORS} they are an
- * allow-list, and it must stay one. The sequelize adapter maps *any* key that
+ * accepts: utilize's `FILTER_VALUE_OPERATORS`. Together with
+ * {@link CSV_LIST_OPERATORS} they are an allow-list, and it must stay one. The sequelize adapter maps *any* key that
  * names an `Op` to that operator, so a name passed through unchecked could
  * reach `Op.col` (compare with another, possibly hidden, column) and similar
  * ORM internals. The regex operators are left out: adapters only offer them
  * on request, because a client-supplied pattern can be a ReDoS.
  */
-export const CSV_VALUE_OPERATORS: ReadonlySet<string> = new Set([
-  "eq", "ne", "gt", "gte", "lte", "lt", "not", "is",
-  "like", "notLike", "iLike", "notILike", "startsWith", "endsWith", "substring",
-]);
+export const CSV_VALUE_OPERATORS: ReadonlySet<string> = new Set(FILTER_VALUE_OPERATORS);
 
 const SEGMENT = /^([^.?[\]]+)((?:\[[^\]]*\])*)$/;
 
