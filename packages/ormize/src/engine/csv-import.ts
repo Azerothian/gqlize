@@ -10,6 +10,7 @@
 // and the token is swapped for the written row's id just before that row is
 // written. Conversion still finishes, for every file, before the first write.
 
+import { randomUUID } from "node:crypto";
 import type { AdapterRow, RequestContext, Selection } from "@azerothian/utilize/types/index";
 
 import { CsvUploadError } from "../csv/errors";
@@ -64,12 +65,14 @@ export interface CsvImportHost extends CsvHost {
 }
 
 /**
- * A NUL can come from neither a CSV cell nor a graphql string a parser has
- * not already refused to take as a key, so a cell holding this prefix after
- * the swap is one of ours.
+ * The placeholder prefix for one import. It carries a random nonce: a cell can
+ * hold any text, NULs included, so a fixed prefix could be spelt out in a cell
+ * to have a labelled row's id swapped in wherever the caller liked, past the
+ * reference checks. A prefix the caller cannot know cannot be forged.
  */
-const TOKEN = "\u0000csv-ref:";
-const token = (label: string) => `${TOKEN}${label}`;
+function tokenPrefix(): string {
+  return `\u0000csv-ref:${randomUUID()}:`;
+}
 
 type Loaded = {
   index: number;
@@ -158,19 +161,19 @@ function writeOrder(loaded: Loaded[], dependsOn: Set<number>[]): number[] {
  * names. A token run together with another (`a1|a2` in a field that takes one
  * id) is refused rather than written as text.
  */
-function resolveTokens(value: unknown, lookup: (label: string) => unknown): unknown {
+function resolveTokens(value: unknown, prefix: string, lookup: (label: string) => unknown): unknown {
   if (typeof value === "string") {
-    if (!value.includes(TOKEN)) {
+    if (!value.includes(prefix)) {
       return value;
     }
-    const label = value.slice(TOKEN.length);
-    if (!value.startsWith(TOKEN) || label.includes(TOKEN)) {
+    const label = value.slice(prefix.length);
+    if (!value.startsWith(prefix) || label.includes(prefix)) {
       throw new CsvUploadError("CSV_ROW_INVALID", "That field takes one reference, not a list of them");
     }
     return lookup(label);
   }
   if (Array.isArray(value)) {
-    return value.map((item) => resolveTokens(item, lookup));
+    return value.map((item) => resolveTokens(item, prefix, lookup));
   }
   if (value !== null && typeof value === "object") {
     const proto = Object.getPrototypeOf(value) as object | null;
@@ -179,7 +182,7 @@ function resolveTokens(value: unknown, lookup: (label: string) => unknown): unkn
     if (proto === Object.prototype || proto === null) {
       const out = Object.create(proto) as { [key: string]: unknown };
       for (const [key, item] of Object.entries(value)) {
-        out[key] = resolveTokens(item, lookup);
+        out[key] = resolveTokens(item, prefix, lookup);
       }
       return out;
     }
@@ -258,6 +261,11 @@ export async function processCsvImport(
           if (!owner) {
             throw invalid(`Row ${row}: "${column}": no row is labelled "${label}"`, at);
           }
+          const expected = l.file.request.refTarget?.(column);
+          const named = loaded[owner.file].file.defName;
+          if (expected !== undefined && named !== expected) {
+            throw invalid(`Row ${row}: "${column}": "${label}" labels a ${named} row, and this column takes a ${expected}`, at);
+          }
           if (owner.file !== l.index) {
             dependsOn[l.index].add(owner.file);
           } else if (owner.row >= row) {
@@ -270,6 +278,7 @@ export async function processCsvImport(
   }
   const order = writeOrder(loaded, dependsOn);
 
+  const prefix = tokenPrefix();
   const planned: Planned[][] = loaded.map(() => []);
   for (const index of order) {
     const l = loaded[index];
@@ -279,7 +288,7 @@ export async function processCsvImport(
       for (const column of l.refColumns) {
         const raw = swapped[column];
         if (raw !== undefined && raw !== null) {
-          swapped[column] = refLabels(raw).map(token).join("|");
+          swapped[column] = refLabels(raw).map((label) => `${prefix}${label}`).join("|");
         }
       }
       const args = await inFile(l.file.name, () => planRow(l.file.request, l.file.operation, l.columns, row, swapped));
@@ -302,7 +311,7 @@ export async function processCsvImport(
         await inFile(file.name, async() => {
           let written: AdapterRow[];
           try {
-            const resolved = resolveTokens(args, lookup) as CsvRowArgs;
+            const resolved = resolveTokens(args, prefix, lookup) as CsvRowArgs;
             written = await write(host, file.defName, file.operation, resolved, file.request.apply, context, request.selection?.(file.defName));
           } catch (e) {
             throw atRow(e, row, "CSV_ROW_FAILED");

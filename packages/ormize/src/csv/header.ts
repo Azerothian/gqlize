@@ -59,7 +59,22 @@ export const CSV_LIST_OPERATORS: ReadonlySet<string> = new Set([
   "overlap", "adjacent", "strictLeft", "strictRight", "noExtendRight", "noExtendLeft",
 ]);
 
-const SEGMENT =/^([^.?[\]]+)((?:\[[^\]]*\])*)$/;
+/**
+ * The single-value filter operators a surface with no typed filter (nestize)
+ * accepts: the same names as `CORE_VALUE_FUNCS` in graphql-types'
+ * `operators.ts`. Together with {@link CSV_LIST_OPERATORS} they are an
+ * allow-list, and it must stay one. The sequelize adapter maps *any* key that
+ * names an `Op` to that operator, so a name passed through unchecked could
+ * reach `Op.col` (compare with another, possibly hidden, column) and similar
+ * ORM internals. The regex operators are left out: adapters only offer them
+ * on request, because a client-supplied pattern can be a ReDoS.
+ */
+export const CSV_VALUE_OPERATORS: ReadonlySet<string> = new Set([
+  "eq", "ne", "gt", "gte", "lte", "lt", "not", "is",
+  "like", "notLike", "iLike", "notILike", "startsWith", "endsWith", "substring",
+]);
+
+const SEGMENT = /^([^.?[\]]+)((?:\[[^\]]*\])*)$/;
 
 function bad(header: string, why: string): never {
   throw new CsvUploadError("CSV_HEADER", `Header "${header}" ${why}`, { column: header });

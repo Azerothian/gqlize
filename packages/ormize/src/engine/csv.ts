@@ -55,6 +55,14 @@ export type CsvRequest = {
    * this one's; anything else is reported as an invalid row.
    */
   toArgs: (cells: CsvRowCells, row: number) => CsvRowArgs | Promise<CsvRowArgs>;
+  /**
+   * Multi-file imports only: the model a `….@ref` column's labels must name,
+   * when the surface knows it. A label of any other model is refused before
+   * anything is written. Without this, a foreign-key reference would write the
+   * other row's key into the column as is, linking to whatever row of the
+   * right model happens to share it.
+   */
+  refTarget?: (column: string) => string | undefined;
 };
 
 /** The narrow slice of the manager this module needs. */
