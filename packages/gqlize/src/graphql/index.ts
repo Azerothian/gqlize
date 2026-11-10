@@ -14,7 +14,7 @@ import createModelType from "./create-model-type";
 import createListObject from "./create-list-object";
 import createClassMethods from "./create-class-methods";
 import createMutationModel from "./create-mutation-model";
-import createMutationInput from "./create-mutation-input";
+import createMutationInput, { createMutationInputPlan } from "./create-mutation-input";
 import { csvImportFieldConfig } from "./objects/csv-import";
 import createSchemaCache from "./create-schema-cache";
 import computeVisibleModels from "./utils/visible-models";
@@ -106,9 +106,10 @@ export function createListObjects(instance: GQLManager, schemaCache: SchemaCache
 }
 
 function createMutationInputs(instance: GQLManager, options: GqlizeOptions, schemaCache: SchemaCache, mutableDefNames: Set<string>) {
+  const plan = createMutationInputPlan(instance, options, mutableDefNames);
   return (defName: string, inputTypes: SchemaCache["mutationInputs"]) => {
     if (mutableDefNames.has(defName)) {
-      inputTypes[defName] = createMutationInput(instance, defName, schemaCache, inputTypes, options, mutableDefNames);
+      inputTypes[defName] = createMutationInput(instance, defName, schemaCache, inputTypes, options, plan);
     }
     return inputTypes;
   };

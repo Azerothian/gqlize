@@ -1,4 +1,5 @@
 import {graphql} from "graphql";
+import type {GraphQLInputObjectType, GraphQLObjectType} from "graphql";
 import Sequelize from "sequelize";
 import { Ormize as Database } from "@azerothian/ormize";
 import {createSchema} from "../src";
@@ -169,6 +170,57 @@ describe("relationship mutations", () => {
       expect(res.errors?.[0]?.message).toMatch(new RegExp(`unknown field "${verb}"`));
     }
     expect(await Comment.count()).toEqual(1);
+  });
+
+  it("add/set/remove: a to-many relationship offers them only with update permission on its target", async () => {
+    const db = await build();
+    const {Post, Comment} = db.models;
+    const post = await Post.create({title: "post1"});
+    const other = await Post.create({title: "other"});
+    const comment = await Comment.create({body: "c", postId: other.get("id")});
+    const notComment = (defName: string) => defName !== "Comment";
+    const schema = await createSchema(db, {permission: {...schemaOpts.permission, mutationUpdate: notComment}});
+    const fieldsOf = (name: string) => Object.keys((schema.getType(name) as GraphQLInputObjectType).getFields()).sort();
+    // `add`/`set`/`remove` on a hasMany rewrite the comment's `postId`: an update of the comment.
+    expect(fieldsOf("PostCommentsHasManyInput")).toEqual(["create", "delete", "restore"]);
+    // On a belongsTo they write the post's own key, and on a belongsToMany a join row.
+    expect(fieldsOf("PostAuthorBelongsToInput")).toEqual(expect.arrayContaining(["set", "remove"]));
+    expect(fieldsOf("PostTagsBelongsToManyInput")).toEqual(expect.arrayContaining(["add", "set", "remove"]));
+
+    const res = await graphql({schema, source: `mutation { models {
+      Post(update: { where: { title: { eq: "post1" } }, input: { comments: { add: [{ body: { eq: "c" } }] } } }) { id }
+    } }`});
+    expect(res.errors?.[0]?.message).toMatch(/unknown field "add"/);
+    expect((await Comment.findByPk(comment.get("id"))).get("postId")).toEqual(other.get("id"));
+    expect(post.get("id")).toBeDefined();
+  });
+
+  it("a relationship with every verb denied is left out, not built as an empty input", async () => {
+    const db = await build();
+    const notComment = (defName: string) => defName !== "Comment";
+    const schema = await createSchema(db, {permission: {
+      ...schemaOpts.permission,
+      mutationCreate: notComment, mutationUpdate: notComment, mutationDelete: notComment, mutationRestore: notComment,
+    }});
+    const postInput = (schema.getType("PostRequiredInput") as GraphQLInputObjectType).getFields();
+    expect(postInput.comments).toBeUndefined();
+    expect(postInput.title).toBeDefined();
+    expect(schema.getType("PostCommentsHasManyInput")).toBeUndefined();
+  });
+
+  it("a model left with nothing writable gets no input at all", async () => {
+    const db = await build();
+    const notComment = (defName: string) => defName !== "Comment";
+    // Post's column and its other relationships are denied too, so nothing on its input remains.
+    const schema = await createSchema(db, {permission: {
+      ...schemaOpts.permission,
+      mutationCreateInput: (defName: string) => defName !== "Post",
+      mutationCreate: notComment, mutationUpdate: notComment, mutationDelete: notComment, mutationRestore: notComment,
+    }});
+    expect(schema.getType("PostRequiredInput")).toBeUndefined();
+    const postArgs = (schema.getMutationType()?.getFields().models.type as GraphQLObjectType).getFields().Post.args.map((a) => a.name);
+    expect(postArgs).not.toContain("create");
+    expect(postArgs).toContain("update");
   });
 
   it("restore: undeletes soft-deleted (paranoid) related records", async () => {

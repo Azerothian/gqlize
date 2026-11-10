@@ -6,7 +6,7 @@ import type { GraphQLInputFieldConfig, GraphQLInputFieldConfigMap, GraphQLInputT
 import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
-import { deprecationFor, isInputFieldWritable, isMutationAllowed } from "@azerothian/utilize";
+import { deprecationFor, isInputFieldWritable, isMutationAllowed, isRelationshipVerbAllowed } from "@azerothian/utilize";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
@@ -47,7 +47,7 @@ function isColumnInput(definition: Definition, defName: string, fieldName: strin
     && isInputFieldWritable(options.permission, defName, fieldName, kind, defFields[fieldName]);
 }
 
-function hasInputFields(defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, mutableDefNames: Set<string>, forceOptional: boolean, options: GqlizeOptions) {
+function hasInputFields(defName: string, definition: Definition, defFields: DefinitionFields, associations: {[relName: string]: Association}, mutableDefNames: Set<string>, forceOptional: boolean, options: GqlizeOptions, plan: MutationInputPlan) {
   const kind = forceOptional ? "update" : "create";
   const hasWritableField = Object.keys(defFields).some((fieldName) => {
     return isColumnInput(definition, defName, fieldName, kind, defFields, options);
@@ -55,13 +55,76 @@ function hasInputFields(defName: string, definition: Definition, defFields: Defi
   if (hasWritableField) {
     return true;
   }
-  // A permitted relationship always contributes a field: even when the target
-  // has no create/update input of its own, `set`/`remove`/`delete`/`restore`
-  // are built from its filter type.
+  // A relationship contributes a field when at least one of its verbs is
+  // offered: exactly the condition `generateInputFields` adds it under, which
+  // it must stay, or this would promise a field the builder leaves out and the
+  // input object would be empty.
   return Object.keys(associations).some((relName) => {
-    return isRelationshipInputAllowed(options, defName, relName, forceOptional) &&
-      mutableDefNames.has(associations[relName].target);
+    const association = associations[relName];
+    return isRelationshipInputAllowed(options, defName, relName, forceOptional)
+      && mutableDefNames.has(association.target)
+      && relationshipOffersAVerb(options, association, plan);
   });
+}
+
+/**
+ * Which relationship verbs a target's permissions allow, decided from the
+ * permission bag alone so `hasInputFields` can ask before any type exists.
+ * `create`, `update` and `select` also need the target's own create/update
+ * input, which the plan answers for; the rule itself is utilize's
+ * `isRelationshipVerbAllowed`, shared with nestize.
+ */
+function relationshipGates(options: GqlizeOptions, association: Association) {
+  return {
+    link: isRelationshipVerbAllowed(options.permission, association, "add"),
+    delete: isRelationshipVerbAllowed(options.permission, association, "delete"),
+    restore: isRelationshipVerbAllowed(options.permission, association, "restore"),
+  };
+}
+
+function relationshipOffersAVerb(options: GqlizeOptions, association: Association, plan: MutationInputPlan) {
+  const gates = relationshipGates(options, association);
+  // `update`/`select` need the target's update permission, under which `link` is already true.
+  return gates.link || gates.delete || gates.restore || plan.creatable(association.target);
+}
+
+/** Whether each model gets a create input and an update input, answered once per schema build. */
+export interface MutationInputPlan {
+  creatable(defName: string): boolean;
+  updatable(defName: string): boolean;
+}
+
+/**
+ * Decide, for every mutable model, whether its create and update inputs exist.
+ *
+ * The question recurses: a model with no writable column of its own still has
+ * an input when one of its relationships offers a verb, and `create` is offered
+ * only when the target itself has a create input. The answers are memoised, and
+ * a model already being decided counts as having no input, so a cycle of models
+ * that exist only through each other's `create` settles on "none" rather than
+ * recursing forever. `createMutationInput` builds exactly what this decides.
+ */
+export function createMutationInputPlan(instance: GQLManager, options: GqlizeOptions, mutableDefNames: Set<string>): MutationInputPlan {
+  const memo = new Map<string, boolean>();
+  const plan: MutationInputPlan = {
+    creatable: (defName) => decide(defName, false),
+    updatable: (defName) => decide(defName, true),
+  };
+  function decide(defName: string, forceOptional: boolean): boolean {
+    const key = `${forceOptional ? "update" : "create"}:${defName}`;
+    const known = memo.get(key);
+    if (known !== undefined) {
+      return known;
+    }
+    memo.set(key, false);
+    const answer = mutableDefNames.has(defName)
+      && isMutationAllowed(options.permission, defName, forceOptional ? "update" : "create")
+      && hasInputFields(defName, instance.getDefinition(defName), instance.getFields(defName),
+        instance.getAssociations(defName), mutableDefNames, forceOptional, options, plan);
+    memo.set(key, answer);
+    return answer;
+  }
+  return plan;
 }
 
 //(instance, defName, fields, relationships, inputTypes, false)
@@ -184,6 +247,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         },
       }, schemaCache, "");
     }
+    const gates = relationshipGates(options, association);
     const isBelongsToMany = association.associationType === "belongsToMany";
     const isCollection = association.associationType === "hasMany" || isBelongsToMany;
     // belongsToMany add/set accept an optional `through` payload to write
@@ -233,6 +297,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       },
       {
         name: "add",
+        available: gates.link,
         collection: {
           type: addSetType,
           description: throughInput
@@ -242,6 +307,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       },
       {
         name: "set",
+        available: gates.link,
         collection: {
           type: addSetType,
           description: throughInput
@@ -252,6 +318,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       },
       {
         name: "remove",
+        available: gates.link,
         collection: { type: list(filterType), description: `This will remove the relationship from any matching elements from the current ${defName}` },
         singular: { type: GraphQLBoolean, description: `When true, this will disassociate the current ${relName} from the ${defName}` },
       },
@@ -262,13 +329,13 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         // denied `mutationDelete` on a model could still delete its rows by
         // reaching them through a relationship.
         name: "delete",
-        available: isMutationAllowed(options.permission, association.target, "delete"),
+        available: gates.delete,
         collection: { type: list(filterType), description: `This will delete any matching elements that have a relationship with the current ${defName}` },
         singular: { type: filterType, description: `This will delete any matching elements that have a relationship with the current ${defName}` },
       },
       {
         name: "restore",
-        available: isMutationAllowed(options.permission, association.target, "restore"),
+        available: gates.restore,
         collection: { type: list(filterType), description: `This will restore any soft-deleted matching elements related to the current ${defName}` },
         singular: { type: filterType, description: `This will restore the soft-deleted ${relName} related to the current ${defName}` },
       },
@@ -290,6 +357,11 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       }
       fld[verb.name] = shape;
     }
+    if (Object.keys(fld).length === 0) {
+      // Every verb denied: no field, rather than an empty input object.
+      // `hasInputFields` counts the relationship out under the same condition.
+      return fields;
+    }
     fields[relName] = {
       type: createGQLInputObject(`${defName}${capitalize(relName)}${capitalize(association.associationType)}Input`, fld, schemaCache, ""),
       description: `This is the mutation object for ${defName}${capitalize(relName)}${capitalize(association.associationType)}`,
@@ -298,17 +370,17 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
   }, def);
 }
 
-export default function createMutationInput(instance: GQLManager, defName: string, schemaCache: SchemaCache, inputTypes: SchemaCache["mutationInputs"], options: GqlizeOptions, mutableDefNames: Set<string>) {
+export default function createMutationInput(instance: GQLManager, defName: string, schemaCache: SchemaCache, inputTypes: SchemaCache["mutationInputs"], options: GqlizeOptions, plan: MutationInputPlan) {
   const fields = instance.getFields(defName);
   const associations = instance.getAssociations(defName);
   const definition = instance.getDefinition(defName);
   // Permissions can leave a model with nothing writable at all; the resulting
   // input object would have no fields and make the whole schema invalid, so it
-  // is not built and the mutations that would take it are omitted.
-  const doNotSkipUpdate = isMutationAllowed(options.permission, defName, "update") &&
-    hasInputFields(defName, definition, fields, associations, mutableDefNames, true, options);
-  const doNotSkipCreate = isMutationAllowed(options.permission, defName, "create") &&
-    hasInputFields(defName, definition, fields, associations, mutableDefNames, false, options);
+  // is not built and the mutations that would take it are omitted. The plan
+  // decides that for every model at once, because whether a relationship can
+  // `create` depends on whether its target gets an input.
+  const doNotSkipUpdate = plan.updatable(defName);
+  const doNotSkipCreate = plan.creatable(defName);
   const required = doNotSkipCreate ? createGQLInputObject(`${defName}RequiredInput`, function() {
     return generateInputFields(instance, defName, definition, fields, associations, inputTypes, schemaCache, false, options);
   }, schemaCache, "") : undefined;
