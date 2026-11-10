@@ -46,7 +46,7 @@ NestizeModule.forRootAsync({
 
 | Method  | Path                                   | Action                              |
 | ------- | -------------------------------------- | ----------------------------------- |
-| `GET`   | `/:resource`                           | list (`?filter`, `?order`, `?limit`, `?offset`, `?count`) |
+| `GET`   | `/:resource`                           | list (`?filter`, `?order`, `?limit`, `?offset`, `?count`). `?filter` takes the filter operators gqlize offers (`eq`, `like`, `in`, …); anything else, ORM internals included, is a `400` |
 | `GET`   | `/:resource/:id`                       | fetch one                           |
 | `POST`  | `/:resource`                           | create                              |
 | `PATCH` | `/:resource?filter=…`                  | update matching rows                |
@@ -55,7 +55,7 @@ NestizeModule.forRootAsync({
 | `POST`  | `/:resource/_csv/:operation`           | CSV create / update / delete ([below](#csv-uploads)) |
 | `POST`  | `/_csv`                                | Several CSV files as one import ([below](#multi-file-import)) |
 | `GET`   | `/:resource/:id/:relation`             | fetch a relationship                |
-| `POST`  | `/:resource/:id/:relation`             | relationship mutation               |
+| `POST`  | `/:resource/:id/:relation`             | relationship mutation (body: `{ create, update, add, set, remove, delete, restore, select }`, each verb held to the related model's own permissions) |
 | `DELETE`| `/:resource/:id/:relation/:relId`      | disassociate a related record       |
 | `GET`   | `/:resource/_actions/:method`          | class-method query                  |
 | `POST`  | `/:resource/_actions/:method`          | class-method mutation               |

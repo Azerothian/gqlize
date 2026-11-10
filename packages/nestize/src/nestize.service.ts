@@ -15,12 +15,14 @@ import {
   isRelationshipAllowed,
 } from "@azerothian/utilize";
 import * as guards from "@azerothian/utilize/guards";
+import { regexOperatorsEnabled } from "@azerothian/utilize/filter-operators";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import type { AdapterWhere, Association, Fail, GuardFailure } from "@azerothian/utilize";
 import { CsvUploadError } from "@azerothian/ormize";
 import type { CsvImportFile, CsvImportOperation, MutationInputTree, Ormize } from "@azerothian/ormize";
 import { csvHttpError, csvUploadOf, isCsvOperation, restCsvRequest } from "./csv";
 import { readCsvParts } from "./csv-multipart";
+import { checkInputTree, type RelationshipInputHost } from "./relationship-input";
 import { NestizeSchemaRegistry } from "./schema-registry";
 import {
   NESTIZE_OPTIONS,
@@ -107,9 +109,21 @@ export class NestizeService {
     guards.assertScopedMutation(where, optIn, "?all=true", FAIL);
   }
 
-  /** Validate that every filter field is permitted — see `@azerothian/utilize/guards`. */
+  /** What `checkInputTree` needs to hold a nested relationship input to the permissions. */
+  private get relationshipInputHost(): RelationshipInputHost {
+    return {
+      orm: this.orm,
+      permission: this.permission,
+      schema: (name, kind) => (kind === "create" ? this.registry.create(name) : this.registry.update(name)),
+      assertFilterAllowed: (name, where) => this.assertFilterAllowed(name, where),
+    };
+  }
+
+  /** Validate every filter field and operator — see `@azerothian/utilize/guards`. */
   private assertFilterAllowed(name: string, where: unknown): void {
-    guards.assertFilterAllowed(this.permission, name, where, FAIL, this.orm.getDefinition(name));
+    guards.assertFilterAllowed(this.permission, name, where, FAIL, this.orm.getDefinition(name), {
+      regexOperators: regexOperatorsEnabled(this.orm.getModelAdapter(name)),
+    });
   }
 
   /** Validate that every `orderBy` field is permitted for the model. */
@@ -386,7 +400,12 @@ export class NestizeService {
       }
       this.assertScopedMutation(where, body?.all === true);
     }
-    const found = await this.orm.processSelect(name, null, { input, where, limit }, { req });
+    // `select`'s input is an update-shaped tree whose relationship operations
+    // run on the matched rows; hold it to what GraphQL's types would allow.
+    const checked = input !== undefined && input !== null
+      ? checkInputTree(this.relationshipInputHost, name, input, "update")
+      : input;
+    const found = await this.orm.processSelect(name, null, { input: checked, where, limit }, { req });
     return { rows: this.present(name, found) };
   }
 
@@ -413,12 +432,13 @@ export class NestizeService {
     if (!isMutationAllowed(this.permission, name, "update")) {
       throw new ForbiddenException(`Update not allowed for ${name}`);
     }
+    const input = checkInputTree(this.relationshipInputHost, name, { [relation]: body }, "update");
     const pk = this.pkName(name);
     const where = { [pk]: { eq: this.coerceId(id) } };
     const results = await this.orm.processUpdate(
       name,
       null,
-      { input: { [relation]: body }, where, limit: 1 },
+      { input: input, where, limit: 1 },
       { req }
     );
     return this.present(name, results);
@@ -441,10 +461,13 @@ export class NestizeService {
       const targetPk = this.pkName(assoc.target);
       subOp = { remove: [{ [targetPk]: { eq: this.coerceId(relId) } }] };
     }
+    // A to-many `remove` rewrites the related row's foreign key: the same
+    // check a body sent to `POST /:resource/:id/:relation` gets.
+    const input = checkInputTree(this.relationshipInputHost, name, { [relation]: subOp }, "update");
     const results = await this.orm.processUpdate(
       name,
       null,
-      { input: { [relation]: subOp }, where, limit: 1 },
+      { input: input, where, limit: 1 },
       { req }
     );
     return this.present(name, results);
