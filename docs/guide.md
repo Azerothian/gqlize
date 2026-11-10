@@ -1247,10 +1247,58 @@ argument.
 **Empty cells and nulls.** An empty cell is left out of the row, so on an update it leaves the column
 alone. To write a null, put `\N` in the cell.
 
-**Matching rows.** `updateCsv` and `deleteCsv` find each row's target by equality on its key columns:
-the primary key by default, or the columns named in `csv.keys`. On an update the remaining columns
-are the input. A delete takes only its key columns. A row whose keys match nothing fails the upload,
-and so does a blank key cell.
+**Matching rows.** `updateCsv` and `deleteCsv` find each row's target by its key columns: equality
+on the primary key by default, or on the columns named in `csv.keys`. A `where.<field>[op]` column
+matches with any filter operator instead, and its presence replaces the primary-key default. On an
+update the remaining columns are the input. A delete takes only its key columns. A row whose keys
+match nothing fails the upload, and so does a blank key cell.
+
+```csv
+where.title[startsWith],published
+draft-,true
+```
+
+**Relationships and filters in the header.** A dotted header is a path into the same input a JSON
+argument takes, so a row can drive the [nested relationship writes](#nested-relationship-writes)
+below:
+
+| Header | Same as the JSON |
+| --- | --- |
+| `author.create.name` | `author: { create: { name } }` |
+| `author.set.name` (or `author.set.where.name`) | `author: { set: { name: { eq } } }` |
+| `tags.add.name[in]` | `tags: { add: [{ name: { in } }] }` |
+| `tags.add.through` | `tags: { add: [{ through }] }` (JSON cell, belongsToMany) |
+| `comments.update.where.body[like]` | `comments: { update: [{ where: { body: { like } } }] }` |
+| `comments.update.body` | `comments: { update: [{ input: { body } }] }` |
+| `comments.create[1].body` | a second `create` entry |
+| `where.or[0].title[like]` | top-level `where: { or: [{ title: { like } }] }` |
+
+- A filter field without an `[op]` means `eq`. `[Op.in]` and `[in]` are the same. Any operator the
+  field's filter type offers works, `or`/`and` included (index them: `or[0]`, `or[1]`).
+- **Columns under one verb merge into one entry.** `tags.add.name[startsWith]` and `tags.add.name[ne]`
+  build one filter, and `tags.add.name[in]` beside `tags.add.through` is one `add`. A `[n]` after
+  the verb starts a separate entry. An entry whose cells are all empty on a row is left out.
+- The `input` of an `update`/`select` and the `where` of a belongsToMany `add`/`set` can be left out
+  of the path. Writing `where` on a verb whose entry is already a filter is allowed, so a header reads
+  the same on every verb.
+- A list operator (`in`, `notIn`, `between`, …) takes `a|b|c` or a JSON array.
+- `?` can stand in for `.`, as in `author.set.where?name`.
+
+A header that does not resolve against the input type (an unknown verb, an operator on a value, two
+headers writing the same place) fails the upload with `CSV_HEADER` before anything is written. Every
+nested write runs inside the upload's one transaction.
+
+Permissions hold as they do for the JSON argument, since a header can only name what the input type
+offers. The following are all refused as `CSV_HEADER`:
+
+- a relationship denied by `mutationCreateInput` / `mutationUpdateInput`;
+- a verb the related model's `mutationCreate` / `mutationUpdate` / `mutationDelete` /
+  `mutationRestore` denies;
+- a related model hidden by `model`;
+- a filter field hidden by `field`.
+
+Row `scope` applies to every related row a verb reaches, so a row outside it is never linked,
+updated or deleted.
 
 **All or nothing.** The whole file is read and every row converted before anything is written. The
 writes then run in one transaction, so a bad cell, a row the input type rejects, or a write that

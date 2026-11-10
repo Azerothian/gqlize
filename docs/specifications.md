@@ -698,8 +698,10 @@ therefore hold without being restated. The order of work is the CSV-specific par
    chunks and `maxRows` as records arrive, and checks the header (present, no blank or repeated
    names). `csvChunks` (`src/csv/source.ts`) accepts text, bytes, any async iterable (Node or web
    stream), graphql-upload's `createReadStream()` / `promise`, and a web `File`/`Blob`.
-2. The header is split into key columns (update/delete; `csv.keys`, default the primary key) and
-   input columns. A delete takes only keys, and an update needs at least one input column.
+2. The header is split into key columns and input columns. Key columns (update/delete only) are
+   `csv.keys` plus every `where.…` column. When neither is given, they default to the primary key.
+   A delete takes only keys, an update needs at least one input column, and a create refuses
+   `where.…` columns.
 3. **Every row is converted before the first write.** The surface supplies `checkColumns` and
    `toArgs`. An empty cell is omitted (on update: column untouched) and `\N` is `null`. A blank key
    cell, or a `toArgs` that yields an empty `where`, is refused: either would act on the whole table.
@@ -718,6 +720,25 @@ not, and a column missing from the input type is a `CSV_HEADER` error. Errors be
 with `code` / `row` / `column` (and `causeCode`) in `extensions`, deliberately without
 `originalError`: graphql-yoga masks a GraphQLError wrapping a plain `Error`. nestize
 (`src/csv.ts`) converts by column descriptor (`csvCellValue`) and validates with its zod schemas.
+
+**Header paths.** `parseCsvHeader` (`packages/ormize/src/csv/header.ts`) reads a header as segments
+separated by `.` or `?`, each optionally indexed (`add[1]`), with an optional trailing operator
+(`[in]`, `[Op.in]`). Resolving a path is the surface's job:
+
+- **gqlize** walks the argument's input types, so every relationship verb and every filter operator
+  the schema offers is reachable. The walk:
+  - inserts an omitted `input` (update/select entries) or `where` (belongsToMany add/set entries);
+  - skips a `where` written where the entry is already a filter type;
+  - takes entry `0` of a list of objects when no index is given;
+  - defaults a filter field's operator to `eq`.
+
+  Rows are then built by placing each cell at its path. Paths sharing a prefix therefore build one
+  object, which is how columns under one verb merge into one entry. List holes left by entries whose
+  cells were all empty are compacted out. Two headers resolving to the same path, or one inside the
+  other, are a `CSV_HEADER` error. A list-of-values leaf takes `csvList` (`a|b` or a JSON array).
+- **nestize** takes only single-field `where.<field>[op]` key columns. It uses `CSV_LIST_OPERATORS`
+  to know which operators take lists, and refuses relationship columns: its zod input schemas hold
+  columns only.
 
 ### Example query
 
@@ -983,7 +1004,7 @@ than a decision, and it is consulted per request rather than per schema.
 | --- | --- |
 | `model(defName, options)` | Whether the model type is generated at all. |
 | `query(defName, options)` | The list query for a model. |
-| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. |
+| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. They gate the nested relationship verbs on the **target** model too: `create` / `update` / `select` disappear with the target's input types, and `delete` / `restore` are checked directly against the target. |
 | `mutationCsv(defName, options)` | The `createCsv` / `updateCsv` / `deleteCsv` arguments and nestize's `_csv` routes, *in addition to* the operation's own gate. Only consulted for a model with CSV on (§5). |
 | `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
