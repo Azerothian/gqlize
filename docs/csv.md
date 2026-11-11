@@ -566,8 +566,9 @@ CSV adds no way in that JSON doesn't already have:
   relationships you may not write are not there to name. They fail the upload with `CSV_HEADER`
   rather than being ignored, so you find out.
 - **The same related-model gates.** A nested `delete` or `restore` is only offered when the related
-  model's own `mutationDelete` / `mutationRestore` allows it. Nested `create` / `update` need the
-  related model's create / update input.
+  model's own `mutationDelete` / `mutationRestore` allows it. `add` / `set` / `remove` on a
+  `hasMany` / `hasOne` rewrite the related row's foreign key, so they need its `mutationUpdate`.
+  Nested `create` / `update` need the related model's create / update input.
 - **The same filters.** Matching on a field is reading it. A field hidden from filtering can't be a
   key column or appear in a relationship filter.
 - **The same row scope.** Every row, and every related row a verb reaches, is held to
