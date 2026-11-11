@@ -1,5 +1,6 @@
 import { isAllowed, isModelAllowed, regexOperatorsEnabled } from "@azerothian/utilize";
 import { definitionMethods, mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
+import { coerceTransformParams } from "@azerothian/utilize/transform-params";
 import type { Definition, Permission, PermissionContext } from "@azerothian/utilize";
 import type { Ormize } from "@azerothian/ormize";
 import { TemporalizeRegistry } from "./registry";
@@ -274,7 +275,7 @@ export function createActivities(
       // optional — keeps the read-only treatment it has always had.
       const transforms = mutationInstanceMethods(definition);
       for (const method of methodNames(definition, "instanceMethods")) {
-        const isTransform = !!transforms[method];
+        const isTransform = Object.hasOwn(transforms, method);
         activities[instanceMethodActivityName(name, method)] = (req: ActivityRequest<InstanceMethodArgs>) =>
           invoke(name, req, true, async (call) => {
             const gate = isTransform
@@ -301,7 +302,18 @@ export function createActivities(
               // "run it with no params". gqlize's "named but not asked for"
               // reading of a falsy value only exists because its `apply` input
               // lists every exposed transform at once; an activity names one.
-              const params = req.args === undefined || req.args === null || req.args === false ? true : req.args;
+              //
+              // The params are then held to the transform's declared `args`, as
+              // gqlize's `apply` input type holds them.
+              const checked = coerceTransformParams(
+                transforms[method],
+                req.args === undefined || req.args === null || req.args === false ? true : req.args,
+                method,
+              );
+              if (!checked.ok) {
+                fail(ErrorType.Validation, `temporalize: ${name}.${method}: ${checked.message}`);
+              }
+              const params = checked.value;
               const rows = await orm.processUpdate(name, null, {
                 input: {},
                 where: { [pkName(name)]: { eq: requireId(name, req.id) } },
