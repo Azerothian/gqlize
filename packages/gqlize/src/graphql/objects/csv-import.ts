@@ -78,6 +78,11 @@ export function csvImportFieldConfig(models: string[]): GraphQLFieldConfig<unkno
         description: "The columns an `update` row is matched on, beside any `where.…` columns. Default: the primary key",
       },
       delimiter: { type: GraphQLString, description: "The field separator. Default: a comma" },
+      apply: {
+        type: JSONType,
+        description: "Instance-method transforms to run on each row, as the model field's own `apply` argument takes them. "
+          + "Checked against that argument's type, so only the transforms it offers are accepted",
+      },
     },
   });
   return {

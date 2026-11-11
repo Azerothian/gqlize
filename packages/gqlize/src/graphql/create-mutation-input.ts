@@ -6,7 +6,8 @@ import type { GraphQLInputFieldConfig, GraphQLInputFieldConfigMap, GraphQLInputT
 import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
-import { deprecationFor, isInputFieldWritable, isMutationAllowed, isRelationshipVerbAllowed } from "@azerothian/utilize";
+import { deprecationFor, isInputFieldWritable, isMutationAllowed, isMutationInstanceMethodAllowed, isRelationshipVerbAllowed } from "@azerothian/utilize";
+import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
 import GQLManager from '../manager';
@@ -370,6 +371,12 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
   }, def);
 }
 
+/** Whether the model exposes an `apply` transform the permissions leave in (see `createInstanceMutationsInput`). */
+export function hasAllowedTransform(definition: Definition, defName: string, options: GqlizeOptions): boolean {
+  return Object.keys(mutationInstanceMethods(definition))
+    .some((methodName) => isMutationInstanceMethodAllowed(options.permission, defName, methodName));
+}
+
 export default function createMutationInput(instance: GQLManager, defName: string, schemaCache: SchemaCache, inputTypes: SchemaCache["mutationInputs"], options: GqlizeOptions, plan: MutationInputPlan) {
   const fields = instance.getFields(defName);
   const associations = instance.getAssociations(defName);
@@ -389,17 +396,24 @@ export default function createMutationInput(instance: GQLManager, defName: strin
   }, schemaCache, "") : undefined;
   const filterType = instance.getFilterGraphQLType(defName);
   // `update` and `select` share the same where/limit/input shape — only the
-  // name and descriptions differ.
+  // name and descriptions differ. `input` is left off when there is no update
+  // input to give it (see `transformOnly`).
   const whereInputObject = (name: string, whereDesc: string, limitDesc: string, inputDesc: string) =>
     new GraphQLList(createGQLInputObject(name, {
       where: { type: filterType, description: whereDesc },
       limit: { type: GraphQLInt, description: limitDesc },
-      input: { type: optional!, description: inputDesc },
+      ...(optional ? { input: { type: optional, description: inputDesc } } : {}),
     }, schemaCache, ""));
+  // A model may update rows but have nothing to write by hand, with its
+  // permitted writes all in `apply` transforms. It still gets `update`, as
+  // `where` and `limit` only, or the transforms could never run on a row that
+  // already exists. `select` stays tied to the update input: without
+  // relationship mutations to run it would do nothing.
+  const transformOnly = !optional && isMutationAllowed(options.permission, defName, "update") && hasAllowedTransform(definition, defName, options);
   return {
     required, optional,
     create: required ? new GraphQLList(required) : undefined,
-    update: optional ? whereInputObject(`${defName}UpdateInput`,
+    update: optional || transformOnly ? whereInputObject(`${defName}UpdateInput`,
       "If provided this will restrict to changes to only the elements that match",
       "If provided this will restrict the changes to only the first amount of ${limit}",
       "This is the input for the data",

@@ -6,11 +6,12 @@
 // field, so a file is offered only the operations that field offers. The
 // field's arguments already encode the operation gates, `mutationCsv` and the
 // model's CSV switch, so a file the caller could not upload alone is refused
-// here too. ormize's `processCsvImport` owns ordering, labels and the
-// all-or-nothing writes.
+// here too. A file's `apply` is held to that field's own `apply` argument the
+// same way, since the generic file type can only carry it as JSON. ormize's
+// `processCsvImport` owns ordering, labels and the all-or-nothing writes.
 
-import { getNamedType, isObjectType } from "graphql";
-import type { GraphQLField, GraphQLResolveInfo } from "graphql";
+import { coerceInputValue, getNamedType, isObjectType, validateInputValue } from "graphql";
+import type { GraphQLError, GraphQLField, GraphQLResolveInfo } from "graphql";
 import { CsvUploadError } from "@azerothian/ormize";
 import type { CsvImportFile, CsvImportOperation } from "@azerothian/ormize";
 import { defaultIdCodec } from "../../codecs/id";
@@ -27,6 +28,7 @@ type CsvImportFileArg = {
   name?: string | null;
   keys?: string[] | null;
   delimiter?: string | null;
+  apply?: unknown;
 };
 
 const EVENTS: { [op in CsvImportOperation]: Events } = {
@@ -39,6 +41,29 @@ function modelFields(info: GraphQLResolveInfo): { [defName: string]: GraphQLFiel
   const models = info.schema.getMutationType()?.getFields().models;
   const type = models && getNamedType(models.type);
   return type && isObjectType(type) ? type.getFields() : {};
+}
+
+/**
+ * A file's `apply`, validated and coerced against the model field's own
+ * `apply` argument: the transforms the caller's permissions leave in, each
+ * with its declared argument types. Refused when the field offers none.
+ */
+function fileApply(field: GraphQLField<unknown, unknown>, value: unknown, file: string): { [methodName: string]: unknown } | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const arg = field.args.find((a) => a.name === "apply");
+  if (!arg) {
+    throw new CsvUploadError("CSV_UNSUPPORTED", `${field.name} has no transforms to apply`, { file });
+  }
+  let first: GraphQLError | undefined;
+  validateInputValue(value, arg.type, (error) => {
+    first = first || error;
+  });
+  if (first) {
+    throw new CsvUploadError("CSV_UNSUPPORTED", `apply: ${first.message}`, { file });
+  }
+  return coerceInputValue(value, arg.type) as { [methodName: string]: unknown };
 }
 
 /** `Post.create`, then `Post.create#2` for a second unnamed file of the same kind. */
@@ -98,7 +123,7 @@ export function buildCsvImportResolver(ctx: BindingContext) {
           name: names[i],
           defName: f.model,
           operation: f.operation,
-          request: csvRequest(f.operation, field, f.file, { keys: f.keys, delimiter: f.delimiter }, undefined, models(f.model)),
+          request: csvRequest(f.operation, field, f.file, { keys: f.keys, delimiter: f.delimiter }, fileApply(field, f.apply, names[i]), models(f.model)),
         };
       });
       result = await instance.processCsvImport({ files, refValue: globalId }, context);

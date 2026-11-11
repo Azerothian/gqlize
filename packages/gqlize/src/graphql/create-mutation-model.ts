@@ -136,8 +136,11 @@ export default function createMutationModel(instance: GQLManager, defName: strin
   }
   // Transforms reshape data on its way to a write, so they are only meaningful
   // alongside one. They run inside the mutation's own transaction, after
-  // `definition.before` and immediately before the adapter persists.
-  if (create || update) {
+  // `definition.before` and immediately before the adapter persists. Offered
+  // only when a `create` or `update` argument actually exists to run them on.
+  // A model whose only writes are its transforms still has `update` (with no
+  // `input`, see `createMutationInput`).
+  if (inp.create || inp.update) {
     const apply = createInstanceMutationsInput(instance, defName, schemaCache, options);
     if (apply) {
       inp.apply = {

@@ -18,7 +18,7 @@ import { csvGraphQLError, csvRequest, type CsvArgs } from "./csv";
  */
 type MutationModelArgs = {
   create?: MutationInputTree[];
-  update?: { input: MutationInputTree; where: MutationFilter; limit?: number }[];
+  update?: { input?: MutationInputTree; where: MutationFilter; limit?: number }[];
   delete?: MutationFilter[];
   restore?: MutationFilter[];
   select?: { input?: MutationInputTree; where?: MutationFilter; limit?: number }[];

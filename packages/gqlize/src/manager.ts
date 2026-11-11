@@ -375,7 +375,7 @@ export default class GqlizeBinding {
   processCreate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processCreate(defName, source, args, context, this.buildSelection(defName, info));
   }
-  processUpdate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
+  processUpdate = (defName: string, source: AdapterRow, args: { input?: MutationInputTree; where: MutationFilter; limit?: number; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processUpdate(defName, source, args, context, this.buildSelection(defName, info));
   }
   processSelect = (defName: string, source: AdapterRow, args: { input?: MutationInputTree; where?: MutationFilter; limit?: number }, context: RequestContext, info: GraphQLResolveInfo) => {
