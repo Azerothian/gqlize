@@ -237,7 +237,22 @@ Rules worth knowing:
 - A row whose keys match nothing fails the upload (`CSV_ROW_NO_MATCH`). A row outside your row scope
   is reported the same way, so the error doesn't reveal whether the row exists.
 - A key that matches several rows updates all of them, as a JSON `update` would.
-- An update needs at least one column besides its keys.
+- An update needs at least one column besides its keys, unless it runs an `apply` transform (see
+  below). Then the key columns alone pick the rows the transform runs on.
+
+### Transforms (`apply`)
+
+A model's [instance-method transforms](guide.md#instance-method-transforms-apply) run on every row
+of a create or update upload, as they do on a JSON write:
+
+- **GraphQL.** The field's own `apply` argument: `Post(updateCsv: $f, csv: { keys: ["slug"] }, apply: { markChecked: true })`.
+  In a `csvImport`, each file takes an `apply` of its own, checked against that model field's
+  `apply` argument.
+- **REST.** `?apply=` on `POST /:resource/_csv/:operation`, or a `<part>.apply` text part on
+  `POST /_csv`. Either holds a JSON object: `{"appendSuffix": {"suffix": "!"}, "markChecked": true}`.
+
+Only the transforms `permission.mutationInstanceMethods` leaves in can run. Over REST, naming one it
+denies is a `403`, and naming anything that isn't an exposed transform is a `400`.
 
 ## Deleting rows
 

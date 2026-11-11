@@ -676,6 +676,24 @@ still delete comments by reaching them through `Post`.
   | A column the related model's create or update schema leaves out (checked strictly) | `400` |
   | A filter on a hidden field, or with an operator outside the allow-list below | `400` |
 
+### ormize checks `mutationInstanceMethods` before running a transform
+
+Before, only gqlize's `apply` type and nestize's instance-method route kept a denied transform from
+running. The engine ran whatever `apply` it was handed, so a host passing a caller's `apply` to
+`orm.processCreate` / `processUpdate` / `processCsv` directly skipped the gate.
+
+Now the engine checks `permission.mutationInstanceMethods` on the ormize instance's own permission
+bag (`new Ormize({ permission })` or `setPermission`) before each transform, and throws if it is
+denied. Nothing changes if that bag is unset, or if it is the same bag you give gqlize and nestize.
+If you set an ormize bag that denies a transform your own server code still runs, allow it there.
+
+Related, in gqlize:
+
+- `apply` is no longer offered on a model field that has neither `create` nor `update`, where it
+  could not run.
+- A model that may be updated, but has nothing writable by hand, keeps `update` when one of its
+  transforms is allowed. Its `{Def}UpdateInput` then holds only `where` and `limit`.
+
 ### REST and Temporal filters take filter operators only
 
 nestize's `?filter=` and every other REST filter, and temporalize's `where`, are now checked
@@ -885,6 +903,7 @@ Not required for migration, but this is what the split bought:
 - [ ] Callers that relied on unpaginated lists updated to page explicitly.
 - [ ] Nested relationship verbs checked against the related model's own permissions (`delete` /
       `restore`, and `add` / `set` / `remove` on a `hasMany` / `hasOne` needing its update).
+- [ ] A permission bag on the ormize instance allows every transform your own code runs through `apply`.
 - [ ] REST / Temporal filters use filter operators only (no `col`, nested JSON paths, or regex unless
       the adapter enables it).
 - [ ] `enableRegexpOperators: true` set if you use `$regexp` and friends.

@@ -651,7 +651,13 @@ artifact stale and `gqlize check` reports it.
 inputs. The top-level model mutation exposes `create` / `update` / `delete` / **`select`**, plus
 **`apply`** (`create-mutation-model.ts`) when the model exposes instance-method transforms — an
 input object with one field per `expose.instanceMethods.mutations` entry, typed by that entry's
-`args` (or `Boolean` when it declares none), gated by `permission.mutationInstanceMethods`. For each
+`args` (or `Boolean` when it declares none), gated by `permission.mutationInstanceMethods`. `apply`
+is offered only alongside a `create` or `update` argument. A model that may be updated but has no
+update input (nothing writable by hand) while a transform is allowed still gets `update`, whose
+`{Def}UpdateInput` then holds only `where` and `limit`, so its transforms can run on existing rows;
+it gets no `select`. The engine rechecks `mutationInstanceMethods` (from the ormize instance's own
+permission bag) before running each transform, for hosts that call `processCreate` /
+`processUpdate` / `processCsv` directly. For each
 association it also emits nested sub-fields, enabling deep writes, applied by
 `processRelationshipMutation` (`packages/ormize/src/relationship-mutations.ts`) via the Sequelize association
 accessors (recursion depends on the graphql patch, see §12). The sub-fields per association type:

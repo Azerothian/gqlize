@@ -92,6 +92,8 @@ input GQLTCsvOptions {
   keys: [String!]
   "The field separator. Default: a comma"
   delimiter: String
+  "Instance-method transforms to run on each row, as the model field's own apply argument takes them"
+  apply: GQLTJson
 }
 ```
 
@@ -101,7 +103,7 @@ having been through the model's `after` hook with the matching event (`MUTATION_
 `MUTATION_UPDATE` / `MUTATION_DELETE`).
 
 The model field's `apply` argument (instance-method transforms) applies to CSV rows as it does to
-JSON ones.
+JSON ones. An `updateCsv` that applies a transform may hold only its key columns.
 
 ### `csvImport`
 
@@ -152,6 +154,7 @@ type GQLTCsvImportFileResult {
 | Rule | |
 | --- | --- |
 | Which files are accepted | A file is accepted only if `Mutation.models.<model>` has the `<operation>Csv` argument. Otherwise it is `CSV_UNSUPPORTED`. Every gate on that argument therefore holds, on live schemas and materialized artifacts alike. |
+| `apply` | Validated and coerced against `Mutation.models.<model>`'s own `apply` argument, so only the transforms it offers, with their declared argument types, are accepted. Refused (`CSV_UNSUPPORTED`) when the field has no `apply`. |
 | Default names | `<model>.<operation>`, then `<model>.<operation>#2`, `#3` for repeats. Explicit names must be unique. |
 | Ids | `ids` and `refs` use the schema's id codec (`GqlizeOptions.id`), like every other id. |
 | Hooks | Each row goes through its model's `after` hook with the event for its file's operation. |
@@ -194,10 +197,11 @@ something.
 | `:operation` | `create`, `update` or `delete`. Anything else is `404`. |
 | Query `keys` | Comma-separated match columns, e.g. `?keys=slug,locale`. Default: the primary key. |
 | Query `delimiter` | One character, e.g. `?delimiter=;` or `?delimiter=%09`. |
+| Query `apply` | create and update only. A JSON object of instance-method transforms to run on each row, each `true` or an object of arguments. An exposed transform `mutationInstanceMethods` denies is `403`; any other name, a malformed value, or `apply` on a delete is `400` (`CSV_UNSUPPORTED`). |
 | Body | The CSV. Taken from, in order: a multer `req.file` (`buffer` or `stream`); a body a parser already read as text or bytes; the request stream (`text/csv` is left unread by Nest's default parsers). |
 | `200` | `{ rows: Model[] }`: every row written, in file order. |
 | `400` | `{ statusCode, code, message, row?, column? }`: the file, a row or a column was refused. Nothing was written. |
-| `403` | The operation (`mutationCreate` …) or `mutationCsv` is denied for the model. |
+| `403` | The operation (`mutationCreate` …) or `mutationCsv` is denied for the model, or `apply` names a transform `mutationInstanceMethods` denies. |
 | `404` | CSV off for the model, or an unknown operation. |
 | `413` | `CSV_TOO_LARGE` or `CSV_TOO_MANY_ROWS`. |
 
@@ -213,6 +217,7 @@ A `multipart/form-data` body of several CSV files, applied as one unit.
 | File part `<resource>.create`, `<resource>.update`, or `<resource>` (= create) | One CSV file. The part name is the file's `name` in errors and results. |
 | Text part `<part>.keys` | Match columns for that file, comma-separated. |
 | Text part `<part>.delimiter` | Delimiter for that file. |
+| Text part `<part>.apply` | Transforms for that file, as the `apply` query parameter above. |
 
 | Status | Body |
 | --- | --- |

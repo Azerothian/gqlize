@@ -1409,7 +1409,18 @@ transform wins over a value that hook set.
 > cannot undo.
 
 Transforms are gated by `permission.mutationInstanceMethods`; a denied transform contributes no
-field to `apply`. See [§8 Permissions](#8-permissions).
+field to `apply`. See [§8 Permissions](#8-permissions). ormize checks the same key on its own
+permission bag before running a transform, so a host calling `orm.processUpdate(…, {apply})`
+directly is held to it too.
+
+A model whose permitted writes are all transforms (nothing writable by hand) keeps `update`, with
+`where` and `limit` but no `input`:
+
+```graphql
+mutation { models { Post(update: [{ where: { id: { eq: "UG9zdDox" } } }], apply: { markChecked: true }) { id } } }
+```
+
+CSV uploads and imports take `apply` too; see [CSV uploads](csv.md#transforms-apply).
 
 ---
 
