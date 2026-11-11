@@ -9,6 +9,7 @@ import createGQLInputObject from "./create-gql-input-object";
 import { deprecationFor, isInputFieldWritable, isMutationAllowed } from "@azerothian/utilize";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
+import {throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
 import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
 import { recordExternalType } from "./snapshot/ledger";
@@ -62,6 +63,57 @@ function hasInputFields(defName: string, definition: Definition, defFields: Defi
     return isRelationshipInputAllowed(options, defName, relName, forceOptional) &&
       mutableDefNames.has(associations[relName].target);
   });
+}
+
+/** The join model a `belongsToMany` writes through, and the two keys on it that the association owns. */
+function resolveJoinModel(instance: GQLManager, defName: string, relName: string, association: Association) {
+  const rel = (instance.getDefinition(defName)?.relationships || [])
+    .find((r) => (r.name || r.options?.as) === relName);
+  const through = association.through || throughModelName(rel?.options?.through);
+  const otherKey = association.otherKey || rel?.options?.otherKey || throughOtherKey(rel?.options?.through);
+  return {through, joinKeys: [association.foreignKey, otherKey].filter(Boolean) as string[]};
+}
+
+/**
+ * The `through` field of a `belongsToMany` add/set entry, typed by the join
+ * model's columns.
+ *
+ * The payload is handed to the association accessor verbatim and written as a
+ * create on the join model, so the columns offered are the ones a create on
+ * that model would accept (the same structural and permission gates), all
+ * optional. Left out on top of that:
+ *  - the two join keys, which the accessor sets itself;
+ *  - any other global key: the payload is not run through the id codec, so a
+ *    Relay id typed in here would reach the database undecoded.
+ *
+ * Returns `JSONType` when the join model is not a registered model (an implicit
+ * join table: its columns are not known at build time), and `undefined` when it
+ * is registered but has nothing writable — an input object with no fields is
+ * not valid GraphQL, and there would be nothing to send anyway.
+ */
+function createThroughType(instance: GQLManager, defName: string, relName: string, association: Association, schemaCache: SchemaCache, options: GqlizeOptions): GraphQLInputType | undefined {
+  const {through, joinKeys} = resolveJoinModel(instance, defName, relName, association);
+  const joinDef = through ? instance.getDefinition(through) : undefined;
+  if (!through || !joinDef) {
+    return JSONType;
+  }
+  const joinFields = instance.getFields(through);
+  const globalKeys = instance.getGlobalKeys(through);
+  const fieldNames = Object.keys(joinFields).filter((fieldName) => !joinKeys.includes(fieldName)
+    && !globalKeys.includes(fieldName)
+    && isColumnInput(joinDef, through, fieldName, "create", joinFields, options));
+  if (fieldNames.length === 0) {
+    return undefined;
+  }
+  return createGQLInputObject(`${defName}${capitalize(relName)}Through`, () => fieldNames.reduce((fields, fieldName) => {
+    const field = joinFields[fieldName];
+    fields[fieldName] = {
+      type: instance.getGraphQLInputType(through, `${fieldName}Optional`, field.type) as GraphQLInputType,
+      description: (joinDef.comments?.fields || {})[fieldName] || field.description,
+      deprecationReason: deprecationFor(joinDef, "fields", fieldName, field.deprecated),
+    };
+    return fields;
+  }, {} as GraphQLInputFieldConfigMap), schemaCache, `Column values written on the ${through} join row`);
 }
 
 //(instance, defName, fields, relationships, inputTypes, false)
@@ -188,16 +240,21 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
     const isCollection = association.associationType === "hasMany" || isBelongsToMany;
     // belongsToMany add/set accept an optional `through` payload to write
     // join-table column values for the associated records.
+    const throughType = isBelongsToMany
+      ? createThroughType(instance, defName, relName, association, schemaCache, options)
+      : undefined;
     const throughInput = isBelongsToMany
       ? createGQLInputObject(`${defName}${capitalize(relName)}AddThrough`, {
         where: {
           type: filterType,
           description: "Filter used to find the existing elements to associate",
         },
-        through: {
-          type: JSONType,
-          description: "Attribute values to write on the join table for the associated elements",
-        },
+        ...(throughType ? {
+          through: {
+            type: throughType,
+            description: "Attribute values to write on the join table for the associated elements",
+          },
+        } : {}),
       }, schemaCache, "")
       : undefined;
     const list = (type: GraphQLInputType) => new GraphQLList(type);

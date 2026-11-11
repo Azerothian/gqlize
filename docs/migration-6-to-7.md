@@ -28,6 +28,7 @@ cleanly — that section is where working code breaks.
    - [Adapter list and relationship methods take a request object](#adapter-list-and-relationship-methods-take-a-request-object)
    - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
    - [Multi-row mutations return every affected row](#multi-row-mutations-return-every-affected-row)
+   - [`belongsToMany` `through` is typed by the join model](#belongstomany-through-is-typed-by-the-join-model)
    - [Adapters agree on enum type names and enum value names](#adapters-agree-on-enum-type-names-and-enum-value-names)
    - [`field: String` works on every adapter](#field-string-works-on-every-adapter)
    - [`OrderEntry` in temporalize is now `SortEntry`](#orderentry-in-temporalize-is-now-sortentry)
@@ -641,6 +642,19 @@ The rows written were always correct — only the mutation's own return value wa
 that read `data.models.Post[0]` after a single-row filter is unaffected; code that counted the
 returned array, or that tested for `[null]` to detect "nothing matched", needs updating.
 
+### `belongsToMany` `through` is typed by the join model
+
+The `through` field on a `belongsToMany` `add` / `set` entry used to be the untyped JSON scalar.
+When the join model is a registered definition, it is now an input object named
+`<Model><Rel>Through` (for example `PostTagsThrough`). Its fields are the join model's columns that
+pass that model's create-input gates, all optional. The two join keys and any other global key are
+left out. So:
+
+- A key that is not one of those columns is now a validation error instead of being silently
+  passed to the adapter.
+- If the join model has no qualifying column, `through` is removed from the entry type.
+- A join table you never registered as a model keeps the JSON scalar.
+
 ### Adapters agree on enum type names and enum value names
 
 Enum handling had drifted between the two shipped adapters. The sequelize adapter capitalised the
@@ -839,6 +853,8 @@ Not required for migration, but this is what the split bought:
       nothing in 6.x and now warn.
 - [ ] Callers that read the return value of a multi-row `update` / `delete` / `select` audited —
       the list now holds every affected row, and an empty match is `[]` rather than `[null]`.
+- [ ] `belongsToMany` `through` payloads checked against the join model's typed input — unknown
+      keys are now rejected.
 - [ ] Hand-written `permission` bags checked against the build-time unknown-key warning.
 - [ ] Third-party adapters recompiled against the typed `OrmAdapter` / `GqlizeAdapter`, and
       `setBuildPermission` implemented if their filter/order/include builders gate on a permission

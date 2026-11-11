@@ -1262,7 +1262,9 @@ Post(update: { where: { title: { eq: "New" } }, input: { author: { remove: true 
 Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { where: { name: { eq: "c" } } } ] } } }) { id }
 ```
 
-**belongsToMany `through` attributes** — write join-table columns when associating:
+**belongsToMany `through` attributes**: write join-table columns when associating. Register the
+join model (here `PostTag`) as a definition and `through` is typed by its columns (`PostTagsThrough`).
+If you leave the join table implicit, `through` is untyped JSON.
 
 ```graphql
 Post(update: {

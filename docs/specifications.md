@@ -655,7 +655,11 @@ accessors (recursion depends on the graphql patch, see §12). The sub-fields per
   `add` (associate existing by where), `set` (replace the entire set with matching existing
   records), `remove` (disassociate matching), `delete` (delete matching), `restore` (undelete
   soft-deleted matching, paranoid models). For **belongsToMany**, `add`/`set` entries are
-  `{ where, through }` where `through` (a JSON payload) writes join-table column values.
+  `{ where, through }` where `through` writes join-table column values. When the join model is a
+  registered model, `through` is a typed input (`<Model><Rel>Through`) holding the join model's
+  columns that pass its create-input gates, all optional, minus the two join keys and any other
+  global key (the payload is not run through the id codec). It is omitted when no column qualifies.
+  An implicit join table (no registered model) keeps the untyped JSON scalar.
 - **belongsTo / hasOne:** `create`, `update`, `set` (associate an existing record found by a
   where filter → `accessors.set`), `remove` (`Boolean` → disassociate via `set(null)`),
   `delete`, `restore`.
