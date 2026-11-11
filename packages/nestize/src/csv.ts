@@ -12,6 +12,7 @@ import { BadRequestException, ForbiddenException, HttpException, HttpStatus } fr
 import { isMutationInstanceMethodAllowed } from "@azerothian/utilize";
 import type { Permission } from "@azerothian/utilize";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
+import { coerceTransformParams } from "@azerothian/utilize/transform-params";
 import {
   CSV_LIST_OPERATORS, CSV_VALUE_OPERATORS, CSV_WHERE, CsvUploadError, csvCellValue, csvList, isCsvRefHeader, isCsvWhereHeader, parseCsvHeader,
 } from "@azerothian/ormize";
@@ -240,8 +241,9 @@ function isPlainObject(value: unknown): value is { [key: string]: unknown } {
  * argument takes them and as the instance-method route runs one.
  *
  * Only a create or update runs transforms. A name the model does not expose as
- * a transform is a 400; one `mutationInstanceMethods` denies is a 403, the
- * answer the instance-method route gives.
+ * a transform, or params its declared `args` don't take, is a 400; one
+ * `mutationInstanceMethods` denies is a 403, the answer the instance-method
+ * route gives.
  */
 export function csvApply(
   orm: Ormize, permission: Permission | undefined, name: string, operation: CsvOperation, raw: unknown, file?: string,
@@ -273,11 +275,13 @@ export function csvApply(
     if (!isMutationInstanceMethodAllowed(permission, name, method)) {
       throw new ForbiddenException(`Method '${method}' not allowed for ${name}`);
     }
-    const params = value[method];
-    if (params !== null && typeof params !== "boolean" && !isPlainObject(params)) {
-      throw refuse(`"${method}" takes true or an object of arguments`);
+    // Held to the transform's declared `args`, as gqlize's `apply` input type
+    // holds them.
+    const checked = coerceTransformParams(methods[method], value[method], method);
+    if (!checked.ok) {
+      throw refuse(checked.message);
     }
-    out[method] = params;
+    out[method] = checked.value;
   }
   return out;
 }

@@ -17,6 +17,7 @@ import {
 import * as guards from "@azerothian/utilize/guards";
 import { regexOperatorsEnabled } from "@azerothian/utilize/filter-operators";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
+import { coerceTransformParams } from "@azerothian/utilize/transform-params";
 import type { AdapterWhere, Association, Fail, GuardFailure } from "@azerothian/utilize";
 import { CsvUploadError } from "@azerothian/ormize";
 import type { CsvImportFile, CsvImportOperation, MutationInputTree, Ormize } from "@azerothian/ormize";
@@ -510,7 +511,8 @@ export class NestizeService {
     //
     // A method declared under neither target — the common case, since `expose`
     // is optional — keeps the read-only treatment it has always had here.
-    const isTransform = !!mutationInstanceMethods(this.orm.getDefinition(name))[method];
+    const transforms = mutationInstanceMethods(this.orm.getDefinition(name));
+    const isTransform = Object.hasOwn(transforms, method);
     const gate = isTransform ? this.permission?.mutationInstanceMethods : this.permission?.queryInstanceMethods;
     if (!isAllowed(gate, name, method, this.permission?.options)) {
       throw new ForbiddenException(`Method '${method}' not allowed for ${name}`);
@@ -535,7 +537,17 @@ export class NestizeService {
       // with no params". gqlize's "named but not asked for" reading of a falsy
       // value only exists because its `apply` input lists every exposed
       // transform at once; a REST call names exactly one.
-      const params = args === undefined || args === null || args === false ? true : args;
+      //
+      // The params are then held to the transform's declared `args`, as
+      // gqlize's `apply` input type holds them: a transform never sees a key
+      // or a value its declaration did not offer.
+      const checked = coerceTransformParams(
+        transforms[method], args === undefined || args === null || args === false ? true : args, method,
+      );
+      if (!checked.ok) {
+        throw new BadRequestException(checked.message);
+      }
+      const params = checked.value;
       const results = await this.orm.processUpdate(
         name,
         null,

@@ -1,4 +1,5 @@
 import { DataTypes } from "sequelize";
+import { GraphQLString } from "graphql";
 import { Ormize } from "@azerothian/ormize";
 import type { Definition, GqlizeOptions } from "@azerothian/utilize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
@@ -53,7 +54,7 @@ const TaskDef: Definition = {
   expose: {
     instanceMethods: {
       query: { describe: { type: DataTypes.STRING } },
-      mutations: { appendSuffix: {}, rename: {} },
+      mutations: { appendSuffix: { args: { suffix: { type: GraphQLString } } }, rename: { args: { to: { type: GraphQLString } } } },
     },
   },
   relationships: [

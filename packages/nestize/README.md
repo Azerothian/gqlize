@@ -76,7 +76,9 @@ method has a route. Which `expose` target named it decides how the route behaves
 
 A transform's writes to `this` are committed, and the request body is its params
 — an absent or empty body means "run it with no params", because calling the
-route is itself the ask. (gqlize's `apply` input reads a falsy value as "named
+route is itself the ask. The body is checked against the `args` the transform
+declares, as gqlize's `apply` input type checks it: an undeclared key, a missing
+required arg or a value of the wrong type is a `400`. (gqlize's `apply` input reads a falsy value as "named
 but not asked for" only because it lists every exposed transform at once.)
 
 `expose.instanceMethods` defaults to **off** here; temporalize defaults it on.

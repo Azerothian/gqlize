@@ -58,7 +58,10 @@ describe("nestize - CSV apply", () => {
 
   it("refuses unknown, malformed or misplaced transforms, writing nothing", async () => {
     const { orm, http } = await start();
-    for (const apply of ["{\"describe\":true}", "{\"nope\":true}", "{\"rename\":3}", "[\"rename\"]", "rename", "{\"__proto__\":true}"]) {
+    for (const apply of [
+      "{\"describe\":true}", "{\"nope\":true}", "{\"rename\":3}", "[\"rename\"]", "rename", "{\"__proto__\":true}",
+      "{\"rename\":{\"to\":1}}", "{\"appendSuffix\":{\"suffix\":\"x\",\"extra\":1}}",
+    ]) {
       const res = await postCsv(http, "/task/_csv/create", "name\na\n", apply);
       expect([apply, res.status, res.body.code]).toEqual([apply, 400, "CSV_UNSUPPORTED"]);
     }
