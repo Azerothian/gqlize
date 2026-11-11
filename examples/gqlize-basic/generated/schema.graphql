@@ -793,6 +793,11 @@ input CsvImportFile {
 
   """The field separator. Default: a comma"""
   delimiter: String
+
+  """
+  Instance-method transforms to run on each row, as the model field's own `apply` argument takes them. Checked against that argument's type, so only the transforms it offers are accepted
+  """
+  apply: GQLTJson
 }
 
 """A model that takes CSV rows in a `csvImport`"""
