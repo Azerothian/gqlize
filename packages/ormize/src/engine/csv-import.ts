@@ -117,7 +117,7 @@ async function load(host: CsvHost, file: CsvImportFile, index: number): Promise<
   }
   const { header, records } = await readCsv(file.request.upload, limits, { delimiter: file.request.delimiter });
   const body = header.filter((column) => column !== CSV_REF);
-  const columns = columnsFor(host, file.defName, file.operation, body, file.request.keys);
+  const columns = columnsFor(host, file.defName, file.operation, body, file.request.keys, file.request.apply);
   const refColumns = body.filter(isCsvRefHeader);
   for (const column of refColumns) {
     if (columns.keys.includes(column)) {

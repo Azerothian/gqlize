@@ -85,7 +85,9 @@ export function atRow(e: unknown, row: number, fallbackCode: "CSV_ROW_INVALID" |
 }
 
 /** Split the header into key and input columns, refusing what the operation cannot take. */
-export function columnsFor(host: CsvHost, defName: string, operation: CsvOperation, header: string[], requested: string[] | undefined) {
+export function columnsFor(
+  host: CsvHost, defName: string, operation: CsvOperation, header: string[], requested: string[] | undefined, apply?: MutationApply,
+) {
   // `where.<field>[op]` columns (see `csv/header.ts`) are match columns
   // wherever they appear; they stand in for the primary key default rather
   // than adding to it, since a file that spells out its filter means that one.
@@ -112,10 +114,17 @@ export function columnsFor(host: CsvHost, defName: string, operation: CsvOperati
   if (operation === "delete" && input.length > 0) {
     throw new CsvUploadError("CSV_HEADER", `A delete takes only its key columns (${keys.join(", ")}); "${input[0]}" is not one`, { column: input[0] });
   }
-  if (operation === "update" && input.length === 0) {
-    throw new CsvUploadError("CSV_HEADER", "An update needs at least one column besides the key columns");
+  // An update with nothing to write is a mistake, unless it runs a transform:
+  // then the key columns alone pick the rows the transform runs on.
+  if (operation === "update" && input.length === 0 && !runsTransform(apply)) {
+    throw new CsvUploadError("CSV_HEADER", "An update needs at least one column besides the key columns, or an `apply` transform");
   }
   return { keys, input };
+}
+
+/** Whether `apply` asks for any transform: a falsy value names one without asking for it. */
+function runsTransform(apply: MutationApply | undefined): boolean {
+  return !!apply && Object.values(apply).some((v) => v !== false && v !== null && v !== undefined);
 }
 
 export function pick(cells: CsvCells, columns: string[]): CsvCells {
@@ -177,7 +186,7 @@ export async function processCsv(
     throw new CsvUploadError("CSV_UNSUPPORTED", `${defName} does not accept CSV uploads`);
   }
   const { header, records } = await readCsv(request.upload, limits, { delimiter: request.delimiter });
-  const columns = columnsFor(host, defName, operation, header, request.keys);
+  const columns = columnsFor(host, defName, operation, header, request.keys, request.apply);
   request.checkColumns?.(columns);
 
   const planned: { row: number; args: CsvRowArgs }[] = [];

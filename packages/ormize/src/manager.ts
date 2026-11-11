@@ -98,11 +98,14 @@ export default class Ormize<
   /** Whether `initialise()` has run, so a later `setPermission` knows to re-audit. */
   private _initialised = false;
   /**
-   * The permission bag, for the one key the engine reads at *resolution* time.
+   * The permission bag, for the keys the engine reads per request.
    *
-   * Every other key is consumed by gqlize while building the schema and never
-   * reaches here. `scope` is the exception, which is why the engine needs the
-   * bag at all — see `RESOLUTION_TIME_PERMISSION_KEYS` in `@azerothian/utilize`.
+   * Most keys are consumed by gqlize while building the schema and never
+   * reach here. `scope` is the main exception, which is why the engine needs
+   * the bag at all — see `RESOLUTION_TIME_PERMISSION_KEYS` in
+   * `@azerothian/utilize`. The engine also rechecks `mutationInstanceMethods`
+   * (synchronous, like every build-time key) before running an `apply`
+   * transform, for hosts that call the write methods directly.
    */
   private permission: Permission | undefined;
   private onScopeMiss: ScopeMissBehaviour;
@@ -698,7 +701,7 @@ export default class Ormize<
     return _processCreate(this.engine, defName, source, args, context, selection);
   }
 
-  processUpdate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+  processUpdate = async(defName: string, source: AdapterRow, args: { input?: MutationInputTree; where: MutationFilter; limit?: number; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return _processUpdate(this.engine, defName, source, args, context, selection);
   }
 
