@@ -1409,7 +1409,9 @@ transform wins over a value that hook set.
 > cannot undo.
 
 Transforms are gated by `permission.mutationInstanceMethods`; a denied transform contributes no
-field to `apply`. See [§8 Permissions](#8-permissions). ormize checks the same key on its own
+field to `apply`. nestize's `_actions` route and CSV `apply`, and temporalize's instance-method
+activity, check a transform's params against its declared `args` the same way the `apply` type
+does, so a param a transform reads must be declared there, with a GraphQL input type. See [§8 Permissions](#8-permissions). ormize checks the same key on its own
 permission bag before running a transform, so a host calling `orm.processUpdate(…, {apply})`
 directly is held to it too.
 

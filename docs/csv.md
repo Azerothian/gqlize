@@ -252,7 +252,8 @@ of a create or update upload, as they do on a JSON write:
   `POST /_csv`. Either holds a JSON object: `{"appendSuffix": {"suffix": "!"}, "markChecked": true}`.
 
 Only the transforms `permission.mutationInstanceMethods` leaves in can run. Over REST, naming one it
-denies is a `403`, and naming anything that isn't an exposed transform is a `400`.
+denies is a `403`, and naming anything that isn't an exposed transform, or giving one params its
+declared `args` don't take, is a `400`.
 
 ## Deleting rows
 

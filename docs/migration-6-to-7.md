@@ -694,6 +694,29 @@ Related, in gqlize:
 - A model that may be updated, but has nothing writable by hand, keeps `update` when one of its
   transforms is allowed. Its `{Def}UpdateInput` then holds only `where` and `limit`.
 
+### nestize and temporalize check a transform's params against its `args`
+
+gqlize types each transform's params from the `args` it declares under
+`expose.instanceMethods.mutations`, so a GraphQL caller can only send those args, with those types.
+nestize's `POST /:resource/:id/_actions/:method`, its CSV `apply` (`?apply=`, `<part>.apply`) and
+temporalize's `<Model>.instanceMethods.<name>` activity passed whatever they were given straight to
+the method: undeclared keys, values of any type, operator objects.
+
+They now check the params the way gqlize does:
+
+- A transform with `args` takes an object of them. An unknown key, a missing required arg or a value
+  its declared type can't coerce is refused. Defaults fill in, and custom scalars and enums coerce
+  through their own `parseValue`, so a transform gets the same values on every surface.
+- A transform with no `args` takes no params. A bare call (no body, `{}` or `true`) still runs it.
+- A refusal is `400` in nestize, and a non-retryable `TemporalizeValidation` failure in temporalize.
+  Nothing is written.
+
+> **Watch for:** a transform that reads params it never declared. Declare them under its `args`
+> with GraphQL input types, which gqlize needs anyway:
+> `appendSuffix: { args: { suffix: { type: GraphQLString } } }`. An arg declared with a type that
+> isn't a GraphQL input type (a Sequelize `DataTypes.STRING`, say) is refused too, since gqlize
+> couldn't build a schema from it either.
+
 ### REST and Temporal filters take filter operators only
 
 nestize's `?filter=` and every other REST filter, and temporalize's `where`, are now checked
@@ -904,6 +927,8 @@ Not required for migration, but this is what the split bought:
 - [ ] Nested relationship verbs checked against the related model's own permissions (`delete` /
       `restore`, and `add` / `set` / `remove` on a `hasMany` / `hasOne` needing its update).
 - [ ] A permission bag on the ormize instance allows every transform your own code runs through `apply`.
+- [ ] Every param a transform reads over REST or Temporal is declared under its `args`, with a
+      GraphQL input type.
 - [ ] REST / Temporal filters use filter operators only (no `col`, nested JSON paths, or regex unless
       the adapter enables it).
 - [ ] `enableRegexpOperators: true` set if you use `$regexp` and friends.
