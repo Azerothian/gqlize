@@ -8,11 +8,14 @@
 // converts against GraphQL input types where this converts against column
 // descriptors, because the zod schemas want a `number` and a `Date`, not text.
 
-import { BadRequestException, HttpException, HttpStatus } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, HttpException, HttpStatus } from "@nestjs/common";
+import { isMutationInstanceMethodAllowed } from "@azerothian/utilize";
+import type { Permission } from "@azerothian/utilize";
+import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import {
   CSV_LIST_OPERATORS, CSV_VALUE_OPERATORS, CSV_WHERE, CsvUploadError, csvCellValue, csvList, isCsvRefHeader, isCsvWhereHeader, parseCsvHeader,
 } from "@azerothian/ormize";
-import type { CsvCells, CsvOperation, CsvRequest, CsvRowCells, Ormize } from "@azerothian/ormize";
+import type { CsvCells, CsvOperation, CsvRequest, CsvRowCells, MutationApply, Ormize } from "@azerothian/ormize";
 import type { z } from "zod";
 import type { RestQuery, RestRequest } from "./types";
 
@@ -125,7 +128,7 @@ function inColumn<T>(column: string, fn: () => T): T {
  */
 export function restCsvRequest(
   orm: Ormize, name: string, operation: CsvOperation, upload: unknown, query: RestQuery, schemas: CsvSchemas,
-  options: { refs?: boolean } = {},
+  options: { refs?: boolean; apply?: MutationApply } = {},
 ): CsvRequest {
   const fields = orm.getFields(name) || {};
   const descriptor = (column: string) => {
@@ -162,6 +165,7 @@ export function restCsvRequest(
     },
     keys: queryList(query?.keys),
     delimiter,
+    apply: options.apply,
     checkColumns: ({ input, keys }) => {
       const shape = schemas.input?.shape || {};
       for (const column of input) {
@@ -219,6 +223,63 @@ export function restCsvRequest(
       return { input: { ...parsed.data, ...refs }, where: operation === "update" ? where : undefined };
     },
   };
+}
+
+function isPlainObject(value: unknown): value is { [key: string]: unknown } {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value) as object | null;
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * The `apply` a CSV upload asks for (`?apply=` on `POST /:resource/_csv/:operation`,
+ * a `<field>.apply` part on `POST /_csv`): a JSON object naming instance-method
+ * transforms, each `true` or an object of arguments, as gqlize's `apply`
+ * argument takes them and as the instance-method route runs one.
+ *
+ * Only a create or update runs transforms. A name the model does not expose as
+ * a transform is a 400; one `mutationInstanceMethods` denies is a 403, the
+ * answer the instance-method route gives.
+ */
+export function csvApply(
+  orm: Ormize, permission: Permission | undefined, name: string, operation: CsvOperation, raw: unknown, file?: string,
+): MutationApply | undefined {
+  if (raw === undefined || raw === null || raw === "") {
+    return undefined;
+  }
+  const refuse = (message: string) => new CsvUploadError("CSV_UNSUPPORTED", message, { file });
+  if (operation === "delete") {
+    throw refuse("A delete runs no transforms; `apply` is only taken by a create or an update");
+  }
+  let value: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw refuse("`apply` must be a JSON object");
+    }
+  }
+  if (!isPlainObject(value)) {
+    throw refuse("`apply` must be a JSON object of transform names");
+  }
+  const methods = mutationInstanceMethods(orm.getDefinition(name));
+  const out: MutationApply = {};
+  for (const method of Object.keys(value)) {
+    if (!Object.hasOwn(methods, method)) {
+      throw refuse(`"${method}" is not a transform ${name} exposes`);
+    }
+    if (!isMutationInstanceMethodAllowed(permission, name, method)) {
+      throw new ForbiddenException(`Method '${method}' not allowed for ${name}`);
+    }
+    const params = value[method];
+    if (params !== null && typeof params !== "boolean" && !isPlainObject(params)) {
+      throw refuse(`"${method}" takes true or an object of arguments`);
+    }
+    out[method] = params;
+  }
+  return out;
 }
 
 /** A refused upload as the HTTP error a client gets: 413 for size, row or file count, 400 for everything else. */

@@ -170,6 +170,11 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
             { name: "operation", in: "path", required: true, schema: { type: "string", enum: csvOperations } },
             { name: "keys", in: "query", required: false, schema: { type: "string" }, description: "Comma-separated columns to match rows on" },
             { name: "delimiter", in: "query", required: false, schema: { type: "string" }, description: "Field separator. Default `,`" },
+            {
+              name: "apply", in: "query", required: false, schema: { type: "string" },
+              description: "create and update only: a JSON object of instance-method transforms to run on each row, "
+                + "each `true` or an object of arguments. An update that applies a transform may carry only its key columns",
+            },
           ],
           requestBody: {
             required: true,
@@ -308,7 +313,8 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
         summary: "Create or update rows of several resources from CSV files, as one unit",
         description:
           "multipart/form-data, one file part per CSV, named `<resource>.create` or `<resource>.update` (a bare " +
-          "`<resource>` creates). Text parts `<part>.keys` and `<part>.delimiter` set a file's options. A file's `@ref` " +
+          "`<resource>` creates). Text parts `<part>.keys`, `<part>.delimiter` and `<part>.apply` (a JSON object of " +
+          "instance-method transforms) set a file's options. A file's `@ref` " +
           "column labels its rows; a `<foreignKey>.@ref` column in any file writes a labelled row's key. Files run in the " +
           "order their references need, all-or-nothing. Parts: " + importParts.join(", "),
         requestBody: {

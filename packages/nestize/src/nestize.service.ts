@@ -20,7 +20,7 @@ import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import type { AdapterWhere, Association, Fail, GuardFailure } from "@azerothian/utilize";
 import { CsvUploadError } from "@azerothian/ormize";
 import type { CsvImportFile, CsvImportOperation, MutationInputTree, Ormize } from "@azerothian/ormize";
-import { csvHttpError, csvUploadOf, isCsvOperation, restCsvRequest } from "./csv";
+import { csvApply, csvHttpError, csvUploadOf, isCsvOperation, restCsvRequest } from "./csv";
 import { readCsvParts } from "./csv-multipart";
 import { checkInputTree, type RelationshipInputHost } from "./relationship-input";
 import { NestizeSchemaRegistry } from "./schema-registry";
@@ -293,11 +293,11 @@ export class NestizeService {
     if (!isMutationCsvAllowed(this.permission, name)) {
       throw new ForbiddenException(`CSV uploads not allowed for ${name}`);
     }
-    const request = restCsvRequest(this.orm, name, operation, csvUploadOf(req), query, {
-      input: operation === "create" ? this.registry.create(name) : operation === "update" ? this.registry.update(name) : undefined,
-      assertFilterAllowed: (where) => this.assertFilterAllowed(name, where),
-    });
     try {
+      const request = restCsvRequest(this.orm, name, operation, csvUploadOf(req), query, {
+        input: operation === "create" ? this.registry.create(name) : operation === "update" ? this.registry.update(name) : undefined,
+        assertFilterAllowed: (where) => this.assertFilterAllowed(name, where),
+      }, { apply: csvApply(this.orm, this.permission, name, operation, query?.apply) });
       const rows = await this.orm.processCsv(name, operation, request, { req });
       return { rows: this.present(name, rows) };
     } catch (e) {
@@ -312,7 +312,8 @@ export class NestizeService {
    *
    * A file part's field name says what it is: `<resource>.create` or
    * `<resource>.update` (a bare `<resource>` creates). Text parts named
-   * `<field>.keys` and `<field>.delimiter` set that file's options. Each file
+   * `<field>.keys`, `<field>.delimiter` and `<field>.apply` set that file's
+   * options. Each file
    * passes the gates its own `POST /:resource/_csv/:operation` would, checked
    * as its part arrives, so a refused file is not even buffered.
    */
@@ -359,6 +360,7 @@ export class NestizeService {
       const files: CsvImportFile[] = parts.files.map((part) => {
         const { name, operation } = target(part.field);
         const query = { keys: parts.fields[`${part.field}.keys`], delimiter: parts.fields[`${part.field}.delimiter`] };
+        const apply = csvApply(this.orm, this.permission, name, operation, parts.fields[`${part.field}.apply`], part.field);
         return {
           name: part.field,
           defName: name,
@@ -366,7 +368,7 @@ export class NestizeService {
           request: restCsvRequest(this.orm, name, operation, part.data, query, {
             input: operation === "create" ? this.registry.create(name) : this.registry.update(name),
             assertFilterAllowed: (where) => this.assertFilterAllowed(name, where),
-          }, { refs: true }),
+          }, { refs: true, apply }),
         };
       });
       const key = (defName: string, row: unknown) => this.orm.getValueFromInstance(defName, row, this.pkName(defName));
