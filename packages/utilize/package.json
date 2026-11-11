@@ -42,6 +42,7 @@
     "pluralize": "^8.0.0"
   },
   "devDependencies": {
+    "graphql": "17.0.2",
     "@types/debug": "catalog:",
     "@jest/globals": "catalog:",
     "@swc/cli": "catalog:",
