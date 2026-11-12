@@ -72,6 +72,14 @@ export type Permission = {
    * consulted for a model the `Ormize` instance has CSV enabled on.
    */
   mutationCsv?: (defName: string, options?: PermissionContext) => boolean;
+  /**
+   * Gates CSV export of a model's rows: the `csv` field on its root list
+   * connection (`<Model>List.csv`) and nestize's `GET /:resource/_csv`. An
+   * *extra* gate on top of `query` and the field predicates, which still decide
+   * what rows and columns the file holds. Only consulted for a model the
+   * `Ormize` instance has CSV enabled on.
+   */
+  queryCsv?: (defName: string, options?: PermissionContext) => boolean;
   mutationCreateInput?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
   mutationUpdateInput?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
   field?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
@@ -285,6 +293,14 @@ export function isRelationshipVerbAllowed(
  * Whether a caller may send a mutation as a CSV upload (`permission.mutationCsv`).
  * Checked alongside {@link isMutationAllowed} for the operation, never instead.
  */
+/**
+ * Whether a caller may export a model's rows as CSV (`permission.queryCsv`).
+ * Checked alongside the model's `query` gate, never instead.
+ */
+export function isQueryCsvAllowed(permission: Permission | undefined, model: string): boolean {
+  return isAllowed(permission?.queryCsv, model, permission?.options);
+}
+
 export function isMutationCsvAllowed(permission: Permission | undefined, model: string): boolean {
   return isAllowed(permission?.mutationCsv, model, permission?.options);
 }
@@ -418,6 +434,7 @@ export const BUILD_TIME_PERMISSION_KEYS = [
   "mutationDelete",
   "mutationRestore",
   "mutationCsv",
+  "queryCsv",
   "mutationCreateInput",
   "mutationUpdateInput",
   "field",

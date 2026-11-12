@@ -66,6 +66,7 @@ describe("utilize - createRoleBasedPermissions", () => {
       "mutationUpdateInput",
       "query",
       "queryClassMethods",
+      "queryCsv",
       "queryDeleted",
       "queryExtension",
       "queryInstanceMethods",
