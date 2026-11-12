@@ -240,3 +240,66 @@ describe("belongsToMany through — writes", () => {
     expect(rows.map((r) => r.sortOrder)).toEqual([9]);
   });
 });
+
+describe("belongsToMany through — the join model's permissions", () => {
+  const verbs = (schema: GraphQLSchema) => {
+    const input = schema.getType("PostTagsBelongsToManyInput") as GraphQLInputObjectType | undefined;
+    return input ? Object.keys(input.getFields()).sort() : [];
+  };
+  const denyOn = (model: string) => (m: string) => m !== model;
+  const update = (db: Database, tags: unknown, permission: object) => db.processUpdate("Post", null, {
+    where: {title: {eq: "mine"}},
+    input: {tags},
+  }, {}, {permission});
+
+  it("offers add/set only with the join model's create, set/remove only with its delete", async () => {
+    const db = await build(true);
+    expect(verbs(await createSchema(db, {}))).toEqual(expect.arrayContaining(["add", "remove", "set"]));
+    const noCreate = verbs(await createSchema(db, {permission: {mutationCreate: denyOn("PostTag")}}));
+    expect(noCreate).not.toContain("add");
+    expect(noCreate).not.toContain("set");
+    expect(noCreate).toContain("remove");
+    const noDelete = verbs(await createSchema(db, {permission: {mutationDelete: denyOn("PostTag")}}));
+    expect(noDelete).toContain("add");
+    expect(noDelete).not.toContain("set");
+    expect(noDelete).not.toContain("remove");
+  });
+
+  it("leaves a plain many-to-many's link verbs alone", async () => {
+    const db = await build(true);
+    // PostTag hidden: plain mode, so its permissions are not asked.
+    const schema = await createSchema(db, {permission: {model: denyOn("PostTag"), mutationCreate: denyOn("PostTag"), mutationDelete: denyOn("PostTag")}});
+    expect(verbs(schema)).toEqual(expect.arrayContaining(["add", "remove", "set"]));
+  });
+
+  it("the engine refuses a link verb the join model's permissions deny, before writing", async () => {
+    const db = await build(true);
+    const {mine, tag} = await seed(db);
+    await db.models.Tag.create({name: "t2"});
+    await expect(update(db, {add: [{where: {name: {eq: "t2"}}}]}, {mutationCreate: denyOn("PostTag")}))
+      .rejects.toBeInstanceOf(ThroughInputError);
+    await expect(update(db, {remove: [{name: {eq: "t1"}}]}, {mutationDelete: denyOn("PostTag")}))
+      .rejects.toBeInstanceOf(ThroughInputError);
+    await expect(update(db, {set: [{where: {name: {eq: "t2"}}}]}, {mutationDelete: denyOn("PostTag")}))
+      .rejects.toBeInstanceOf(ThroughInputError);
+    expect(await joinRows(db, "PostTag")).toEqual([
+      expect.objectContaining({postId: mine.get("id"), tagId: tag.get("id")}),
+    ]);
+  });
+
+  it("a through that rewrites an existing link needs the join model's update", async () => {
+    const db = await build(true);
+    await seed(db);
+    await db.models.Tag.create({name: "t2"});
+    const noUpdate = {mutationUpdate: denyOn("PostTag")};
+    // A new link with join data is a create only.
+    await update(db, {add: [{where: {name: {eq: "t2"}}, through: {sortOrder: 2}}]}, noUpdate);
+    // t1 is linked already: writing through over it is an update.
+    await expect(update(db, {add: [{where: {name: {eq: "t1"}}, through: {sortOrder: 9}}]}, noUpdate))
+      .rejects.toBeInstanceOf(ThroughInputError);
+    await expect(update(db, {set: [{where: {name: {eq: "t1"}}, through: {sortOrder: 9}}]}, noUpdate))
+      .rejects.toBeInstanceOf(ThroughInputError);
+    const rows = await joinRows(db, "PostTag");
+    expect(rows.map((r) => r.sortOrder).sort()).toEqual([2, null]);
+  });
+});

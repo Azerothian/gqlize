@@ -702,7 +702,8 @@ check on the nested body.
 | `create` | `mutationCreate` (already true: its create input) |
 | `update`, `select` | `mutationUpdate` (already true: its update input) |
 | `add`, `set`, `remove` on a `hasMany` / `hasOne` | `mutationUpdate`. **New**: they rewrite the related row's foreign key. |
-| `add`, `set`, `remove` on a `belongsTo` / `belongsToMany` | nothing more: they write the source's own key or a join row |
+| `add`, `set`, `remove` on a `belongsTo` / plain `belongsToMany` | nothing more: they write the source's own key or a join row nobody can see |
+| `add`, `set`, `remove` on a `belongsToMany` in through mode | the **join model's** `mutationCreate` (`add`), `mutationDelete` (`remove`), or both (`set`); plus its `mutationUpdate` when a `through` payload rewrites a link that already exists. **New.** |
 | `delete` | `mutationDelete`. **New**. |
 | `restore` | `mutationRestore`. **New**. |
 

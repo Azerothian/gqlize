@@ -9,8 +9,8 @@
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
-import { isThroughInputField, isThroughMode, mergeScopeWhere } from "@azerothian/utilize/gate";
-import type { PortableWhere, ScopeOperation } from "@azerothian/utilize/gate";
+import { isMutationAllowed, isThroughInputField, isThroughMode, mergeScopeWhere, throughLinkOperations } from "@azerothian/utilize/gate";
+import type { MutationKind, PortableWhere, ScopeOperation } from "@azerothian/utilize/gate";
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, OrmAdapter,
   RequestContext, Selection,
@@ -166,6 +166,7 @@ const applyRemove = async(s: MutationScope, value: true | MutationFilter[]) => {
   }
   // The list forms are the collection branch of each pair — a singular
   // relationship takes one filter, and is handled above.
+  assertJoinWrite(s, "remove");
   await waterfall(value as MutationFilter[], async(arg: MutationFilter) => {
     const results = await findByFilter(s, arg);
     if (results.length > 0) {
@@ -212,6 +213,38 @@ function hasOnlyLinkKeys(arg: unknown): arg is LinkEntry {
  * through mode whenever the join model is registered.
  */
 const isThroughModeFor = (s: MutationScope) => isThroughMode(s.selection?.permission, s.association);
+
+/**
+ * Refuse a link verb whose join-row writes the join model's own permissions
+ * deny, under the same bag as {@link isThroughModeFor}. Only through mode asks:
+ * there the join rows are a registered model's, so `add` needs its create,
+ * `remove` its delete and `set` both (`throughLinkOperations`, shared with the
+ * projections' gate). `rewrites` adds the update a `through` payload needs when
+ * it lands on a link that already exists.
+ */
+function assertJoinWrite(s: MutationScope, verb: "add" | "set" | "remove", rewrites = false) {
+  if (!s.isBtm || !isThroughModeFor(s)) {
+    return;
+  }
+  const joinName = s.association.through as string;
+  const kinds: MutationKind[] = [...throughLinkOperations(verb), ...(rewrites ? ["update" as const] : [])];
+  for (const kind of kinds) {
+    if (!isMutationAllowed(s.selection?.permission, joinName, kind)) {
+      throw new ThroughInputError(s.association.source, s.association.name,
+        `${verb} would ${kind} ${joinName} rows, which this caller may not.`);
+    }
+  }
+}
+
+/** Whether any of `rows` is linked to this row already, so a `through` written with it rewrites that link. */
+async function anyLinked(s: MutationScope, rows: AdapterRow[]): Promise<boolean> {
+  if (rows.length === 0) {
+    return false;
+  }
+  const keyOf = (row: AdapterRow) => String(s.targetAdapter.getValueFromInstance(row, s.association.targetKey));
+  const linked = new Set((await getRelated(s, {})).map(keyOf));
+  return rows.some((row) => linked.has(keyOf(row)));
+}
 
 /**
  * Split one `add`/`set` entry into the filter that finds the target rows and
@@ -286,9 +319,14 @@ async function checkThrough(s: MutationScope, through: MutationInput): Promise<M
 
 /** Attach existing records that a filter selects. */
 const applyAdd = async(s: MutationScope, entries: (MutationFilter | LinkEntry)[]) => {
+  assertJoinWrite(s, "add");
   await waterfall(entries, async(arg: MutationFilter | LinkEntry) => {
     const {filter, through} = await splitLinkEntry(s, arg);
     const results = await findByFilter(s, filter);
+    if (through !== undefined) {
+      // Adding a row that is linked already writes `through` over that link.
+      assertJoinWrite(s, "add", await anyLinked(s, results));
+    }
     if (results.length > 0) {
       await s.row[s.association.accessors.addMultiple](results, withThrough(s, through));
       await assertLinkInScope(s, results);
@@ -306,6 +344,7 @@ const applySet = async(s: MutationScope, value: MutationFilter | (MutationFilter
     return;
   }
   // Collections: replace the entire set with all matching existing records.
+  assertJoinWrite(s, "set");
   const entries: {rows: AdapterRow[]; through?: MutationInput}[] = [];
   await waterfall(value as (MutationFilter | LinkEntry)[], async(arg: MutationFilter | LinkEntry) => {
     const entry = await splitLinkEntry(s, arg);
@@ -317,6 +356,8 @@ const applySet = async(s: MutationScope, value: MutationFilter | (MutationFilter
     await assertLinkInScope(s, all);
     return;
   }
+  // A link kept from before is rewritten below, which is an update of it.
+  assertJoinWrite(s, "set", await anyLinked(s, all));
   // Each entry carries its own join-row values, and the accessor's `set` takes
   // one `through` for the whole set. So the set is cleared and each entry
   // linked with its own values, which also fills a required join column on a

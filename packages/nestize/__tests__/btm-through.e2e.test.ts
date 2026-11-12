@@ -140,3 +140,24 @@ describe("nestize - belongsToMany with a hidden join model", () => {
     expect(await joinRows(ctx.orm)).toHaveLength(1);
   });
 });
+
+describe("nestize - belongsToMany through, the join model's permissions", () => {
+  let ctx: Awaited<ReturnType<typeof boot>>;
+  beforeAll(async () => {
+    ctx = await boot({ mutationCreate: (model: string) => model !== "PostTag" });
+  });
+  afterAll(async () => {
+    await ctx.app.close();
+  });
+
+  it("refuses add when the join model's create is denied", async () => {
+    const res = await request(ctx.http).post(`/post/${ctx.postId}/tags`).send({ add: [{ where: { name: { eq: "t1" } } }] });
+    expect(res.status).toBe(403);
+    expect(await joinRows(ctx.orm)).toHaveLength(0);
+  });
+
+  it("still allows remove, which only deletes join rows", async () => {
+    const res = await request(ctx.http).post(`/post/${ctx.postId}/tags`).send({ remove: [{ name: { eq: "t1" } }] });
+    expect(res.status).toBeLessThan(300);
+  });
+});

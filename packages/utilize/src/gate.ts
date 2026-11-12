@@ -259,15 +259,19 @@ export type RelationshipVerb = "create" | "update" | "add" | "set" | "remove" | 
  * - `create` needs the target's create, `update` and `select` its update.
  * - `add` / `set` / `remove` on a `hasMany` / `hasOne` rewrite the target's
  *   foreign key, so they need the target's update. On a `belongsTo` they write
- *   the source's own key, and on a `belongsToMany` a join row, so the source's
- *   write covers them.
+ *   the source's own key, so the source's write covers them. On a plain
+ *   `belongsToMany` they write a join row nobody can see, which the source's
+ *   write covers too; in through mode the join rows are a registered model's
+ *   own, so its permissions apply ({@link isThroughLinkAllowed}).
  * - `delete` / `restore` need the target's delete / restore.
  *
  * gqlize offers a verb on a relationship input only where this allows it, and
  * nestize refuses a nested input that uses one it does not.
  */
 export function isRelationshipVerbAllowed(
-  permission: Permission | undefined, association: { associationType: string; target: string }, verb: RelationshipVerb,
+  permission: Permission | undefined,
+  association: { associationType: string; target: string; through?: string; throughModel?: boolean },
+  verb: RelationshipVerb,
 ): boolean {
   const target = association.target;
   switch (verb) {
@@ -280,7 +284,8 @@ export function isRelationshipVerbAllowed(
     case "set":
     case "remove": {
       const rewritesTarget = association.associationType === "hasMany" || association.associationType === "hasOne";
-      return !rewritesTarget || isMutationAllowed(permission, target, "update");
+      return (!rewritesTarget || isMutationAllowed(permission, target, "update"))
+        && isThroughLinkAllowed(permission, association, verb);
     }
     case "delete":
       return isMutationAllowed(permission, target, "delete");
@@ -290,9 +295,37 @@ export function isRelationshipVerbAllowed(
 }
 
 /**
- * Whether a caller may send a mutation as a CSV upload (`permission.mutationCsv`).
- * Checked alongside {@link isMutationAllowed} for the operation, never instead.
+ * What a link verb on a through-mode `belongsToMany` does to the join model's
+ * rows: `add` creates links, `remove` deletes them, and `set` does both. (An
+ * entry's `through` that rewrites a link that already exists is an update too;
+ * whether one does depends on the data, so the write engine checks that part.)
  */
+export function throughLinkOperations(verb: "add" | "set" | "remove"): MutationKind[] {
+  switch (verb) {
+    case "add":
+      return ["create"];
+    case "set":
+      return ["create", "delete"];
+    case "remove":
+      return ["delete"];
+  }
+}
+
+/**
+ * Whether a link verb may write the join rows of a `belongsToMany`. Only a
+ * relationship in through mode ({@link isThroughMode}) asks: its join model is a
+ * registered model the caller can see, whose rows its own `mutationCreate` /
+ * `mutationDelete` govern. Every other relationship is allowed here.
+ */
+export function isThroughLinkAllowed(
+  permission: Permission | undefined, association: ThroughModeAssociation, verb: "add" | "set" | "remove",
+): boolean {
+  if (!isThroughMode(permission, association)) {
+    return true;
+  }
+  return throughLinkOperations(verb).every((kind) => isMutationAllowed(permission, association.through as string, kind));
+}
+
 /**
  * Whether a caller may export a model's rows as CSV (`permission.queryCsv`).
  * Checked alongside the model's `query` gate, never instead.
@@ -301,6 +334,10 @@ export function isQueryCsvAllowed(permission: Permission | undefined, model: str
   return isAllowed(permission?.queryCsv, model, permission?.options);
 }
 
+/**
+ * Whether a caller may send a mutation as a CSV upload (`permission.mutationCsv`).
+ * Checked alongside {@link isMutationAllowed} for the operation, never instead.
+ */
 export function isMutationCsvAllowed(permission: Permission | undefined, model: string): boolean {
   return isAllowed(permission?.mutationCsv, model, permission?.options);
 }

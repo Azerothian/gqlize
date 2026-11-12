@@ -109,8 +109,12 @@ function createThroughType(instance: GQLManager, defName: string, relName: strin
  * `isRelationshipVerbAllowed`, shared with nestize.
  */
 function relationshipGates(options: GqlizeOptions, association: Association) {
+  // `add`, `set` and `remove` agree except on a through-mode belongsToMany,
+  // where they create and/or delete the join model's rows (`isThroughLinkAllowed`).
   return {
-    link: isRelationshipVerbAllowed(options.permission, association, "add"),
+    add: isRelationshipVerbAllowed(options.permission, association, "add"),
+    set: isRelationshipVerbAllowed(options.permission, association, "set"),
+    remove: isRelationshipVerbAllowed(options.permission, association, "remove"),
     delete: isRelationshipVerbAllowed(options.permission, association, "delete"),
     restore: isRelationshipVerbAllowed(options.permission, association, "restore"),
   };
@@ -118,8 +122,10 @@ function relationshipGates(options: GqlizeOptions, association: Association) {
 
 function relationshipOffersAVerb(options: GqlizeOptions, association: Association, plan: MutationInputPlan) {
   const gates = relationshipGates(options, association);
-  // `update`/`select` need the target's update permission, under which `link` is already true.
-  return gates.link || gates.delete || gates.restore || plan.creatable(association.target);
+  // `create` is offered when the target has a create input, `update`/`select`
+  // when it has an update input: the same conditions the builder adds them under.
+  return gates.add || gates.set || gates.remove || gates.delete || gates.restore
+    || plan.creatable(association.target) || plan.updatable(association.target);
 }
 
 /** Whether each model gets a create input and an update input, answered once per schema build. */
@@ -338,7 +344,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       },
       {
         name: "add",
-        available: gates.link,
+        available: gates.add,
         collection: {
           type: addSetType,
           description: throughInput
@@ -348,7 +354,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       },
       {
         name: "set",
-        available: gates.link,
+        available: gates.set,
         collection: {
           type: addSetType,
           description: throughInput
@@ -359,7 +365,7 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
       },
       {
         name: "remove",
-        available: gates.link,
+        available: gates.remove,
         collection: { type: list(filterType), description: `This will remove the relationship from any matching elements from the current ${defName}` },
         singular: { type: GraphQLBoolean, description: `When true, this will disassociate the current ${relName} from the ${defName}` },
       },

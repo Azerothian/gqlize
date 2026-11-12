@@ -1361,6 +1361,11 @@ those its `mutationCreateInput` allows, minus the two join keys, every primary/f
 ormize generated, or one hidden by `permission.model`) the relationship is a plain many-to-many:
 entries are bare filters and there is no `through`.
 
+In through mode the links are rows of the join model, so its own permissions decide the link
+verbs: `add` needs its `mutationCreate`, `remove` its `mutationDelete`, `set` both, and a `through`
+written over a link that already exists also needs its `mutationUpdate`. A verb they deny is left
+off the input (and refused over REST and Temporal).
+
 ```graphql
 Post(update: {
   where: { title: { eq: "New" } },
