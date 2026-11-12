@@ -2,6 +2,7 @@ import Sequelize from "sequelize";
 import { Ormize } from "@azerothian/ormize";
 import SequelizeAdapter from "../src";
 import { describe, expect, it } from "@jest/globals";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 /**
  * `initialise()` is the one lifecycle step that is *nearly* free of I/O:
@@ -37,19 +38,18 @@ const WitnessDef = {
  * startup DDL is — so an empty `queries` here means nothing was sent at all,
  * not merely that no model was touched.
  */
-function buildWithSpy() {
+async function buildWithSpy() {
   const queries: string[] = [];
-  const adapter = new SequelizeAdapter({}, {
-    dialect: "sqlite",
+  const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({
     logging: (sql: string) => { queries.push(sql); },
-  } as never);
+  })));
   const db = new Ormize().registerAdapter(adapter);
   return { db, queries };
 }
 
 describe("initialise({ddl: false})", () => {
   it("does not replay a definition's raw DDL", async () => {
-    const { db, queries } = buildWithSpy();
+    const { db, queries } = await buildWithSpy();
     await db.addDefinition(WitnessDef);
 
     await db.initialise({ ddl: false });
@@ -58,7 +58,7 @@ describe("initialise({ddl: false})", () => {
   });
 
   it("still wires the model up, so a schema can be built from it", async () => {
-    const { db } = buildWithSpy();
+    const { db } = await buildWithSpy();
     await db.addDefinition(WitnessDef);
     await db.addDefinition({
       name: "Sibling",
@@ -78,7 +78,7 @@ describe("initialise({ddl: false})", () => {
   });
 
   it("replays the DDL by default", async () => {
-    const { db, queries } = buildWithSpy();
+    const { db, queries } = await buildWithSpy();
     await db.addDefinition(WitnessDef);
 
     await db.initialise();
@@ -87,7 +87,7 @@ describe("initialise({ddl: false})", () => {
   });
 
   it("issues nothing either way for a definition with no raw DDL", async () => {
-    const { db, queries } = buildWithSpy();
+    const { db, queries } = await buildWithSpy();
     await db.addDefinition({ name: "Plain", define: { name: { type: Sequelize.STRING } } });
 
     await db.initialise();

@@ -1,10 +1,15 @@
 import { beforeAll, beforeEach, describe, expect, it } from "@jest/globals";
 import type { Client, WorkflowStartOptions } from "@temporalio/client";
 import type { Ormize } from "@azerothian/ormize";
+import { testDialect } from "@azerothian/test-fixtures/dialect";
 import { buildQueueMap } from "../src/queue";
 import { createTemporalizeClient } from "../src/client";
 import type { TemporalizeClientOptions } from "../src/client";
 import { buildOrm, ctx } from "./helper";
+
+// The datasource segment in queue names reflects whichever adapter the
+// definition is pinned to — "sqlite" or "postgres" depending on the project.
+const ds = testDialect();
 
 /** One call captured off the fake `workflow.execute`/`workflow.start` below. */
 type WorkflowCall = { kind: "execute" | "start"; type: string; options: WorkflowStartOptions };
@@ -24,7 +29,7 @@ describe("createTemporalizeClient", () => {
   } as unknown as Client;
 
   beforeAll(async () => {
-    orm = await buildOrm();
+    orm = await buildOrm({ suite: true });
   });
   beforeEach(() => {
     calls.length = 0;
@@ -35,7 +40,7 @@ describe("createTemporalizeClient", () => {
   it("dispatches each op to its generic workflow on the model's queue", async () => {
     await build().model("Task").create({ context: ctx, input: { name: "alpha" } });
     expect(calls[0].type).toBe("createWorkflow");
-    expect(calls[0].options.taskQueue).toBe("myapp.sqlite.Task");
+    expect(calls[0].options.taskQueue).toBe(`myapp.${ds}.Task`);
     expect(calls[0].options.args).toEqual([{ model: "Task", context: ctx, input: { name: "alpha" } }]);
   });
 
@@ -94,7 +99,7 @@ describe("createTemporalizeClient", () => {
     const queueMap = JSON.parse(JSON.stringify(buildQueueMap(orm, { queuePrefix: "myapp" })));
     const t = createTemporalizeClient(client, queueMap);
     await t.model("Task").count({ context: ctx });
-    expect(calls[0].options.taskQueue).toBe("myapp.sqlite.Task");
+    expect(calls[0].options.taskQueue).toBe(`myapp.${ds}.Task`);
   });
 
   it("throws for a model with no queue", () => {

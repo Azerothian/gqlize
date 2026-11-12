@@ -195,6 +195,20 @@ describe("generated activities", () => {
       expect(after.label).toBe("alpha!");
     });
 
+    it("holds a transform's args to its declared `args`", async () => {
+      // `relabel` declares `to: String`; an undeclared key or a value of another
+      // type used to reach the method as sent.
+      const [item] = (await acts["Item.create"]({ context: ctx, input: { label: "alpha" } })) as ItemRow[];
+      for (const args of [{ to: 3 }, { to: "x", extra: true }, "omega"]) {
+        await expectFailure(
+          acts["Item.instanceMethods.relabel"]({ context: ctx, id: item.id, args }),
+          ErrorType.Validation
+        );
+      }
+      const after = (await acts["Item.findByPk"]({ context: ctx, id: item.id })) as ItemRow;
+      expect(after.label).toBe("alpha");
+    });
+
     it("still fails non-retryably when a transform addresses a missing row", async () => {
       await expectFailure(
         acts["Item.instanceMethods.relabel"]({ context: ctx, id: 999 }),

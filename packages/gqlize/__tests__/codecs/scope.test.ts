@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, jest } from "@jest/globals";
 
 import { createSchema, prefixIdCodec, rawIdCodec } from "../../src";
 import type { IdCodec } from "../../src/types";
-import { createAdapterForDialect, registerTeardown } from "../helper/dialect";
+import { createAdapterForDialect, registerSuiteTeardown, registerTeardown } from "../helper/dialect";
 
 // The seam between two features that landed independently: pluggable id codecs
 // (#42) and row-level `permission.scope` (#40).
@@ -90,10 +90,11 @@ interface Response {
   };
 }
 
-async function build(options: {id: IdCodec; scope?: ScopePredicate}) {
+async function build(options: {id: IdCodec; scope?: ScopePredicate; suite?: boolean}) {
   const db = new Database(options.scope ? {permission: {scope: options.scope}} : undefined);
   const {adapter, name, teardown} = await createAdapterForDialect();
-  registerTeardown(teardown);
+  // `suite`: seeded once in a `beforeAll` — see `registerSuiteTeardown`.
+  (options.suite ? registerSuiteTeardown : registerTeardown)(teardown);
   db.registerAdapter(adapter, name);
   await db.addDefinition(DocDef);
   await db.addDefinition(NoteDef);
@@ -157,7 +158,7 @@ describe("codecs + scope - a scope's raw ids never reach the codec", () => {
   };
 
   beforeAll(async() => {
-    schema = await build({id, scope: pinnedToFirstDoc});
+    schema = await build({id, scope: pinnedToFirstDoc, suite: true});
     // Two docs, so "the scope filtered correctly" is not satisfied by there being
     // only one row in the database.
     const first = await newDoc("first");
@@ -227,7 +228,7 @@ describe("codecs + scope - a caller's opaque ids are still decoded", () => {
   };
 
   beforeAll(async() => {
-    schema = await build({id, scope: everything});
+    schema = await build({id, scope: everything, suite: true});
     docId = await seed("first", "a");
     await seed("second", "b");
   });
@@ -255,7 +256,7 @@ describe("codecs + scope - a caller's opaque ids are still decoded", () => {
     }`);
     expect(result.errors?.[0]?.message).toEqual(
       'gqlize: "Note.docId" expects a "Doc" id, but the id given is a "Note" id');
-    const after = await ask(schema, `query { models { Note { edges { node { body } } } } }`);
+    const after = await ask(schema, `query { models { Note(orderBy: [idASC]) { edges { node { body } } } } }`);
     expect(after.data.models.Note.edges.map((e) => e.node.body)).toEqual(["edited", "b"]);
   });
 });

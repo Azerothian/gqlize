@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/glo
 import { Ormize } from "@azerothian/ormize";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
 import Sequelize from "sequelize";
 import type IORedis from "ioredis";
 import ValkeyAdapter, { type ValkeyRow } from "../src";
@@ -81,9 +82,11 @@ describe("valkey adapter — cross-adapter transaction with SQLite", () => {
     const orm = new Ormize();
     const valkey = new ValkeyAdapter({ prefix: "xadapter" }, client);
     orm.registerAdapter(valkey, "valkey");
-    orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+    const sqlAdapter = new SequelizeAdapter({}, await dialectConfig());
+    trackConnection(sqlAdapter);
+    orm.registerAdapter(sqlAdapter, testDialect());
     await orm.addDefinition({ name: "Note", define: { id: { type: DataTypes.UUID, primaryKey: true }, text: { type: DataTypes.String, index: true } }, options: {} }, "valkey");
-    await orm.addDefinition({ name: "Audit", define: { message: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } }, "sqlite");
+    await orm.addDefinition({ name: "Audit", define: { message: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } }, testDialect());
     await orm.initialise();
     await orm.sync();
 

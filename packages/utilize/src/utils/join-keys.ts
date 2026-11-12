@@ -28,6 +28,24 @@ export function throughOtherKey(through: Relationship["options"]["through"]): st
   return typeof through === "object" ? through?.otherKey : undefined;
 }
 
+/** A `foreignKey` declared on the object form of `through`, if there is one. */
+export function throughForeignKey(through: Relationship["options"]["through"]): string | undefined {
+  return typeof through === "object" ? through?.foreignKey : undefined;
+}
+
+/**
+ * A relationship's foreign key: the top-level `options.foreignKey`, or — for a
+ * `belongsToMany`, whose keys live on the join model — the one declared under
+ * `through`. Both are typed; only the top-level one used to be read, so a key
+ * written under `through` was ignored by one backend and honoured by another.
+ */
+export function relationshipForeignKey(type: string, options: Relationship["options"] | undefined): string | undefined {
+  if (options?.foreignKey !== undefined) {
+    return options.foreignKey;
+  }
+  return type === "belongsToMany" ? throughForeignKey(options?.through) : undefined;
+}
+
 /**
  * The reciprocal `belongsToMany`'s foreign key — the join column pointing at the
  * target.

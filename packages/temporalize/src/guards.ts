@@ -1,7 +1,7 @@
 import { ApplicationFailure } from "@temporalio/common";
 import { isAllowed, isMutationAllowed } from "@azerothian/utilize";
 import * as shared from "@azerothian/utilize/guards";
-import type { Fail, GuardFailure, Permission } from "@azerothian/utilize";
+import type { Definition, Fail, GuardFailure, Permission } from "@azerothian/utilize";
 import { ErrorType } from "./workflow-types";
 import type { CallerContext, PlainRow } from "./workflow-types";
 import type { SchemaSet } from "./registry";
@@ -90,14 +90,19 @@ export function assertScopedMutation(where: unknown, optIn?: boolean): void {
   shared.assertScopedMutation(where, optIn, "all: true", guardFail);
 }
 
-/** Validate that every filter field is permitted — see `@azerothian/utilize/guards`. */
-export function assertFilterAllowed(permission: Permission | undefined, name: string, where: unknown): void {
-  shared.assertFilterAllowed(permission, name, where, guardFail);
+/**
+ * Validate every filter field and operator — see `@azerothian/utilize/guards`.
+ * `regexOperators` is whether the model's adapter offers the regex operators.
+ */
+export function assertFilterAllowed(
+  permission: Permission | undefined, name: string, where: unknown, definition?: Definition, regexOperators?: boolean,
+): void {
+  shared.assertFilterAllowed(permission, name, where, guardFail, definition, { regexOperators });
 }
 
 /** Validate that every `orderBy` field is permitted for the model. */
-export function assertOrderAllowed(permission: Permission | undefined, name: string, orderBy: unknown): void {
-  shared.assertOrderAllowed(permission, name, orderBy, guardFail);
+export function assertOrderAllowed(permission: Permission | undefined, name: string, orderBy: unknown, definition?: Definition): void {
+  shared.assertOrderAllowed(permission, name, orderBy, guardFail, definition);
 }
 
 /** Parse `input` through the model's create/update schema, if one exists. */

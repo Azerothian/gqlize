@@ -17,7 +17,7 @@
   "types": "lib/index.d.ts",
   "scripts": {
     "watch": "tsc --watch",
-    "test": "jest",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "typecheck": "tsc -p tsconfig.test.json && tsc -p tsconfig.test-d.json",
     "typecheck:types": "tsc -p tsconfig.test-d.json",
     "package:yalc": "pnpm run build && cd publish && yalc publish",
@@ -39,6 +39,7 @@
   "devDependencies": {
     "@azerothian/gqlize": "workspace:*",
     "@azerothian/ormize": "workspace:*",
+    "@azerothian/test-fixtures": "workspace:*",
     "@jest/globals": "catalog:",
     "@swc/cli": "catalog:",
     "@swc/core": "catalog:",

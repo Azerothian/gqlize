@@ -1,1 +1,1 @@
-process.env.GQLIZE_DIALECT = "sqlite";
+import "@azerothian/test-fixtures/jest/dialect-sqlite";

@@ -994,13 +994,12 @@ input GQLTQueryChildWhere {
   parentId: GQLTQueryChildWhereparentId
   or: [GQLTQueryChildWhere]
   and: [GQLTQueryChildWhere]
-  any: [GQLTQueryChildWhere]
-  all: [GQLTQueryChildWhere]
 }
 
 input GQLTQueryChildWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -1030,6 +1029,7 @@ input GQLTQueryChildWhereid {
 input GQLTQueryChildWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -1059,6 +1059,7 @@ input GQLTQueryChildWherename {
 input GQLTQueryChildWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -1088,6 +1089,7 @@ input GQLTQueryChildWherecreatedAt {
 input GQLTQueryChildWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -1117,6 +1119,7 @@ input GQLTQueryChildWhereupdatedAt {
 input GQLTQueryChildWhereparentId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -1162,13 +1165,12 @@ input GQLTQueryParentWhere {
   updatedAt: GQLTQueryParentWhereupdatedAt
   or: [GQLTQueryParentWhere]
   and: [GQLTQueryParentWhere]
-  any: [GQLTQueryParentWhere]
-  all: [GQLTQueryParentWhere]
 }
 
 input GQLTQueryParentWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -1198,6 +1200,7 @@ input GQLTQueryParentWhereid {
 input GQLTQueryParentWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -1227,6 +1230,7 @@ input GQLTQueryParentWherename {
 input GQLTQueryParentWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -1256,6 +1260,7 @@ input GQLTQueryParentWherecreatedAt {
 input GQLTQueryParentWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -1479,13 +1484,12 @@ input GQLTQueryTaskItemWhere {
   updatedAt: GQLTQueryTaskItemWhereupdatedAt
   or: [GQLTQueryTaskItemWhere]
   and: [GQLTQueryTaskItemWhere]
-  any: [GQLTQueryTaskItemWhere]
-  all: [GQLTQueryTaskItemWhere]
 }
 
 input GQLTQueryTaskItemWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -1515,6 +1519,7 @@ input GQLTQueryTaskItemWhereid {
 input GQLTQueryTaskItemWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -1544,6 +1549,7 @@ input GQLTQueryTaskItemWherename {
 input GQLTQueryTaskItemWheretaskId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -1573,6 +1579,7 @@ input GQLTQueryTaskItemWheretaskId {
 input GQLTQueryTaskItemWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -1602,6 +1609,7 @@ input GQLTQueryTaskItemWherecreatedAt {
 input GQLTQueryTaskItemWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -1652,8 +1660,6 @@ input GQLTQueryTaskWhere {
   updatedAt: GQLTQueryTaskWhereupdatedAt
   or: [GQLTQueryTaskWhere]
   and: [GQLTQueryTaskWhere]
-  any: [GQLTQueryTaskWhere]
-  all: [GQLTQueryTaskWhere]
   hasNoItems: Boolean
   chainTest: Boolean
 }
@@ -1661,6 +1667,7 @@ input GQLTQueryTaskWhere {
 input GQLTQueryTaskWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -1690,6 +1697,7 @@ input GQLTQueryTaskWhereid {
 input GQLTQueryTaskWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -1719,6 +1727,7 @@ input GQLTQueryTaskWherename {
 input GQLTQueryTaskWherenullCheck {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -1748,6 +1757,7 @@ input GQLTQueryTaskWherenullCheck {
 input GQLTQueryTaskWhereintZeroCheck {
   eq: Int
   ne: Int
+  gt: Int
   gte: Int
   lte: Int
   lt: Int
@@ -1777,6 +1787,7 @@ input GQLTQueryTaskWhereintZeroCheck {
 input GQLTQueryTaskWheremutationCheck {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -1806,6 +1817,7 @@ input GQLTQueryTaskWheremutationCheck {
 input GQLTQueryTaskWhereoptions {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -1835,6 +1847,7 @@ input GQLTQueryTaskWhereoptions {
 input GQLTQueryTaskWhereoptions2 {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -1864,6 +1877,7 @@ input GQLTQueryTaskWhereoptions2 {
 input GQLTQueryTaskWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -1893,6 +1907,7 @@ input GQLTQueryTaskWherecreatedAt {
 input GQLTQueryTaskWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -1973,13 +1988,12 @@ input GQLTQueryItemWhere {
   belongsToId: GQLTQueryItemWherebelongsToId
   or: [GQLTQueryItemWhere]
   and: [GQLTQueryItemWhere]
-  any: [GQLTQueryItemWhere]
-  all: [GQLTQueryItemWhere]
 }
 
 input GQLTQueryItemWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -2009,6 +2023,7 @@ input GQLTQueryItemWhereid {
 input GQLTQueryItemWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -2038,6 +2053,7 @@ input GQLTQueryItemWherename {
 input GQLTQueryItemWhereparentId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -2067,6 +2083,7 @@ input GQLTQueryItemWhereparentId {
 input GQLTQueryItemWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -2096,6 +2113,7 @@ input GQLTQueryItemWherecreatedAt {
 input GQLTQueryItemWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -2125,6 +2143,7 @@ input GQLTQueryItemWhereupdatedAt {
 input GQLTQueryItemWherehasOneId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -2154,6 +2173,7 @@ input GQLTQueryItemWherehasOneId {
 input GQLTQueryItemWheretaskId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -2183,6 +2203,7 @@ input GQLTQueryItemWheretaskId {
 input GQLTQueryItemWherebelongsToId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -2605,13 +2626,12 @@ input GQLTQueryMemoWhere {
   deletedAt: GQLTQueryMemoWheredeletedAt
   or: [GQLTQueryMemoWhere]
   and: [GQLTQueryMemoWhere]
-  any: [GQLTQueryMemoWhere]
-  all: [GQLTQueryMemoWhere]
 }
 
 input GQLTQueryMemoWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -2641,6 +2661,7 @@ input GQLTQueryMemoWhereid {
 input GQLTQueryMemoWherebody {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -2670,6 +2691,7 @@ input GQLTQueryMemoWherebody {
 input GQLTQueryMemoWhereparentId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -2699,6 +2721,7 @@ input GQLTQueryMemoWhereparentId {
 input GQLTQueryMemoWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -2728,6 +2751,7 @@ input GQLTQueryMemoWherecreatedAt {
 input GQLTQueryMemoWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -2757,6 +2781,7 @@ input GQLTQueryMemoWhereupdatedAt {
 input GQLTQueryMemoWheredeletedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -3711,14 +3736,14 @@ input ItemBtmTasksBelongsToManyInput {
   update: [ItemBtmTasksUpdate]
 
   """
-  This will add any matching existing elements (with optional through attributes) to the current Item
+  This will add any matching elements with a relationship to the current Item
   """
-  add: [ItemBtmTasksAddThrough]
+  add: [GQLTQueryTaskWhere]
 
   """
-  This will replace the entire btmTasks set with the matching existing elements (with optional through attributes)
+  This will replace the entire btmTasks set with the matching existing elements
   """
-  set: [ItemBtmTasksAddThrough]
+  set: [GQLTQueryTaskWhere]
 
   """
   This will remove the relationship from any matching elements from the current Item
@@ -3751,20 +3776,6 @@ input ItemBtmTasksUpdate {
   """
   input: TaskOptionalInput
 }
-
-""""""
-input ItemBtmTasksAddThrough {
-  """Filter used to find the existing elements to associate"""
-  where: GQLTQueryTaskWhere
-
-  """
-  Attribute values to write on the join table for the associated elements
-  """
-  through: GQLTJson
-}
-
-"""The \`JSON\` scalar type represents raw JSON as values."""
-scalar GQLTJson
 
 """"""
 input ItemBtmTasksSelect {
@@ -3827,14 +3838,14 @@ input TaskBtmItemsBelongsToManyInput {
   update: [TaskBtmItemsUpdate]
 
   """
-  This will add any matching existing elements (with optional through attributes) to the current Task
+  This will add any matching elements with a relationship to the current Task
   """
-  add: [TaskBtmItemsAddThrough]
+  add: [GQLTQueryItemWhere]
 
   """
-  This will replace the entire btmItems set with the matching existing elements (with optional through attributes)
+  This will replace the entire btmItems set with the matching existing elements
   """
-  set: [TaskBtmItemsAddThrough]
+  set: [GQLTQueryItemWhere]
 
   """
   This will remove the relationship from any matching elements from the current Task
@@ -3866,17 +3877,6 @@ input TaskBtmItemsUpdate {
   This will update the items that you targeted with the filter in the where element
   """
   input: ItemOptionalInput
-}
-
-""""""
-input TaskBtmItemsAddThrough {
-  """Filter used to find the existing elements to associate"""
-  where: GQLTQueryItemWhere
-
-  """
-  Attribute values to write on the join table for the associated elements
-  """
-  through: GQLTJson
 }
 
 """"""
@@ -5170,13 +5170,12 @@ input GQLTQueryChildWhere {
   parentId: GQLTQueryChildWhereparentId
   or: [GQLTQueryChildWhere]
   and: [GQLTQueryChildWhere]
-  any: [GQLTQueryChildWhere]
-  all: [GQLTQueryChildWhere]
 }
 
 input GQLTQueryChildWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -5206,6 +5205,7 @@ input GQLTQueryChildWhereid {
 input GQLTQueryChildWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -5235,6 +5235,7 @@ input GQLTQueryChildWherename {
 input GQLTQueryChildWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -5264,6 +5265,7 @@ input GQLTQueryChildWherecreatedAt {
 input GQLTQueryChildWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -5293,6 +5295,7 @@ input GQLTQueryChildWhereupdatedAt {
 input GQLTQueryChildWhereparentId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -5548,13 +5551,12 @@ input GQLTQueryItemWhere {
   belongsToId: GQLTQueryItemWherebelongsToId
   or: [GQLTQueryItemWhere]
   and: [GQLTQueryItemWhere]
-  any: [GQLTQueryItemWhere]
-  all: [GQLTQueryItemWhere]
 }
 
 input GQLTQueryItemWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -5584,6 +5586,7 @@ input GQLTQueryItemWhereid {
 input GQLTQueryItemWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -5613,6 +5616,7 @@ input GQLTQueryItemWherename {
 input GQLTQueryItemWhereparentId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -5642,6 +5646,7 @@ input GQLTQueryItemWhereparentId {
 input GQLTQueryItemWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -5671,6 +5676,7 @@ input GQLTQueryItemWherecreatedAt {
 input GQLTQueryItemWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -5700,6 +5706,7 @@ input GQLTQueryItemWhereupdatedAt {
 input GQLTQueryItemWherehasOneId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -5729,6 +5736,7 @@ input GQLTQueryItemWherehasOneId {
 input GQLTQueryItemWheretaskId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -5758,6 +5766,7 @@ input GQLTQueryItemWheretaskId {
 input GQLTQueryItemWherebelongsToId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -5844,8 +5853,6 @@ input GQLTQueryTaskWhere {
   updatedAt: GQLTQueryTaskWhereupdatedAt
   or: [GQLTQueryTaskWhere]
   and: [GQLTQueryTaskWhere]
-  any: [GQLTQueryTaskWhere]
-  all: [GQLTQueryTaskWhere]
   hasNoItems: Boolean
   chainTest: Boolean
 }
@@ -5853,6 +5860,7 @@ input GQLTQueryTaskWhere {
 input GQLTQueryTaskWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -5882,6 +5890,7 @@ input GQLTQueryTaskWhereid {
 input GQLTQueryTaskWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -5911,6 +5920,7 @@ input GQLTQueryTaskWherename {
 input GQLTQueryTaskWherenullCheck {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -5940,6 +5950,7 @@ input GQLTQueryTaskWherenullCheck {
 input GQLTQueryTaskWhereintZeroCheck {
   eq: Int
   ne: Int
+  gt: Int
   gte: Int
   lte: Int
   lt: Int
@@ -5969,6 +5980,7 @@ input GQLTQueryTaskWhereintZeroCheck {
 input GQLTQueryTaskWhereoptions {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -5998,6 +6010,7 @@ input GQLTQueryTaskWhereoptions {
 input GQLTQueryTaskWhereoptions2 {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -6027,6 +6040,7 @@ input GQLTQueryTaskWhereoptions2 {
 input GQLTQueryTaskWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -6056,6 +6070,7 @@ input GQLTQueryTaskWherecreatedAt {
 input GQLTQueryTaskWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -6225,13 +6240,12 @@ input GQLTQueryTaskItemWhere {
   updatedAt: GQLTQueryTaskItemWhereupdatedAt
   or: [GQLTQueryTaskItemWhere]
   and: [GQLTQueryTaskItemWhere]
-  any: [GQLTQueryTaskItemWhere]
-  all: [GQLTQueryTaskItemWhere]
 }
 
 input GQLTQueryTaskItemWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -6261,6 +6275,7 @@ input GQLTQueryTaskItemWhereid {
 input GQLTQueryTaskItemWherename {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -6290,6 +6305,7 @@ input GQLTQueryTaskItemWherename {
 input GQLTQueryTaskItemWheretaskId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -6319,6 +6335,7 @@ input GQLTQueryTaskItemWheretaskId {
 input GQLTQueryTaskItemWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -6348,6 +6365,7 @@ input GQLTQueryTaskItemWherecreatedAt {
 input GQLTQueryTaskItemWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -6514,13 +6532,12 @@ input GQLTQueryMemoWhere {
   deletedAt: GQLTQueryMemoWheredeletedAt
   or: [GQLTQueryMemoWhere]
   and: [GQLTQueryMemoWhere]
-  any: [GQLTQueryMemoWhere]
-  all: [GQLTQueryMemoWhere]
 }
 
 input GQLTQueryMemoWhereid {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -6550,6 +6567,7 @@ input GQLTQueryMemoWhereid {
 input GQLTQueryMemoWherebody {
   eq: String
   ne: String
+  gt: String
   gte: String
   lte: String
   lt: String
@@ -6579,6 +6597,7 @@ input GQLTQueryMemoWherebody {
 input GQLTQueryMemoWhereparentId {
   eq: ID
   ne: ID
+  gt: ID
   gte: ID
   lte: ID
   lt: ID
@@ -6608,6 +6627,7 @@ input GQLTQueryMemoWhereparentId {
 input GQLTQueryMemoWherecreatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -6637,6 +6657,7 @@ input GQLTQueryMemoWherecreatedAt {
 input GQLTQueryMemoWhereupdatedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -6666,6 +6687,7 @@ input GQLTQueryMemoWhereupdatedAt {
 input GQLTQueryMemoWheredeletedAt {
   eq: GQLTDate
   ne: GQLTDate
+  gt: GQLTDate
   gte: GQLTDate
   lte: GQLTDate
   lt: GQLTDate
@@ -7352,14 +7374,14 @@ input ItemBtmTasksBelongsToManyInput {
   update: [ItemBtmTasksUpdate]
 
   """
-  This will add any matching existing elements (with optional through attributes) to the current Item
+  This will add any matching elements with a relationship to the current Item
   """
-  add: [ItemBtmTasksAddThrough]
+  add: [GQLTQueryTaskWhere]
 
   """
-  This will replace the entire btmTasks set with the matching existing elements (with optional through attributes)
+  This will replace the entire btmTasks set with the matching existing elements
   """
-  set: [ItemBtmTasksAddThrough]
+  set: [GQLTQueryTaskWhere]
 
   """
   This will remove the relationship from any matching elements from the current Item
@@ -7392,20 +7414,6 @@ input ItemBtmTasksUpdate {
   """
   input: TaskOptionalInput
 }
-
-""""""
-input ItemBtmTasksAddThrough {
-  """Filter used to find the existing elements to associate"""
-  where: GQLTQueryTaskWhere
-
-  """
-  Attribute values to write on the join table for the associated elements
-  """
-  through: GQLTJson
-}
-
-"""The \`JSON\` scalar type represents raw JSON as values."""
-scalar GQLTJson
 
 """"""
 input ItemBtmTasksSelect {
@@ -7468,14 +7476,14 @@ input TaskBtmItemsBelongsToManyInput {
   update: [TaskBtmItemsUpdate]
 
   """
-  This will add any matching existing elements (with optional through attributes) to the current Task
+  This will add any matching elements with a relationship to the current Task
   """
-  add: [TaskBtmItemsAddThrough]
+  add: [GQLTQueryItemWhere]
 
   """
-  This will replace the entire btmItems set with the matching existing elements (with optional through attributes)
+  This will replace the entire btmItems set with the matching existing elements
   """
-  set: [TaskBtmItemsAddThrough]
+  set: [GQLTQueryItemWhere]
 
   """
   This will remove the relationship from any matching elements from the current Task
@@ -7507,17 +7515,6 @@ input TaskBtmItemsUpdate {
   This will update the items that you targeted with the filter in the where element
   """
   input: ItemOptionalInput
-}
-
-""""""
-input TaskBtmItemsAddThrough {
-  """Filter used to find the existing elements to associate"""
-  where: GQLTQueryItemWhere
-
-  """
-  Attribute values to write on the join table for the associated elements
-  """
-  through: GQLTJson
 }
 
 """"""

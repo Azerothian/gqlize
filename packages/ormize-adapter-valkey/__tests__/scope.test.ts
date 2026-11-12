@@ -6,6 +6,7 @@ import type { ScopePredicate } from "@azerothian/utilize/gate";
 import { scopeAware, unscoped } from "@azerothian/utilize/gate";
 import ValkeyAdapter from "../src";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
 import { makeClient, flush, shutdown } from "./helper/redis";
 
 // Row-level scope on an adapter with **no enforcement layer of its own**.
@@ -249,7 +250,9 @@ describe("valkey - row-level scope, the extend surface (§12)", () => {
     // model with nothing underneath it — and a warning there would be a warning
     // about the wrong half.
     const orm = await buildOrm();
-    orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+    const sqlAdapter = new SequelizeAdapter({}, await dialectConfig());
+    trackConnection(sqlAdapter);
+    orm.registerAdapter(sqlAdapter, testDialect());
     expect(() => orm.auditExtendSurfaces("query", { recentDocs: { resolve: () => 1 } }))
       .toThrow(/query\.recentDocs \(extend field\)/);
   });

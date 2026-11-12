@@ -49,10 +49,14 @@ export function requestFrom(options: AdapterQueryOptions | undefined): RequestCo
  *
  * Reaching a row is a read whatever happens next, so the read scope is ANDed on
  * top of the operation's own.
+ *
+ * `includeDeleted` is for a restore. The row it reaches is soft-deleted by
+ * definition, so a lookup that skips deleted rows never finds it and refuses
+ * every restore, in scope or not.
  */
 export async function writable(
   host: AdapterRoutingHost, defName: string, adapter: OrmAdapter, row: AdapterRow,
-  operation: ScopeOperation, options: AdapterQueryOptions | undefined,
+  operation: ScopeOperation, options: AdapterQueryOptions | undefined, includeDeleted = false,
 ): Promise<boolean> {
   const request = requestFrom(options);
   let where = await host.scopedWhere(defName, "read", request, undefined, options);
@@ -74,6 +78,9 @@ export async function writable(
     ...(options?.transaction !== undefined ? {transaction: options.transaction} : {}),
     where: filterMerger(host, defName)(pk, value, true, where),
     limit: 1,
+    // Spelled the way `relationship-mutations` asks for soft-deleted rows. A
+    // backend that doesn't soft delete ignores it.
+    ...(includeDeleted ? {paranoid: false} : {}),
   }));
   if (!found) {
     host.scopeMiss(defName, operation);
@@ -316,15 +323,23 @@ function btmWriteAccessors(host: AdapterRoutingHost, association: Association, s
     }
     const sourceValue = sourceAdapter.getValueFromInstance(this, sourceKey);
     // `through` carries attribute values for the join row itself (the columns a
-    // join table has beyond its two keys).
-    const attributes: MutationInput = (options || {}).through || {};
+    // join table has beyond its two keys). The two keys are never taken from it:
+    // the relationship verbs already strip them, and this accessor is reachable
+    // without them, so the keys are written last and dropped from an update.
+    const attributes: MutationInput = {...((options || {}).through || {})};
     const opts = await forThrough(options);
     const throughAdapter = host.getModelAdapter(throughName);
+    const throughFields = throughAdapter.getFields(throughName) || {};
+    for (const key of Object.keys(attributes)) {
+      if (key === foreignKey || key === otherKey || throughFields[key]?.primaryKey) {
+        delete attributes[key];
+      }
+    }
     for (const target of list(targets)) {
       const targetValue = targetAdapter.getValueFromInstance(target, targetKey);
       const [existing] = await throughAdapter.findAll(throughName, {where: edgeWhere(sourceValue, targetValue), ...opts});
       if (!existing) {
-        await throughAdapter.getCreateFunction(throughName)({[foreignKey]: sourceValue, [otherKey]: targetValue, ...attributes}, opts);
+        await throughAdapter.getCreateFunction(throughName)({...attributes, [foreignKey]: sourceValue, [otherKey]: targetValue}, opts);
       } else if (Object.keys(attributes).length > 0) {
         await throughAdapter.update(existing, attributes, opts);
       }

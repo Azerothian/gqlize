@@ -151,7 +151,8 @@ describe("fingerprintDefinitions", () => {
 
     it("a relationship rename", async() => {
       expect(drifts(await fpWith((defs) => {
-        byName(defs, "Parent").relationships![0].options.as = "kids";
+        // `name` is the relationship's alias; `options.as` no longer renames it.
+        byName(defs, "Parent").relationships![0].name = "kids";
       }))).toEqual(["models"]);
     });
 

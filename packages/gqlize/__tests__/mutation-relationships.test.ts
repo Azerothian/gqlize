@@ -1,4 +1,5 @@
 import {graphql} from "graphql";
+import type {GraphQLInputObjectType, GraphQLObjectType} from "graphql";
 import Sequelize from "sequelize";
 import { Ormize as Database } from "@azerothian/ormize";
 import {createSchema} from "../src";
@@ -90,7 +91,7 @@ describe("relationship mutations", () => {
     const schema = await createSchema(db, schemaOpts);
 
     await graphql({schema, source: `mutation { models {
-      Post(update: { where: { title: { eq: "post1" } }, input: { tags: { add: [{ where: { name: { eq: "tagone" } } }, { where: { name: { eq: "tagtwo" } } }] } } }) { id }
+      Post(update: { where: { title: { eq: "post1" } }, input: { tags: { add: [{ name: { eq: "tagone" } }, { name: { eq: "tagtwo" } }] } } }) { id }
     } }`});
     expect(await post.countTags()).toEqual(2);
 
@@ -113,7 +114,7 @@ describe("relationship mutations", () => {
     const schema = await createSchema(db, schemaOpts);
 
     const res = await graphql({schema, source: `mutation { models {
-      Post(update: { where: { title: { eq: "post1" } }, input: { tags: { set: [{ where: { name: { eq: "tagthree" } } }] } } }) { id }
+      Post(update: { where: { title: { eq: "post1" } }, input: { tags: { set: [{ name: { eq: "tagthree" } }] } } }) { id }
     } }`});
     validateResult(res);
     const names = (await post.getTags()).map((t: {get: (key: string) => string}) => t.get("name"));
@@ -125,7 +126,7 @@ describe("relationship mutations", () => {
     const {Post, Tag, PostTag} = db.models;
     await Post.create({title: "post1"});
     await Tag.create({name: "tagone"});
-    const schema = await createSchema(db, schemaOpts);
+    const schema = await createSchema(db, {})  // PostTag visible: through mode;
 
     const res = await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { tags: { add: [{ where: { name: { eq: "tagone" } }, through: { sortOrder: 7 } }] } } }) { id }
@@ -150,6 +151,76 @@ describe("relationship mutations", () => {
     validateResult(res);
     const bodies = (await post.getComments()).map((c: {get: (key: string) => string}) => c.get("body"));
     expect(bodies).toEqual(["commenttwo"]);
+  });
+
+  it("delete/restore: not offered on a relationship whose target the caller may not delete/restore", async () => {
+    const db = await build();
+    const {Post, Comment} = db.models;
+    const post = await Post.create({title: "post1"});
+    await Comment.create({body: "commentone", postId: post.get("id")});
+    const notComment = (defName: string) => defName !== "Comment";
+    const schema = await createSchema(db, {permission: {
+      ...schemaOpts.permission, mutationDelete: notComment, mutationRestore: notComment,
+    }});
+
+    for (const verb of ["delete", "restore"]) {
+      const res = await graphql({schema, source: `mutation { models {
+        Post(update: { where: { title: { eq: "post1" } }, input: { comments: { ${verb}: [{ body: { eq: "commentone" } }] } } }) { id }
+      } }`});
+      expect(res.errors?.[0]?.message).toMatch(new RegExp(`unknown field "${verb}"`));
+    }
+    expect(await Comment.count()).toEqual(1);
+  });
+
+  it("add/set/remove: a to-many relationship offers them only with update permission on its target", async () => {
+    const db = await build();
+    const {Post, Comment} = db.models;
+    const post = await Post.create({title: "post1"});
+    const other = await Post.create({title: "other"});
+    const comment = await Comment.create({body: "c", postId: other.get("id")});
+    const notComment = (defName: string) => defName !== "Comment";
+    const schema = await createSchema(db, {permission: {...schemaOpts.permission, mutationUpdate: notComment}});
+    const fieldsOf = (name: string) => Object.keys((schema.getType(name) as GraphQLInputObjectType).getFields()).sort();
+    // `add`/`set`/`remove` on a hasMany rewrite the comment's `postId`: an update of the comment.
+    expect(fieldsOf("PostCommentsHasManyInput")).toEqual(["create", "delete", "restore"]);
+    // On a belongsTo they write the post's own key, and on a belongsToMany a join row.
+    expect(fieldsOf("PostAuthorBelongsToInput")).toEqual(expect.arrayContaining(["set", "remove"]));
+    expect(fieldsOf("PostTagsBelongsToManyInput")).toEqual(expect.arrayContaining(["add", "set", "remove"]));
+
+    const res = await graphql({schema, source: `mutation { models {
+      Post(update: { where: { title: { eq: "post1" } }, input: { comments: { add: [{ body: { eq: "c" } }] } } }) { id }
+    } }`});
+    expect(res.errors?.[0]?.message).toMatch(/unknown field "add"/);
+    expect((await Comment.findByPk(comment.get("id"))).get("postId")).toEqual(other.get("id"));
+    expect(post.get("id")).toBeDefined();
+  });
+
+  it("a relationship with every verb denied is left out, not built as an empty input", async () => {
+    const db = await build();
+    const notComment = (defName: string) => defName !== "Comment";
+    const schema = await createSchema(db, {permission: {
+      ...schemaOpts.permission,
+      mutationCreate: notComment, mutationUpdate: notComment, mutationDelete: notComment, mutationRestore: notComment,
+    }});
+    const postInput = (schema.getType("PostRequiredInput") as GraphQLInputObjectType).getFields();
+    expect(postInput.comments).toBeUndefined();
+    expect(postInput.title).toBeDefined();
+    expect(schema.getType("PostCommentsHasManyInput")).toBeUndefined();
+  });
+
+  it("a model left with nothing writable gets no input at all", async () => {
+    const db = await build();
+    const notComment = (defName: string) => defName !== "Comment";
+    // Post's column and its other relationships are denied too, so nothing on its input remains.
+    const schema = await createSchema(db, {permission: {
+      ...schemaOpts.permission,
+      mutationCreateInput: (defName: string) => defName !== "Post",
+      mutationCreate: notComment, mutationUpdate: notComment, mutationDelete: notComment, mutationRestore: notComment,
+    }});
+    expect(schema.getType("PostRequiredInput")).toBeUndefined();
+    const postArgs = (schema.getMutationType()?.getFields().models.type as GraphQLObjectType).getFields().Post.args.map((a) => a.name);
+    expect(postArgs).not.toContain("create");
+    expect(postArgs).toContain("update");
   });
 
   it("restore: undeletes soft-deleted (paranoid) related records", async () => {
@@ -180,7 +251,7 @@ describe("relationship mutations", () => {
     const res = await graphql({schema, source: `mutation { models {
       Author(select: [{ where: { name: { eq: "author1" } }, input: {
         posts: { select: [{ where: { title: { eq: "keep" } }, input: {
-          tags: { add: [{ where: { name: { eq: "t1" } } }] }
+          tags: { add: [{ name: { eq: "t1" } }] }
         } }] }
       } }]) { id name }
     } }`});
@@ -210,7 +281,7 @@ describe("relationship mutations", () => {
     const res = await graphql({schema, source: `mutation { models {
       Author(select: [{ where: { name: { eq: "a1" } }, input: {
         posts: { select: [{ where: { title: { eq: "p2" } }, input: {
-          tags: { add: [{ where: { name: { eq: "t1" } } }] }
+          tags: { add: [{ name: { eq: "t1" } }] }
         } }] }
       } }]) { id }
     } }`});
@@ -230,7 +301,7 @@ describe("relationship mutations", () => {
     const res = await graphql({schema, source: `mutation { models {
       Post(select: [{ where: { title: { eq: "original" } }, input: {
         title: "HACKED",
-        tags: { add: [{ where: { name: { eq: "t1" } } }] }
+        tags: { add: [{ name: { eq: "t1" } }] }
       } }]) { id title }
     } }`});
     validateResult(res);
@@ -255,7 +326,7 @@ describe("relationship mutations", () => {
     const res = await graphql({schema, source: `mutation { models {
       Comment(select: [{ where: { body: { eq: "c1" } }, input: {
         post: { select: { where: { title: { eq: "post1" } }, input: {
-          tags: { add: [{ where: { name: { eq: "t1" } } }] }
+          tags: { add: [{ name: { eq: "t1" } }] }
         } } }
       } }]) { id }
     } }`});

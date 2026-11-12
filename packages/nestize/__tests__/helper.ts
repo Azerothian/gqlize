@@ -1,7 +1,9 @@
 import { DataTypes } from "sequelize";
+import { GraphQLString } from "graphql";
 import { Ormize } from "@azerothian/ormize";
-import type { Definition } from "@azerothian/utilize";
+import type { Definition, GqlizeOptions } from "@azerothian/utilize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { dialectConfig, trackConnection, testDialect } from "@azerothian/test-fixtures/dialect";
 
 const ItemDef: Definition = {
   name: "Item",
@@ -52,7 +54,7 @@ const TaskDef: Definition = {
   expose: {
     instanceMethods: {
       query: { describe: { type: DataTypes.STRING } },
-      mutations: { appendSuffix: {}, rename: {} },
+      mutations: { appendSuffix: { args: { suffix: { type: GraphQLString } } }, rename: { args: { to: { type: GraphQLString } } } },
     },
   },
   relationships: [
@@ -60,10 +62,12 @@ const TaskDef: Definition = {
   ],
 };
 
-/** Build a fresh, initialised & synced in-memory ormize (Item hasMany Task). */
-export async function buildOrm(): Promise<Ormize> {
-  const orm = new Ormize();
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+/** Build a fresh, initialised & synced ormize (Item hasMany Task). */
+export async function buildOrm(options?: GqlizeOptions): Promise<Ormize> {
+  const orm = new Ormize(options);
+  const adapter = new SequelizeAdapter({}, await dialectConfig());
+  trackConnection(adapter, { suite: true });
+  orm.registerAdapter(adapter, testDialect());
   await orm.addDefinition(ItemDef);
   await orm.addDefinition(TaskDef);
   await orm.initialise();

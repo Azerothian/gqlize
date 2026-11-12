@@ -6,6 +6,7 @@ import TaskDef from "./helper/models/task";
 import { Definition, OrmAdapter, Model } from "../src/types";
 // import TaskItemDef from "./models/task-item";
 import {test,expect} from "@jest/globals";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 // `Model` (from utilize) types an adapter's model handle as an indexable
 // object, but doesn't claim it's constructible, and types `prototype` as a
@@ -17,30 +18,22 @@ type ModelClass = Omit<Model, "prototype"> & {
 } & (new (...args: unknown[]) => Record<string, unknown>);
 
 
-test("manager - registerAdapter", () => {
+test("manager - registerAdapter", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
   expect(db.adapters.sqlite).not.toBeUndefined();
 });
 
-test("manager - registerAdapter - check default adapter", () => {
+test("manager - registerAdapter - check default adapter", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
   expect(db.defaultAdapter).toEqual("sqlite");
 });
 
-test("manager - registerAdapter - multi adapters", () => {
+test("manager - registerAdapter - multi adapters", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite2");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite2");
   expect(db.defaultAdapter).toEqual("sqlite");
   expect(db.adapters.sqlite).not.toBeUndefined();
   expect(db.adapters.sqlite2).not.toBeUndefined();
@@ -48,9 +41,7 @@ test("manager - registerAdapter - multi adapters", () => {
 
 test("manager - addDefinition", async() => {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
   await db.addDefinition(TaskDef);
   const name = TaskDef.name || "";
   expect(db.defs[name]).not.toBeUndefined();
@@ -61,9 +52,7 @@ test("manager - addDefinition", async() => {
 
 test("manager - getModelAdapter", async() => {
   const db = new Database();
-  const adapter = new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }) as OrmAdapter;
+  const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig())) as OrmAdapter;
   db.registerAdapter(adapter, "sqlite");
   await db.addDefinition(TaskDef);
   const name = TaskDef.name || "";
@@ -73,9 +62,7 @@ test("manager - getModelAdapter", async() => {
 
 test("manager - processRelationship - hasMany - single adapter", async() => {
   const db = new Database();
-  const sqlite = new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }) as OrmAdapter;
+  const sqlite = trackConnection(new SequelizeAdapter({}, await dialectConfig())) as OrmAdapter;
 
   db.registerAdapter(sqlite, "sqlite");
   const def = {
@@ -101,12 +88,8 @@ test("manager - processRelationship - hasMany - single adapter", async() => {
 
 test("manager - processRelationship - hasMany - multi adapter", async() => {
   const db = new Database();
-  const sqlite = new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }) as OrmAdapter;
-  const sqlite2 = new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }) as OrmAdapter;
+  const sqlite = trackConnection(new SequelizeAdapter({}, await dialectConfig())) as OrmAdapter;
+  const sqlite2 = trackConnection(new SequelizeAdapter({}, await dialectConfig())) as OrmAdapter;
   db.registerAdapter(sqlite, "sqlite");
   db.registerAdapter(sqlite2, "sqlite2");
   const parentDef = {
@@ -151,9 +134,7 @@ test("manager - processRelationship - hasMany - multi adapter", async() => {
 
 test("manager - processRelationship - belongsTo - single adapter", async() => {
   const db = new Database();
-  const sqlite = new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }) as OrmAdapter;
+  const sqlite = trackConnection(new SequelizeAdapter({}, await dialectConfig())) as OrmAdapter;
 
   db.registerAdapter(sqlite, "sqlite");
   const parentDef = {
@@ -207,12 +188,8 @@ test("manager - processRelationship - belongsTo - single adapter", async() => {
 test("manager - processRelationship - belongsTo - multi adapter", async() => {
   const db = new Database();
 
-  const sqlite = new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }) as OrmAdapter;
-  const sqlite2 = new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }) as OrmAdapter;
+  const sqlite = trackConnection(new SequelizeAdapter({}, await dialectConfig())) as OrmAdapter;
+  const sqlite2 = trackConnection(new SequelizeAdapter({}, await dialectConfig())) as OrmAdapter;
   db.registerAdapter(sqlite, "sqlite");
   db.registerAdapter(sqlite2, "sqlite2");
 
@@ -272,9 +249,7 @@ test("manager - processSelect without input returns rows instead of throwing", a
   // still walked for nested relationship mutations, and that walk used to index
   // the absent input per association.
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, {
-    dialect: "sqlite",
-  }), "sqlite");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
   const parentDef: Definition = {
     name: "SelectParent",
     define: {
@@ -307,4 +282,64 @@ test("manager - processSelect without input returns rows instead of throwing", a
 
   const rows = await db.processSelect("SelectParent", null, {where: {name: "a"}}, {});
   expect(rows.length).toEqual(1);
+});
+
+// Both hook spellings are documented. Reading one *or* the other dropped every
+// `options.hooks` entry whenever a top-level `hooks` existed, even `{}`.
+async function hookedDb(hooks: Definition["hooks"], nestedHooks: Definition["hooks"]) {
+  const db = new Database();
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
+  await db.addDefinition({
+    name: "Hooked",
+    define: { name: { type: Sequelize.STRING } },
+    hooks,
+    options: { hooks: nestedHooks },
+  });
+  await db.initialise();
+  await db.sync();
+  return db;
+}
+
+test("manager - definition hooks - an empty top-level map does not hide options.hooks", async () => {
+  const fired: string[] = [];
+  const db = await hookedDb({}, {
+    beforeFind(options: unknown) {
+      fired.push("nested");
+      return options;
+    },
+  });
+  await db.models.Hooked.findAll();
+  expect(fired).toEqual(["nested"]);
+});
+
+test("manager - definition hooks - a name in both spellings runs both, top-level first", async () => {
+  const fired: string[] = [];
+  const db = await hookedDb({
+    beforeFind(options: unknown) {
+      fired.push("top");
+      return options;
+    },
+  }, {
+    beforeFind(options: unknown) {
+      fired.push("nested");
+      return options;
+    },
+    afterFind(rows: unknown) {
+      fired.push("nested-after");
+      return rows;
+    },
+  });
+  await db.models.Hooked.findAll();
+  expect(fired).toEqual(["top", "nested", "nested-after"]);
+});
+
+test("manager - asInstance hands a plain row to the adapter and passes anything else through", async () => {
+  const db = await hookedDb(undefined, undefined);
+  expect(db.asInstance("Hooked", null)).toBeNull();
+  const plain = { id: 1, name: "plain" };
+  const row = db.asInstance("Hooked", plain) as { get(key: string): unknown };
+  expect(row).not.toBe(plain);
+  expect(row.get("name")).toBe("plain");
+  // An instance is handed back as it is.
+  expect(db.asInstance("Hooked", row)).toBe(row);
 });

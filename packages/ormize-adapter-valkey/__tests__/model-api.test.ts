@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/glo
 import { Ormize } from "@azerothian/ormize";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 import type { Definition } from "@azerothian/utilize/types/index";
 import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
@@ -32,8 +33,9 @@ const makeDefs = (): Definition[] => [
 ];
 
 const backends = [
-  { name: "sequelize", makeAdapter: () => new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) },
-  { name: "valkey", makeAdapter: () => new ValkeyAdapter({ prefix: "api" }, client) },
+  { name: "sequelize", makeAdapter: async () => trackConnection(new SequelizeAdapter({}, await dialectConfig())) },
+  // eslint-disable-next-line @typescript-eslint/require-await -- kept async to match the sequelize factory's return type
+  { name: "valkey", makeAdapter: async () => new ValkeyAdapter({ prefix: "api" }, client) },
 ];
 
 beforeAll(async () => { client = await makeClient(); });
@@ -44,7 +46,7 @@ describe.each(backends)("$name adapter — Sequelize-style model API", ({ name, 
   beforeEach(async () => {
     if (name === "valkey") await flush(client);
     orm = new Ormize();
-    orm.registerAdapter(makeAdapter(), "db");
+    orm.registerAdapter(await makeAdapter(), "db");
     for (const d of makeDefs()) await orm.addDefinition(d);
     await orm.initialise();
     await orm.sync();

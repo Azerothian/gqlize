@@ -44,3 +44,20 @@ describe("ValkeyModel - field metadata", () => {
     expect(model.fields.plain.description).toBeUndefined();
   });
 });
+
+describe("ValkeyModel - allowNull default", () => {
+  it("matches the sequelize adapter: nullable only when the field says so", () => {
+    const model = new ValkeyModel({
+      name: "Note",
+      define: {
+        title: { type: DataTypes.String },
+        body: { type: DataTypes.String, allowNull: true },
+        tag: { type: DataTypes.String, allowNull: false },
+      },
+    });
+    expect(model.fields.title.allowNull).toBe(false);
+    expect(model.fields.body.allowNull).toBe(true);
+    expect(model.fields.tag.allowNull).toBe(false);
+    expect(model.fields.id.allowNull).toBe(false);
+  });
+});

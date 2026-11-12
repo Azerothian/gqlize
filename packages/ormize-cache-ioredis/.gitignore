@@ -1,0 +1,11 @@
+node_modules
+
+yalc\.lock
+yarn\.lock
+yarn-error\.log
+coverage
+build
+docs
+lib
+.yalc
+publish

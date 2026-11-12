@@ -157,6 +157,8 @@ const ONE_ARG_GATES = {
   mutationDelete: ["mutationDelete"],
   queryDeleted: ["queryDeleted"],
   mutationRestore: ["mutationRestore"],
+  mutationCsv: ["mutationCsv"],
+  queryCsv: ["queryCsv"],
   queryExtension: ["queryExtension", "extensions"],
   mutationExtension: ["mutationExtension", "extensions"],
 } satisfies GateMap;

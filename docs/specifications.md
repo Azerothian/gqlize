@@ -76,12 +76,13 @@ which now lives in `gqlize`) and is registered on an `Ormize` instance.
 
 | Package | Path | Responsibility |
 | --- | --- | --- |
-| [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise(options?)`/`sync`/`reset`, relationship wiring, the graphql-free resolution engine (`resolveFindAll`/`process*`/`resolve{Many,Single}Relationship`), and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
+| [`@azerothian/ormize`](../packages/ormize) | `packages/ormize` | GraphQL-free backend manager: `Ormize` class (`src/manager.ts`, with its engine in `src/engine/`), `registerAdapter`, fluent `define()`, `addDefinition`, `models`, hooks, `getAssociations`/`getFields`/`getGlobalKeys`, `initialise(options?)`/`sync`/`reset`, relationship wiring, the graphql-free resolution engine (`resolveFindAll`/`process*`/`resolve{Many,Single}Relationship`), and the generic (adapter-agnostic) typed-model system. No GraphQL dependency. |
 | [`@azerothian/gqlize`](../packages/gqlize) | `packages/gqlize` | GraphQL layer: `createSchema(orm, options)` accepts an `Ormize` instance and generates the full Relay-style schema. Key files: `src/graphql/*` (builders), `src/graphql/resolvers/*` (the resolver registry), `src/graphql/snapshot/*` (serialisation), `src/cli/*` (the `gqlize` binary), `src/types/gqlize-adapter.ts` (the `GqlizeAdapter` contract). |
 | [`@azerothian/ormize-zod4`](../packages/ormize-zod4) | `packages/ormize-zod4` | Zod v4 projection: `generateZodSchemas(orm, options)` → permission-gated `{ entity, create, update }` schemas per model. |
 | [`@azerothian/nestize`](../packages/nestize) | `packages/nestize` | NestJS REST + Swagger projection: `NestizeModule.forRoot(orm, options)` + `buildOpenApiDocument`/`setupSwagger`. Drives the graphql-free ormize engine over REST; request bodies validated with the ormize-zod4 schemas. |
 | [`@azerothian/ormize-adapter-sequelize`](../packages/ormize-adapter-sequelize) | `packages/ormize-adapter-sequelize` | Reference `GqlizeAdapter` implementation over Sequelize 6. Same `SequelizeAdapter` default export. Entry: `src/index.ts`; `src/type-mapper.ts`, `src/utils/where-ops.ts`, `src/utils/where-operators.ts`. Typesystem binding in `src/types/orm.ts` (`defineModel`, `SequelizeModel`, `IORSequelizeModel`). |
 | [`@azerothian/utilize`](../packages/utilize) | `packages/utilize` | Shared, GraphQL-free foundation: `OrmAdapter` (backend adapter contract), `Definition`, `DefinitionField*`, `Association`, `Relationship`, `WhereOperators`, `Selection`, `DataType`/`DataTypes`, options/cache types; the generic definition typesystem (`src/types/orm.ts`: `ITypedDefinition`, `IORModel`); the `Events` enum; permission gate helpers + `createRoleBasedPermissions` (`src/gate.ts`, `src/permissions.ts`); and utilities (`logger`, `unique`, `word`, `waterfall`). |
+| [`@azerothian/ormize-cache-ioredis`](../packages/ormize-cache-ioredis) | `packages/ormize-cache-ioredis` | `IORedisCacheStore`: a Redis/Valkey `CacheStore` for the ormize read cache, shared across processes. LRU index and eviction in Lua scripts. `ioredis` is an optional peer. |
 | [`@azerothian/graphql-types`](../packages/graphql-types) | `packages/graphql-types` | Custom GraphQL scalars (`json`, `date`, `bigint`, `ip`, `upload`) and `createQueryType`. A local copy of `@vostro/graphql-types`. |
 
 > **Runnable examples:** [`examples/gqlize-basic`](../examples/gqlize-basic) (GraphQL) and
@@ -95,7 +96,7 @@ design property they all serve is **one resolver implementation, two callers**:
 
 | Path | Responsibility |
 | --- | --- |
-| `src/graphql/resolvers/` | Every resolver body, keyed by `kind` (`connection`, `singleRelationship`, `globalId`, `modelField`, `overrideOutput`, `instanceMethod`, `classMethod`, `mutationModel`, `container`, `nodeField`, `extend`). `bind.ts` exports `bindField(config, binding, ctx)` — the **single** point at which any resolver is attached to any field, and the place the `FieldBinding` descriptor is stamped onto `extensions.gqlize`. |
+| `src/graphql/resolvers/` | Every resolver body, keyed by `kind` (`connection`, `singleRelationship`, `globalId`, `modelField`, `overrideOutput`, `instanceMethod`, `classMethod`, `mutationModel`, `csvImport`, `container`, `nodeField`, `extend`). `bind.ts` exports `bindField(config, binding, ctx)` — the **single** point at which any resolver is attached to any field, and the place the `FieldBinding` descriptor is stamped onto `extensions.gqlize`. |
 | `src/graphql/snapshot/` | `ir.ts` (the serialisable `SchemaSnapshot`), `snapshot.ts` (`GraphQLSchema` → IR), `materialize.ts` (IR → `GraphQLSchema`), `fingerprint.ts`, `scalar-registry.ts`, `type-ref.ts`, `reachability.ts`, `ledger.ts`, `load.ts`. |
 | `src/cli/` | `args.ts` (`node:util.parseArgs`), `config.ts` (discovery + loading), `profiles.ts`, `commands/{build,print,check}.ts`, and `index.ts` — the shebang shell that turns `run()`'s return value into an exit status. |
 
@@ -265,22 +266,120 @@ Consumer-facing (`packages/ormize/src/manager.ts`):
 
 Internal resolution methods invoked by generated resolvers:
 
-- `resolveFindAll` — list query resolver (cursor→offset, `adapter.processListArgsToOptions` → `adapter.findAll` + count, fires `before` with `Events.QUERY`).
-- `resolveSingleRelationship` / `resolveManyRelationship` — relationship resolvers.
+- `resolveFindAll` — list query resolver (cursor→offset, `adapter.processListArgsToOptions` → `adapter.findAll` + count, fires `before` with `Events.QUERY`). Backward pagination (`before`/`last`) computes offset as `max(0, cursor.index - pageSize)` and clamps the limit to `min(pageSize, cursor.index)`. `last` without a cursor counts first and offsets from the end.
+- `resolveSingleRelationship` / `resolveManyRelationship` — relationship resolvers. The same backward-pagination semantics apply to nested connections.
 - `resolveClassMethod` — invokes `Model[methodName](args, context)` with optional before/after.
 - `processCreate` / `processUpdate` / `processDelete` — mutation executors; run `processInputs`, translate global IDs (`replaceIdDeep`), fire the matching `Events.MUTATION_*` hook, delegate to adapter functions, then `processRelationshipMutation`.
 - `processRelationshipMutation` — the nested-mutation engine (see §5).
+- `csvLimits(defName)` / `processCsv(defName, operation, request, context, selection?)` — CSV uploads:
+  whether (and under what limits) a model takes them, and the all-or-nothing row-by-row executor
+  over the three above (`engine/csv.ts`, see [CSV uploads](#csv-uploads)). Called by gqlize's model
+  mutation resolver and nestize's `_csv` route.
 
-> These internal resolution methods are invoked by gqlize's generated resolvers; they live in
-> `packages/ormize/src/manager.ts` (the `Ormize` class is backend-only) and are called from the
-> GraphQL layer in `packages/gqlize`.
+> These internal resolution methods are invoked by gqlize's generated resolvers. They are members of
+> the `Ormize` class (`packages/ormize/src/manager.ts`, backend-only), implemented in
+> `packages/ormize/src/engine/` (`resolution.ts` for reads, `mutations.ts` for writes), and called
+> from the GraphQL layer in `packages/gqlize`.
+
+---
+
+### Paging semantics
+
+| Arguments | Behaviour |
+| --- | --- |
+| `first: N` | First N rows of the ordered set. |
+| `first: N, after: C` | N rows after cursor C. |
+| `after: C` | Default page size (100) of rows after cursor C. |
+| `last: N` | Last N rows of the ordered set (count-then-offset). |
+| `last: N, before: C` | N rows ending just before cursor C. |
+| `before: C` | Default page size ending just before cursor C. |
+
+Page size is always clamped: absent → 100 (DEFAULT\_PAGE\_SIZE); above 1000 → 1000 (MAX\_PAGE\_SIZE). Both constants live in `@azerothian/utilize/utils/page-size`.
+
+### Default order
+
+A primary-key ASC tiebreaker is automatically appended when `orderBy` does not already end with the PK. This ensures deterministic pagination on all dialects — including Postgres, where an UPDATE may physically relocate a row. The tiebreaker is applied at the adapter level (`processListArgsToOptions`) for root and per-parent queries, and in `processIncludeStatement` for separate includes.
+
+### Read cache (`options.cache`)
+
+`new Ormize({cache: {store, ...}})` puts an LRU cache in front of the adapter reads `resolveFindAll`
+makes: the row fetch and every `count`. That covers every surface (GraphQL, REST, Temporal) and
+eager-loaded relations, since those arrive in the root fetch. It is off unless `cache` is set. The
+implementation is `packages/ormize/src/read-cache/`.
+
+| Option | Default | |
+| --- | --- | --- |
+| `store` | (required) | A `CacheStore`: `MemoryCacheStore` (ormize, per process) or `IORedisCacheStore` (`@azerothian/ormize-cache-ioredis`, shared). |
+| `ttl` | `60000` | Entry lifetime in ms. A definition's `cache.ttl` overrides it. |
+| `maxEntrySize` | 1 MiB | A larger serialised result is returned but not stored. `0` means no limit. |
+| `dedupe` | `true` | Concurrent identical reads share one adapter call. Each caller decodes its own copy. |
+| `exclude` | none | Model names, or `(request) => boolean` over `{defName, operation, context}`. |
+| `hooks` | `"bypass"` | `"cache"` also caches models with their own find/count hooks (see below). |
+| `vary` | none | `(context) => value`, mixed into the key, to partition by caller. |
+| `onError` | `console.warn` | Receives store failures. A failing store never fails a read. |
+
+Store-level limits (`maxEntries`, `maxSize` in bytes) are options of the store, which evicts the
+least recently used entry to stay within them.
+
+**Key.** The key is a SHA-256 of a canonical form of the *adapter-native* options, taken after the row
+scope, `definition.before` and every exposed-method `input` hook have run. Anything that changes
+which rows match is therefore in it. Symbol keys (Sequelize `Op`) and Sequelize helper objects are
+kept. `getGraphQLArgs`, `logging` and `benchmark` are left out. A model class is named. Any other
+function, or a cycle, makes the read uncacheable. `vary(context)` and the generations of the read's
+tags are appended.
+
+**Tags and invalidation.** A read's tags are its model, every eager-loaded target, and their join
+models. Invalidation is generational: `store.invalidate(tags)` increments a counter per tag, so keys
+built from the old counters are never looked up again and age out. Invalidation happens:
+
+- after every `process*` mutation, for the model plus all of its relationship targets and join models
+  (nested verbs write those), including when the mutation throws;
+- from the model hooks `afterCreate`/`afterUpdate`/`afterDestroy`/`afterRestore`/`afterSave`/
+  `afterUpsert` and their bulk forms, on the model that fired them. This catches writes made straight
+  through `orm.models.X`;
+- again after the commit, when the write was part of a transaction (`OrmizeTransaction.afterCommit`,
+  or the native transaction's `afterCommit` for a caller-supplied one). The first increment stops new
+  reads hitting old entries. The second removes anything a reader outside the transaction cached
+  before the commit made the write visible.
+
+Writes ormize never sees (raw SQL, another service, a userland association write to a join table
+with no definition) are only caught by TTL, or by calling `orm.readCache.invalidate([...])`.
+
+**Bypass.** A read is never cached, and nothing is stored, when it runs inside a transaction (ambient
+coordinator or `options.transaction`), when its model is excluded or has `cache: false`, or when its
+options can't be fingerprinted. It is also skipped when its model has its own `beforeFind`,
+`beforeFindAfterExpandIncludeAll`, `beforeFindAfterOptions` or `afterFind` (findAll) or
+`beforeCount` (count) hooks, defined on the model or globally, unless `hooks: "cache"` or the
+definition has a `cache` object. Those hooks run inside the adapter call, so on a hit they don't run
+and their output from the miss is what was stored. `afterCount` and an included model's `afterFind`
+are fired by ormize after the read, so they run on every hit.
+
+**Rows.** Rows are cached only for an adapter that implements the optional `snapshotRows` /
+`restoreRows` pair (§9). Otherwise only counts are cached. Values go through a JSON codec that keeps
+`Date`, `Buffer` and `bigint`.
+
+**Lookup.** A store may implement the optional `lookup(shape, tags)`, which reads the generations
+and the entry in one call. Without it a read is `versions` then `get`, which for a networked store is
+two round trips. Either way the entry key is `cacheEntryKey(shape, versions)`
+(`@azerothian/utilize/utils/cache-key`), `shape:v1.v2…`, kept plain so a store can build it
+server-side. `IORedisCacheStore` implements `lookup` in Lua, which halves the cost of a hit (0.55 ms
+to 0.29 ms against a local Redis).
+
+**Oversized results.** A result over `maxEntrySize` is returned and not stored, and its shape (the
+key without generations) is remembered for one TTL. Until then a miss on that shape skips the
+snapshot and encode, which are most of a miss's overhead, unless a deduplicated follower is waiting
+for its own copy.
+
+**Benchmark.** `packages/gqlize/__tests__/bench/read-cache.bench.ts` (opt-in, see AGENTS.md) prints
+median latency for uncached, missed and hit reads, the cost of each phase, cold-burst deduplication
+and write overhead.
 
 ---
 
 ## 4. Model Definition Schema
 
 A **Definition** is the plain object passed to `db.addDefinition`. The full type lives in
-`packages/utilize/src/types/index.ts` (`Definition`). The canonical, full-featured
+`packages/utilize/src/types/definitions.ts` (`Definition`). The canonical, full-featured
 example is `packages/gqlize/__tests__/helper/models/task.ts`.
 
 ### Fields
@@ -289,9 +388,10 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | --- | --- |
 | `name` | Unique model name (required). |
 | `datasource` | Optional adapter name; defaults to the manager's default adapter. |
-| `define` | Field map. Each value is a `DefinitionField`: `type`, `allowNull`, `primaryKey`, `foreignKey`, `unique`, `defaultValue`, `values` (enum), `validate`, `description`, `comment`, `deprecated` (the `@deprecated` reason for the generated field), plus `args` and `resolve` (per-field GraphQL arguments and a field resolver — see [guide: Field arguments & field resolvers](guide.md#field-arguments--field-resolvers)), `writable` (opt a pk/fk back into mutation input) and `ignoreGlobalKey`. |
+| `define` | Field map. Each value is a `DefinitionField`: `type`, `allowNull`, `primaryKey`, `foreignKey`, `unique`, `defaultValue`, `values` (enum), `validate`, `description`, `comment`, `deprecated` (the `@deprecated` reason for the generated field), plus `args` and `resolve` (per-field GraphQL arguments and a field resolver — see [guide: Field arguments & field resolvers](guide.md#field-arguments--field-resolvers)), `writable` (opt a pk/fk back into mutation input; `false` opts a fk out of `writableForeignKeys`) and `ignoreGlobalKey`. |
 | `override` | Per-field custom GraphQL type plus `input`/`output` transform functions (e.g. storing JSON in a string column but exposing a typed object). |
-| `ignoreFields` | Columns to exclude from the generated type. |
+| `ignoreFields` | Columns to exclude from every generated type: the output type, both mutation inputs, the `where` filter and the `orderBy` enum. nestize and temporalize refuse them in filters and ordering too. |
+| `generated` | Set by ormize, not by authors: marks the join model it registers for a cross-adapter `belongsToMany` that names no registered `through` model (`generateJoinModels`, `packages/ormize/src/engine/relationships.ts`). No projection exposes such a model — gqlize (`visible-models.ts`), nestize, ormize-zod4 and temporalize all skip it — and its relationship is a plain many-to-many (`Association.throughModel` is false). |
 | `relationships` | Array of `Relationship`: `{ model, name, type, options }` where `type ∈ hasOne | belongsTo | hasMany | belongsToMany` and `options` carries `as`, `foreignKey`, `sourceKey`, `through`, `constraints`. `name`, a known `type` and a `model` naming an already-defined target are all validated at wiring time, before either the same-adapter or cross-adapter branch runs, and each throws naming the relationship. Cross-adapter key columns are re-checked in a post-pass at the end of `initialise()` (see §3). |
 | `whereOperators` / `whereOperatorTypes` | Custom filter operators (async functions returning a where fragment) and their GraphQL input types. |
 | `expose` | Declares which methods surface to GraphQL: `expose.classMethods.{query,mutations}` and `expose.instanceMethods.{query,mutations}`, each an `ExposedMethod`: `{ type?, args?, before?, after?, fields?, include?, input?, output?, orderBy?, where? }`. `type` may be a string model reference (`"Task"`) or a list (`"Task[]"`), or a concrete GraphQL type. See [Exposed methods](#exposed-methods). |
@@ -299,7 +399,8 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `deprecated` | Model-level `@deprecated` reason. GraphQL cannot deprecate an object type, so the mark lands on the two fields that lead to the model: `QueryModels.<Name>` and `MutationModels.<Name>`. |
 | `deprecations` | Central deprecation map, mirroring `comments`: `deprecations.{fields,classMethods,instanceMethods}[key] = reason`. Wins over a `deprecated` written on the declaration itself, which is what lets a definition deprecate something it did not author — a relationship, an inherited column. See [Deprecation](#deprecation). |
 | `before` / `after` | gqlize-level transforms discriminated by the `Events` enum (see §8). |
-| `hooks` | Sequelize-style lifecycle `HookMap`. |
+| `hooks` | Sequelize-style lifecycle `HookMap`. Merged with `options.hooks`; a hook named in both runs both, top-level first. |
+| `cache` | This model's part in the read cache (§3). `false` keeps every read of it out. `{ttl}` overrides the cache-wide TTL, and also opts in a model that has its own find/count hooks. |
 | `queries` | **Sequelize adapter only.** Raw create/drop DDL registered against the definition (`{ [name]: { create, drop } }`, each a string or a thunk). `initialise()` replays every `create`, and `reset()` replays the `drop`s then the `create`s. This is the adapter's only I/O in `initialise()`, which is why `initialise({ddl: false})` — the offline schema build — turns it off. |
 | `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
 
@@ -360,7 +461,7 @@ export default {
 
 ### Exposed methods
 
-An entry under `expose` is an `ExposedMethod` (`packages/utilize/src/types/index.ts`). Beyond
+An entry under `expose` is an `ExposedMethod` (`packages/utilize/src/types/definitions.ts`). Beyond
 the schema shape (`type`, `args`) and the hooks (`before`, `after`) every target understands,
 an entry may declare what the method *needs loaded* and how it *shapes the query it is selected
 in*. Those keys are read by `packages/utilize/src/exposed-methods.ts` — GraphQL-free, so
@@ -405,7 +506,7 @@ Rules the surface holds to:
 
 `expose.instanceMethods.mutations` is the write-side target: pre-commit transforms, surfaced as
 the mutation's `apply` argument (§5) and run by `applyInstanceTransforms`
-(`packages/ormize/src/manager.ts`) after `definition.before` and immediately before the adapter
+(`packages/ormize/src/engine/mutations.ts`) after `definition.before` and immediately before the adapter
 persists. On create the transform's `this` is the pending values object; on update it is the
 live row, wrapped in a recording proxy so direct writes (`this.name = …`) are captured and
 persisted alongside a returned partial — the Sequelize adapter's update path persists the values
@@ -461,8 +562,9 @@ Extra query fields may be injected via `options.extend.query`.
 
 | Field | Meaning |
 | --- | --- |
-| `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**; `restore` in addition on a soft-deleting model. |
+| `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**; `restore` in addition on a soft-deleting model; `createCsv` / `updateCsv` / `deleteCsv` when CSV uploads are on (see [CSV uploads](#csv-uploads)). |
 | `classMethods` | Per-model exposed **mutation** class methods (`MutationClassMethods`). |
+| `csvImport` | Several CSV files, each a create or an update on its own model, applied as one unit with `@ref` labels linking rows across them. Present when at least one model's field takes `createCsv` or `updateCsv` (see [Multi-file imports](#multi-file-imports)). |
 
 Extra mutation fields may be injected via `options.extend.mutation`. Subscriptions are not
 generated: `options.subscriptions` is accepted and ignored (the generator is commented out —
@@ -550,16 +652,39 @@ artifact stale and `gqlize check` reports it.
 inputs. The top-level model mutation exposes `create` / `update` / `delete` / **`select`**, plus
 **`apply`** (`create-mutation-model.ts`) when the model exposes instance-method transforms — an
 input object with one field per `expose.instanceMethods.mutations` entry, typed by that entry's
-`args` (or `Boolean` when it declares none), gated by `permission.mutationInstanceMethods`. For each
+`args` (or `Boolean` when it declares none), gated by `permission.mutationInstanceMethods`. `apply`
+is offered only alongside a `create` or `update` argument. A model that may be updated but has no
+update input (nothing writable by hand) while a transform is allowed still gets `update`, whose
+`{Def}UpdateInput` then holds only `where` and `limit`, so its transforms can run on existing rows;
+it gets no `select`. The engine rechecks `mutationInstanceMethods` (from the ormize instance's own
+permission bag) before running each transform, for hosts that call `processCreate` /
+`processUpdate` / `processCsv` directly. For each
 association it also emits nested sub-fields, enabling deep writes, applied by
-`processRelationshipMutation` (`packages/ormize/src/manager.ts`) via the Sequelize association
+`processRelationshipMutation` (`packages/ormize/src/relationship-mutations.ts`) via the Sequelize association
 accessors (recursion depends on the graphql patch, see §12). The sub-fields per association type:
 
 - **hasMany / belongsToMany:** `create` (new records), `update` (`where`+`input` pairs),
   `add` (associate existing by where), `set` (replace the entire set with matching existing
   records), `remove` (disassociate matching), `delete` (delete matching), `restore` (undelete
-  soft-deleted matching, paranoid models). For **belongsToMany**, `add`/`set` entries are
-  `{ where, through }` where `through` (a JSON payload) writes join-table column values.
+  soft-deleted matching, paranoid models). `add`/`set` entries are bare filters, with one
+  exception: a **belongsToMany in through mode** takes `{ where, through }`, `through` writing
+  join-row columns. Through mode (`isThroughMode`, `packages/utilize/src/gate.ts`) needs
+  `Association.throughModel` (the join model is a definition the author registered, set by
+  `Ormize.getAssociations`; an implicit table or a `generated` one is not) and a permission bag
+  that lets the join model be seen. `through` is a typed input (`<Model><Rel>ThroughInput`) of the
+  join model's columns that pass `isThroughInputField` — its `mutationCreateInput`, minus the two
+  join keys, every primary/foreign key (the payload is not run through the id codec) and
+  `ignoreFields` — all optional, and is omitted when no column qualifies. The engine
+  (`splitLinkEntry` in `relationship-mutations.ts`) makes the same decisions on every route with
+  the caller's permission bag, which each projection passes as `Selection.permission` (gqlize: the
+  bag its schema was built with, visible-model fold included, via `GqlizeBinding.buildPermission`;
+  nestize and temporalize: the bag for the call; a direct server call passes none and is held to
+  the structural rules only). It refuses, with `ThroughInputError`, a bare filter in through mode,
+  a `{ where, through }` entry outside it, and any `through` key `isThroughInputField` rejects;
+  what passes runs through `processInputs` on the join model. nestize answers the error with 403,
+  temporalize with a non-retryable `Forbidden`. A `set` whose entries carry `through` clears the
+  links and links each entry with its own values (a kept link is rewritten with those values or the
+  column defaults); a `set` with no `through` is one accessor call, as before.
 - **belongsTo / hasOne:** `create`, `update`, `set` (associate an existing record found by a
   where filter → `accessors.set`), `remove` (`Boolean` → disassociate via `set(null)`),
   `delete`, `restore`.
@@ -570,8 +695,147 @@ found records** — no field write, no create/update/delete; scalar fields in `i
 Nested `select` is **relationship-scoped** (`source[accessors.get]({ where })`, firing
 `beforeFind`/`afterFind`); top-level `select` finds globally (`adapter.findAll`) and returns the
 found rows. Implemented by `processSelect` (top-level) and the `select` branch of
-`processRelationshipMutation` (`manager.ts`), which recurse without calling
+`processRelationshipMutation` (`relationship-mutations.ts`), which recurse without calling
 `processCreate`/`processUpdate`/`processDelete` on the selected rows.
+
+### CSV uploads
+
+This section describes how CSV uploads are built. For using them, see [CSV uploads](csv.md); for
+the client-facing surface, see the [CSV API reference](csv-api.md).
+
+`GqlizeOptions.csv` (read by the `Ormize` constructor, like `cache`) turns on CSV uploads: `true`
+for the default `CsvLimits` (`maxRows` 1000, `maxBytes` 5 MB), or an object overriding them. A
+definition's own `csv` either opts the model out (`false`) or overrides the limits; it cannot opt a
+model in when the instance has CSV off. `orm.csvLimits(defName)` resolves the two
+(`packages/ormize/src/csv/limits.ts`) and is what every surface asks.
+
+**Schema.** `create-mutation-model.ts` adds `createCsv`, `updateCsv` and `deleteCsv` (all
+`GQLTUpload`) beside `create`, `update` and `delete`, each only where its JSON twin is present, so the
+operation's own gates and the "nothing writable" omission carry over. A shared module-level
+`GQLTCsvOptions` input (`keys: [String!]`, `delimiter: String`) is added as `csv` when any of them
+is. Two further conditions: `orm.csvLimits(defName)` is set, and the build-time
+`permission.mutationCsv(defName)` allows it. Whether a model has CSV is part of the `models`
+fingerprint (recorded only when on, so existing artifacts stay current).
+
+**Export.** The read side. A root list connection (`<Model>List`, data source `findAll`) gets a
+`csv(columns: [String!], delimiter: String, header: Boolean): String!` field when
+`orm.csvLimits(defName)` is set and the build-time `permission.queryCsv(defName)` allows it
+(binding kind `connectionCsv`, resolver `resolvers/csv-export.ts`). It formats the page the
+connection fetched, so `where`, `orderBy`, paging, row scope and OUTPUT hooks are the list's own.
+Its columns are the node type's leaf fields with no arguments that are not exposed methods; each
+cell is the node field's own resolver output run through the field type's `serialize`, so ids are
+global ids and enums their names. Selecting `csv` counts as selecting rows
+(`isConnectionRowsSelected`) and widens the read to every column (`isConnectionCsvSelected` in
+`buildSelection`). Relationship connections have no `csv`. The text comes from ormize's
+`writeCsv` (`src/csv/write.ts`): RFC 4180 quoting, CRLF, `\N` for null, an empty cell for a value
+the row lacks, so a file reads back through `readCsv` unchanged. nestize's `GET /:resource/_csv`
+does the same over the list route's query, capped at the model's `maxRows`.
+
+**Engine.** `processCsv` (`packages/ormize/src/engine/csv.ts`) is a transport, not a write path:
+every row becomes one `processCreate` / `processUpdate` / `processDelete` call. The
+mass-assignment allow-list, `override.input`, scope, hooks, `apply` and read-cache invalidation
+therefore hold without being restated. The order of work is the CSV-specific part:
+
+1. `readCsv` (`src/csv/read.ts`) streams the upload through csv-parse, enforcing `maxBytes` across
+   chunks and `maxRows` as records arrive, and checks the header (present, no blank or repeated
+   names). `csvChunks` (`src/csv/source.ts`) accepts text, bytes, any async iterable (Node or web
+   stream), graphql-upload's `createReadStream()` / `promise`, and a web `File`/`Blob`.
+2. The header is split into key columns and input columns. Key columns (update/delete only) are
+   `csv.keys` plus every `where.…` column. When neither is given, they default to the primary key.
+   A delete takes only keys, an update needs at least one input column, and a create refuses
+   `where.…` columns.
+3. **Every row is converted before the first write.** The surface supplies `checkColumns` and
+   `toArgs`. An empty cell is omitted (on update: column untouched) and `\N` is `null`. A blank key
+   cell, or a `toArgs` that yields an empty `where`, is refused: either would act on the whole table.
+4. The writes run inside one `orm.transaction`. An update/delete row that changes nothing is
+   `CSV_ROW_NO_MATCH`, reported identically whether the row is absent or scoped out.
+
+Everything is reported as a `CsvUploadError` (`src/csv/errors.ts`) with a stable `code`, plus `row`
+(1-based, header excluded), `column` and, in a multi-file import, `file` where they apply. A failed
+write is wrapped as `CSV_ROW_FAILED` with the engine's error as `cause`.
+
+**Cell conversion is the surface's.** gqlize (`graphql/resolvers/csv.ts`) reads the input and where
+types off the field being resolved, not the schema cache, so a materialized artifact behaves the
+same. Each cell is converted by its field's type, then the row goes through graphql's
+`validateInputValue` / `coerceInputValue`. A CSV can therefore send nothing a JSON argument could
+not, and a column missing from the input type is a `CSV_HEADER` error. Errors become `GraphQLError`s
+with `code` / `row` / `column` (and `causeCode`) in `extensions`, deliberately without
+`originalError`: graphql-yoga masks a GraphQLError wrapping a plain `Error`. nestize
+(`src/csv.ts`) converts by column descriptor (`csvCellValue`) and validates with its zod schemas.
+
+**Header paths.** `parseCsvHeader` (`packages/ormize/src/csv/header.ts`) reads a header as segments
+separated by `.` or `?`, each optionally indexed (`add[1]`), with an optional trailing operator
+(`[in]`, `[Op.in]`). Resolving a path is the surface's job:
+
+- **gqlize** walks the argument's input types, so every relationship verb and every filter operator
+  the schema offers is reachable. The walk:
+  - inserts an omitted `input` (update/select entries) or `where` (belongsToMany add/set entries);
+  - skips a `where` written where the entry is already a filter type;
+  - takes entry `0` of a list of objects when no index is given;
+  - defaults a filter field's operator to `eq`.
+
+  Rows are then built by placing each cell at its path. Object nodes have no prototype, and list
+  entries are held in a map by index until they are compacted, so a header's `[n]` costs one entry
+  whatever `n` is. Paths sharing a prefix therefore build one
+  object, which is how columns under one verb merge into one entry. List holes left by entries whose
+  cells were all empty are compacted out. Two headers resolving to the same path, or one inside the
+  other, are a `CSV_HEADER` error. A list-of-values leaf takes `csvList` (`a|b` or a JSON array).
+- **nestize** takes only single-field `where.<field>[op]` key columns. It uses `CSV_LIST_OPERATORS`
+  to know which operators take lists, and refuses relationship columns: its zod input schemas hold
+  columns only.
+
+### Multi-file imports
+
+`processCsvImport` (`packages/ormize/src/engine/csv-import.ts`) applies several uploads, each a
+create or an update on its own model, as one unit. `GqlizeOptions.csv.maxFiles` caps the file count
+(default 10, `resolveCsvMaxFiles`). Each file is read, split and converted with the one-file
+helpers (`columnsFor`, `planRow`, `write`). The additions are:
+
+1. **Labels.** A file's `@ref` column (`CSV_REF`) labels its rows. Labels are unique across the
+   import. A label on an update row names the row it matched, which must be exactly one.
+2. **References.** A header ending in `.@ref` (`isCsvRefHeader`) names labelled rows. A reference
+   to another file is a dependency edge. A reference within a file must point at an earlier row. A
+   reference may not be a match column.
+3. **Order.** Files run in a dependency order (`writeOrder`) that keeps the given order where it is
+   free. A cycle is a `CSV_HEADER` error.
+4. **Placeholders.** Before conversion, every reference cell is replaced with tokens
+   (`\u0000csv-ref:<nonce>:<label>`). The nonce is random per import, so a cell cannot spell out a
+   token and have an id swapped into a field of its choosing. When the surface supplies
+   `request.refTarget(column)`, a label of any other model is refused here, before any write. Every row of every file is converted, through the surface's `toArgs`,
+   before the transaction opens. Inside it, just before a row is written, `resolveTokens` swaps each
+   token for `request.refValue(defName, row)` of the row it names. That is a global id in gqlize and
+   the raw key in nestize. A token in a single-valued field holding several labels is refused.
+5. **Selection.** `request.selection(defName)` supplies each model's write selection. gqlize's carries
+   the `translateFilter` that decodes global ids, references included. Without it they would reach
+   the adapter encoded.
+
+**gqlize.** `csvImport(files: [CsvImportFile!]!)`. `CsvImportFile` has:
+
+- `model`, a per-schema enum `CsvImportModel` of every model whose `models.<Model>` field takes
+  `createCsv` or `updateCsv`;
+- `operation` (`GQLTCsvImportOperation`);
+- `file`, `name`, `keys` and `delimiter`.
+
+The resolver (`graphql/resolvers/csv-import.ts`, binding kind `csvImport`) refuses a file whose
+model field lacks the `<operation>Csv` argument, so every build-time gate on that argument holds. It
+then converts against that field's input types with `csvRequest`, handing it a `CsvModels` (each
+relationship's target, each model's single primary key). The path walker uses that to resolve
+`….@ref`:
+
+- an `ID` leaf takes the id;
+- a relationship takes its `add` (to-many) or `set` (to-one);
+- an entry takes its filter as `<pk>: { in: [...] }`.
+
+`GQLTCsvImportResult` lists each file's name, model, operation, count and ids, plus `refs` (label to
+id). Rows get `processAfter` with their model's definition, as a model field's CSV rows do.
+
+**nestize.** `POST /_csv` reads a multipart body (`src/csv-multipart.ts`). It takes the files a
+multer interceptor left on `req.files`, or reads the stream with busboy. Each file is metered against
+its model's `maxBytes`, and the part count against `maxFiles`. File parts are named
+`<resource>.<operation>`, and text parts `<part>.keys` / `<part>.delimiter` set a file's options.
+Each part's resource, CSV switch and permissions are checked as it arrives. A reference fills one
+writable foreign-key column (`<field>.@ref`). Its cell is set aside from zod validation and written
+with the referenced row's key.
 
 ### Example query
 
@@ -609,7 +873,7 @@ mutation {
 
 ### Query resolution & eager loading
 
-For a top-level list query, `resolveFindAll` (`packages/ormize/src/manager.ts`) resolves the
+For a top-level list query, `resolveFindAll` (`packages/ormize/src/engine/resolution.ts`) resolves the
 requested relationships **at the root level** rather than lazily per parent. It builds a
 combined include tree from the GraphQL **selection set** — merged with any explicit `include`
 argument — via `packages/gqlize/src/graphql/utils/build-include-from-selection.ts`, then issues
@@ -623,7 +887,16 @@ the query through the adapter. Key properties:
 - **Merge, not override.** The selection-derived tree and any explicit `include` args (parent
   level and nested) are merged by relation name and path (`where` → AND, `required` → OR,
   orderBy/pagination precedence) — a parent `include` and a nested `include` for the same
-  section combine rather than clobber each other.
+  section combine rather than clobber each other. Every element of a list-shaped `include` merges,
+  not only the first.
+- **One plan shape.** The `include` argument is a list on an adapter with `includeIsList` and a
+  single object on one without (Valkey). The engine normalises either, at every depth, into
+  `IncludeMap[]` of complete descriptors (`completeIncludePlan`,
+  `packages/utilize/src/utils/include-plan.ts`): `target` and `associationType` are read off the
+  live association, since a client-written descriptor has neither, and a through-mode
+  `belongsToMany` gets `through` so it is never JOINed. This runs where the plan enters
+  `resolveFindAll` and the per-parent `resolveManyRelationship`, before scoping. Adapters are only
+  ever handed `IncludeMap[]`; `includeIsList` decides the argument's GraphQL type and nothing else.
 - **Adapter-aware.** Only relationships whose target is on the **same adapter** as the parent
   are folded into the parent query. Cross-adapter relationships (a different adapter — no shared
   database to JOIN) are left to their own resolvers, which run them as separate root queries.
@@ -645,9 +918,26 @@ the query through the adapter. Key properties:
   default a selected relation is a LEFT JOIN, so a nested `where` filters the child rows but not
   the parent; `required: true` promotes it to an INNER JOIN so parents without a matching related
   row are excluded. Equivalent to `required` on the explicit `include` argument (the two
-  OR-merge). A row-level scope on the child overrides it back to a LEFT JOIN — see §12:
-  `required: true` means "has a matching child" among the rows the caller may see, and a
-  parent is never dropped because its children were filtered by a scope.
+  OR-merge). `required` is local: it removes rows of its *own* parent level, and reaches the
+  root only through an unbroken chain of required levels. Under a non-required single relation
+  the parent field becomes `null`; under a non-required collection the parent row drops out of
+  that collection, and the root is unaffected. With a row-level scope on the child, the scope filter sits inside the join:
+  `required: true` means "has a matching child" among the rows the caller may see, so a parent
+  is dropped only when it has no *visible* match. A scope never makes a join required by
+  itself; an unset `required` stays a LEFT JOIN. `required` nests at any depth, including
+  beneath a `required` hasMany/belongsToMany: Sequelize 6 places such a join inside the
+  paginated subquery, away from the collection it joins through, and the Sequelize adapter
+  moves it back to the outer query (a `beforeFindAfterOptions` hook on its instance).
+- **`required` where no JOIN applies.** A through-mode `belongsToMany`, a cross-adapter relation,
+  and every relation of a model whose adapter sets `supportsJoins: false` (Valkey) cannot be
+  JOINed. The include builder still plans a `required` one (a cross-adapter one as a filter-only
+  descriptor), and `applyEngineRequired` (`ormize/src/engine/required-filter.ts`) replaces it,
+  after the scope pass and before the adapter sees the plan, with a key filter on the model above:
+  `<foreignKey> in [...]` for a `belongsTo`, `<sourceKey> in [...]` for a `hasOne`/`hasMany`/
+  `belongsToMany`, the keys read unpaged from the target's rows matching the descriptor's `where`,
+  its read scope and any `required` relations nested under it. Every other engine-applied
+  descriptor is dropped from the plan; its rows come from its own resolver. A root left with no
+  keys answers an empty page without a query. So `required` means the same on every adapter.
 - **Accurate totals.** When a per-parent limit is applied, the nested connection's `total` is
   fetched with a `count` (firing `beforeCount`) rather than reported as the page length. hasMany
   counts run against the target model with the foreign-key filter so `beforeCount` fires (the
@@ -685,6 +975,7 @@ relation is deliberately left to its own resolver — a strategy, not a failure.
 | Accurate `total` under a per-parent limit | holds (an extra count per parent) |
 | Count-only (`total` without `edges`) skips the findAll | holds — `query-count.test.ts` |
 | Cross-adapter relations are left to their own resolvers | holds — `ormize-adapter-valkey/__tests__/cross-adapter.test.ts` |
+| `required` filters parents on Valkey and across adapters too | holds — `ormize-adapter-valkey/__tests__/required.test.ts` |
 | Soft-delete `deleted:` carried per include node | holds — `paranoid.test.ts` |
 | A row-level scope never becomes a filter on the parent | holds — see the note below |
 | Child find hooks fire exactly once, JOIN or separate | holds — `query-count.test.ts` |
@@ -711,7 +1002,7 @@ Known limits, recorded because why something is absent is worth as much as what 
   and imposes nothing, and the same absence skips that entry's `afterFind` and its
   computed-`orderBy` expansion. The **join is still scoped**, because §13 works off the
   model on each native include rather than the portable descriptor; this is the backstop
-  doing its job, and `ormize/__tests__/scope.test.ts` pins it.
+  doing its job, and `ormize/__tests__/scope-enforcement.test.ts` pins it.
 - **`countOptions` carries the full include array without `distinct: true`**, so a
   `hasMany` fan-out would inflate `total` on a dialect with no inline count. Latent only:
   the inline-count expression covers postgres, mssql and sqlite.
@@ -757,6 +1048,26 @@ builder may legitimately skip, and `edges.node` stays nullable because the row i
 a time and resolved per edge — it can go away in between. Every field above was nullable in 6.x; see
 [the migration note](migration-6-to-7.md#relay-connection-fields-are-non-null).
 
+A `belongsToMany` in through mode (`isThroughMode`, see §5's relationship writes) adds `through:
+<JoinModel>` to its edge and `throughWhere` / `throughOrderBy` (the join model's own filter and
+order types) to its field, and its connection is named after the parent too
+(`<Parent><Target>BelongsToMany<Rel>List`), so it never shares an edge type with another parent's
+relationship of the same name. It is read by one path on every adapter
+(`packages/ormize/src/engine/through-reads.ts`): the join rows for the parent, filtered by
+`throughWhere` and the join model's read scope, then the targets through `resolveFindAll` restricted
+to the keys those rows point at (the target's own scope, hooks and read cache apply). The page
+carries the join rows (`AdapterRelationshipPage.through`); the connection resolver runs each
+through the join model's OUTPUT hooks and drops the edge if one is rejected. With
+`throughOrderBy`, edges sort by join columns, then the target's order and primary key, and are
+windowed in memory with the connection's own offset arithmetic. The path is keyed on
+`Association.throughModel` alone, so a join model the permission bag hides still has its read scope
+applied — it just offers no `through` or join-row arguments, and the engine refuses them
+(`ThroughInputError`). A through-mode relation is never in the include plan except as a `required`
+filter: `applyEngineRequired` replaces it, before the adapter sees the plan, with
+`<sourceKey> in [...]` on the model above it — the keys with a visible link matching
+`throughWhere` and the (scoped) target `where`. A parent left with no keys at the root answers
+with an empty page.
+
 They come with cursor args `after`, `first`, `before`, `last`, `orderBy`, merged with the adapter's
 default list args (`where` filter + `include`). Cursors are index-based and carry the name of
 the connection that minted them, so a cursor is rejected by any other connection, whose index
@@ -792,7 +1103,7 @@ byte-for-byte what earlier versions emitted:
   `signedCursorCodec` (HMAC over the index) and `fallbackCursorCodec(next, ...previous)`, which
   mints in the first format and reads any of them — the rolling-deploy path.
 
-The interfaces are declared in `packages/utilize/src/types/index.ts`, which stays graphql-free;
+The interfaces are declared in `packages/utilize/src/types/codecs.ts`, which stays graphql-free;
 the implementations live in gqlize because `relayIdCodec` delegates to `graphql-relay`. `decode`
 returns `null` for a value the codec does not recognise and never throws: one caller turns that
 `null` into `GraphQLError("Invalid cursor")` and another — the nested-relation offset planner —
@@ -821,7 +1132,7 @@ served without them resolves perfectly well, in the wrong format. See §5 and
 ## 7. Permissions
 
 Permissions are configured via `options.permission` (type `GqlizeOptions.permission` in
-`packages/utilize/src/types/index.ts`). All but one are **build-time** callbacks, consulted
+`packages/utilize/src/types/options.ts`). All but one are **build-time** callbacks, consulted
 throughout `packages/gqlize/src/graphql/*`: each returns a boolean, and returning falsy omits the
 corresponding schema element. `scope` is the exception on both counts — it returns a filter rather
 than a decision, and it is consulted per request rather than per schema.
@@ -830,7 +1141,9 @@ than a decision, and it is consulted per request rather than per schema.
 | --- | --- |
 | `model(defName, options)` | Whether the model type is generated at all. |
 | `query(defName, options)` | The list query for a model. |
-| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. |
+| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. They gate the nested relationship verbs on the **target** model too, by `isRelationshipVerbAllowed` (utilize): `create` needs its create; `update` / `select` its update; `add` / `set` / `remove` on a `hasMany` / `hasOne` its update (they rewrite its foreign key); `delete` / `restore` its delete / restore. On a `belongsToMany` in through mode the link verbs write the join model's rows, so they need its permissions (`isThroughLinkAllowed`): `add` its create, `remove` its delete, `set` both — and the engine also requires its update when an entry's `through` lands on a link that already exists. gqlize offers only the allowed verbs and leaves out a relationship with none; nestize refuses a nested body that uses a denied one. |
+| `mutationCsv(defName, options)` | The `createCsv` / `updateCsv` / `deleteCsv` arguments and nestize's `_csv` upload routes, *in addition to* the operation's own gate. Only consulted for a model with CSV on (§5). |
+| `queryCsv(defName, options)` | CSV export: the `csv` field on the model's root list connection and nestize's `GET /:resource/_csv`, *in addition to* `query` and the field gates. Only consulted for a model with CSV on (§5). |
 | `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
 | `queryDeleted(defName, options)` | The `deleted` argument on a soft-deleting model's list fields and include input — i.e. whether this caller may read soft-deleted rows at all. Row-level visibility is still `scope`'s: a caller allowed deleted rows sees only the deleted rows inside their scope. |
@@ -865,7 +1178,8 @@ not reach it in the role-based helper: an absent `scope` means unscoped, because
 every deployment that does not set one.
 
 Enforcement is deliberately layered (issue #40 decision 8). The engine merges the resolved filter at
-its read and write chokepoints in `packages/ormize/src/manager.ts`; on sequelize a second copy is
+its read and write chokepoints in `packages/ormize/src/engine/` (`resolution.ts`, `mutations.ts`, via
+`scope-bridge.ts`); on sequelize a second copy is
 imposed by model hooks in `packages/ormize/src/scope-hooks.ts`, which sit below the paths the engine
 cannot see; a post-write re-check refuses a write that would move a row out of scope; and an
 instance-level `beforeQuery` refuses a raw statement bound to a scoped model that did not come
@@ -913,7 +1227,7 @@ gqlize has two distinct hook systems.
 ### 1. Sequelize-style lifecycle hooks
 
 The manager recognizes Sequelize's lifecycle hook names, split across two lists in
-`packages/ormize/src/manager.ts` by where the hook actually fires.
+`packages/ormize/src/engine/constants.ts` by where the hook actually fires.
 
 **Model hooks** (`hookList`) are registered on the model: `beforeValidate`/`afterValidate`,
 `validationFailed`, `beforeCreate`/`afterCreate`, `beforeUpdate`/`afterUpdate`,
@@ -986,8 +1300,9 @@ per-definition hook map so `runHook` can fire it after a count, but it is withhe
 ## 9. Adapter Contract
 
 Any data source is integrated by implementing the `GqlizeAdapter` interface
-(`packages/utilize/src/types/index.ts`). The Sequelize adapter
-(`packages/ormize-adapter-sequelize/src/index.ts`) is the reference implementation. The
+(`packages/utilize/src/types/adapter.ts`). The Sequelize adapter
+(`packages/ormize-adapter-sequelize/src/index.ts`, a thin class delegating to `reads.ts`, `writes.ts`,
+`model-creation.ts`, `introspection.ts` and siblings) is the reference implementation. The
 contract groups into:
 
 - **Lifecycle:** `createModel`, `initialise(options?)`, `sync`, `reset`. `initialise` takes an
@@ -1011,6 +1326,14 @@ contract groups into:
   `getInlineCount`, `processFilterArgument`, `replaceIdInArgs`.
 - **Mutations:** `getCreateFunction`, `getUpdateFunction`, `getDeleteFunction`, `update`, and
   optionally `getRestoreFunction`.
+- **Read cache (optional):** `snapshotRows(defName, rows, options)` turns a `findAll` result into
+  JSON-safe values. `restoreRows(defName, snapshot, options)` rebuilds fresh rows from them, as close
+  as possible to what `findAll` with the same options returns. Both or neither. Without them, the read
+  cache (§3) stores counts only. The Sequelize adapter snapshots `dataValues` recursively (not getter
+  output, which would go through the getter twice) and restores with `bulkBuild({raw: true,
+  isNewRecord: false, include})` over a clone of the include tree, then re-marks windowed includes.
+  It validates that tree once and passes `includeValidated: true`, as `findAll` does. `bulkBuild`
+  alone re-validates it for every root row, which doubled the cost of a restore.
 - **Soft delete (optional):** `softDeletes(defName)` reports whether a model can answer for a
   deleted row; `getRestoreFunction(defName, whereOperators)` clears the deletion. Both are
   optional in the same way `computedOrderableFields` is — a backend without soft delete (valkey,
@@ -1109,7 +1432,7 @@ each with its own subpath export:
 | `DateType` | `.../date` | Date/time values. |
 | `IPType` | `.../ip` | IP addresses. |
 | `JSONType` | `.../json` | Arbitrary JSON. |
-| `UploadType` | `.../upload` | File uploads. |
+| `UploadType` | `.../upload` | File uploads. The type of the CSV upload arguments (§5); gqlize parses no multipart itself — the host's layer fills the value. |
 | `createQueryType`, `defaultConfig` | `.../query` | Builds the `where`/filter input type used by adapters. |
 
 ---
@@ -1249,7 +1572,7 @@ is:
   — so streaming would over-fetch rather than break.
 - Federation: no trace in the tree, and out of scope unless asked for.
 - DataLoader-style batching is largely moot for same-adapter reads, since the selection-set-driven
-  `include` builder (`ormize/src/manager.ts`) collapses the N+1 in SQL. The live gap is the
+  `include` builder (`ormize/src/engine/resolution.ts`) collapses the N+1 in SQL. The live gap is the
   cross-adapter batching listed above, which is an ormize concern rather than a gqlize one.
 
 ---

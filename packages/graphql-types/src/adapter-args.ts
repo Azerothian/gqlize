@@ -6,7 +6,7 @@ import {
   type GraphQLFieldConfigArgumentMap,
   type GraphQLInputFieldConfigMap,
 } from "graphql";
-import { isFieldAllowed, isModelAllowed, isQueryDeletedAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
+import { isFieldExposed, isModelAllowed, isQueryDeletedAllowed, isRelationshipAllowed } from "@azerothian/utilize/gate";
 import { computedWhereFields } from "@azerothian/utilize/exposed-methods";
 import { deprecationFor } from "@azerothian/utilize/utils/deprecation";
 import type { Definition, OrderEntry, Permission } from "@azerothian/utilize/types/index";
@@ -91,6 +91,26 @@ export interface AdapterArgsHost {
   readonly includeIsList: boolean;
 }
 
+/**
+ * The meta-store entries the builders below derive from a permission bag:
+ * `getFilterGraphQLType`, `getOrderByGraphQLType` and `getIncludeGraphQLType`
+ * memoize under these keys. An adapter's meta store is keyed by model name
+ * alone, so a schema built off the same adapter under a different permission
+ * must drop them first, or it is handed the previous build's types and
+ * re-exposes the fields and relationships the new bag denies. A new
+ * permission-derived builder adds its key here.
+ */
+const PERMISSION_DERIVED_META = ["queryType", "orderByType", "includeType"];
+
+/** Drop every permission-derived entry from an adapter's meta store; see {@link PERMISSION_DERIVED_META}. */
+export function clearPermissionDerivedMeta(meta: { [model: string]: { [key: string]: unknown } }): void {
+  for (const model of Object.keys(meta)) {
+    for (const key of PERMISSION_DERIVED_META) {
+      delete meta[model][key];
+    }
+  }
+}
+
 /** Resolve the effective permission: an explicit argument wins over the build-time one. */
 function effective(host: AdapterArgsHost, permission?: Permission): Permission | undefined {
   return permission !== undefined ? permission : host._buildPermission;
@@ -171,7 +191,7 @@ export function getOrderByGraphQLType(
     // definition of its own, and `targetOf` is the one handle it is given.
     const definition = host.targetOf(defName)?.definition;
     for (const fieldName of host.orderableFields(defName)) {
-      if (!isFieldAllowed(perm, defName, fieldName)) {
+      if (!isFieldExposed(definition, perm, defName, fieldName)) {
         continue;
       }
       // A deprecated column should not stay silently sortable: both halves of

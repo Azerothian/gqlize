@@ -3,7 +3,8 @@ import {createInstance, resultData, validateResult} from "./helper";
 import {createSchema} from "../src";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 
-import {describe, it, expect} from "@jest/globals";
+import {describe, it, expect, jest} from "@jest/globals";
+import Sequelize from "sequelize";
 import {toGlobalId} from "graphql-relay";
 
 type Edge<T> = {node: T; cursor?: string};
@@ -589,6 +590,88 @@ it("include operator - required", async() => {
   expect(models.Task.edges).toHaveLength(1);
   expect(models.Task.edges[0].node.name).toEqual("task1");
   expect(models.Task.edges[0].node.items.edges).toHaveLength(2);
+});
+
+it("include operator - required at every level (#70)", async() => {
+  const instance = await createInstance();
+  const {Task, Item} = instance.models;
+  const other = await Task.create({name: "other"});
+  const test = await Task.create({name: "test"});
+  const p1 = await Item.create({name: "p1", taskId: other.id});
+  const p2 = await Item.create({name: "p2"});
+  const p3 = await Item.create({name: "p3", taskId: test.id});
+  await Item.create({name: "c1", parentId: p1.id});
+  await Item.create({name: "c2", parentId: p2.id});
+  await Item.create({name: "c3", parentId: p3.id});
+  const schema = await createSchema(instance);
+  const include = `include: [{parent: {required: true, include: {task: {required: true, where: {name: {eq: "test"}}}}}}]`;
+  type Row = {name: string; parent?: {name: string; task?: {name: string} | null} | null};
+  type Result = {models: {Item: Connection<Row> & {total: number}}};
+  // Whether or not the selection reaches the nested relation — the selection
+  // builds its own plan, which the explicit include has to merge into, not lose.
+  for (const node of ["name", "name parent { name }", "name parent { name task { name } }"]) {
+    const {models} = await run<Result>(schema, `query {
+      models { Item(${include}) { total edges { node { ${node} } } } }
+    }`);
+    expect(models.Item.edges.map((e) => e.node.name)).toEqual(["c3"]);
+    expect(models.Item.total).toEqual(1);
+  }
+});
+
+it("include operator - required include under a required collection", async() => {
+  // Sequelize 6 put the nested join inside the paginated subquery, away from
+  // the collection it joins through, and the SQL failed (#70). The adapter's
+  // `beforeFindAfterOptions` hook keeps it in the outer query.
+  const instance = await createInstance();
+  const {Task, Item} = instance.models;
+  const test = await Task.create({name: "test"});
+  const other = await Task.create({name: "other"});
+  const p1 = await Item.create({name: "p1"});
+  const p2 = await Item.create({name: "p2"});
+  await Item.create({name: "p3"});
+  await Item.create({name: "c1", parentId: p1.id, taskId: test.id});
+  await Item.create({name: "c2", parentId: p1.id, taskId: other.id});
+  await Item.create({name: "c3", parentId: p2.id, taskId: other.id});
+  const schema = await createSchema(instance);
+  type Result = {models: {Item: Connection<{name: string; children: Connection<{name: string}>}> & {total: number}}};
+  // `first: 1` as well: the page has to be counted in parents that pass the
+  // filter, not in whatever rows the subquery happened to take first.
+  for (const args of ["", "first: 1, "]) {
+    const {models} = await run<Result>(schema, `query {
+      models { Item(${args}include: [{children: {required: true, include: {task: {required: true, where: {name: {eq: "test"}}}}}}]) {
+        total edges { node { name children { edges { node { name } } } } }
+      } }
+    }`);
+    expect(models.Item.edges.map((e) => e.node.name)).toEqual(["p1"]);
+    // The INNER JOIN filters the children too, exactly as it does unpaginated.
+    expect(models.Item.edges[0].node.children.edges.map((e) => e.node.name)).toEqual(["c1"]);
+    expect(models.Item.total).toEqual(1);
+  }
+});
+
+it("include operator - a relationship whose options.as differs is reached by its name", async() => {
+  // The include input, permissions and the output field all key by `name`;
+  // the adapter used to register the association under `options.as` instead,
+  // so `include: {owner: …}` reached for an association that did not exist.
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    const instance = await createInstance([{
+      name: "Ticket",
+      define: {name: {type: Sequelize.STRING, allowNull: false}},
+      relationships: [{type: "belongsTo", model: "Task", name: "owner", options: {as: "user", foreignKey: "taskId"}}],
+    }]);
+    const {Task, Ticket} = instance.models;
+    const task = await Task.create({name: "task1"});
+    await Ticket.create({name: "t1", taskId: task.id});
+    await Ticket.create({name: "t2"});
+    const schema = await createSchema(instance);
+    const {models} = await run<{models: {Ticket: Connection<{name: string; owner: {name: string} | null}>}}>(schema, `query {
+      models { Ticket(include: [{owner: {required: true}}]) { edges { node { name owner { name } } } } }
+    }`);
+    expect(models.Ticket.edges.map((e) => e.node)).toEqual([{name: "t1", owner: {name: "task1"}}]);
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 it("include operator - where primarykey converted correctly", async() => {

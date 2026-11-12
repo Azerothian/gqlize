@@ -1,4 +1,5 @@
-import {graphql, GraphQLEnumType, GraphQLInputObjectType, GraphQLObjectType} from "graphql";
+import {graphql, GraphQLEnumType, GraphQLInputObjectType, GraphQLObjectType, GraphQLString} from "graphql";
+import Sequelize from "sequelize";
 import {describe, it, expect} from "@jest/globals";
 
 import {createInstance, resultData, validateResult} from "./helper";
@@ -132,6 +133,209 @@ describe("exposed instance methods — projection", () => {
     // the method's include did not clobber the selection-derived one
     expect(node.petNames).toBe("ari,rex");
     expect(node.pets.edges.map((e) => e.node.name).sort()).toEqual(["ari", "rex"]);
+  });
+});
+
+describe("exposed instance methods — sorting under a narrowed selection", () => {
+  it("keeps the sort column when only a relation-backed method is selected", async() => {
+    // A joined `hasMany` plus a limit puts the root in a subquery, and the outer
+    // ORDER BY names `Person.lastName`. Narrowing to the method's own columns used
+    // to leave it out of the subquery: "no such column: Person.lastName".
+    const instance = await personInstance();
+    const {Pet} = instance.models;
+    const [john, ada, zoe] = await people(instance);
+    await Pet.create({name: "Rex", personId: john.get("id")});
+    await Pet.create({name: "Tom", personId: ada.get("id")});
+    await Pet.create({name: "Kit", personId: zoe.get("id")});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: `{
+      models { Person(orderBy: lastNameASC) { edges { node { petNames } } } }
+    }`});
+    validateResult(result);
+    expect(resultData<{models: {Person: {edges: {node: {petNames: string}}[]}}}>(result)
+      .models.Person.edges.map((e) => e.node.petNames)).toEqual(["Kit", "Tom", "Rex"]);
+  });
+});
+
+describe("exposed instance methods — finding the implementation (#72)", () => {
+  // Top-level `instanceMethods`, plus an `options.instanceMethods` — empty or
+  // not. The adapter used to install one bag *or* the other, so every
+  // top-level method vanished as soon as the nested bag existed at all.
+  const gadget = (options: Definition["options"]): Definition => ({
+    name: "Gadget",
+    define: {name: {type: Sequelize.STRING, allowNull: false}},
+    expose: {
+      instanceMethods: {
+        query: {
+          shout: {type: GraphQLString, fields: ["name"]},
+          whisper: {type: GraphQLString, fields: ["name"]},
+          clash: {type: GraphQLString},
+        },
+      },
+    },
+    instanceMethods: {
+      shout(this: {name: string}) {
+        return `${this.name}!`;
+      },
+      clash() {
+        return "top-level";
+      },
+    },
+    options,
+  });
+  type GadgetResult = {models: {Gadget: {edges: {node: {shout: string; whisper?: string; clash?: string}}[]}}};
+
+  it("finds a top-level method beside an empty `options.instanceMethods`", async() => {
+    const instance = await createInstance([gadget({instanceMethods: {}})]);
+    await instance.models.Gadget.create({name: "g"});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ models { Gadget { edges { node { shout } } } } }"});
+    validateResult(result);
+    expect(resultData<GadgetResult>(result).models.Gadget.edges[0].node.shout).toBe("g!");
+  });
+
+  it("merges both spellings, the nested one winning a name both declare", async() => {
+    const instance = await createInstance([gadget({instanceMethods: {
+      whisper(this: {name: string}) {
+        return `${this.name}...`;
+      },
+      clash() {
+        return "nested";
+      },
+    }})]);
+    await instance.models.Gadget.create({name: "g"});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ models { Gadget { edges { node { shout whisper clash } } } } }"});
+    validateResult(result);
+    expect(resultData<GadgetResult>(result).models.Gadget.edges[0].node).toEqual({shout: "g!", whisper: "g...", clash: "nested"});
+  });
+
+  it("resolves on plain objects a class method returns typed as the model", async() => {
+    // `reverseNameArray` hands back `{id, name}` literals typed `Task[]` — no
+    // model instance, so no prototype to find the method on.
+    const instance = await createInstance();
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: `{
+      classMethods { Task { reverseNameArray { name testInstanceMethod(input: {amount: 1}) { name } } } }
+    }`});
+    validateResult(result);
+    const rows = resultData<{classMethods: {Task: {reverseNameArray: {name: string; testInstanceMethod: {name: string}[]}[]}}}>(result)
+      .classMethods.Task.reverseNameArray;
+    expect(rows.map((r) => r.testInstanceMethod[0].name)).toEqual(["reverseName41", "reverseName31"]);
+  });
+
+  it("resolves on plain objects an instance method returns typed as the model", async() => {
+    const instance = await createInstance();
+    await instance.models.Task.create({name: "item1"});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: `{
+      models { Task { edges { node { testInstanceMethod(input: {amount: 1}) { testInstanceMethod(input: {amount: 2}) { name } } } } } }
+    }`});
+    validateResult(result);
+    const node = resultData<{models: {Task: {edges: {node: {testInstanceMethod: {testInstanceMethod: {name: string}[]}[]}}[]}}}>(result)
+      .models.Task.edges[0].node;
+    expect(node.testInstanceMethod[0].testInstanceMethod[0].name).toBe("item112");
+  });
+
+  it("resolves relationships on plain objects a class method returns typed as the model", async() => {
+    // The relationship accessors live on the model prototype too; the adapter
+    // builds an instance over the plain values to reach them.
+    const instance = await createInstance();
+    const {Task, TaskItem, Item} = instance.models;
+    // `reverseNameArray` returns ids 1 and 2; only task 1 exists and has children.
+    const task = await Task.create({name: "task1"});
+    await TaskItem.create({name: "taskitem1", taskId: task.id});
+    const item = await Item.create({name: "i1", taskId: task.id});
+    await (task as unknown as {addBtmItems(rows: unknown[]): Promise<void>}).addBtmItems([item]);
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: `{
+      classMethods { Task { reverseNameArray {
+        items { total edges { node { name } } }
+        firstItems: items(first: 1) { total }
+        item { name }
+        btmItems { total edges { node { name } } }
+      } } }
+    }`});
+    validateResult(result);
+    type Rel = {total: number; edges?: {node: {name: string}}[]};
+    const rows = resultData<{classMethods: {Task: {reverseNameArray: {
+      items: Rel; firstItems: Rel; item: {name: string} | null; btmItems: Rel;
+    }[]}}}>(result).classMethods.Task.reverseNameArray;
+    expect(rows[0].items).toEqual({total: 1, edges: [{node: {name: "taskitem1"}}]});
+    expect(rows[0].firstItems.total).toBe(1);
+    expect(rows[0].item).toEqual({name: "i1"});
+    expect(rows[0].btmItems).toEqual({total: 1, edges: [{node: {name: "i1"}}]});
+    expect(rows[1].items).toEqual({total: 0, edges: []});
+    expect(rows[1].item).toBeNull();
+  });
+
+  it("runs a field's own `resolve` and `override.output` against a real row", async() => {
+    // Field code written against the adapter's rows — `row.get(...)`, as the
+    // Task fixture's `options` override does — threw `get is not a function`
+    // on the plain literals a class method returns typed as the model.
+    const instance = await createInstance([{
+      name: "Badge",
+      define: {
+        label: {
+          type: Sequelize.STRING,
+          allowNull: true,
+          resolve: (row: {get(key: string): string}) => row.get("label").toUpperCase(),
+        },
+        meta: {type: Sequelize.STRING, allowNull: true},
+      },
+      override: {
+        meta: {
+          type: {name: "BadgeMeta", fields: {raw: {type: GraphQLString}}},
+          output: (row: {get(key: string): string}) => ({raw: row.get("meta")}),
+          input: (value: {raw?: string}) => value.raw,
+        },
+      },
+      classMethods: {
+        listed() {
+          return [{id: 1, label: "plain", meta: "m"}];
+        },
+      },
+      expose: {classMethods: {query: {listed: {type: "Badge[]", args: {}}}}},
+    }]);
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ classMethods { Badge { listed { label meta { raw } } } } }"});
+    validateResult(result);
+    expect(resultData<{classMethods: {Badge: {listed: {label: string; meta: {raw: string}}[]}}}>(result).classMethods.Badge.listed)
+      .toEqual([{label: "PLAIN", meta: {raw: "m"}}]);
+  });
+
+  it("gives an instance method the row API on a plain row", async() => {
+    const instance = await createInstance([{
+      ...gadget({}),
+      name: "Widget",
+      instanceMethods: {
+        shout(this: {get(key: string): string}) {
+          return `${this.get("name")}!`;
+        },
+      },
+      classMethods: {
+        listed() {
+          return [{id: 1, name: "plain"}];
+        },
+      },
+      expose: {
+        instanceMethods: {query: {shout: {type: GraphQLString, fields: ["name"]}}},
+        classMethods: {query: {listed: {type: "Widget[]", args: {}}}},
+      },
+    }]);
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ classMethods { Widget { listed { shout } } } }"});
+    validateResult(result);
+    expect(resultData<{classMethods: {Widget: {listed: {shout: string}[]}}}>(result).classMethods.Widget.listed)
+      .toEqual([{shout: "plain!"}]);
+  });
+
+  it("still reports a method with no implementation anywhere", async() => {
+    const instance = await createInstance([{...gadget({}), name: "Gizmo", instanceMethods: {}}]);
+    await instance.models.Gizmo.create({name: "g"});
+    const schema = await createSchema(instance);
+    const result = await graphql({schema, source: "{ models { Gizmo { edges { node { shout } } } } }"});
+    expect(result.errors?.[0]?.message).toMatch(/neither the row nor the definition/);
   });
 });
 

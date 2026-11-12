@@ -1,14 +1,18 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, beforeAll } from "@jest/globals";
 import { DataTypes } from "sequelize";
 import SequelizeAdapter from "../src/index";
 import { DataType, isOrmizeDataType, DataTypes as OrmizeDataTypes } from "@azerothian/utilize/types/data-type";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
-function makeAdapter() {
-  return new SequelizeAdapter({}, { dialect: "sqlite" });
+async function makeAdapter() {
+  return trackConnection(new SequelizeAdapter({}, await dialectConfig()));
 }
 
 describe("sequelize adapter - mapDataType (native -> abstract)", () => {
-  const adapter = makeAdapter();
+  let adapter: SequelizeAdapter;
+  beforeAll(async () => {
+    adapter = await makeAdapter();
+  });
 
   it("maps scalar Sequelize DataTypes to abstract DataType", () => {
     expect(adapter.mapDataType(DataTypes.STRING).type).toBe(DataType.String);
@@ -44,7 +48,10 @@ describe("sequelize adapter - mapDataType (native -> abstract)", () => {
 });
 
 describe("sequelize adapter - toNativeType (abstract -> native) + isOrmizeDataType", () => {
-  const adapter = makeAdapter();
+  let adapter: SequelizeAdapter;
+  beforeAll(async () => {
+    adapter = await makeAdapter();
+  });
 
   it("round-trips abstract token -> native -> abstract", () => {
     const cases = [

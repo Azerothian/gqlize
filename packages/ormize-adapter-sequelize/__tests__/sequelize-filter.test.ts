@@ -1,7 +1,8 @@
 import {Op} from "sequelize";
 import {mergeFilterStatement} from "../src";
+import {normalizeWhereForDialect} from "../src/utils/where-ops";
 
-import { expect, test } from "@jest/globals";
+import { describe, expect, it, test } from "@jest/globals";
 
 test("sequelize-adapter - mergeFilterStatement - simple match", () => {
   const result = mergeFilterStatement("id", 1, true);
@@ -88,4 +89,15 @@ test("sequelize-adapter - mergeFilterStatement - merge negative match array", ()
   expect(result[Op.and][0].id).toEqual(2);
   expect(result[Op.and][1].id).not.toBeUndefined();
   expect(result[Op.and][1].id[Op.notIn]).toEqual(arg);
+});
+
+describe("normalizeWhereForDialect", () => {
+  it("keeps the Op symbols an engine-built where already carries", () => {
+    // Rebuilding the tree from its string keys alone dropped them, so a
+    // cross-adapter join's `{[Op.in]: [...]}` matched every row on SQLite.
+    const where = { id: { [Op.in]: [1, 2] }, [Op.or]: [{ name: { iLike: "a%" } }] };
+    const out = normalizeWhereForDialect(where, "sqlite") as typeof where & { [Op.or]: { name: { like: string } }[] };
+    expect(out.id[Op.in]).toEqual([1, 2]);
+    expect(out[Op.or]).toEqual([{ name: { like: "a%" } }]);
+  });
 });

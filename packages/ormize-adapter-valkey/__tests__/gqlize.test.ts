@@ -167,6 +167,58 @@ describe("valkey adapter — gqlize GraphQL", () => {
   });
 });
 
+// #68. This adapter sets `includeIsList = false`, so the `include` argument is
+// one object rather than a list. The engine reads the include plan as a list, so
+// an explicit `include` threw "include is not iterable" before reaching here.
+describe("valkey adapter — an explicit include argument (#68)", () => {
+  async function buildAuthors() {
+    const orm = new Ormize();
+    orm.registerAdapter(new ValkeyAdapter({ prefix: "inc68" }, client), "valkey");
+    await orm.addDefinition({
+      name: "Author",
+      define: { id: { type: DataTypes.UUID, primaryKey: true }, name: { type: DataTypes.String, index: true } },
+      options: {},
+      relationships: [{ type: "hasMany", model: "Post", name: "posts", options: { foreignKey: "authorId" } }],
+    });
+    await orm.addDefinition({
+      name: "Post",
+      define: {
+        id: { type: DataTypes.UUID, primaryKey: true },
+        title: { type: DataTypes.String, index: true },
+        authorId: { type: DataTypes.UUID, index: true },
+      },
+      options: {},
+      relationships: [{ type: "belongsTo", model: "Author", name: "author", options: { foreignKey: "authorId" } }],
+    });
+    await orm.initialise();
+    await orm.sync();
+    const [author] = await orm.processCreate("Author", null, { input: { name: "ann" } }, {}, undefined) as { id: string }[];
+    await orm.processCreate("Post", null, { input: { title: "p1", authorId: author.id } }, {}, undefined);
+    return { orm, schema: await createSchema(orm) };
+  }
+
+  it("is one input object, not a list", async () => {
+    const { schema } = await buildAuthors();
+    const field = (schema.getQueryType()!.getFields().models.type as GraphQLObjectType).getFields().Author;
+    expect(String(field.args.find((a) => a.name === "include")!.type)).toBe("GQLTAuthorInclude");
+  });
+
+  it("runs, with or without the relation selected", async () => {
+    const { schema } = await buildAuthors();
+    for (const source of [
+      `{ models { Author(include: {posts: {}}) { total } } }`,
+      `{ models { Author(include: {posts: {where: {title: {eq: "p1"}}}}) { edges { node { name posts { edges { node { title } } } } } } } }`,
+      `query($inc: GQLTAuthorInclude) { models { Author(include: $inc) { edges { node { name posts { total } } } } } }`,
+    ]) {
+      const r = await graphql({ schema, source, variableValues: { inc: { posts: {} } } }) as QueryResult;
+      expect([source, r.errors]).toEqual([source, undefined]);
+    }
+    const r = await graphql({ schema, source: `{ models { Author(include: {posts: {}}) { total edges { node { name posts { edges { node { title } } } } } } } }` }) as QueryResult;
+    expect(r.data.models.Author.total).toBe(1);
+    expect(r.data.models.Author.edges[0].node.posts.edges.map((e: Edge) => e.node.title)).toEqual(["p1"]);
+  });
+});
+
 describe("valkey adapter — exposed instance methods", () => {
   // The declarative half of `expose.instanceMethods` is adapter-agnostic by
   // construction (shared readers in utilize, order expansion in the ormize
@@ -177,7 +229,7 @@ describe("valkey adapter — exposed instance methods", () => {
       id: { type: DataTypes.UUID, primaryKey: true },
       firstName: { type: DataTypes.String, index: true },
       lastName: { type: DataTypes.String, index: true },
-      secret: { type: DataTypes.String },
+      secret: { type: DataTypes.String, allowNull: true },
     },
     expose: {
       instanceMethods: {

@@ -8,7 +8,8 @@ import Sequelize, {
 import { Ormize } from "@azerothian/ormize";
 import SequelizeAdapter from "../src";
 import { defineModel } from "../src/types/orm";
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 // Author-declared instance interface, Sequelize v6 idiom.
 interface WidgetInstance
@@ -44,7 +45,7 @@ describe("definition typesystem", () => {
   });
 
   it("fluent define() chains, defers creation to initialise(), and builds a working model", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
 
     // Fluent chain: registerAdapter fixes the base URI, define() accumulates models.
     const db = new Ormize().registerAdapter(adapter).define(WidgetDef);
@@ -72,6 +73,84 @@ describe("definition typesystem", () => {
   });
 });
 
+describe("createModel - method spellings (#72)", () => {
+  it("installs top-level and `options.*` methods together, the nested one winning a clash", async () => {
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
+    const Model = await adapter.createModel({
+      name: "Mixed",
+      define: { name: { type: Sequelize.STRING } },
+      instanceMethods: {
+        topLevel() { return "top"; },
+        clash() { return "top-level"; },
+      },
+      classMethods: {
+        topStatic() { return "top"; },
+      },
+      options: {
+        instanceMethods: {
+          nested() { return "nested"; },
+          clash() { return "nested"; },
+        },
+        classMethods: {
+          nestedStatic() { return "nested"; },
+        },
+      },
+    });
+    const statics = Model as unknown as Record<string, () => string>;
+    const row = Model.build({ name: "m" }) as unknown as Record<string, () => string>;
+    // Picking one bag or the other dropped the top-level ones entirely.
+    expect(row.topLevel()).toBe("top");
+    expect(row.nested()).toBe("nested");
+    expect(row.clash()).toBe("nested");
+    expect(statics.topStatic()).toBe("top");
+    expect(statics.nestedStatic()).toBe("nested");
+  });
+
+  it("is not masked by an empty `options.instanceMethods`", async () => {
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
+    const Model = await adapter.createModel({
+      name: "Masked",
+      define: { name: { type: Sequelize.STRING } },
+      instanceMethods: { topLevel() { return "top"; } },
+      options: { instanceMethods: {} },
+    });
+    const row = Model.build({ name: "m" }) as unknown as Record<string, () => string>;
+    expect(row.topLevel()).toBe("top");
+  });
+});
+
+describe("createModel - top-level tableName", () => {
+  it("names the table from a top-level `tableName`", async () => {
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
+    const Model = await adapter.createModel({ name: "Tabled", tableName: "app_tabled", define: {} });
+    expect(Model.getTableName()).toBe("app_tabled");
+  });
+
+  it("prefers `options.tableName` when both are given", async () => {
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
+    const Model = await adapter.createModel({
+      name: "Both", tableName: "top_both", define: {}, options: { tableName: "nested_both" },
+    });
+    expect(Model.getTableName()).toBe("nested_both");
+  });
+});
+
+describe("createRelationship - the alias is the relationship name", () => {
+  it("registers under `name` and warns when `options.as` differs", async () => {
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig({ logging: false })));
+    await adapter.createModel({ name: "Account", define: { name: { type: Sequelize.STRING } } });
+    await adapter.createModel({ name: "Ledger", define: { name: { type: Sequelize.STRING } } });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      adapter.createRelationship("Ledger", "Account", "owner", "belongsTo", { as: "user", foreignKey: "accountId" });
+      expect(Object.keys(adapter.getAssociations("Ledger"))).toEqual(["owner"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('options.as "user" is ignored'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("getFields - authored field metadata", () => {
   // `args`/`resolve` are authored on a field for gqlize's benefit and mean
   // nothing to Sequelize. `getFields` reads them back off `rawAttributes`,
@@ -80,7 +159,7 @@ describe("getFields - authored field metadata", () => {
   // regresses, `createModel` also stashes the authored definition on the model
   // (`model.definition`), which `getFields` could read instead.
   it("passes authored args/resolve through rawAttributes", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const resolve = (source: { name: string }) => source.name;
     const args = { casing: { type: "Casing" } };
     const db = new Ormize().registerAdapter(adapter).define({
@@ -102,7 +181,7 @@ describe("getFields - authored field metadata", () => {
   });
 
   it("accepts either spelling of the field description", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const db = new Ormize().registerAdapter(adapter).define({
       name: "Described",
       define: {
@@ -123,7 +202,7 @@ describe("getFields - authored field metadata", () => {
   });
 
   it("does not leak Sequelize's own attribute internals", async () => {
-    const adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+    const adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()));
     const db = new Ormize().registerAdapter(adapter).define({
       name: "Plain",
       define: { name: { type: Sequelize.STRING, allowNull: false } },

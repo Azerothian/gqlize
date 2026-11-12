@@ -1,3 +1,4 @@
+import { graphql, type GraphQLSchema } from "graphql";
 
 import { Ormize as Database } from "@azerothian/ormize";
 
@@ -6,18 +7,22 @@ import TaskItemModel from "./models/task-item";
 import Item from "./models/item";
 import MemoModel from "./models/memo";
 import Sequelize from "sequelize";
-import { createAdapterForDialect, registerTeardown } from "./dialect";
-import type {Definition} from "../../src/types";
+import { createAdapterForDialect, registerSuiteTeardown, registerTeardown } from "./dialect";
+import type {Definition, GqlizeOptions} from "../../src/types";
 
 /**
  * `extraDefinitions` exists so a test can exercise a definition shape without
  * editing the shared models — `schema-golden.test.ts` pins the SDL these six
  * produce, and any edit to them churns that snapshot for unrelated reasons.
  */
-export async function createInstance(extraDefinitions: Definition[] = []) {
-  const db = new Database();
+export async function createInstance(extraDefinitions: Definition[] = [], options: {suite?: boolean; orm?: GqlizeOptions} = {}) {
+  // `orm`: constructor options — the ones read by `new Ormize` rather than by
+  // `createSchema` (`csv`, `cache`, `writableForeignKeys`).
+  const db = new Database(options.orm);
   const { adapter, name, teardown } = await createAdapterForDialect();
-  registerTeardown(teardown);
+  // `suite`: built in a `beforeAll` and shared by the describe's tests, so its
+  // connection must stay open past the first test.
+  (options.suite ? registerSuiteTeardown : registerTeardown)(teardown);
   db.registerAdapter(adapter, name);
   const parentDef = {
     name: "Parent",
@@ -89,5 +94,18 @@ export function validateResult(result: {errors?: readonly unknown[] | null}) {
  * Call {@link validateResult} first — this does not check `errors`.
  */
 export function resultData<T>(result: {data?: unknown}): T {
+  return result.data as T;
+}
+
+/**
+ * Run an operation and hand back its data, or throw with the operation text
+ * and every error message. For table-driven suites, where the failing row has
+ * to be identifiable from the failure alone.
+ */
+export async function ask<T = Record<string, unknown>>(schema: GraphQLSchema, source: string, contextValue: unknown = {}): Promise<T> {
+  const result = await graphql({schema, source, contextValue});
+  if (result.errors?.length) {
+    throw new Error(`${source}\n${result.errors.map((e) => e.message).join("\n")}`);
+  }
   return result.data as T;
 }

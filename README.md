@@ -14,6 +14,9 @@ layer that accepts an `Ormize` instance and generates the full schema).
   schema, and write queries & mutations for every feature, with copy-pasteable examples.
 - 📄 [**docs/specifications.md**](docs/specifications.md) — **reference**: architecture, public
   API, model definition schema, permissions, hooks, and the adapter contract.
+- 📑 [**docs/csv.md**](docs/csv.md) — **CSV uploads**: create, update and delete rows from CSV files
+  over GraphQL or REST, including relationships and linked multi-file imports. The
+  [**CSV API reference**](docs/csv-api.md) lists every option, type, route and error code.
 - 🔀 [**docs/migration-6-to-7.md**](docs/migration-6-to-7.md) — **upgrading from 6.x**: the package
   split, renames, and the changed defaults (mass assignment, pagination bounds, permission-gated
   filters) that break working 6.x code.
@@ -54,6 +57,7 @@ mutations, permissions, hooks, and more.
 | [`@azerothian/ormize-adapter-sequelize`](packages/ormize-adapter-sequelize) | Sequelize adapter — the reference data-source implementation. Same `SequelizeAdapter` default export, same `defineModel`/`SequelizeModel` typesystem exports. |
 | [`@azerothian/ormize-adapter-valkey`](packages/ormize-adapter-valkey) | Valkey/Redis adapter — typed-JSON objects with self-maintained index/mapping structures (no keyspace scans), index-only `where` queries, foreign-key index maps for relationships, `MULTI`/`EXEC` transactions with a per-transaction overlay, and object expiry that cascades into the mappings. |
 | [`@azerothian/ormize-adapter-mikro-orm`](packages/ormize-adapter-mikro-orm) | MikroORM adapter — the inverted one: register an **existing** `MikroORM` instance and its entities become ormize models straight from `orm.getMetadata()`, with no definitions to author. Synthesizes the scalar foreign key MikroORM has no property for, typed by what it points at; `initialise({ddl: false})` builds a schema with nothing connected. |
+| [`@azerothian/ormize-cache-ioredis`](packages/ormize-cache-ioredis) | Redis/Valkey store for the optional ormize read cache — an LRU shared by every process on the same prefix, so a write anywhere invalidates cached reads everywhere. The in-process `MemoryCacheStore` ships with ormize. |
 | [`@azerothian/ormize-zod4`](packages/ormize-zod4) | Zod v4 projection — `generateZodSchemas(orm, options)` produces permission-gated entity/create/update schemas per model from the same ormize instance. |
 | [`@azerothian/nestize`](packages/nestize) | NestJS REST + Swagger projection — `NestizeModule.forRoot(orm, options)` exposes full CRUD + relationship + `_actions` routes over the ormize resolution engine, with an OpenAPI doc built from the ormize-zod4 schemas. |
 | [`@azerothian/temporalize`](packages/temporalize) | Temporal projection — `createActivities`/`createWorkers` turn each model's CRUD surface, `classMethods` and `instanceMethods` into Temporal activities on a per-model task queue, with a required per-call context, an optional permission gate and generic CRUD workflows. |

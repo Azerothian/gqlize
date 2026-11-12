@@ -2,6 +2,7 @@ import Database from "../src/manager";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { describe, it, expect } from "@jest/globals";
 import Sequelize from "sequelize";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 // A minimal self-referential model: a Node has many child Nodes. `name` is NOT
 // NULL, so a nested create with a null name fails at the DB — exercising the
@@ -9,7 +10,7 @@ import Sequelize from "sequelize";
 async function buildOrm() {
   const db = new Database();
   db.registerAdapter(
-    new SequelizeAdapter({}, { dialect: "sqlite", logging: false }),
+    trackConnection(new SequelizeAdapter({}, await dialectConfig())),
     "sqlite",
   );
   await db.addDefinition({
@@ -66,8 +67,8 @@ describe("manager - transactions", () => {
 // failure, roll BOTH back — even though they are separate database connections.
 async function buildTwoAdapterOrm() {
   const db = new Database();
-  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
-  db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite2");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
+  db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite2");
   await db.addDefinition({ name: "Left", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } }, "sqlite");
   await db.addDefinition({ name: "Right", define: { name: { type: Sequelize.STRING, allowNull: false } }, options: { timestamps: false } }, "sqlite2");
   await db.initialise();
@@ -105,7 +106,7 @@ describe("manager - ambient context tracking", () => {
   it("propagates the request context across async boundaries into hooks", async () => {
     let seenInHook: unknown;
     const db = new Database();
-    db.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite", logging: false }), "sqlite");
+    db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
     await db.addDefinition({
       name: "Ctx",
       define: { name: { type: Sequelize.STRING, allowNull: false } },

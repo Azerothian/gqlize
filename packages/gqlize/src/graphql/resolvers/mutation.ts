@@ -1,10 +1,12 @@
 import type { GraphQLResolveInfo } from "graphql";
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
+import { CsvUploadError } from "@azerothian/ormize";
+import type { CsvOperation, MutationFilter, MutationInputTree } from "@azerothian/ormize";
 import { processAfter } from "../utils/after";
 import Events from "../../events";
-import type { AdapterRow, RequestContext } from "../../types";
+import type { AdapterRow, Definition, RequestContext } from "../../types";
 import type { BindingContext, FieldBinding } from "./types";
+import { csvGraphQLError, csvRequest, type CsvArgs } from "./csv";
 
 /**
  * The generated model-mutation field's arguments — one list per operation, as
@@ -16,12 +18,47 @@ import type { BindingContext, FieldBinding } from "./types";
  */
 type MutationModelArgs = {
   create?: MutationInputTree[];
-  update?: { input: MutationInputTree; where: MutationFilter; limit?: number }[];
+  update?: { input?: MutationInputTree; where: MutationFilter; limit?: number }[];
   delete?: MutationFilter[];
   restore?: MutationFilter[];
   select?: { input?: MutationInputTree; where?: MutationFilter; limit?: number }[];
   apply?: { [methodName: string]: unknown };
+  /** CSV uploads — whatever the host's multipart layer put in the `GQLTUpload` slot. */
+  createCsv?: unknown;
+  updateCsv?: unknown;
+  deleteCsv?: unknown;
+  csv?: CsvArgs;
 };
+
+/** Each CSV argument, the operation it carries, and the event its rows report. */
+const CSV_ARGS: [keyof MutationModelArgs, CsvOperation, Events][] = [
+  ["createCsv", "create", Events.MUTATION_CREATE],
+  ["updateCsv", "update", Events.MUTATION_UPDATE],
+  ["deleteCsv", "delete", Events.MUTATION_DELETE],
+];
+
+/**
+ * Process a batch of mutation operations that each return an array of rows,
+ * running `processAfter` on every row. update/delete/restore/select all share
+ * this shape — each operation yields an array and every element gets the same
+ * post-processing.
+ */
+async function collectBatch<TArg>(
+  items: TArg[],
+  process: (arg: TArg) => Promise<AdapterRow[]>,
+  args: MutationModelArgs,
+  context: RequestContext,
+  info: GraphQLResolveInfo,
+  definition: Definition,
+  event: Events,
+  results: AdapterRow[],
+): Promise<AdapterRow[]> {
+  return waterfall(items, async (arg, arr) => {
+    const result = await process(arg);
+    const node = await waterfall(result, async (el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, event)), []);
+    return arr.concat(node);
+  }, results);
+}
 
 export function buildMutationModelResolver(
   binding: Extract<FieldBinding, { kind: "mutationModel" }>,
@@ -42,34 +79,42 @@ export function buildMutationModelResolver(
       }, results);
     }
     if (args.update) {
-      results = await waterfall(args.update, async(arg, arr) => {
-        const result = await instance.processUpdate(defName, source, {...arg, apply: args.apply}, context, info);
-        const node = await waterfall(result, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, Events.MUTATION_UPDATE)), []);
-        return arr.concat(node);
-      }, results);
+      results = await collectBatch(args.update,
+        (arg) => instance.processUpdate(defName, source, {...arg, apply: args.apply}, context, info),
+        args, context, info, definition, Events.MUTATION_UPDATE, results);
     }
     if (args.delete) {
-      results = await waterfall(args.delete, async(arg, arr) => {
-        const result = await instance.processDelete(defName, source, arg, context, info);
-        const node = await waterfall(result, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, Events.MUTATION_DELETE)), []);
-        return arr.concat(node);
-      }, results);
+      results = await collectBatch(args.delete,
+        (arg) => instance.processDelete(defName, source, arg, context, info),
+        args, context, info, definition, Events.MUTATION_DELETE, results);
     }
     if (args.restore) {
-      results = await waterfall(args.restore, async(arg, arr) => {
-        const result = await instance.processRestore(defName, source, arg, context, info);
-        // `MUTATION_UPDATE` rather than an event of its own — see the same
-        // choice in ormize's `processRestore`.
-        const node = await waterfall(result, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, Events.MUTATION_UPDATE)), []);
-        return arr.concat(node);
-      }, results);
+      // `MUTATION_UPDATE` rather than an event of its own — see the same
+      // choice in ormize's `processRestore`.
+      results = await collectBatch(args.restore,
+        (arg) => instance.processRestore(defName, source, arg, context, info),
+        args, context, info, definition, Events.MUTATION_UPDATE, results);
     }
     if (args.select) {
-      results = await waterfall(args.select, async(arg, arr) => {
-        const result = await instance.processSelect(defName, source, arg, context, info);
-        const node = await waterfall(result, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, Events.MUTATION_UPDATE)), []);
-        return arr.concat(node);
-      }, results);
+      results = await collectBatch(args.select,
+        (arg) => instance.processSelect(defName, source, arg, context, info),
+        args, context, info, definition, Events.MUTATION_UPDATE, results);
+    }
+    // After the JSON lists, in the same create → update → delete order. Each
+    // upload is one all-or-nothing unit (see ormize's `processCsv`); its rows
+    // then get the same `after` processing a JSON write's do.
+    for (const [argName, operation, event] of CSV_ARGS) {
+      const upload = args[argName];
+      if (upload === undefined || upload === null) {
+        continue;
+      }
+      let rows: AdapterRow[];
+      try {
+        rows = await instance.processCsv(defName, operation, csvRequest(operation, info.parentType.getFields()[info.fieldName], upload, args.csv, args.apply), context, info);
+      } catch (e) {
+        throw e instanceof CsvUploadError ? csvGraphQLError(e) : e;
+      }
+      results = await waterfall(rows, async(el, acc: AdapterRow[]) => acc.concat(await processAfter(el, args, context, info, definition, event)), results);
     }
     return results;
   };

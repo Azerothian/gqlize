@@ -4,6 +4,7 @@ import { Ormize, createRoleBasedPermissions, DataType, DataTypes as OrmizeDataTy
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import { generateZodSchemas } from "../src";
 import type { Definition } from "@azerothian/utilize";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 const ItemDef: Definition = {
   name: "Item",
@@ -38,7 +39,7 @@ const TaskDef: Definition = {
 
 async function buildOrm() {
   const orm = new Ormize();
-  orm.registerAdapter(new SequelizeAdapter({}, { dialect: "sqlite" }), "sqlite");
+  orm.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig()), { suite: true }), "sqlite");
   await orm.addDefinition(ItemDef);
   await orm.addDefinition(TaskDef);
   await orm.initialise();
@@ -134,5 +135,22 @@ describe("ormize-zod4 - generateZodSchemas", () => {
       const { entity } = generateZodSchemas(orm);
       expect(entity.Task.shape).toHaveProperty("name");
     });
+  });
+});
+
+describe("ormize-zod4 - generated join models", () => {
+  it("emits no schemas for a join model ormize generated", async () => {
+    const orm = new Ormize();
+    orm.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
+    await orm.addDefinition(ItemDef);
+    await orm.addDefinition(TaskDef);
+    // What ormize registers for a cross-adapter belongsToMany with no join model.
+    await orm.addDefinition({ name: "ItemLink", define: { itemId: { type: DataTypes.INTEGER } }, generated: true });
+    await orm.initialise();
+    await orm.sync();
+    const { entity, create, update } = generateZodSchemas(orm);
+    expect(Object.keys(entity).sort()).toEqual(["Item", "Task"]);
+    expect(create.ItemLink).toBeUndefined();
+    expect(update.ItemLink).toBeUndefined();
   });
 });

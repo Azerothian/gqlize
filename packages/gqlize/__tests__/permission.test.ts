@@ -337,7 +337,8 @@ describe("permissions", () => {
       (permission as unknown as Record<string, unknown>)[key] = fn;
     });
 
-    const instance = await createInstance();
+    // CSV on, so `mutationCsv` has a model to be asked about.
+    const instance = await createInstance([], {orm: {csv: true}});
     await createSchema(instance, {
       extend: {
         query: {health: {type: GraphQLString, resolve: () => "ok"}},

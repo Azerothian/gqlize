@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothian/utilize/exposed-methods";
+import { computedOrderableFields as computedOrderableFieldsFor, definitionMethods } from "@azerothian/utilize/exposed-methods";
 import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
-import {reciprocalOtherKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
+import {reciprocalOtherKey, relationshipForeignKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
 import {lowercase} from "@azerothian/utilize/utils/word";
 import type {
   AdapterListOptions, AdapterListRequest, AdapterQueryOptions, AdapterRelationshipRequest,
@@ -21,6 +21,7 @@ import { mapDataType, toNativeType } from "./data-type-mapper";
 import typeMapper from "./type-mapper";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
 import {
+  clearPermissionDerivedMeta,
   getDefaultListArgs,
   getFilterGraphQLType,
   getIncludeGraphQLType,
@@ -90,6 +91,8 @@ export type ValkeyAssociation = Association & { fkA?: string; fkB?: string };
 type RegisteredModel = ValkeyModel & Model & {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see doc comment above; matches OrmAdapter.addInstanceFunction's own permissive fn type
   __instanceMethods?: { [name: string]: (...args: any[]) => any };
+  /** The instance-method names the definition itself declared, as opposed to ones ormize installed. */
+  __declaredInstanceMethods?: string[];
 };
 
 /**
@@ -142,14 +145,9 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   _buildPermission: Permission | undefined = undefined;
   setBuildPermission = (permission: Permission | undefined) => {
     if (permission !== this._buildPermission) {
-      // These three types are derived from the permission bag but cached by
-      // model name alone — a second schema build under a different permission
-      // would otherwise reuse the previous build's (differently gated) types.
-      Object.keys(this.meta).forEach((model) => {
-        delete this.meta[model].queryType;
-        delete this.meta[model].orderByType;
-        delete this.meta[model].includeType;
-      });
+      // A second schema build under a different permission must not reuse the
+      // previous build's (differently gated) types.
+      clearPermissionDerivedMeta(this.meta);
     }
     this._buildPermission = permission;
   };
@@ -173,6 +171,8 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     : undefined);
   /** One include object keyed by relationship name — there is no JOIN to repeat. */
   readonly includeIsList = false;
+  /** No JOINs at all: ormize applies `required` itself (`engine/required-filter.ts`). */
+  readonly supportsJoins = false;
 
   getFilterGraphQLType = (defName: string, definition: Definition, permission?: Permission) => getFilterGraphQLType(this, defName, definition, permission);
   getOrderByGraphQLType = (defName: string, permission?: Permission) => getOrderByGraphQLType(this, defName, permission);
@@ -261,10 +261,20 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     // Wire user-declared class/instance methods (top-level + options.*), matching
     // the Sequelize adapter. Class methods → statics; instance methods → stashed
     // for `tag()` to attach to each returned record.
-    const classMethods = { ...(def.classMethods || {}), ...(def.options?.classMethods || {}) };
-    const instanceMethods = { ...(def.instanceMethods || {}), ...(def.options?.instanceMethods || {}) };
+    const classMethods = definitionMethods(def, "classMethods");
+    const instanceMethods = definitionMethods(def, "instanceMethods");
     for (const k of Object.keys(classMethods)) model[k] = classMethods[k];
+    // A record carries its fields as own properties, and `tag()` never defines
+    // a method over a property that is already there — so a method sharing a
+    // field's name silently never existed. They cannot both live on one record;
+    // say so while the definition is being read rather than at the first call.
+    for (const k of Object.keys(instanceMethods)) {
+      if (model.fields[k]) {
+        throw new Error(`Valkey model "${name}": instance method "${k}" has the same name as a field, whose stored value would hide it. Rename one of them.`);
+      }
+    }
     model.__instanceMethods = instanceMethods;
+    model.__declaredInstanceMethods = Object.keys(instanceMethods);
 
     return model;
   };
@@ -295,12 +305,25 @@ export default class ValkeyAdapter implements GqlizeAdapter {
 
   getValueFromInstance = (data: ValkeyRow, key: string) => (data ? data[key] : undefined);
 
+  /**
+   * See `OrmAdapter.asInstance`. A record this adapter returned is already
+   * tagged; a plain object — a class or instance method's own return value —
+   * gets the same methods and accessors on a shallow copy, so the caller's
+   * object is never written on.
+   */
+  asInstance = (defName: string, row: ValkeyRow): ValkeyRow => {
+    if (!row || typeof row !== "object" || (row as {__valkeyModel?: unknown}).__valkeyModel) {
+      return row;
+    }
+    return this.tag({...row}, defName);
+  };
+
   getAssociations = (defName: string) => {
     const model = this.model(defName);
     const out: { [rel: string]: ValkeyAssociation } = {};
     for (const rel of model.relationships) {
       const type = rel.type;
-      const fk = rel.options?.foreignKey;
+      const fk = relationshipForeignKey(type, rel.options);
       const join = rel.__join;
       out[rel.name] = {
         name: rel.name,
@@ -324,6 +347,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
         associationType: type,
         // belongsToMany join descriptor (through model + the two foreign keys).
         through: join?.through,
+        otherKey: join?.fkB,
         fkA: join?.fkA,
         fkB: join?.fkB,
         // Sequelize-style accessor names (singular for the -one variants, plural
@@ -338,7 +362,20 @@ export default class ValkeyAdapter implements GqlizeAdapter {
 
   createRelationship = (defName: string, targetModel: string, relName: string, relType: string, options: Relationship["options"] = {}) => {
     const source = this.model(defName);
-    const fk = options.foreignKey;
+    // The relationship's value and its accessors are put on every record of
+    // `defName` by `tag()`, after the user's own methods. One of the user's
+    // methods by the same name would shadow the accessor ormize relies on, or
+    // be shadowed by the loaded value — reject the clash up front, the same way
+    // `createModel` rejects one with a field. Only methods the definition
+    // declared are checked: ormize's own cross-adapter accessors are installed
+    // under these names on purpose.
+    const declared = new Set(source.__declaredInstanceMethods || []);
+    for (const k of [relName, ...Object.values(relationshipAccessors(relName))]) {
+      if (declared.has(k)) {
+        throw new Error(`Valkey model "${defName}": instance method "${k}" has the same name as relationship "${relName}" or one of its accessors. Rename one of them.`);
+      }
+    }
+    const fk = relationshipForeignKey(relType, options);
     // Ensure the foreign key is an indexed field on whichever model owns it, so
     // relationship reads are index-driven.
     // Auto-created relationship FK fields are writable by default — in a KV store
@@ -515,6 +552,12 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       }
     };
 
+    // User-declared instance methods first, so one named like a built-in
+    // replaces it — as a prototype method does on the sequelize adapter. `def`
+    // never overwrites, so in the old order a user `toJSON` or `save` was
+    // silently dropped in favour of the built-in.
+    for (const [k, fn] of Object.entries(model.__instanceMethods || {})) def(k, fn);
+
     // Instance CRUD.
     def("save", async (options: AdapterQueryOptions) => { await this.persistPatch(modelName, record[pk], plain(), options); return record; });
     def("update", async (values: { [field: string]: unknown }, options: AdapterQueryOptions) => { Object.assign(record, values); await this.persistPatch(modelName, record[pk], values, options); return record; });
@@ -522,9 +565,6 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     def("reload", async (options: AdapterQueryOptions) => { const fresh = await this.getById(modelName, record[pk], options); if (fresh) Object.assign(record, fresh); return record; });
     def("get", (key?: string | { [opt: string]: unknown }) => (key === undefined || typeof key === "object" ? plain() : record[key]));
     def("toJSON", () => plain());
-
-    // User-declared instance methods.
-    for (const [k, fn] of Object.entries(model.__instanceMethods || {})) def(k, fn);
 
     // Relationship finders / mutators.
     for (const assoc of Object.values(this.getAssociations(modelName))) {
@@ -576,12 +616,21 @@ export default class ValkeyAdapter implements GqlizeAdapter {
         const joinFkA = fkA as string;
         const joinFkB = fkB as string;
         const add = async (recs: ValkeyRow | ValkeyRow[], options: AdapterQueryOptions) => {
-          const throughData = (options && options.through) || {};
+          // The join row's keys and primary key are never taken from `through`:
+          // a payload carrying them would point the link at a row the caller
+          // never named, or overwrite another link. The keys are also written
+          // last, after whatever the payload holds.
+          const throughData = { ...((options && options.through) || {}) };
+          if (isBtm) {
+            delete throughData[joinFkA];
+            delete throughData[joinFkB];
+            delete throughData[this.model(joinThrough).primaryKey];
+          }
           for (const t of arr(recs)) {
             const tid = t[tpk(target)];
             if (isBtm) {
               const existing = await this.findAll(joinThrough, { where: { and: [{ [joinFkA]: record[srcKey] }, { [joinFkB]: tid }] }, transaction: options?.transaction });
-              if (!existing.length) await this.getCreateFunction(joinThrough)({ [joinFkA]: record[srcKey], [joinFkB]: tid, ...throughData }, options);
+              if (!existing.length) await this.getCreateFunction(joinThrough)({ ...throughData, [joinFkA]: record[srcKey], [joinFkB]: tid }, options);
               else if (Object.keys(throughData).length) await this.persistPatch(joinThrough, existing[0][this.model(joinThrough).primaryKey], throughData, options);
             } else {
               await this.persistPatch(target, tid, { [fk]: record[srcKey] }, options);
@@ -667,27 +716,29 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     };
   };
 
-  findAll = async (defName: string, options: AdapterQueryOptions = {}) => {
-    const model = this.model(defName);
-    const { ex, finish } = this.execFor(options);
-    const now = Date.now();
-    const where = await processFilterArgument(options.where || {}, options.whereOperators, options);
-    let objs = await executeQuery(ex, this.keys, model, where, now);
-    objs = this.sortObjects(objs, options.order);
-    const offset = options.offset || 0;
-    if (offset || options.limit != null) {
-      objs = objs.slice(offset, options.limit != null ? offset + options.limit : undefined);
-    }
-    await finish();
-    return this.tagAll(objs, defName);
-  };
-
-  count = async (defName: string, options: AdapterQueryOptions = {}) => {
+  /** Run index resolution and filter matching, returning raw unordered/unpaginated objects. */
+  private async resolveQuery(defName: string, options: AdapterQueryOptions): Promise<{ objs: ValkeyRow[]; finish: () => Promise<void> }> {
     const model = this.model(defName);
     const { ex, finish } = this.execFor(options);
     const now = Date.now();
     const where = await processFilterArgument(options.where || {}, options.whereOperators, options);
     const objs = await executeQuery(ex, this.keys, model, where, now);
+    return { objs, finish };
+  }
+
+  findAll = async (defName: string, options: AdapterQueryOptions = {}) => {
+    const resolved = await this.resolveQuery(defName, options);
+    let objs = this.sortObjects(resolved.objs, options.order);
+    const offset = options.offset || 0;
+    if (offset || options.limit != null) {
+      objs = objs.slice(offset, options.limit != null ? offset + options.limit : undefined);
+    }
+    await resolved.finish();
+    return this.tagAll(objs, defName);
+  };
+
+  count = async (defName: string, options: AdapterQueryOptions = {}) => {
+    const { objs, finish } = await this.resolveQuery(defName, options);
     await finish();
     return objs.length;
   };
@@ -811,6 +862,19 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     return rows[0] || null;
   };
 
+  /**
+   * Build the FK equality filter for a hasMany/hasOne relationship and merge it
+   * with an optional additional `where`. Used by both `resolveManyRelationship`
+   * and `countRelationship` to avoid duplicating the sourceKey resolution and
+   * merge logic.
+   */
+  private fkWhere(association: ValkeyAssociation, source: ValkeyRow, extraWhere?: AdapterWhere): AdapterWhere {
+    const sourceModel = this.model(association.source);
+    const sourceKey = association.sourceKey || sourceModel.primaryKey;
+    const fkFilter = { [association.foreignKey]: source[sourceKey] };
+    return extraWhere && Object.keys(extraWhere).length ? { and: [fkFilter, extraWhere] } : fkFilter;
+  }
+
   resolveManyRelationship = async (
     _defName: string, association: ValkeyAssociation, source: ValkeyRow, request: AdapterRelationshipRequest,
   ) => {
@@ -825,10 +889,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       const start = offset || 0;
       return { total, models: limit != null ? models.slice(start, start + limit) : models.slice(start) };
     }
-    const sourceModel = this.model(association.source);
-    const sourceKey = association.sourceKey || sourceModel.primaryKey;
-    const fkFilter = { [association.foreignKey]: source[sourceKey] };
-    const where = args?.where ? { and: [fkFilter, args.where] } : fkFilter;
+    const where = this.fkWhere(association, source, args?.where);
     const listOptions = { where, whereOperators, order: args?.orderBy, limit, offset: offset || 0, transaction: options?.transaction };
     const total = await this.count(association.target, { where, whereOperators, transaction: options?.transaction });
     if (countOnly) return { total, models: [] };
@@ -842,10 +903,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
       if (where && Object.keys(where).length) models = models.filter((m) => matchWhere(m, where));
       return models.length;
     }
-    const sourceModel = this.model(association.source);
-    const sourceKey = association.sourceKey || sourceModel.primaryKey;
-    const fkFilter = { [association.foreignKey]: source[sourceKey] };
-    const merged = where && Object.keys(where).length ? { and: [fkFilter, where] } : fkFilter;
+    const merged = this.fkWhere(association, source, where);
     return this.count(association.target, { where: merged, transaction: options?.transaction });
   };
 

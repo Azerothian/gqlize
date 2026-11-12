@@ -7,7 +7,7 @@ import { buildOrm } from "./helper";
 describe("TemporalizeRegistry", () => {
   let orm: Ormize;
   beforeAll(async () => {
-    orm = await buildOrm();
+    orm = await buildOrm({ suite: true });
   });
 
   it("resolves a model by exact and lower-cased name", () => {

@@ -123,7 +123,9 @@ Both shapes require `id`. A transform's writes to `this` are committed, and
 `args` is its params — omitting `args` means "run it with no params", because
 scheduling the activity is itself the ask. (gqlize's `apply` input reads a falsy
 value as "named but not asked for" only because it lists every exposed transform
-at once.)
+at once.) `args` is checked against the `args` the transform declares, as
+gqlize's `apply` input type checks it: an undeclared key, a missing required arg
+or a value of the wrong type fails with `TemporalizeValidation`.
 
 `expose.instanceMethods` defaults to **on** here, unlike nestize, where it is off
 until you opt in. A definition with no `expose` block at all has every instance

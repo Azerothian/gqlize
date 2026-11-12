@@ -1,4 +1,5 @@
-import { isFieldAllowed } from "./gate";
+import { isFieldExposed, LOGICAL_OPERATORS } from "./gate";
+import { FILTER_LIST_OPERATORS, FILTER_REGEX_OPERATORS, FILTER_VALUE_OPERATORS } from "./filter-operators";
 import type { Permission } from "./types/index";
 
 /**
@@ -62,6 +63,13 @@ export function assertScopedMutation(where: unknown, optIn: boolean | undefined,
  * password hash) and use the returned row count as a boolean oracle to read its
  * value, even though the field never appears in a response.
  *
+ * Every operator inside a field's filter must be a filter operator
+ * (`./filter-operators`), and the regex ones only when `options.regexOperators`
+ * says the adapter offers them. Checking the field names alone is not enough:
+ * the adapter honours any ORM operator name it is handed, and
+ * `{name: {col: "passwordHash"}}` reads the denied column as surely as
+ * filtering on it would.
+ *
  * **Invariant: this runs on caller input only, before any `permission.scope`
  * has been merged in.** A scope is entitled to filter on a field the caller may
  * not see — `{ownerId: {eq: me}}` on a model whose `field` gate denies
@@ -76,6 +84,8 @@ export function assertScopedMutation(where: unknown, optIn: boolean | undefined,
  */
 export function assertFilterAllowed(
   permission: Permission | undefined, name: string, where: unknown, fail: Fail,
+  definition?: {ignoreFields?: string[]; whereOperators?: object},
+  options: {regexOperators?: boolean} = {},
 ): void {
   if (!where || typeof where !== "object") {
     return;
@@ -85,31 +95,68 @@ export function assertFilterAllowed(
     if (LOGICAL_OPERATORS.has(key.toLowerCase())) {
       const branch = clause[key];
       if (Array.isArray(branch)) {
-        branch.forEach((c) => assertFilterAllowed(permission, name, c, fail));
+        branch.forEach((c) => assertFilterAllowed(permission, name, c, fail, definition, options));
       } else {
-        assertFilterAllowed(permission, name, branch, fail);
+        assertFilterAllowed(permission, name, branch, fail, definition, options);
       }
       continue;
     }
-    if (!isFieldAllowed(permission, name, key)) {
+    // `definition` is optional so a caller without one keeps the permission
+    // check alone; one that has it also refuses an `ignoreFields` column.
+    if (!isFieldExposed(definition, permission, name, key)) {
       fail("denied-field", `Unknown or not permitted filter field '${key}'`);
+    }
+    // A definition's own `whereOperators` take whatever value their handler
+    // reads; everything else is a field, whose value is held to the operators.
+    if (!(definition?.whereOperators && Object.hasOwn(definition.whereOperators, key))) {
+      assertOperators(clause[key], key, fail, options);
     }
   }
 }
 
-/** Combinators whose values are nested clauses, not field names. */
-const LOGICAL_OPERATORS = new Set(["and", "or", "not"]);
+/**
+ * Refuse any key in a field's filter value that is not a filter operator.
+ *
+ * A bare value (`{name: "x"}`, equality) has no keys to check. An operator
+ * object's keys must all be on the allow-list, and an object nested inside it,
+ * or inside a list it holds, is checked the same way: Sequelize reads operator
+ * keys at any depth, so `{name: {in: [{col: "secret"}]}}` is as dangerous as
+ * `{name: {col: "secret"}}`.
+ */
+function assertOperators(value: unknown, field: string, fail: Fail, options: {regexOperators?: boolean}): void {
+  if (Array.isArray(value)) {
+    value.forEach((item) => assertOperators(item, field, fail, options));
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  const proto = Object.getPrototypeOf(value) as object | null;
+  if (proto !== Object.prototype && proto !== null) {
+    // A Date, a Buffer: a value, not an operator object.
+    return;
+  }
+  for (const op of Object.keys(value)) {
+    const allowed = FILTER_VALUE_OPERATORS.includes(op) || FILTER_LIST_OPERATORS.includes(op)
+      || (options.regexOperators === true && FILTER_REGEX_OPERATORS.includes(op));
+    if (!allowed) {
+      fail("denied-field", `Unknown or not permitted filter operator '${op}' on '${field}'`);
+    }
+    assertOperators((value as { [op: string]: unknown })[op], field, fail, options);
+  }
+}
 
 /** Validate that every `orderBy` field is permitted for the model. */
 export function assertOrderAllowed(
   permission: Permission | undefined, name: string, orderBy: unknown, fail: Fail,
+  definition?: {ignoreFields?: string[]},
 ): void {
   if (!Array.isArray(orderBy)) {
     return;
   }
   for (const entry of orderBy) {
     const field = Array.isArray(entry) ? entry[0] : entry;
-    if (typeof field === "string" && field && !isFieldAllowed(permission, name, field)) {
+    if (typeof field === "string" && field && !isFieldExposed(definition, permission, name, field)) {
       fail("denied-field", `Unknown or not permitted order field '${field}'`);
     }
   }

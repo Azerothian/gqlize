@@ -32,6 +32,7 @@ Every example below is drawn from the behaviour exercised in the test suite
 7. [Mutations](#7-mutations)
    - [Create / update / delete](#create--update--delete)
    - [Restoring soft-deleted rows](#restoring-soft-deleted-rows)
+   - [CSV uploads](#csv-uploads)
    - [Nested relationship writes](#nested-relationship-writes)
    - [Class-method mutations](#class-method-mutations)
    - [Instance-method transforms (`apply`)](#instance-method-transforms-apply)
@@ -41,6 +42,8 @@ Every example below is drawn from the behaviour exercised in the test suite
 11. [Multiple data sources](#11-multiple-data-sources)
 12. [Transactions & async context](#12-transactions--async-context)
 13. [The Valkey / Redis adapter](#13-the-valkey--redis-adapter)
+14. [The MikroORM adapter](#14-the-mikroorm-adapter)
+15. [Read cache](#15-read-cache)
 
 ---
 
@@ -166,7 +169,11 @@ Definition keys you'll commonly use:
   A field may also carry `description`, `args` and `resolve`
   (see [below](#field-arguments--field-resolvers)).
 - **`relationships`** — `{ type, model, name, options }`, `type` ∈ `belongsTo | hasOne | hasMany
-  | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`as`/`through`.
+  | belongsToMany`. `options` carries `foreignKey`/`otherKey`/`through`; a `belongsToMany`
+  may instead declare its keys as `through: { model, foreignKey, otherKey }` (a top-level key
+  wins), and every backend joins on the same columns either way. `name` is the
+  relationship's alias everywhere (output field, `include` key, permissions); an
+  `options.as` that differs is ignored with a warning.
 - **`override`** — expose a column as a different GraphQL type with `input`/`output` transforms
   (see [§10](#10-custom-scalars--json-columns)).
 - **`whereOperators` / `whereOperatorTypes`** — custom filter operators usable in `where`
@@ -174,11 +181,17 @@ Definition keys you'll commonly use:
 - **`expose.classMethods` / `expose.instanceMethods`** — surface methods to GraphQL under
   `query` and `mutations` (see [Class & instance methods](#class--instance-methods)).
 - **`options`** — passed to Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, and the
-  `classMethods`/`instanceMethods` implementations.
+  `classMethods`/`instanceMethods` implementations. `tableName`, `hooks` and the method bags
+  may also be written at the top level; `options` wins a clash for `tableName` and the
+  methods, and hooks named in both run both.
 
 > **Junction models.** A `through` model that only carries FK columns (+ your extra columns) has
-> no relationships of its own; exclude it from the schema with a permission gate so it isn't
-> exposed: `createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`.
+> no relationships of its own. Hiding it with `permission.model`
+> (`createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`) keeps it out of the
+> schema *and* turns its relationships into plain many-to-many ones, with no `through`. To keep
+> `through` but drop its root operations, gate those instead (`permission.query`,
+> `permission.mutation`). A join model ormize generates for a cross-adapter `belongsToMany` is never
+> exposed, by any projection.
 
 ### Field arguments & field resolvers
 
@@ -671,10 +684,25 @@ query {
 
 Available operators (from the generated filter type):
 
-- **value:** `eq`, `ne`, `gte`, `lte`, `lt`, `not`, `is`, `like`, `notLike`, `iLike`, `notILike`,
-  `startsWith`, `endsWith`, `substring`, `regexp`, `notRegexp`, `iRegexp`, `notIRegexp`
-- **list:** `in`, `notIn`, `between`, `notBetween`, `contains`, `contained`, `overlap`, … (array-valued)
-- **combinators:** `and`, `or`, `any`, `all` (each takes a list of whole `where` objects)
+- **value:** `eq`, `ne`, `gt`, `gte`, `lte`, `lt`, `not`, `is`, `like`, `notLike`, `iLike`,
+  `notILike`, `startsWith`, `endsWith`, `substring`; `regexp`, `notRegexp`, `iRegexp`,
+  `notIRegexp` (opt-in via `enableRegexpOperators`, **Postgres only**)
+- **list:** `in`, `notIn`, `between`, `notBetween`, `contains`, `contained`, `overlap`,
+  `adjacent`, `strictLeft`, `strictRight`, `noExtendRight`, `noExtendLeft` (array/range
+  operators — **Postgres only**; a clear error is raised on other dialects)
+- **combinators:** `and`, `or` (each takes a list of whole `where` objects)
+
+**Dialect notes:**
+
+- **`iLike` / `notILike` on SQLite:** SQLite has no `ILIKE` operator, but its `LIKE` is
+  already case-insensitive for ASCII characters. The adapter transparently translates
+  `iLike` → `LIKE` and `notILike` → `NOT LIKE` on SQLite, so these operators work on
+  both dialects.
+- **`like` case sensitivity:** Postgres `LIKE` is case-sensitive; SQLite `LIKE` is
+  case-insensitive for ASCII. Use `iLike` for portable case-insensitive matching.
+- **Postgres-only operators** (regexp, array/range): using them on a non-Postgres dialect
+  raises `gqlize: the "<op>" operator requires the postgres dialect` instead of a raw SQL
+  error. The GraphQL schema itself stays dialect-independent.
 
 ```graphql
 # combine conditions
@@ -723,17 +751,36 @@ connection's name and the row's index, though the format is
 connection is rejected by another, and a malformed one raises `Invalid cursor`:
 
 ```graphql
-# page 1
+# page 1 — forward
 query { models { Post(first: 10) { edges { cursor node { id } } pageInfo { endCursor hasNextPage } } } }
 
 # page 2 — pass the previous page's cursor
 query { models { Post(first: 10, after: "eyJpZCI6..." ) { edges { cursor node { id } } } } }
+
+# backward — last 5 rows before a cursor
+query { models { Post(last: 5, before: "eyJpZCI6..." ) { edges { cursor node { id } } } } }
+
+# last N rows of the entire ordered set
+query { models { Post(last: 10) { edges { cursor node { id } } } } }
 ```
+
+**Forward pagination** (`first`, `first`+`after`, `after` alone) pages from the start of the
+ordered set, or from the position after a cursor. **Backward pagination** (`last`, `last`+`before`,
+`before` alone) pages from the end or from just before a cursor. `last` without `before` returns
+the last N rows of the total ordered set; `before` without `last` returns a default-sized page
+ending just before the cursor.
 
 `cursor` is `String!` and `pageInfo` is `PageInfo!` with `hasNextPage` / `hasPreviousPage` both
 `Boolean!`, so a paging loop needs no null checks on the values it drives off. `startCursor` and
 `endCursor` are still nullable — an empty page has no first or last edge to name — so guard the
 "is there another page" decision on `hasNextPage`, not on the cursor being present.
+
+**Page size bounds.** An absent `first`/`last` defaults to 100. A value above 1000 is clamped to
+1000. Both limits are in `@azerothian/utilize/utils/page-size`.
+
+**Default order.** When `orderBy` is absent or does not already end with the primary key, a PK ASC
+tiebreaker is appended automatically. This makes pagination deterministic on every dialect —
+including Postgres, where UPDATE can change a row's physical position.
 
 ### Relationships & eager loading
 
@@ -777,7 +824,8 @@ Post { edges { node { title author(required: true) { name } } } }
 ```
 
 You can also drive eager loading explicitly with the `include` argument (fields: `required`,
-`separate`, `where`, `orderBy`, and nested `include`). It merges with the selection:
+`separate`, `where`, `orderBy`, and nested `include`). It merges with the selection. On Sequelize
+it is a list of objects; on Valkey a single object (`include: { comments: { required: true } }`):
 
 ```graphql
 Post(include: { comments: { required: true, where: { body: { eq: "hi" } } } }) {
@@ -785,8 +833,48 @@ Post(include: { comments: { required: true, where: { body: { eq: "hi" } } } }) {
 }
 ```
 
+`required` means the same on every adapter. Where no JOIN can apply it (on Valkey, across two
+adapters, or a many-to-many in through mode) ormize filters the parents itself, by the keys of the
+related rows the caller may see.
+
 Non-paginated relations fold into a single JOINed query; a nested `hasMany` with pagination
 (`first`/`last`) is loaded via a batched `separate:true` query so per-parent limits are correct.
+
+### Many-to-many join data (`through`)
+
+A `belongsToMany` whose join model you registered as a definition, and which the permission bag
+lets be seen, is in **through mode** (the same rule the [nested writes](#nested-relationship-writes)
+use). Its connection then carries the join row on every edge, and takes two extra arguments:
+
+```graphql
+Post { edges { node { title
+  tags(throughWhere: { sortOrder: { gte: 1 } }, throughOrderBy: sortOrderASC, first: 10) {
+    total
+    edges {
+      through { sortOrder label }   # the PostTag row behind this link
+      node { name }
+    }
+  }
+} } }
+```
+
+- `through` is the join model's own type, so its field permissions, global ids and output hooks
+  apply. A join row its output hooks reject removes the whole edge.
+- `throughWhere` filters links by join columns; `total` counts the filtered links.
+- `throughOrderBy` orders links by join columns, ahead of `orderBy` (which, with the primary key,
+  breaks ties). Nulls sort last ascending, first descending. The page is cut in memory, because the
+  order spans the join table and the target table.
+- `required: true` with `throughWhere` (and/or `where`) keeps only parents that have a matching
+  link. This works on every adapter, Valkey included.
+- **The join model's row scope decides which links exist.** A join row its read scope hides is
+  no link at all: no edge, not counted, and it does not satisfy `required`. That holds in plain
+  mode too (a hidden join model), wherever the join model is a registered definition.
+
+Each side declares its own relationship; the reverse list is not created for you. Its connection
+is named after the parent (`PostTagBelongsToManyTagsList`, edge `PostTagBelongsToManyTagsEdge`),
+because its edge carries this parent's join model. A through-mode relationship is never JOINed into
+the parent query: it is read per parent (join rows, then targets), so it costs two queries per
+parent rather than riding along with the parent's.
 
 ### Count-only (`total`)
 
@@ -1126,6 +1214,24 @@ Delete with a variable (the delete arg type is `[GQLTQuery{Model}Where]`):
 mutation ($where: [GQLTQueryPostWhere]) { models { Post(delete: $where) { id } } }
 ```
 
+#### Writing primary & foreign keys
+
+Primary and foreign keys are **not** on the create/update inputs by default (a client could
+otherwise forge an id or reassign a record's owner). Set a relationship through its
+[nested input](#nested-relationship-writes) instead, or opt keys back in:
+
+```ts
+define: { roleId: { type: DataTypes.INTEGER, allowNull: true, writable: true } } // one column
+new Ormize({ writableForeignKeys: true })                                         // every foreign key
+```
+
+`writableForeignKeys` covers plain foreign keys only; primary keys still need `writable: true`, and
+a column with `writable: false` stays guarded. A written key takes the target's global id:
+
+```graphql
+mutation { models { User(create: { name: "Ada", roleId: "<Role global id>" }) { id roleId } } }
+```
+
 ### Restoring soft-deleted rows
 
 A [paranoid](#soft-delete-paranoid) model also gets a `restore` argument, which clears `deletedAt`
@@ -1144,6 +1250,50 @@ as updates, and `after` receives `Events.MUTATION_UPDATE`.
 
 `restore` is gated by the `mutationRestore` permission, and appears only on models that actually
 soft delete.
+
+### CSV uploads
+
+`create`, `update` and `delete` can also take a CSV file, applied as one write per data row, all or
+nothing. Several linked files can go in one import. It is off until the `Ormize` instance turns it
+on:
+
+```ts
+new Ormize({ csv: true })                                              // 1000 rows, 5 MB, 10 files
+new Ormize({ csv: { maxRows: 10_000, maxBytes: 50e6, maxFiles: 5 } })
+const Audit = { name: "Audit", csv: false, /* … */ }                   // keep one model out
+```
+
+```graphql
+mutation ($file: GQLTUpload!) { models { Post(createCsv: $file) { id title } } }
+mutation ($file: GQLTUpload!) { models { Post(updateCsv: $file, csv: { keys: ["slug"] }) { id } } }
+mutation ($files: [CsvImportFile!]!) { csvImport(files: $files) { files { name count } refs } }
+```
+
+```csv
+title,rank,author.set.name,tags.add.name[in]
+Hello,1,Ann,red|blue
+```
+
+- A header names a field, or a dotted path into the same input a JSON mutation takes:
+  [relationship verbs](#nested-relationship-writes) (`author.set.name`) and filter operators
+  (`where.rank[gte]`).
+- An empty cell leaves a column alone, and `\N` writes `null`.
+- In a multi-file import, an `@ref` column labels rows, and `author.@ref` points at them from another
+  file.
+- Permissions, the [key guard](#writing-primary--foreign-keys), row scope and hooks hold exactly as
+  for JSON. The `mutationCsv` permission can take CSV away on top.
+- nestize serves the same uploads at `POST /:resource/_csv/:operation` and `POST /_csv`.
+- The other direction: a model's list has a `csv` field that writes the page as a file, which
+  uploads back through `updateCsv`
+  (`Post(where: …, first: 500) { csv(columns: ["id", "title", "rank"]) }`). nestize serves it at
+  `GET /:resource/_csv`. `queryCsv` gates it. See [Exporting rows](csv.md#exporting-rows).
+
+**Read next:**
+
+- [CSV uploads](csv.md): how to use it, from the first upload to linked multi-file imports, error
+  handling and server setup.
+- [CSV API reference](csv-api.md): every option, schema type, route, header rule, conversion and
+  error code.
 
 ### Nested relationship writes
 
@@ -1181,7 +1331,7 @@ mutation {
   models {
     Post(update: {
       where: { title: { eq: "New" } },
-      input: { tags: { add: [ { where: { name: { eq: "a" } } }, { where: { name: { eq: "b" } } } ] } }
+      input: { tags: { add: [ { name: { eq: "a" } }, { name: { eq: "b" } } ] } }
     }) { id }
   }
 }
@@ -1200,10 +1350,22 @@ Post(update: { where: { title: { eq: "New" } }, input: { author: { set: { name: 
 Post(update: { where: { title: { eq: "New" } }, input: { author: { remove: true } } }) { id author { name } }
 
 # hasMany / belongsToMany: replace the whole set with the matching records
-Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { where: { name: { eq: "c" } } } ] } } }) { id }
+Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { name: { eq: "c" } } ] } } }) { id }
 ```
 
-**belongsToMany `through` attributes** — write join-table columns when associating:
+**belongsToMany `through` attributes**: write join-table columns when associating. This needs a
+join model you registered as a definition (here `PostTag`) that the permission bag lets be seen.
+Then `add`/`set` entries are always `{ where, through? }` (a bare filter is refused, over REST
+and Temporal too), and `through` is typed by the join model's columns (`PostTagsThroughInput`):
+those its `mutationCreateInput` allows, minus the two join keys, every primary/foreign key and
+`ignoreFields`. Each `set` entry's `through` applies to the rows that entry matched. Without such a join model (an implicit table, one
+ormize generated, or one hidden by `permission.model`) the relationship is a plain many-to-many:
+entries are bare filters and there is no `through`.
+
+In through mode the links are rows of the join model, so its own permissions decide the link
+verbs: `add` needs its `mutationCreate`, `remove` its `mutationDelete`, `set` both, and a `through`
+written over a link that already exists also needs its `mutationUpdate`. A verb they deny is left
+off the input (and refused over REST and Temporal).
 
 ```graphql
 Post(update: {
@@ -1235,7 +1397,7 @@ mutation {
       input: {
         posts: { select: [{
           where: { status: { eq: "draft" } },
-          input: { tags: { add: [ { where: { name: { eq: "featured" } } } ] } }
+          input: { tags: { add: [ { name: { eq: "featured" } } ] } }
         }] }
       }
     }]) { id name }        # returns the found authors (unchanged)
@@ -1309,7 +1471,20 @@ transform wins over a value that hook set.
 > cannot undo.
 
 Transforms are gated by `permission.mutationInstanceMethods`; a denied transform contributes no
-field to `apply`. See [§8 Permissions](#8-permissions).
+field to `apply`. nestize's `_actions` route and CSV `apply`, and temporalize's instance-method
+activity, check a transform's params against its declared `args` the same way the `apply` type
+does, so a param a transform reads must be declared there, with a GraphQL input type. See [§8 Permissions](#8-permissions). ormize checks the same key on its own
+permission bag before running a transform, so a host calling `orm.processUpdate(…, {apply})`
+directly is held to it too.
+
+A model whose permitted writes are all transforms (nothing writable by hand) keeps `update`, with
+`where` and `limit` but no `input`:
+
+```graphql
+mutation { models { Post(update: [{ where: { id: { eq: "UG9zdDox" } } }], apply: { markChecked: true }) { id } } }
+```
+
+CSV uploads and imports take `apply` too; see [CSV uploads](csv.md#transforms-apply).
 
 ---
 
@@ -1331,6 +1506,7 @@ const schema = await createSchema(db, {
     mutationUpdate: (modelName) => true,
     mutationDelete: (modelName) => true,
     mutationRestore: (modelName) => true,                       // hide `restore` on a paranoid model
+    mutationCsv: (modelName) => true,                           // hide `createCsv` & co. (needs `csv` on the Ormize)
     mutationCreateInput: (modelName, fieldName) => true,        // hide a create-input field
     mutationUpdateInput: (modelName, fieldName) => true,
     queryDeleted: (modelName) => true,                          // hide the `deleted` argument
@@ -1577,8 +1753,9 @@ db.addDefinition({
 });
 ```
 
-**Sequelize lifecycle hooks** (`options.hooks`) — `beforeFind`, `beforeCreate`, `afterFind`,
-`beforeCount`, etc. A `beforeFind` can read the originating GraphQL args via
+**Sequelize lifecycle hooks** (`options.hooks`, or top-level `hooks`) — `beforeFind`,
+`beforeCreate`, `afterFind`, `beforeCount`, etc. Both spellings are merged; a hook named in
+both runs both, top-level first. A `beforeFind` can read the originating GraphQL args via
 `options.getGraphQLArgs()` (fed by the query's `rootValue`):
 
 ```ts
@@ -1806,6 +1983,17 @@ on the Sequelize adapter (see [Field arguments & field resolvers](#field-argumen
 `description`/`comment` on a Valkey-backed model, its GraphQL fields now gain those descriptions and
 the artifact's `models` fingerprint changes; rebuild the artifact.
 
+**Nullability.** As on the Sequelize adapter, a field is nullable only when it declares
+`allowNull: true`; omitting it makes the GraphQL field non-null and the create input require it.
+This adapter used to treat an omitted `allowNull` as nullable, so the same definition produced a
+different schema on each backend. Add `allowNull: true` to any field that can be empty.
+
+**Instance methods.** A record carries the definition's instance methods, and one named like a
+built-in (`save`, `update`, `destroy`, `reload`, `get`, `toJSON`) replaces it, as a prototype
+method does on Sequelize. A method cannot share its name with a field, a relationship or one of a
+relationship's accessors (`getTags`, `setTags`, …): the stored value or the accessor would hide
+it, so the definition is rejected with an error naming the clash.
+
 **Sequelize-style model API.** In addition to the manager pipeline (`orm.processCreate`/
 `resolveFindAll`), the direct model/instance API works too, so a Valkey-backed model is used the same
 way as a Sequelize one: static `orm.models.X.create/findAll/findOne/findByPk/count/update/destroy`,
@@ -1882,6 +2070,76 @@ would reach the host application's own queries. For the same reason `manageSchem
 polymorphic/STI entities (root only), and `define()` against this adapter (it binds to the entities
 it was given). See the runnable [`examples/mikro-orm-basic`](../examples/mikro-orm-basic) and the
 [package README](../packages/ormize-adapter-mikro-orm).
+## 15. Read cache
+
+An optional LRU cache in front of adapter reads: list fetches (eager-loaded relations included) and
+`total` counts, for GraphQL, REST and anything else that reads through ormize. It is off until you
+pass a store.
+
+```ts
+import { Ormize, MemoryCacheStore } from "@azerothian/ormize";
+
+const orm = new Ormize({
+  cache: {
+    store: new MemoryCacheStore({ maxEntries: 5_000, maxSize: 128 * 1024 * 1024 }),
+    ttl: 30_000,                  // ms, default 60 000
+    maxEntrySize: 512 * 1024,     // bytes; bigger results are returned but not stored
+    exclude: ["AuditLog"],        // or ({defName, operation, context}) => boolean
+  },
+});
+```
+
+To share the cache, and its invalidations, across processes, use the Redis/Valkey store:
+
+```ts
+import { IORedisCacheStore } from "@azerothian/ormize-cache-ioredis";
+
+const orm = new Ormize({
+  cache: { store: new IORedisCacheStore(new IORedis(url), { prefix: "app-cache", maxEntries: 50_000 }) },
+});
+```
+
+**What you get for free.**
+
+- *Size limits.* Each store evicts the least recently used entry past `maxEntries` or `maxSize`
+  (bytes). `maxEntrySize` keeps one huge page from flushing everything else.
+- *Deduplication.* Identical reads that arrive while one is in flight share its adapter call.
+  `dedupe: false` turns this off. Every caller still gets its own rows, so mutating them is safe.
+- *Invalidation.* Every mutation, and every write through `orm.models.X`, invalidates the models it
+  could have touched. Any cached read that included one of those models (as the root or eager-loaded)
+  misses next time. Inside `orm.transaction(...)` the invalidation is repeated after the commit.
+- *Security.* A row scope (`permission.scope`) is merged into the filter before the key is built, so
+  two users with different scopes never share an entry. Reads inside a transaction are never cached.
+
+**Exclusions.** Keep a model out with `exclude`, or on the definition itself:
+
+```ts
+{ name: "Session", define: { ... }, cache: false }
+{ name: "Country", define: { ... }, cache: { ttl: 24 * 60 * 60 * 1000 } }  // per-model TTL
+```
+
+**Hooks.** A model with its own `beforeFind`/`afterFind`/`beforeCount` hooks (on the model or
+global) is **not** cached by default. Those hooks run inside the adapter call, so on a hit they
+wouldn't run, and the stored result would be whatever they produced for whoever missed first. If
+they give every caller the same answer, opt in with `hooks: "cache"` (all models) or a `cache: {}`
+object on the definition. If they depend on the caller in a way the filter doesn't show, also pass
+`vary`:
+
+```ts
+cache: { store, hooks: "cache", vary: (context) => context.user?.tenantId }
+```
+
+**Writes ormize can't see.** Raw SQL, another service writing the same database, or a userland
+`post.addTag(tag)` on a join table with no definition of its own are only caught by the TTL. Tell
+the cache yourself:
+
+```ts
+await orm.readCache?.invalidate(["Post", "Tag"]);
+await orm.readCache?.clear();
+```
+
+A failing store never fails a query. The read goes to the database and the error goes to
+`onError` (default `console.warn`).
 
 ---
 

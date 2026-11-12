@@ -8,7 +8,7 @@ import type { ScopePredicate } from "@azerothian/utilize/gate";
 import { describe, it, expect, beforeAll } from "@jest/globals";
 
 import { createSchema } from "../src";
-import { createAdapterForDialect, registerTeardown } from "./helper/dialect";
+import { createAdapterForDialect, registerSuiteTeardown, registerTeardown } from "./helper/dialect";
 
 // The whole feature, seen from the only place a caller actually stands.
 //
@@ -80,10 +80,10 @@ const owned: ScopePredicate = (_defName, _operation, _options, context) => {
   return { where: { ownerId: { eq: id } }, set: { ownerId: id } };
 };
 
-async function build(scope?: ScopePredicate) {
+async function build(scope?: ScopePredicate, options: { suite?: boolean } = {}) {
   const db = new Database(scope ? { permission: { scope } } : undefined);
   const { adapter, name, teardown } = await createAdapterForDialect();
-  registerTeardown(teardown);
+  (options.suite ? registerSuiteTeardown : registerTeardown)(teardown);
   db.registerAdapter(adapter, name);
   await db.addDefinition(DocDef);
   await db.addDefinition(NoteDef);
@@ -111,7 +111,7 @@ describe("gqlize - row-level scope through the schema", () => {
   };
 
   beforeAll(async() => {
-    ({ schema } = await build(owned));
+    ({ schema } = await build(owned, { suite: true }));
     ourDoc = await seed("u1", "ours", "our note");
     theirDoc = await seed("u2", "theirs", "their note");
   });
@@ -184,6 +184,35 @@ describe("gqlize - row-level scope through the schema", () => {
     expect(result.data.models.Doc[0]!.ownerId).toEqual("u1");
   });
 
+  it("honours `required: true` on scoped relations at every level (#70)", async() => {
+    // Both models are scoped, so both levels pass through the scope guard. An
+    // INNER JOIN with the scope inside it drops only parents with no *visible*
+    // match; the guard used to turn each into a LEFT JOIN instead, handing back
+    // parents the caller asked to exclude.
+    const docs = async(body: string) => {
+      const result = await run(`query { models { Doc(include: [{notes: {required: true, where: {body: {eq: "${body}"}}}}]) {
+        total edges { node { name } }
+      } } }`, "u1");
+      expect(result.errors).toBeUndefined();
+      return result.data.models.Doc;
+    };
+    expect((await docs("missing")).edges).toEqual([]);
+    expect((await docs("missing")).total).toEqual(0);
+    expect((await docs("our note")).edges.map((e) => e.node.name)).toEqual(["ours"]);
+    // A note u1 cannot see matches nothing, exactly as if it did not exist.
+    expect((await docs("their note")).edges).toEqual([]);
+
+    const notes = async(body: string) => {
+      const result = await run(`query { models { Note(include: [{doc: {required: true, include: [{notes: {required: true, where: {body: {eq: "${body}"}}}}]}}]) {
+        edges { node { body doc { name } } }
+      } } }`, "u1") as unknown as {errors?: unknown[]; data: {models: {Note: Connection<{body: string; doc: {name: string} | null}>}}};
+      expect(result.errors).toBeUndefined();
+      return result.data.models.Note.edges.map((e) => e.node);
+    };
+    expect(await notes("missing")).toEqual([]);
+    expect(await notes("our note")).toEqual([{body: "our note", doc: {name: "ours"}}]);
+  });
+
   it("shows every row to a schema built without a scope", async() => {
     // The control. Everything above is the scope working; this is the same
     // schema shape proving the tests are not simply reading an empty database.
@@ -214,5 +243,54 @@ describe("gqlize - row-level scope through the schema", () => {
       only.schema, "query { models { Doc { edges { node { name notes { total } } } } } }", "u1");
     expect(result.data.models.Doc.edges).toHaveLength(1);
     expect(result.data.models.Doc.edges[0].node.notes.total).toEqual(0);
+  });
+});
+
+describe("gqlize - row-level scope on a restore", () => {
+  // The pre-write check looks the row up under the scope. A restored row is
+  // soft-deleted by definition, so a lookup that skipped deleted rows refused
+  // every restore, the principal's own included.
+  const MemoDef: Definition = {
+    name: "Memo",
+    define: {
+      body: { type: Sequelize.STRING },
+      ownerId: { type: Sequelize.STRING, allowNull: true, writable: true },
+    },
+    options: { paranoid: true },
+  };
+
+  async function memos() {
+    const db = new Database({ permission: { scope: owned } });
+    const { adapter, name, teardown } = await createAdapterForDialect();
+    registerTeardown(teardown);
+    db.registerAdapter(adapter, name);
+    await db.addDefinition(MemoDef);
+    await db.initialise();
+    await db.sync();
+    const schema = await createSchema(db);
+    const run = (source: string, user: string) =>
+      graphql({ schema, source, contextValue: { user } }) as unknown as Promise<{errors?: readonly {message: string}[], data: {models: {Memo: {body: string}[] | {edges: {node: {body: string}}[]}}}}>;
+    for (const [user, body] of [["u1", "mine"], ["u2", "theirs"]]) {
+      expect((await run(`mutation { models { Memo(create: {body: "${body}"}) { id } } }`, user)).errors).toBeUndefined();
+      expect((await run(`mutation { models { Memo(delete: {body: {eq: "${body}"}}) { id } } }`, user)).errors).toBeUndefined();
+    }
+    return run;
+  }
+
+  it("restores the principal's own soft-deleted row", async() => {
+    const run = await memos();
+    const restored = await run(`mutation { models { Memo(restore: {body: {eq: "mine"}}) { body } } }`, "u1");
+    expect(restored.errors).toBeUndefined();
+    expect(restored.data.models.Memo).toEqual([{ body: "mine" }]);
+    const listed = await run("query { models { Memo { edges { node { body } } } } }", "u1");
+    expect(listed.data.models.Memo).toEqual({ edges: [{ node: { body: "mine" } }] });
+  });
+
+  it("still cannot restore someone else's row", async() => {
+    const run = await memos();
+    const restored = await run(`mutation { models { Memo(restore: {body: {eq: "theirs"}}) { body } } }`, "u1");
+    expect(restored.data.models.Memo).toEqual([]);
+    const theirs = await run("query { models { Memo(deleted: ONLY) { edges { node { body } } } } }", "u2");
+    expect(theirs.data.models.Memo).toEqual({ edges: [{ node: { body: "theirs" } }] });
   });
 });

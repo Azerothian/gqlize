@@ -87,6 +87,17 @@ describe("nestize - instance methods (`_actions`)", () => {
     expect(res.body.name).toBe("epsilon!");
   });
 
+  it("holds a transform's params to its declared args, writing nothing on a refusal", async () => {
+    // `appendSuffix` declares `suffix: String`, `rename` declares `to: String`.
+    // A key or a value type they don't declare used to reach the method as sent.
+    const id = await makeTask(http, "theta");
+    for (const body of [{ suffix: 3 }, { suffix: "x", extra: true }, { suffix: { "$gt": "" } }, { suffix: ["a", "b"] }]) {
+      const res = await request(http).post(`/task/${id}/_actions/appendSuffix`).send(body);
+      expect([JSON.stringify(body), res.status]).toEqual([JSON.stringify(body), 400]);
+    }
+    expect((await request(http).get(`/task/${id}`)).body.name).toBe("theta");
+  });
+
   it("is 404 for an unknown id and for an unknown method", async () => {
     const id = await makeTask(http, "zeta");
     expect((await request(http).post(`/task/999999/_actions/appendSuffix`).send({})).status).toBe(404);

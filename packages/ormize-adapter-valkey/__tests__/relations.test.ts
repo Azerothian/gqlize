@@ -3,6 +3,7 @@ import { Ormize, type MutationFilter, type MutationInputTree } from "@azerothian
 import { DataTypes } from "@azerothian/utilize/types/data-type";
 import type { AdapterWhere, Definition, Selection } from "@azerothian/utilize/types/index";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 import type IORedis from "ioredis";
 import ValkeyAdapter from "../src";
 import { makeClient, flush, shutdown } from "./helper/redis";
@@ -66,8 +67,9 @@ const defs: Definition[] = [
 ];
 
 const backends = [
-  { name: "sequelize", makeAdapter: () => new SequelizeAdapter({}, { dialect: "sqlite", logging: false }) },
-  { name: "valkey", makeAdapter: () => new ValkeyAdapter({ prefix: "rel" }, client) },
+  { name: "sequelize", makeAdapter: async () => trackConnection(new SequelizeAdapter({}, await dialectConfig())) },
+  // eslint-disable-next-line @typescript-eslint/require-await -- kept async to match the sequelize factory's return type
+  { name: "valkey", makeAdapter: async () => new ValkeyAdapter({ prefix: "rel" }, client) },
 ];
 
 beforeAll(async () => { client = await makeClient(); });
@@ -79,7 +81,7 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
   beforeEach(async () => {
     if (name === "valkey") await flush(client);
     orm = new Ormize();
-    orm.registerAdapter(makeAdapter(), "db");
+    orm.registerAdapter(await makeAdapter(), "db");
     for (const d of defs) await orm.addDefinition(d);
     await orm.initialise();
     await orm.sync();
@@ -209,5 +211,51 @@ describe.each(backends)("$name adapter — relation types + transactions", ({ na
     ).rejects.toThrow("boom");
     expect((await list("Author", { name: "frank" })).length).toBe(0);
     expect((await list("Post")).length).toBe(0);
+  });
+});
+
+// A belongsToMany whose keys are written only under `through`. Both spellings
+// are typed; Sequelize used to read neither `through.foreignKey` nor
+// `through.otherKey`, and nothing read `through.foreignKey` at all, so the two
+// backends joined on different columns.
+const throughKeyDefs: Definition[] = [
+  {
+    name: "Course",
+    define: { title: { type: DataTypes.String, index: true } },
+    options: {},
+    relationships: [{ type: "belongsToMany", model: "Student", name: "students",
+      options: { through: { model: "Enrolment", foreignKey: "courseRef", otherKey: "studentRef" } } }],
+  },
+  {
+    name: "Student",
+    define: { name: { type: DataTypes.String, index: true } },
+    options: {},
+    relationships: [{ type: "belongsToMany", model: "Course", name: "courses",
+      options: { through: { model: "Enrolment", foreignKey: "studentRef", otherKey: "courseRef" } } }],
+  },
+  { name: "Enrolment", define: {}, options: {} },
+];
+
+describe.each(backends)("$name adapter — belongsToMany keys under `through`", ({ name, makeAdapter }) => {
+  it("joins on the keys `through` declares", async () => {
+    if (name === "valkey") await flush(client);
+    const orm = new Ormize();
+    orm.registerAdapter(await makeAdapter(), "db");
+    for (const d of throughKeyDefs) await orm.addDefinition(d);
+    await orm.initialise();
+    await orm.sync();
+
+    await orm.processCreate("Course", null, { input: { title: "maths", students: { create: [{ name: "ann" }, { name: "bob" }] } } }, {});
+    const links = (await orm.resolveFindAll("Enrolment", null, {}, {}, undefined)).models as Row[];
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link.courseRef).not.toBeNull();
+      expect(link.studentRef).not.toBeNull();
+    }
+    const adapter = orm.getModelAdapter("Course");
+    const assoc = adapter.getAssociations("Course").students;
+    const course = ((await orm.resolveFindAll("Course", null, {}, {}, undefined)).models as Row[])[0];
+    const { models } = await adapter.resolveManyRelationship("Student", assoc, course, { args: {}, offset: 0 });
+    expect((models as Row[]).map((s) => s.name).sort()).toEqual(["ann", "bob"]);
   });
 });

@@ -3,6 +3,7 @@ import { toGlobalId } from "graphql-relay";
 import { Ormize } from "@azerothian/ormize";
 import SequelizeAdapter from "../src";
 import { describe, expect, it, beforeAll } from "@jest/globals";
+import { dialectConfig, trackConnection } from "@azerothian/test-fixtures/dialect";
 
 // Regression cover for the global-id decode guard.
 //
@@ -21,7 +22,7 @@ let adapter: SequelizeAdapter;
 let db: Ormize;
 
 beforeAll(async () => {
-  adapter = new SequelizeAdapter({}, { dialect: "sqlite" });
+  adapter = trackConnection(new SequelizeAdapter({}, await dialectConfig()), { suite: true });
   db = new Ormize().registerAdapter(adapter);
   await db.addDefinition({
     name: "Thing",

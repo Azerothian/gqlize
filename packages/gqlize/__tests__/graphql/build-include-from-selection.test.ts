@@ -270,9 +270,10 @@ describe("normaliseExplicitInclude", () => {
     expect(Object.keys(map)).toEqual(["orders", "owner"]);
   });
 
-  it("treats anything that is not an array as no include", () => {
+  it("reads a single object as one level (an includeIsList = false adapter, #68)", () => {
     expect(normaliseExplicitInclude(undefined)).toEqual({});
-    expect(normaliseExplicitInclude({orders: {}})).toEqual({});
+    expect(normaliseExplicitInclude({orders: {}})).toEqual({orders: {}});
+    expect(normaliseExplicitInclude("nonsense")).toEqual({});
   });
 });
 
@@ -399,14 +400,20 @@ describe("cursor arithmetic", () => {
     const plan = planFor(`query { tasks { edges { node {
       orders(last: 3, before: "${toCursor("Order", 9)}") { edges { node { id } } }
     } } } }`);
-    expect(plan.orders.offset).toBe(7);
+    // Cursor at index 9: the 3 rows before it are at positions 6, 7, 8.
+    // limit = min(3, 9) = 3, offset = 9 - 3 = 6.
+    expect(plan.orders.offset).toBe(6);
+    expect(plan.orders.limit).toBe(3);
   });
 
   it("floors a `before` that would run off the front at zero", () => {
     const plan = planFor(`query { tasks { edges { node {
       orders(last: 5, before: "${toCursor("Order", 1)}") { edges { node { id } } }
     } } } }`);
+    // Cursor at index 1: only 1 row before it (position 0).
+    // limit = min(5, 1) = 1, offset = 1 - 1 = 0.
     expect(plan.orders.offset).toBe(0);
+    expect(plan.orders.limit).toBe(1);
   });
 
   it("treats a malformed cursor as index -1 rather than throwing", () => {
