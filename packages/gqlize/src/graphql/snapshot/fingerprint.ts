@@ -176,6 +176,12 @@ function modelProjection(instance: GqlizeBinding) {
         };
       }),
       expose: exposeProjection(def.expose),
+      // Whether the model takes CSV uploads decides whether its mutation field
+      // has `createCsv` & co. — and is resolved from the instance-wide
+      // `options.csv` too, so it is read off the binding, not the definition.
+      // Recorded only when on, so turning the feature on elsewhere leaves
+      // every artifact built without it current.
+      ...(instance.csvEnabled(defName) ? { csv: true } : {}),
     };
   });
 }

@@ -9,12 +9,14 @@ import {
 import createNodeInterface from "./utils/create-node-interface";
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import { PERMISSION_KEYS, isModelAllowed, isMutationAllowed, modelDeprecation, unknownPermissionKeys } from "@azerothian/utilize";
+import { PERMISSION_KEYS, isModelAllowed, isMutationAllowed, isQueryCsvAllowed, modelDeprecation, unknownPermissionKeys } from "@azerothian/utilize";
 import createModelType from "./create-model-type";
 import createListObject from "./create-list-object";
 import createClassMethods from "./create-class-methods";
 import createMutationModel from "./create-mutation-model";
-import createMutationInput from "./create-mutation-input";
+import createMutationInput, { createMutationInputPlan } from "./create-mutation-input";
+import { csvImportFieldConfig } from "./objects/csv-import";
+import { csvExportFieldConfig } from "./objects/csv-export";
 import createSchemaCache from "./create-schema-cache";
 import { foldVisibleModels } from "./utils/visible-models";
 import pruneModelTypes from "./utils/model-types";
@@ -89,10 +91,18 @@ export function createListObjects(instance: GQLManager, schemaCache: SchemaCache
           return o;
         }
       }
+      // CSV export rides on the root list: the `csv` field formats the page the
+      // connection fetched. Offered where an upload would be (CSV on for the
+      // model), and only if `queryCsv` allows it.
+      const csvExport = instance.csvEnabled(defName) && isQueryCsvAllowed(options.permission, defName);
       const listObject = createListObject(instance, schemaCache, defName, schemaCache.types[defName], {
         source: "findAll",
         defName,
-      }, "", "", undefined, undefined, options);
+      }, "", "", undefined, undefined, options, csvExport ? {
+        connectionFields: () => ({
+          csv: bindField(csvExportFieldConfig(defName), {kind: "connectionCsv", defName}, {instance, options}),
+        }),
+      } : {});
       // GraphQL cannot deprecate an object type, so `definition.deprecated`
       // lands on the fields that lead to the model — this one and the model's
       // mutation field. Copied rather than marked in place: `createListObject`
@@ -105,9 +115,10 @@ export function createListObjects(instance: GQLManager, schemaCache: SchemaCache
 }
 
 function createMutationInputs(instance: GQLManager, options: GqlizeOptions, schemaCache: SchemaCache, mutableDefNames: Set<string>) {
+  const plan = createMutationInputPlan(instance, options, mutableDefNames);
   return (defName: string, inputTypes: SchemaCache["mutationInputs"]) => {
     if (mutableDefNames.has(defName)) {
-      inputTypes[defName] = createMutationInput(instance, defName, schemaCache, inputTypes, options, mutableDefNames);
+      inputTypes[defName] = createMutationInput(instance, defName, schemaCache, inputTypes, options, plan);
     }
     return inputTypes;
   };
@@ -253,6 +264,16 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   }
 
   addContainer(mutationRootFields, "models", "MutationModels", mutationCollection);
+  // `csvImport` takes a file for any model whose own mutation field takes a
+  // `createCsv` or `updateCsv`, so it inherits every gate those arguments
+  // carry rather than restating them.
+  const csvImport = csvImportFieldConfig(Object.keys(mutationCollection).filter((defName) => {
+    const args = mutationCollection[defName].args || {};
+    return Boolean(args.createCsv || args.updateCsv);
+  }));
+  if (csvImport) {
+    mutationRootFields.csvImport = bindField(csvImport, {kind: "csvImport"}, bindingContext);
+  }
   addContainer(mutationRootFields, "classMethods", "MutationClassMethods", classMethodMutations);
   mutationRootFields = await applyExtendFields(mutationRootFields, extend?.mutation, "mutation", options, bindingContext, ledger);
   if (Object.keys(mutationRootFields).length > 0) {

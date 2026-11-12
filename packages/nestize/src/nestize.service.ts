@@ -11,13 +11,20 @@ import {
   isAllowed,
   isModelAllowed,
   isMutationAllowed,
+  isMutationCsvAllowed,
+  isQueryCsvAllowed,
   isRelationshipAllowed,
 } from "@azerothian/utilize";
 import * as guards from "@azerothian/utilize/guards";
+import { regexOperatorsEnabled } from "@azerothian/utilize/filter-operators";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
+import { coerceTransformParams } from "@azerothian/utilize/transform-params";
 import type { AdapterWhere, Association, Fail, GuardFailure, Selection } from "@azerothian/utilize";
-import { ThroughInputError } from "@azerothian/ormize";
-import type { MutationInputTree, Ormize } from "@azerothian/ormize";
+import { CsvUploadError, ThroughInputError, writeCsv } from "@azerothian/ormize";
+import type { CsvImportFile, CsvImportOperation, MutationInputTree, Ormize } from "@azerothian/ormize";
+import { csvApply, csvHttpError, csvUploadOf, isCsvOperation, restCsvRequest } from "./csv";
+import { readCsvParts } from "./csv-multipart";
+import { checkInputTree, type RelationshipInputHost } from "./relationship-input";
 import { NestizeSchemaRegistry } from "./schema-registry";
 import {
   NESTIZE_OPTIONS,
@@ -31,6 +38,16 @@ import { parseListQuery, parseWhere } from "./query";
 
 /** A list response: `total` always, `rows` unless the caller asked to count only. */
 export type ListResult = { total: number; rows?: unknown };
+
+function isImportOperation(operation: string): operation is CsvImportOperation {
+  return operation === "create" || operation === "update";
+}
+
+/** What `POST /_csv` answers: each file's written rows, and each label's key. */
+export type CsvImportResponse = {
+  files: { name: string; resource: string; operation: CsvImportOperation; rows: unknown }[];
+  refs: { [label: string]: unknown };
+};
 
 /** Kind of `_actions` call, derived from the HTTP verb (GET → query, POST → mutation). */
 export type MethodKind = "query" | "mutation";
@@ -94,9 +111,21 @@ export class NestizeService {
     guards.assertScopedMutation(where, optIn, "?all=true", FAIL);
   }
 
-  /** Validate that every filter field is permitted — see `@azerothian/utilize/guards`. */
+  /** What `checkInputTree` needs to hold a nested relationship input to the permissions. */
+  private get relationshipInputHost(): RelationshipInputHost {
+    return {
+      orm: this.orm,
+      permission: this.permission,
+      schema: (name, kind) => (kind === "create" ? this.registry.create(name) : this.registry.update(name)),
+      assertFilterAllowed: (name, where) => this.assertFilterAllowed(name, where),
+    };
+  }
+
+  /** Validate every filter field and operator — see `@azerothian/utilize/guards`. */
   private assertFilterAllowed(name: string, where: unknown): void {
-    guards.assertFilterAllowed(this.permission, name, where, FAIL, this.orm.getDefinition(name));
+    guards.assertFilterAllowed(this.permission, name, where, FAIL, this.orm.getDefinition(name), {
+      regexOperators: regexOperatorsEnabled(this.orm.getModelAdapter(name)),
+    });
   }
 
   /** Validate that every `orderBy` field is permitted for the model. */
@@ -221,6 +250,52 @@ export class NestizeService {
     return { total, rows: this.present(name, models) };
   }
 
+  /**
+   * `GET /:resource/_csv`: the rows `GET /:resource` would list, as CSV text.
+   *
+   * 404 unless the instance has CSV on for the model, as for the upload routes;
+   * 403 when `queryCsv` denies it. The filter, order and paging are the list
+   * route's, under the same guards, and the columns are the ones `present`
+   * keeps, so a file holds nothing the JSON list would not. At most the model's
+   * `maxRows` rows: the most an upload of the same model may carry back.
+   * `?columns=a,b` picks and orders the columns, `?delimiter=;` and
+   * `?header=false` shape the file.
+   */
+  async csvExport(resource: string, query: RestQuery, req: RestRequest): Promise<string> {
+    const name = this.mustResolve(resource);
+    const limits = this.orm.csvLimits(name);
+    if (!limits) {
+      throw new NotFoundException(`Cannot GET /${resource}/_csv`);
+    }
+    if (!isQueryCsvAllowed(this.permission, name)) {
+      throw new ForbiddenException(`CSV export not allowed for ${name}`);
+    }
+    const { args } = parseListQuery(query);
+    this.assertFilterAllowed(name, args.where);
+    this.assertOrderAllowed(name, args.orderBy);
+    args.first = Math.min(args.first ?? limits.maxRows, limits.maxRows);
+    const readable = Object.keys(this.registry.entity(name)?.shape || {});
+    const requested = typeof query?.columns === "string" ? query.columns.split(",").map((c) => c.trim()).filter((c) => c !== "") : undefined;
+    for (const column of requested || []) {
+      if (!readable.includes(column)) {
+        throw new BadRequestException(`"${column}" is not a column this CSV can hold`);
+      }
+    }
+    if (requested && new Set(requested).size !== requested.length) {
+      throw new BadRequestException("A column is named twice");
+    }
+    const { models } = await this.orm.resolveFindAll(name, null, args, { req });
+    const rows = this.present(name, models) as { [column: string]: unknown }[];
+    try {
+      return writeCsv(requested || readable, Array.isArray(rows) ? rows : [], {
+        delimiter: typeof query?.delimiter === "string" ? query.delimiter : undefined,
+        header: query?.header !== "false" && query?.header !== false,
+      });
+    } catch (e) {
+      throw e instanceof CsvUploadError ? csvHttpError(e) : e;
+    }
+  }
+
   async findOne(resource: string, id: unknown, req: RestRequest): Promise<unknown> {
     const name = this.mustResolve(resource);
     const row = await this.loadInstance(name, id, req);
@@ -270,6 +345,122 @@ export class NestizeService {
     return { deleted: this.present(name, deleted) };
   }
 
+  /**
+   * `POST /:resource/_csv/:operation` — a CSV body applied as one create,
+   * update or delete per row, all-or-nothing (ormize's `processCsv`).
+   *
+   * 404 unless the instance has CSV on for the model, so the route is as
+   * absent as gqlize's `createCsv` argument would be. Then the same gates a
+   * JSON write passes, plus `mutationCsv`.
+   */
+  async csv(resource: string, operation: string, query: RestQuery, req: RestRequest): Promise<{ rows: unknown }> {
+    this.assertWritable();
+    const name = this.mustResolve(resource);
+    if (!isCsvOperation(operation) || !this.orm.csvLimits(name)) {
+      throw new NotFoundException(`Cannot POST /${resource}/_csv/${operation}`);
+    }
+    if (!isMutationAllowed(this.permission, name, operation)) {
+      throw new ForbiddenException(`${operation[0].toUpperCase()}${operation.slice(1)} not allowed for ${name}`);
+    }
+    if (!isMutationCsvAllowed(this.permission, name)) {
+      throw new ForbiddenException(`CSV uploads not allowed for ${name}`);
+    }
+    try {
+      const request = restCsvRequest(this.orm, name, operation, csvUploadOf(req), query, {
+        input: operation === "create" ? this.registry.create(name) : operation === "update" ? this.registry.update(name) : undefined,
+        assertFilterAllowed: (where) => this.assertFilterAllowed(name, where),
+      }, { apply: csvApply(this.orm, this.permission, name, operation, query?.apply) });
+      // The bag goes with every row's write, as on the JSON routes, so whatever
+      // the engine decides by it decides the same way here.
+      const rows = await this.orm.processCsv(name, operation, request, { req }, this.selection);
+      return { rows: this.present(name, rows) };
+    } catch (e) {
+      throw e instanceof CsvUploadError ? csvHttpError(e) : e;
+    }
+  }
+
+  /**
+   * `POST /_csv`: several CSV files in one multipart body, each a create or an
+   * update on its own model, applied as one all-or-nothing unit with `@ref`
+   * labels linking rows across them.
+   *
+   * A file part's field name says what it is: `<resource>.create` or
+   * `<resource>.update` (a bare `<resource>` creates). Text parts named
+   * `<field>.keys`, `<field>.delimiter` and `<field>.apply` set that file's
+   * options. Each file
+   * passes the gates its own `POST /:resource/_csv/:operation` would, checked
+   * as its part arrives, so a refused file is not even buffered.
+   */
+  async csvImport(req: RestRequest): Promise<CsvImportResponse> {
+    this.assertWritable();
+    const maxFiles = this.orm.csvMaxFiles();
+    if (maxFiles === undefined) {
+      throw new NotFoundException("Cannot POST /_csv");
+    }
+    const targets = new Map<string, { resource: string; name: string; operation: CsvImportOperation }>();
+    const target = (field: string) => {
+      const known = targets.get(field);
+      if (known) {
+        return known;
+      }
+      const [resource, operation = "create", ...rest] = field.split(".");
+      if (rest.length > 0 || !isImportOperation(operation)) {
+        throw new CsvUploadError("CSV_UNSUPPORTED", `"${field}": name a file part <resource>.create or <resource>.update`, { file: field });
+      }
+      let name: string;
+      try {
+        name = this.mustResolve(resource);
+      } catch {
+        throw new CsvUploadError("CSV_UNSUPPORTED", `"${field}": there is no resource "${resource}"`, { file: field });
+      }
+      if (!this.orm.csvLimits(name)) {
+        throw new CsvUploadError("CSV_UNSUPPORTED", `"${field}": ${name} does not accept CSV uploads`, { file: field });
+      }
+      if (!isMutationAllowed(this.permission, name, operation)) {
+        throw new ForbiddenException(`"${field}": ${operation[0].toUpperCase()}${operation.slice(1)} not allowed for ${name}`);
+      }
+      if (!isMutationCsvAllowed(this.permission, name)) {
+        throw new ForbiddenException(`"${field}": CSV uploads not allowed for ${name}`);
+      }
+      const found = { resource, name, operation };
+      targets.set(field, found);
+      return found;
+    };
+    try {
+      const parts = await readCsvParts(req, {
+        maxFiles,
+        maxBytes: (field) => (this.orm.csvLimits(target(field).name) as { maxBytes: number }).maxBytes,
+      });
+      const files: CsvImportFile[] = parts.files.map((part) => {
+        const { name, operation } = target(part.field);
+        const query = { keys: parts.fields[`${part.field}.keys`], delimiter: parts.fields[`${part.field}.delimiter`] };
+        const apply = csvApply(this.orm, this.permission, name, operation, parts.fields[`${part.field}.apply`], part.field);
+        return {
+          name: part.field,
+          defName: name,
+          operation,
+          request: restCsvRequest(this.orm, name, operation, part.data, query, {
+            input: operation === "create" ? this.registry.create(name) : this.registry.update(name),
+            assertFilterAllowed: (where) => this.assertFilterAllowed(name, where),
+          }, { refs: true, apply }),
+        };
+      });
+      const key = (defName: string, row: unknown) => this.orm.getValueFromInstance(defName, row, this.pkName(defName));
+      const result = await this.orm.processCsvImport({ files, refValue: key, selection: () => this.selection }, { req });
+      return {
+        files: result.files.map((file) => ({
+          name: file.name,
+          resource: targets.get(file.name)?.resource ?? file.defName,
+          operation: file.operation,
+          rows: this.present(file.defName, file.rows),
+        })),
+        refs: Object.fromEntries(Object.entries(result.refs).map(([label, ref]) => [label, key(ref.defName, ref.row)])),
+      };
+    } catch (e) {
+      throw e instanceof CsvUploadError ? csvHttpError(e) : e;
+    }
+  }
+
   async select(resource: string, body: SelectBody, req: RestRequest): Promise<{ rows: unknown }> {
     const name = this.mustResolve(resource);
     const { input, where, limit } = body || {};
@@ -285,7 +476,12 @@ export class NestizeService {
       }
       this.assertScopedMutation(where, body?.all === true);
     }
-    const found = await this.write(() => this.orm.processSelect(name, null, { input, where, limit }, { req }, this.selection));
+    // `select`'s input is an update-shaped tree whose relationship operations
+    // run on the matched rows; hold it to what GraphQL's types would allow.
+    const checked = input !== undefined && input !== null
+      ? checkInputTree(this.relationshipInputHost, name, input, "update")
+      : input;
+    const found = await this.write(() => this.orm.processSelect(name, null, { input: checked, where, limit }, { req }, this.selection));
     return { rows: this.present(name, found) };
   }
 
@@ -297,6 +493,10 @@ export class NestizeService {
     const source = await this.loadInstance(name, id, req);
     const single = assoc.associationType === "belongsTo" || assoc.associationType === "hasOne";
     const { args } = parseListQuery(query);
+    // The related rows are filtered and ordered like a list of the target:
+    // held to the same field and operator allow-list as `GET /:target`.
+    this.assertFilterAllowed(assoc.target, args.where);
+    this.assertOrderAllowed(assoc.target, args.orderBy);
     if (single) {
       const row = await this.orm.resolveSingleRelationship(assoc.target, assoc, source, args, { req });
       return this.present(assoc.target, row);
@@ -312,12 +512,13 @@ export class NestizeService {
     if (!isMutationAllowed(this.permission, name, "update")) {
       throw new ForbiddenException(`Update not allowed for ${name}`);
     }
+    const input = checkInputTree(this.relationshipInputHost, name, { [relation]: body }, "update");
     const pk = this.pkName(name);
     const where = { [pk]: { eq: this.coerceId(id) } };
     const results = await this.write(() => this.orm.processUpdate(
       name,
       null,
-      { input: { [relation]: body }, where, limit: 1 },
+      { input, where, limit: 1 },
       { req },
       this.selection,
     ));
@@ -341,10 +542,13 @@ export class NestizeService {
       const targetPk = this.pkName(assoc.target);
       subOp = { remove: [{ [targetPk]: { eq: this.coerceId(relId) } }] };
     }
+    // A to-many `remove` rewrites the related row's foreign key: the same
+    // check a body sent to `POST /:resource/:id/:relation` gets.
+    const input = checkInputTree(this.relationshipInputHost, name, { [relation]: subOp }, "update");
     const results = await this.orm.processUpdate(
       name,
       null,
-      { input: { [relation]: subOp }, where, limit: 1 },
+      { input, where, limit: 1 },
       { req },
       this.selection,
     );
@@ -386,7 +590,8 @@ export class NestizeService {
     //
     // A method declared under neither target — the common case, since `expose`
     // is optional — keeps the read-only treatment it has always had here.
-    const isTransform = !!mutationInstanceMethods(this.orm.getDefinition(name))[method];
+    const transforms = mutationInstanceMethods(this.orm.getDefinition(name));
+    const isTransform = Object.hasOwn(transforms, method);
     const gate = isTransform ? this.permission?.mutationInstanceMethods : this.permission?.queryInstanceMethods;
     if (!isAllowed(gate, name, method, this.permission?.options)) {
       throw new ForbiddenException(`Method '${method}' not allowed for ${name}`);
@@ -411,7 +616,17 @@ export class NestizeService {
       // with no params". gqlize's "named but not asked for" reading of a falsy
       // value only exists because its `apply` input lists every exposed
       // transform at once; a REST call names exactly one.
-      const params = args === undefined || args === null || args === false ? true : args;
+      //
+      // The params are then held to the transform's declared `args`, as
+      // gqlize's `apply` input type holds them: a transform never sees a key
+      // or a value its declaration did not offer.
+      const checked = coerceTransformParams(
+        transforms[method], args === undefined || args === null || args === false ? true : args, method,
+      );
+      if (!checked.ok) {
+        throw new BadRequestException(checked.message);
+      }
+      const params = checked.value;
       const results = await this.orm.processUpdate(
         name,
         null,

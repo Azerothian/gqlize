@@ -49,6 +49,7 @@
     "@temporalio/workflow": "^1.22.0"
   },
   "devDependencies": {
+    "graphql": "17.0.2",
     "@azerothian/ormize": "workspace:*",
     "@azerothian/ormize-adapter-sequelize": "workspace:*",
     "@azerothian/ormize-zod4": "workspace:*",

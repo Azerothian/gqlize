@@ -8,15 +8,17 @@ import Item from "./models/item";
 import MemoModel from "./models/memo";
 import Sequelize from "sequelize";
 import { createAdapterForDialect, registerSuiteTeardown, registerTeardown } from "./dialect";
-import type {Definition} from "../../src/types";
+import type {Definition, GqlizeOptions} from "../../src/types";
 
 /**
  * `extraDefinitions` exists so a test can exercise a definition shape without
  * editing the shared models — `schema-golden.test.ts` pins the SDL these six
  * produce, and any edit to them churns that snapshot for unrelated reasons.
  */
-export async function createInstance(extraDefinitions: Definition[] = [], options: {suite?: boolean} = {}) {
-  const db = new Database();
+export async function createInstance(extraDefinitions: Definition[] = [], options: {suite?: boolean; orm?: GqlizeOptions} = {}) {
+  // `orm`: constructor options — the ones read by `new Ormize` rather than by
+  // `createSchema` (`csv`, `cache`, `writableForeignKeys`).
+  const db = new Database(options.orm);
   const { adapter, name, teardown } = await createAdapterForDialect();
   // `suite`: built in a `beforeAll` and shared by the describe's tests, so its
   // connection must stay open past the first test.

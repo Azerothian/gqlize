@@ -391,6 +391,25 @@ describe("eager resolution (root-level include from selection)", () => {
     expect(models.Task.edges[0].node.name).toEqual("task1");
   });
 
+  it("required:true still filters parents when the connection selects only total", async () => {
+    // A count-only connection is not eager-loaded, so its `required` used to
+    // be dropped with it and every parent came back.
+    const instance = await createInstance();
+    const {Task, TaskItem} = instance.models;
+    const t1 = await Task.create({name: "task1"});
+    await Task.create({name: "task2"});
+    await TaskItem.create({name: "taskitemone", taskId: t1.get("id")});
+    await TaskItem.create({name: "taskitemtwo", taskId: t1.get("id")});
+    const schema = await createSchema(instance);
+
+    const {models} = await run<{models: {Task: {total: number, edges: {node: {name: string, items: {total: number}}}[]}}}>(schema,
+      `query { models { Task { total edges { node { name
+        items(required: true) { total }
+      } } } } }`);
+    expect(models.Task.total).toEqual(1);
+    expect(models.Task.edges.map((e) => [e.node.name, e.node.items.total])).toEqual([["task1", 2]]);
+  });
+
   it("required:true on a single-valued relation filters parents", async () => {
     const instance = await createInstance();
     const {Task, Item} = instance.models;

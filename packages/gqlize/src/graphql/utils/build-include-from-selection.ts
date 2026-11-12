@@ -72,7 +72,17 @@ export function isConnectionRowsSelected(fieldNode: FieldNode | undefined, info:
   if (!fieldNode || !fieldNode.selectionSet) {
     return true;
   }
-  return flattenFieldNodes(fieldNode.selectionSet, info).some((f) => f.name.value === "edges");
+  // `csv` (a root list's export) formats the page's rows, so it needs them too.
+  return flattenFieldNodes(fieldNode.selectionSet, info).some((f) => f.name.value === "edges" || f.name.value === "csv");
+}
+
+/**
+ * Whether a root list connection selects its `csv` export, which writes every
+ * column the caller may read, not just the ones `edges { node }` names — so the
+ * read must not be narrowed to the selected node fields.
+ */
+export function isConnectionCsvSelected(fieldNode: FieldNode | undefined, info: GraphQLResolveInfo): boolean {
+  return !!fieldNode?.selectionSet && flattenFieldNodes(fieldNode.selectionSet, info).some((f) => f.name.value === "csv");
 }
 
 // Memoizes the flattened field list per selection-set AST node. Node identity is
@@ -212,7 +222,7 @@ export function normaliseExplicitInclude(include: unknown): IncludeMap {
  * Walk the GraphQL selection set for `defName` and build an include map for every
  * requested relationship whose target is on the SAME adapter as the parent
  * (cross-adapter relations are left for their own resolvers to fetch as separate
- * root queries).
+ * root queries, and planned only as a filter when `required`).
  */
 export function buildIncludeMapFromSelection(
   instance: GQLManager,
@@ -250,15 +260,8 @@ export function buildIncludeMapFromSelection(
       // No adapter for the target: treat it as local and let the include be built.
       sameAdapter = true;
     }
-    if (!sameAdapter) {
-      continue; // cross-adapter: resolved as its own root query elsewhere
-    }
     const collection = isCollection(association.associationType);
-    if (collection && !isConnectionRowsSelected(sel, info)) {
-      // Only `total` (no `edges`/rows) requested — do not eager-load; the nested
-      // resolver runs a count-only query (fires beforeCount/afterCount) instead.
-      continue;
-    }
+    const countOnly = collection && !isConnectionRowsSelected(sel, info);
     let fieldArgs: IncludeFieldArgs = {};
     try {
       const fieldDef = typeFields[relName];
@@ -270,11 +273,33 @@ export function buildIncludeMapFromSelection(
     } catch (e) {
       fieldArgs = {};
     }
+    if (!sameAdapter) {
+      // Cross-adapter: its rows are resolved as their own root query elsewhere,
+      // since no JOIN spans two datastores. A `required` one is still planned,
+      // as a filter only (no rows, no nesting): the engine turns it into a key
+      // filter on this model (`applyEngineRequired`) before the adapter runs.
+      if (fieldArgs.required === true) {
+        plan[relName] = {
+          target: association.target,
+          associationType: association.associationType,
+          required: true,
+          ...(fieldArgs.where ? {where: fieldArgs.where} : {}),
+        };
+      }
+      continue;
+    }
+    if (countOnly && fieldArgs.required !== true) {
+      // Only `total` (no `edges`/rows) requested — do not eager-load; the nested
+      // resolver runs a count-only query (fires beforeCount/afterCount) instead.
+      // A `required` one stays in the plan: it is what filters the parent rows,
+      // and dropping it with the rows handed back every parent.
+      continue;
+    }
     // A belongsToMany in through mode is resolved per parent by the engine's
     // through path (join rows first, then targets), which no JOIN can stand in
     // for: the join model's own read scope decides which edges exist. So it is
     // planned only when `required`, and then only as a parent filter that the
-    // engine applies itself (`applyThroughRequired`) before any adapter sees it.
+    // engine applies itself (`applyEngineRequired`) before any adapter sees it.
     const throughMode = association.associationType === "belongsToMany" && association.throughModel === true;
     if (throughMode && fieldArgs.required !== true) {
       continue;

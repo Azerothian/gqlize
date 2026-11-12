@@ -4,7 +4,7 @@
 // invalidates the read cache on the way out.
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import { isStructurallyWritable } from "@azerothian/utilize/gate";
+import { isMutationInstanceMethodAllowed, isStructurallyWritable } from "@azerothian/utilize/gate";
 import { whereOperatorsFor, definitionMethods, mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import { ScopeDeniedError } from "../scope";
 import { applyRelationshipMutations } from "../relationship-mutations";
@@ -240,6 +240,13 @@ export async function applyInstanceTransforms(
     if (!entry) {
       throw new Error(`ormize: "${defName}.${methodName}" is not exposed as an instance-method transform.`);
     }
+    // gqlize's `apply` type and nestize's routes already leave a denied
+    // transform out, but `processCreate`/`processUpdate`/`processCsv` are
+    // public: a host calling them directly with a caller's `apply` gets the
+    // same gate here, read off this instance's permission bag.
+    if (!isMutationInstanceMethodAllowed(self.permission, defName, methodName)) {
+      throw new Error(`ormize: instance-method transform "${defName}.${methodName}" is not allowed.`);
+    }
     // The same merged view the adapter installs onto the model prototype.
     const implementation = definitionMethods(definition, "instanceMethods")[methodName];
     if (typeof implementation !== "function") {
@@ -341,15 +348,19 @@ export async function processCreate(
 export async function processUpdate(
   self: MutationEntryHost,
   defName: string, source: AdapterRow,
-  args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: MutationApply },
+  args: { input?: MutationInputTree; where: MutationFilter; limit?: number; apply?: MutationApply },
   context: RequestContext, selection?: Selection,
 ): Promise<AdapterRow[]> {
   return mutationEntry(self, defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
     const translateId = selection?.translateId || ((v: unknown) => v);
     const processUpdateFn = adapter.getUpdateFunction(defName, whereOperatorsFor(definition));
-    let i: MutationInput = Object.keys(args.input).reduce((o, k) => {
+    // An update may carry no input at all: one that only runs `apply`
+    // transforms on the matched rows (gqlize offers `update` without `input`
+    // to a model whose only writes are its transforms).
+    const input: MutationInputTree = args.input || {};
+    let i: MutationInput = Object.keys(input).reduce((o, k) => {
       if (globalKeys.indexOf(k) > -1) {
-        let v = args.input[k];
+        let v = input[k];
         // A global-id argument may arrive as a thunk over the operation's
         // variables — gqlize defers relay id translation that way.
         if (typeof v === "function") {
@@ -361,7 +372,7 @@ export async function processUpdate(
           o[k] = translateId(v, k);
         }
       } else {
-        o[k] = args.input[k];
+        o[k] = input[k];
       }
       return o;
     }, {} as MutationInput);

@@ -14,6 +14,9 @@ layer that accepts an `Ormize` instance and generates the full schema).
   schema, and write queries & mutations for every feature, with copy-pasteable examples.
 - 📄 [**docs/specifications.md**](docs/specifications.md) — **reference**: architecture, public
   API, model definition schema, permissions, hooks, and the adapter contract.
+- 📑 [**docs/csv.md**](docs/csv.md) — **CSV uploads**: create, update and delete rows from CSV files
+  over GraphQL or REST, including relationships and linked multi-file imports. The
+  [**CSV API reference**](docs/csv-api.md) lists every option, type, route and error code.
 - 🔀 [**docs/migration-6-to-7.md**](docs/migration-6-to-7.md) — **upgrading from 6.x**: the package
   split, renames, and the changed defaults (mass assignment, pagination bounds, permission-gated
   filters) that break working 6.x code.

@@ -60,6 +60,7 @@
   },
   "dependencies": {
     "@azerothian/utilize": "workspace:*",
+    "csv-parse": "^7.0.3",
     "pluralize": "^8.0.0"
   }
 }

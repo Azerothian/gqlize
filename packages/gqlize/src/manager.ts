@@ -6,10 +6,10 @@ import { globalKeyTargets } from "@azerothian/utilize/utils/global-keys";
 import { GraphQLResolveInfo } from "graphql";
 import type { FieldNode } from "graphql";
 import logger from "@azerothian/utilize/utils/logger";
-import buildIncludeFromSelection, { mergeIncludeMaps, normaliseExplicitInclude, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
+import buildIncludeFromSelection, { mergeIncludeMaps, normaliseExplicitInclude, getChildSelectionSet, flattenFieldNodes, isConnectionCsvSelected, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
 import { methodOptionHooks, methodProjection, queryInstanceMethods, type MethodSelection } from "@azerothian/utilize/exposed-methods";
 import { getArgumentValues, type GraphQLObjectType } from "graphql";
-import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
+import type { CsvImportRequest, CsvOperation, CsvRequest, MutationFilter, MutationInputTree } from "@azerothian/ormize";
 import { AdapterRow, AnyOrmize, Association, DeclaredIncludeMap, FindAllArgs, GlobalKeyTargets, GqlizeAdapter, GqlizeOptions, IncludeMap, NativeDataType, Permission, RequestContext, Selection } from './types';
 
 /**
@@ -267,8 +267,9 @@ export default class GqlizeBinding {
     // Widening here — next to `withCrossAdapterJoinKeys`, which widens for
     // exactly this class of reason — is what makes the declaration mean anything.
     const declared = methods.length > 0 ? methodProjection(this.getDefinition(defName), selectedNames) : {};
-    const fields = declared.fields === "*"
-      ? undefined // opted out of narrowing: load every column
+    const csvExport = !!info && Array.isArray(info.fieldNodes) && isConnectionCsvSelected(info.fieldNodes[0], info);
+    const fields = declared.fields === "*" || csvExport
+      ? undefined // opted out of narrowing, or a CSV export that writes every column: load them all
       : this.withCrossAdapterJoinKeys(defName, declared.fields?.length
         ? [...new Set([...(selectedNames || []), ...declared.fields])]
         : selectedNames);
@@ -385,7 +386,7 @@ export default class GqlizeBinding {
   processCreate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processCreate(defName, source, args, context, this.buildSelection(defName, info));
   }
-  processUpdate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
+  processUpdate = (defName: string, source: AdapterRow, args: { input?: MutationInputTree; where: MutationFilter; limit?: number; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processUpdate(defName, source, args, context, this.buildSelection(defName, info));
   }
   processSelect = (defName: string, source: AdapterRow, args: { input?: MutationInputTree; where?: MutationFilter; limit?: number }, context: RequestContext, info: GraphQLResolveInfo) => {
@@ -396,6 +397,19 @@ export default class GqlizeBinding {
   }
   processRestore = (defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processRestore(defName, source, args, context, this.buildSelection(defName, info));
+  }
+  /**
+   * Whether `defName` takes CSV uploads at all — see `GqlizeOptions.csv`.
+   * Tolerates an ormize that predates the method (gqlize's peer range is
+   * wider than the release it shipped in): no method, no CSV.
+   */
+  csvEnabled = (defName: string): boolean => typeof this.orm.csvLimits === "function" && Boolean(this.orm.csvLimits(defName));
+  processCsv = (defName: string, operation: CsvOperation, request: CsvRequest, context: RequestContext, info: GraphQLResolveInfo) => {
+    return this.orm.processCsv(defName, operation, request, context, this.buildSelection(defName, info));
+  }
+  /** A multi-file CSV import, each model's writes carrying the selection that decodes its global ids. */
+  processCsvImport = (request: CsvImportRequest, context: RequestContext) => {
+    return this.orm.processCsvImport({ ...request, selection: (defName) => this.buildSelection(defName, undefined) }, context);
   }
 }
 

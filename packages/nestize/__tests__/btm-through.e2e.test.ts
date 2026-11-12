@@ -87,6 +87,23 @@ describe("nestize - belongsToMany through", () => {
     expect(res.status).toBe(403);
   });
 
+  it("refuses a bare filter, as the engine does on every route", async () => {
+    const res = await request(ctx.http).post(`/post/${ctx.postId}/tags`).send({ add: [{ name: { eq: "t1" } }] });
+    expect(res.status).toBe(403);
+  });
+
+  it("holds the where of a { where, through } entry to the filter allow-list", async () => {
+    const res = await request(ctx.http).post(`/post/${ctx.postId}/tags`)
+      .send({ add: [{ where: { name: { col: "name" } }, through: { sortOrder: 1 } }] });
+    expect(res.status).toBe(400);
+  });
+
+  it("holds a relationship read's filter to the operator allow-list", async () => {
+    const res = await request(ctx.http).get(`/post/${ctx.postId}/tags`)
+      .query({ filter: JSON.stringify({ name: { col: "name" } }) });
+    expect(res.status).toBe(400);
+  });
+
   it("does not expose a generated join model", async () => {
     expect((await request(ctx.http).get("/hidden")).status).toBe(404);
   });
@@ -107,9 +124,40 @@ describe("nestize - belongsToMany with a hidden join model", () => {
     expect(res.status).toBe(403);
   });
 
+  it("refuses a { where } wrapper", async () => {
+    const res = await request(ctx.http).post(`/post/${ctx.postId}/tags`).send({ set: [{ where: { name: { eq: "t1" } } }] });
+    expect(res.status).toBe(403);
+  });
+
+  it("holds a bare filter to the filter allow-list", async () => {
+    const res = await request(ctx.http).post(`/post/${ctx.postId}/tags`).send({ add: [{ name: { col: "name" } }] });
+    expect(res.status).toBe(400);
+  });
+
   it("links with a bare filter", async () => {
     const res = await request(ctx.http).post(`/post/${ctx.postId}/tags`).send({ add: [{ name: { eq: "t1" } }] });
     expect(res.status).toBeLessThan(300);
     expect(await joinRows(ctx.orm)).toHaveLength(1);
+  });
+});
+
+describe("nestize - belongsToMany through, the join model's permissions", () => {
+  let ctx: Awaited<ReturnType<typeof boot>>;
+  beforeAll(async () => {
+    ctx = await boot({ mutationCreate: (model: string) => model !== "PostTag" });
+  });
+  afterAll(async () => {
+    await ctx.app.close();
+  });
+
+  it("refuses add when the join model's create is denied", async () => {
+    const res = await request(ctx.http).post(`/post/${ctx.postId}/tags`).send({ add: [{ where: { name: { eq: "t1" } } }] });
+    expect(res.status).toBe(403);
+    expect(await joinRows(ctx.orm)).toHaveLength(0);
+  });
+
+  it("still allows remove, which only deletes join rows", async () => {
+    const res = await request(ctx.http).post(`/post/${ctx.postId}/tags`).send({ remove: [{ name: { eq: "t1" } }] });
+    expect(res.status).toBeLessThan(300);
   });
 });

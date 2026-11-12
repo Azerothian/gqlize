@@ -171,6 +171,8 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     : undefined);
   /** One include object keyed by relationship name — there is no JOIN to repeat. */
   readonly includeIsList = false;
+  /** No JOINs at all: ormize applies `required` itself (`engine/required-filter.ts`). */
+  readonly supportsJoins = false;
 
   getFilterGraphQLType = (defName: string, definition: Definition, permission?: Permission) => getFilterGraphQLType(this, defName, definition, permission);
   getOrderByGraphQLType = (defName: string, permission?: Permission) => getOrderByGraphQLType(this, defName, permission);

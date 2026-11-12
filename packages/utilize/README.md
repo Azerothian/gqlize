@@ -59,6 +59,12 @@ this subpath.
 See [Exposed methods](../../docs/specifications.md#exposed-methods) for what each key means and
 which reader consumes it.
 
+`coerceTransformParams(method, params)` on the `/transform-params` subpath checks the params a
+caller gives an instance-method transform against the `args` its `ExposedMethod` declares, as
+gqlize's `apply` input type would. It returns `{ ok: true, value }` with the coerced params, or
+`{ ok: false, message }`. nestize and temporalize use it. It recognises the declared GraphQL types
+without importing graphql.
+
 ## License
 
 MIT
