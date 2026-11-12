@@ -245,11 +245,7 @@ export function buildIncludeMapFromSelection(
       continue; // cross-adapter: resolved as its own root query elsewhere
     }
     const collection = isCollection(association.associationType);
-    if (collection && !isConnectionRowsSelected(sel, info)) {
-      // Only `total` (no `edges`/rows) requested — do not eager-load; the nested
-      // resolver runs a count-only query (fires beforeCount/afterCount) instead.
-      continue;
-    }
+    const countOnly = collection && !isConnectionRowsSelected(sel, info);
     let fieldArgs: IncludeFieldArgs = {};
     try {
       const fieldDef = typeFields[relName];
@@ -260,6 +256,13 @@ export function buildIncludeMapFromSelection(
       }
     } catch (e) {
       fieldArgs = {};
+    }
+    if (countOnly && fieldArgs.required !== true) {
+      // Only `total` (no `edges`/rows) requested — do not eager-load; the nested
+      // resolver runs a count-only query (fires beforeCount/afterCount) instead.
+      // A `required` one stays in the plan: its INNER JOIN is what filters the
+      // parent rows, and dropping it with the rows handed back every parent.
+      continue;
     }
     const childType = info.schema.getType(association.target) as GraphQLObjectType | undefined;
     const childSelectionSet = getChildSelectionSet(sel.selectionSet, collection, info);
