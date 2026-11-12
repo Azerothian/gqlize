@@ -32,6 +32,7 @@ Every example below is drawn from the behaviour exercised in the test suite
 7. [Mutations](#7-mutations)
    - [Create / update / delete](#create--update--delete)
    - [Restoring soft-deleted rows](#restoring-soft-deleted-rows)
+   - [CSV uploads](#csv-uploads)
    - [Nested relationship writes](#nested-relationship-writes)
    - [Class-method mutations](#class-method-mutations)
    - [Instance-method transforms (`apply`)](#instance-method-transforms-apply)
@@ -1244,6 +1245,46 @@ as updates, and `after` receives `Events.MUTATION_UPDATE`.
 `restore` is gated by the `mutationRestore` permission, and appears only on models that actually
 soft delete.
 
+### CSV uploads
+
+`create`, `update` and `delete` can also take a CSV file, applied as one write per data row, all or
+nothing. Several linked files can go in one import. It is off until the `Ormize` instance turns it
+on:
+
+```ts
+new Ormize({ csv: true })                                              // 1000 rows, 5 MB, 10 files
+new Ormize({ csv: { maxRows: 10_000, maxBytes: 50e6, maxFiles: 5 } })
+const Audit = { name: "Audit", csv: false, /* … */ }                   // keep one model out
+```
+
+```graphql
+mutation ($file: GQLTUpload!) { models { Post(createCsv: $file) { id title } } }
+mutation ($file: GQLTUpload!) { models { Post(updateCsv: $file, csv: { keys: ["slug"] }) { id } } }
+mutation ($files: [CsvImportFile!]!) { csvImport(files: $files) { files { name count } refs } }
+```
+
+```csv
+title,rank,author.set.name,tags.add.name[in]
+Hello,1,Ann,red|blue
+```
+
+- A header names a field, or a dotted path into the same input a JSON mutation takes:
+  [relationship verbs](#nested-relationship-writes) (`author.set.name`) and filter operators
+  (`where.rank[gte]`).
+- An empty cell leaves a column alone, and `\N` writes `null`.
+- In a multi-file import, an `@ref` column labels rows, and `author.@ref` points at them from another
+  file.
+- Permissions, the [key guard](#writing-primary--foreign-keys), row scope and hooks hold exactly as
+  for JSON. The `mutationCsv` permission can take CSV away on top.
+- nestize serves the same uploads at `POST /:resource/_csv/:operation` and `POST /_csv`.
+
+**Read next:**
+
+- [CSV uploads](csv.md): how to use it, from the first upload to linked multi-file imports, error
+  handling and server setup.
+- [CSV API reference](csv-api.md): every option, schema type, route, header rule, conversion and
+  error code.
+
 ### Nested relationship writes
 
 A relationship field inside a create/update `input` accepts operations that vary by association
@@ -1415,7 +1456,20 @@ transform wins over a value that hook set.
 > cannot undo.
 
 Transforms are gated by `permission.mutationInstanceMethods`; a denied transform contributes no
-field to `apply`. See [§8 Permissions](#8-permissions).
+field to `apply`. nestize's `_actions` route and CSV `apply`, and temporalize's instance-method
+activity, check a transform's params against its declared `args` the same way the `apply` type
+does, so a param a transform reads must be declared there, with a GraphQL input type. See [§8 Permissions](#8-permissions). ormize checks the same key on its own
+permission bag before running a transform, so a host calling `orm.processUpdate(…, {apply})`
+directly is held to it too.
+
+A model whose permitted writes are all transforms (nothing writable by hand) keeps `update`, with
+`where` and `limit` but no `input`:
+
+```graphql
+mutation { models { Post(update: [{ where: { id: { eq: "UG9zdDox" } } }], apply: { markChecked: true }) { id } } }
+```
+
+CSV uploads and imports take `apply` too; see [CSV uploads](csv.md#transforms-apply).
 
 ---
 
@@ -1437,6 +1491,7 @@ const schema = await createSchema(db, {
     mutationUpdate: (modelName) => true,
     mutationDelete: (modelName) => true,
     mutationRestore: (modelName) => true,                       // hide `restore` on a paranoid model
+    mutationCsv: (modelName) => true,                           // hide `createCsv` & co. (needs `csv` on the Ormize)
     mutationCreateInput: (modelName, fieldName) => true,        // hide a create-input field
     mutationUpdateInput: (modelName, fieldName) => true,
     queryDeleted: (modelName) => true,                          // hide the `deleted` argument

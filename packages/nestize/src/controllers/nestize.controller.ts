@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -20,7 +21,7 @@ import { ZodExceptionFilter } from "../zod-exception.filter";
  * param routes; the concrete resource/relation/method is resolved at request time
  * by `NestizeService`.
  *
- * ROUTE ORDER MATTERS: literal segments (`select`, `_actions`) are declared before
+ * ROUTE ORDER MATTERS: literal segments (`select`, `_csv`, `_actions`) are declared before
  * the equivalent-depth `:id` / `:relation` param routes so Express matches the
  * literal first (first-match wins). The optional `pathPrefix` is applied by the
  * module via `@Controller(prefix)` on a subclass.
@@ -33,10 +34,31 @@ import { ZodExceptionFilter } from "../zod-exception.filter";
 export class NestizeController {
   constructor(private readonly service: NestizeService) {}
 
+  // 0. literal `_csv` before `POST /:resource`, which would take it as a
+  // resource name. 200 rather than 201: an import may update as well as create.
+  @Post("_csv")
+  @HttpCode(200)
+  csvImport(@Req() req: RestRequest) {
+    return this.service.csvImport(req);
+  }
+
   // 1. literal `select` before `/:resource/:id`
   @Post(":resource/select")
   select(@Param("resource") resource: string, @Body() body: SelectBody, @Req() req: RestRequest) {
     return this.service.select(resource, body, req);
+  }
+
+  // 1b. literal `_csv` before `/:resource/:id/:relation`. 200 rather than
+  // POST's 201: one upload may update or delete as well as create.
+  @Post(":resource/_csv/:operation")
+  @HttpCode(200)
+  csv(
+    @Param("resource") resource: string,
+    @Param("operation") operation: string,
+    @Query() query: RestQuery,
+    @Req() req: RestRequest
+  ) {
+    return this.service.csv(resource, operation, query, req);
   }
 
   // 2-3. class-method actions (`/:resource/_actions/:method`)

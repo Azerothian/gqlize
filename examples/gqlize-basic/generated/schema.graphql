@@ -428,6 +428,11 @@ type TaskEdge {
 
 type Mutation {
   models: MutationModels
+
+  """
+  Create or update rows of several models from CSV files in one all-or-nothing unit. A file's `@ref` column labels its rows; a `<relationship>.@ref` or `<foreignKey>.@ref` column in any file points at them
+  """
+  csvImport(files: [CsvImportFile!]!): GQLTCsvImportResult!
 }
 
 type MutationModels {
@@ -445,6 +450,24 @@ type MutationModels {
 
     """This will delete a new element for Item"""
     delete: [GQLTQueryItemWhere]
+
+    """
+    A CSV file of Item rows to create, one per line, with field names as the header
+    """
+    createCsv: GQLTUpload
+
+    """
+    A CSV file of Item rows to update, matched on the `csv.keys` columns (default: the primary key)
+    """
+    updateCsv: GQLTUpload
+
+    """
+    A CSV file of Item rows to delete, holding only the `csv.keys` columns (default: the primary key)
+    """
+    deleteCsv: GQLTUpload
+
+    """How the CSV uploads are read"""
+    csv: GQLTCsvOptions
   ): [Item]
   Task(
     """This will create a new element for Task"""
@@ -460,6 +483,24 @@ type MutationModels {
 
     """This will delete a new element for Task"""
     delete: [GQLTQueryTaskWhere]
+
+    """
+    A CSV file of Task rows to create, one per line, with field names as the header
+    """
+    createCsv: GQLTUpload
+
+    """
+    A CSV file of Task rows to update, matched on the `csv.keys` columns (default: the primary key)
+    """
+    updateCsv: GQLTUpload
+
+    """
+    A CSV file of Task rows to delete, holding only the `csv.keys` columns (default: the primary key)
+    """
+    deleteCsv: GQLTUpload
+
+    """How the CSV uploads are read"""
+    csv: GQLTCsvOptions
   ): [Task]
 }
 
@@ -650,6 +691,22 @@ input ItemSelectInput {
   input: ItemOptionalInput
 }
 
+"""
+The `Upload` scalar type represents a file upload promise that resolves an object containing `stream`, `filename`, `mimetype` and `encoding`.
+"""
+scalar GQLTUpload
+
+"""How a CSV upload is read"""
+input GQLTCsvOptions {
+  """
+  The columns an `updateCsv` or `deleteCsv` row is matched on. Default: the primary key
+  """
+  keys: [String!]
+
+  """The field separator. Default: a comma"""
+  delimiter: String
+}
+
 """"""
 input TaskUpdateInput {
   """
@@ -682,4 +739,69 @@ input TaskSelectInput {
   Relationship mutations to run on the selected elements. Scalar fields are ignored — the selected elements are not modified
   """
   input: TaskOptionalInput
+}
+
+type GQLTCsvImportResult {
+  """One entry per file, in the order given"""
+  files: [GQLTCsvImportFileResult!]!
+
+  """Each `@ref` label and the id of the row it labelled"""
+  refs: GQLTJson!
+}
+
+"""What one file of a CSV import wrote"""
+type GQLTCsvImportFileResult {
+  """The file's name, as given or defaulted"""
+  name: String!
+  model: String!
+  operation: GQLTCsvImportOperation!
+
+  """Rows written"""
+  count: Int!
+
+  """The written rows' ids, in file order"""
+  ids: [ID!]!
+}
+
+"""What one file of a CSV import does to its rows"""
+enum GQLTCsvImportOperation {
+  """Create one row per line"""
+  create
+
+  """Update the rows each line's key columns match"""
+  update
+}
+
+"""The `JSON` scalar type represents raw JSON as values."""
+scalar GQLTJson
+
+"""One file of a `csvImport`"""
+input CsvImportFile {
+  model: CsvImportModel!
+  operation: GQLTCsvImportOperation!
+  file: GQLTUpload!
+
+  """
+  How errors and results name this file. Default: `<model>.<operation>`, numbered if repeated
+  """
+  name: String
+
+  """
+  The columns an `update` row is matched on, beside any `where.…` columns. Default: the primary key
+  """
+  keys: [String!]
+
+  """The field separator. Default: a comma"""
+  delimiter: String
+
+  """
+  Instance-method transforms to run on each row, as the model field's own `apply` argument takes them. Checked against that argument's type, so only the transforms it offers are accepted
+  """
+  apply: GQLTJson
+}
+
+"""A model that takes CSV rows in a `csvImport`"""
+enum CsvImportModel {
+  Item
+  Task
 }

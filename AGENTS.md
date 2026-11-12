@@ -152,7 +152,7 @@ split it by concern into modules a reader can find by name. Don't split it into 
   because callers pass them around detached.
 - **Type barrels.** `utilize/src/types/index.ts` only re-exports the themed files beside it
   (`adapter.ts`, `definitions.ts`, `selection.ts`, `options.ts`, `cache.ts`, `codecs.ts`,
-  `relationships.ts`, `primitives.ts`). Import from `types/index` and add new types to the themed
+  `relationships.ts`, `primitives.ts`, `csv.ts`). Import from `types/index` and add new types to the themed
   file they belong in.
 - **Test files.** Split a test file by `describe` topic. Put shared setup in `__tests__/helper/` (for
   example `ormize/__tests__/helper/scope-fixtures.ts`). Every new file has to be listed wherever the
@@ -172,6 +172,8 @@ Where the core logic lives:
 | Row scope: engine side / model-hook backstop / audit | `ormize/src/engine/scope-bridge.ts`, `scope-hooks.ts`, `scope-audit.ts` |
 | Relationship wiring and cross-adapter join models | `ormize/src/engine/relationships.ts`, `cross-adapter.ts` |
 | Read-cache tagging / the cache itself | `ormize/src/engine/read-cache-bridge.ts`, `read-cache/` |
+| CSV mutation uploads: reading under limits / row-by-row writes / per-surface cell conversion | `ormize/src/csv/`, `ormize/src/engine/csv.ts`, `gqlize/src/graphql/resolvers/csv.ts`, `nestize/src/csv.ts` |
+| Multi-file CSV imports: labels, ordering, placeholder swap / GraphQL root field / REST multipart | `ormize/src/engine/csv-import.ts`, `gqlize/src/graphql/resolvers/csv-import.ts` + `objects/csv-import.ts`, `nestize/src/csv-multipart.ts` |
 | Sequelize reads / writes / model creation | `ormize-adapter-sequelize/src/reads.ts`, `writes.ts`, `model-creation.ts` |
 
 ## Code style

@@ -96,7 +96,7 @@ design property they all serve is **one resolver implementation, two callers**:
 
 | Path | Responsibility |
 | --- | --- |
-| `src/graphql/resolvers/` | Every resolver body, keyed by `kind` (`connection`, `singleRelationship`, `globalId`, `modelField`, `overrideOutput`, `instanceMethod`, `classMethod`, `mutationModel`, `container`, `nodeField`, `extend`). `bind.ts` exports `bindField(config, binding, ctx)` — the **single** point at which any resolver is attached to any field, and the place the `FieldBinding` descriptor is stamped onto `extensions.gqlize`. |
+| `src/graphql/resolvers/` | Every resolver body, keyed by `kind` (`connection`, `singleRelationship`, `globalId`, `modelField`, `overrideOutput`, `instanceMethod`, `classMethod`, `mutationModel`, `csvImport`, `container`, `nodeField`, `extend`). `bind.ts` exports `bindField(config, binding, ctx)` — the **single** point at which any resolver is attached to any field, and the place the `FieldBinding` descriptor is stamped onto `extensions.gqlize`. |
 | `src/graphql/snapshot/` | `ir.ts` (the serialisable `SchemaSnapshot`), `snapshot.ts` (`GraphQLSchema` → IR), `materialize.ts` (IR → `GraphQLSchema`), `fingerprint.ts`, `scalar-registry.ts`, `type-ref.ts`, `reachability.ts`, `ledger.ts`, `load.ts`. |
 | `src/cli/` | `args.ts` (`node:util.parseArgs`), `config.ts` (discovery + loading), `profiles.ts`, `commands/{build,print,check}.ts`, and `index.ts` — the shebang shell that turns `run()`'s return value into an exit status. |
 
@@ -271,6 +271,10 @@ Internal resolution methods invoked by generated resolvers:
 - `resolveClassMethod` — invokes `Model[methodName](args, context)` with optional before/after.
 - `processCreate` / `processUpdate` / `processDelete` — mutation executors; run `processInputs`, translate global IDs (`replaceIdDeep`), fire the matching `Events.MUTATION_*` hook, delegate to adapter functions, then `processRelationshipMutation`.
 - `processRelationshipMutation` — the nested-mutation engine (see §5).
+- `csvLimits(defName)` / `processCsv(defName, operation, request, context, selection?)` — CSV uploads:
+  whether (and under what limits) a model takes them, and the all-or-nothing row-by-row executor
+  over the three above (`engine/csv.ts`, see [CSV uploads](#csv-uploads)). Called by gqlize's model
+  mutation resolver and nestize's `_csv` route.
 
 > These internal resolution methods are invoked by gqlize's generated resolvers. They are members of
 > the `Ormize` class (`packages/ormize/src/manager.ts`, backend-only), implemented in
@@ -558,8 +562,9 @@ Extra query fields may be injected via `options.extend.query`.
 
 | Field | Meaning |
 | --- | --- |
-| `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**; `restore` in addition on a soft-deleting model. |
+| `models` | Per-model `create` / `update` / `delete` operations, each supporting **nested relationship mutations**; `restore` in addition on a soft-deleting model; `createCsv` / `updateCsv` / `deleteCsv` when CSV uploads are on (see [CSV uploads](#csv-uploads)). |
 | `classMethods` | Per-model exposed **mutation** class methods (`MutationClassMethods`). |
+| `csvImport` | Several CSV files, each a create or an update on its own model, applied as one unit with `@ref` labels linking rows across them. Present when at least one model's field takes `createCsv` or `updateCsv` (see [Multi-file imports](#multi-file-imports)). |
 
 Extra mutation fields may be injected via `options.extend.mutation`. Subscriptions are not
 generated: `options.subscriptions` is accepted and ignored (the generator is commented out —
@@ -647,7 +652,13 @@ artifact stale and `gqlize check` reports it.
 inputs. The top-level model mutation exposes `create` / `update` / `delete` / **`select`**, plus
 **`apply`** (`create-mutation-model.ts`) when the model exposes instance-method transforms — an
 input object with one field per `expose.instanceMethods.mutations` entry, typed by that entry's
-`args` (or `Boolean` when it declares none), gated by `permission.mutationInstanceMethods`. For each
+`args` (or `Boolean` when it declares none), gated by `permission.mutationInstanceMethods`. `apply`
+is offered only alongside a `create` or `update` argument. A model that may be updated but has no
+update input (nothing writable by hand) while a transform is allowed still gets `update`, whose
+`{Def}UpdateInput` then holds only `where` and `limit`, so its transforms can run on existing rows;
+it gets no `select`. The engine rechecks `mutationInstanceMethods` (from the ormize instance's own
+permission bag) before running each transform, for hosts that call `processCreate` /
+`processUpdate` / `processCsv` directly. For each
 association it also emits nested sub-fields, enabling deep writes, applied by
 `processRelationshipMutation` (`packages/ormize/src/relationship-mutations.ts`) via the Sequelize association
 accessors (recursion depends on the graphql patch, see §12). The sub-fields per association type:
@@ -686,6 +697,131 @@ Nested `select` is **relationship-scoped** (`source[accessors.get]({ where })`, 
 found rows. Implemented by `processSelect` (top-level) and the `select` branch of
 `processRelationshipMutation` (`relationship-mutations.ts`), which recurse without calling
 `processCreate`/`processUpdate`/`processDelete` on the selected rows.
+
+### CSV uploads
+
+This section describes how CSV uploads are built. For using them, see [CSV uploads](csv.md); for
+the client-facing surface, see the [CSV API reference](csv-api.md).
+
+`GqlizeOptions.csv` (read by the `Ormize` constructor, like `cache`) turns on CSV uploads: `true`
+for the default `CsvLimits` (`maxRows` 1000, `maxBytes` 5 MB), or an object overriding them. A
+definition's own `csv` either opts the model out (`false`) or overrides the limits; it cannot opt a
+model in when the instance has CSV off. `orm.csvLimits(defName)` resolves the two
+(`packages/ormize/src/csv/limits.ts`) and is what every surface asks.
+
+**Schema.** `create-mutation-model.ts` adds `createCsv`, `updateCsv` and `deleteCsv` (all
+`GQLTUpload`) beside `create`, `update` and `delete`, each only where its JSON twin is present, so the
+operation's own gates and the "nothing writable" omission carry over. A shared module-level
+`GQLTCsvOptions` input (`keys: [String!]`, `delimiter: String`) is added as `csv` when any of them
+is. Two further conditions: `orm.csvLimits(defName)` is set, and the build-time
+`permission.mutationCsv(defName)` allows it. Whether a model has CSV is part of the `models`
+fingerprint (recorded only when on, so existing artifacts stay current).
+
+**Engine.** `processCsv` (`packages/ormize/src/engine/csv.ts`) is a transport, not a write path:
+every row becomes one `processCreate` / `processUpdate` / `processDelete` call. The
+mass-assignment allow-list, `override.input`, scope, hooks, `apply` and read-cache invalidation
+therefore hold without being restated. The order of work is the CSV-specific part:
+
+1. `readCsv` (`src/csv/read.ts`) streams the upload through csv-parse, enforcing `maxBytes` across
+   chunks and `maxRows` as records arrive, and checks the header (present, no blank or repeated
+   names). `csvChunks` (`src/csv/source.ts`) accepts text, bytes, any async iterable (Node or web
+   stream), graphql-upload's `createReadStream()` / `promise`, and a web `File`/`Blob`.
+2. The header is split into key columns and input columns. Key columns (update/delete only) are
+   `csv.keys` plus every `where.…` column. When neither is given, they default to the primary key.
+   A delete takes only keys, an update needs at least one input column, and a create refuses
+   `where.…` columns.
+3. **Every row is converted before the first write.** The surface supplies `checkColumns` and
+   `toArgs`. An empty cell is omitted (on update: column untouched) and `\N` is `null`. A blank key
+   cell, or a `toArgs` that yields an empty `where`, is refused: either would act on the whole table.
+4. The writes run inside one `orm.transaction`. An update/delete row that changes nothing is
+   `CSV_ROW_NO_MATCH`, reported identically whether the row is absent or scoped out.
+
+Everything is reported as a `CsvUploadError` (`src/csv/errors.ts`) with a stable `code`, plus `row`
+(1-based, header excluded), `column` and, in a multi-file import, `file` where they apply. A failed
+write is wrapped as `CSV_ROW_FAILED` with the engine's error as `cause`.
+
+**Cell conversion is the surface's.** gqlize (`graphql/resolvers/csv.ts`) reads the input and where
+types off the field being resolved, not the schema cache, so a materialized artifact behaves the
+same. Each cell is converted by its field's type, then the row goes through graphql's
+`validateInputValue` / `coerceInputValue`. A CSV can therefore send nothing a JSON argument could
+not, and a column missing from the input type is a `CSV_HEADER` error. Errors become `GraphQLError`s
+with `code` / `row` / `column` (and `causeCode`) in `extensions`, deliberately without
+`originalError`: graphql-yoga masks a GraphQLError wrapping a plain `Error`. nestize
+(`src/csv.ts`) converts by column descriptor (`csvCellValue`) and validates with its zod schemas.
+
+**Header paths.** `parseCsvHeader` (`packages/ormize/src/csv/header.ts`) reads a header as segments
+separated by `.` or `?`, each optionally indexed (`add[1]`), with an optional trailing operator
+(`[in]`, `[Op.in]`). Resolving a path is the surface's job:
+
+- **gqlize** walks the argument's input types, so every relationship verb and every filter operator
+  the schema offers is reachable. The walk:
+  - inserts an omitted `input` (update/select entries) or `where` (belongsToMany add/set entries);
+  - skips a `where` written where the entry is already a filter type;
+  - takes entry `0` of a list of objects when no index is given;
+  - defaults a filter field's operator to `eq`.
+
+  Rows are then built by placing each cell at its path. Object nodes have no prototype, and list
+  entries are held in a map by index until they are compacted, so a header's `[n]` costs one entry
+  whatever `n` is. Paths sharing a prefix therefore build one
+  object, which is how columns under one verb merge into one entry. List holes left by entries whose
+  cells were all empty are compacted out. Two headers resolving to the same path, or one inside the
+  other, are a `CSV_HEADER` error. A list-of-values leaf takes `csvList` (`a|b` or a JSON array).
+- **nestize** takes only single-field `where.<field>[op]` key columns. It uses `CSV_LIST_OPERATORS`
+  to know which operators take lists, and refuses relationship columns: its zod input schemas hold
+  columns only.
+
+### Multi-file imports
+
+`processCsvImport` (`packages/ormize/src/engine/csv-import.ts`) applies several uploads, each a
+create or an update on its own model, as one unit. `GqlizeOptions.csv.maxFiles` caps the file count
+(default 10, `resolveCsvMaxFiles`). Each file is read, split and converted with the one-file
+helpers (`columnsFor`, `planRow`, `write`). The additions are:
+
+1. **Labels.** A file's `@ref` column (`CSV_REF`) labels its rows. Labels are unique across the
+   import. A label on an update row names the row it matched, which must be exactly one.
+2. **References.** A header ending in `.@ref` (`isCsvRefHeader`) names labelled rows. A reference
+   to another file is a dependency edge. A reference within a file must point at an earlier row. A
+   reference may not be a match column.
+3. **Order.** Files run in a dependency order (`writeOrder`) that keeps the given order where it is
+   free. A cycle is a `CSV_HEADER` error.
+4. **Placeholders.** Before conversion, every reference cell is replaced with tokens
+   (`\u0000csv-ref:<nonce>:<label>`). The nonce is random per import, so a cell cannot spell out a
+   token and have an id swapped into a field of its choosing. When the surface supplies
+   `request.refTarget(column)`, a label of any other model is refused here, before any write. Every row of every file is converted, through the surface's `toArgs`,
+   before the transaction opens. Inside it, just before a row is written, `resolveTokens` swaps each
+   token for `request.refValue(defName, row)` of the row it names. That is a global id in gqlize and
+   the raw key in nestize. A token in a single-valued field holding several labels is refused.
+5. **Selection.** `request.selection(defName)` supplies each model's write selection. gqlize's carries
+   the `translateFilter` that decodes global ids, references included. Without it they would reach
+   the adapter encoded.
+
+**gqlize.** `csvImport(files: [CsvImportFile!]!)`. `CsvImportFile` has:
+
+- `model`, a per-schema enum `CsvImportModel` of every model whose `models.<Model>` field takes
+  `createCsv` or `updateCsv`;
+- `operation` (`GQLTCsvImportOperation`);
+- `file`, `name`, `keys` and `delimiter`.
+
+The resolver (`graphql/resolvers/csv-import.ts`, binding kind `csvImport`) refuses a file whose
+model field lacks the `<operation>Csv` argument, so every build-time gate on that argument holds. It
+then converts against that field's input types with `csvRequest`, handing it a `CsvModels` (each
+relationship's target, each model's single primary key). The path walker uses that to resolve
+`….@ref`:
+
+- an `ID` leaf takes the id;
+- a relationship takes its `add` (to-many) or `set` (to-one);
+- an entry takes its filter as `<pk>: { in: [...] }`.
+
+`GQLTCsvImportResult` lists each file's name, model, operation, count and ids, plus `refs` (label to
+id). Rows get `processAfter` with their model's definition, as a model field's CSV rows do.
+
+**nestize.** `POST /_csv` reads a multipart body (`src/csv-multipart.ts`). It takes the files a
+multer interceptor left on `req.files`, or reads the stream with busboy. Each file is metered against
+its model's `maxBytes`, and the part count against `maxFiles`. File parts are named
+`<resource>.<operation>`, and text parts `<part>.keys` / `<part>.delimiter` set a file's options.
+Each part's resource, CSV switch and permissions are checked as it arrives. A reference fills one
+writable foreign-key column (`<field>.@ref`). Its cell is set aside from zod validation and written
+with the referenced row's key.
 
 ### Example query
 
@@ -971,7 +1107,8 @@ than a decision, and it is consulted per request rather than per schema.
 | --- | --- |
 | `model(defName, options)` | Whether the model type is generated at all. |
 | `query(defName, options)` | The list query for a model. |
-| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. |
+| `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. They gate the nested relationship verbs on the **target** model too, by `isRelationshipVerbAllowed` (utilize): `create` needs its create; `update` / `select` its update; `add` / `set` / `remove` on a `hasMany` / `hasOne` its update (they rewrite its foreign key); `delete` / `restore` its delete / restore. gqlize offers only the allowed verbs and leaves out a relationship with none; nestize refuses a nested body that uses a denied one. |
+| `mutationCsv(defName, options)` | The `createCsv` / `updateCsv` / `deleteCsv` arguments and nestize's `_csv` routes, *in addition to* the operation's own gate. Only consulted for a model with CSV on (§5). |
 | `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
 | `queryDeleted(defName, options)` | The `deleted` argument on a soft-deleting model's list fields and include input — i.e. whether this caller may read soft-deleted rows at all. Row-level visibility is still `scope`'s: a caller allowed deleted rows sees only the deleted rows inside their scope. |
@@ -1218,7 +1355,7 @@ each with its own subpath export:
 | `DateType` | `.../date` | Date/time values. |
 | `IPType` | `.../ip` | IP addresses. |
 | `JSONType` | `.../json` | Arbitrary JSON. |
-| `UploadType` | `.../upload` | File uploads. |
+| `UploadType` | `.../upload` | File uploads. The type of the CSV upload arguments (§5); gqlize parses no multipart itself — the host's layer fills the value. |
 | `createQueryType`, `defaultConfig` | `.../query` | Builds the `where`/filter input type used by adapters. |
 
 ---

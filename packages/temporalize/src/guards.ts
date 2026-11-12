@@ -90,9 +90,14 @@ export function assertScopedMutation(where: unknown, optIn?: boolean): void {
   shared.assertScopedMutation(where, optIn, "all: true", guardFail);
 }
 
-/** Validate that every filter field is permitted — see `@azerothian/utilize/guards`. */
-export function assertFilterAllowed(permission: Permission | undefined, name: string, where: unknown, definition?: Definition): void {
-  shared.assertFilterAllowed(permission, name, where, guardFail, definition);
+/**
+ * Validate every filter field and operator — see `@azerothian/utilize/guards`.
+ * `regexOperators` is whether the model's adapter offers the regex operators.
+ */
+export function assertFilterAllowed(
+  permission: Permission | undefined, name: string, where: unknown, definition?: Definition, regexOperators?: boolean,
+): void {
+  shared.assertFilterAllowed(permission, name, where, guardFail, definition, { regexOperators });
 }
 
 /** Validate that every `orderBy` field is permitted for the model. */

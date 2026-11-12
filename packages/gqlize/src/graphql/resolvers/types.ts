@@ -72,6 +72,8 @@ export type FieldBinding =
     }
   /** create-mutation-model: the create/update/delete/select entry point */
   | { kind: "mutationModel"; defName: string }
+  /** the root `csvImport` mutation: several CSV files linked by `@ref` labels */
+  | { kind: "csvImport" }
   /** grouping objects whose only job is to return `{}` so children resolve */
   | { kind: "container" }
   /** the relay `node` root field — rebuilt live, never serialized */

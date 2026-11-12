@@ -1,5 +1,6 @@
-import { isAllowed, isModelAllowed } from "@azerothian/utilize";
+import { isAllowed, isModelAllowed, regexOperatorsEnabled } from "@azerothian/utilize";
 import { definitionMethods, mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
+import { coerceTransformParams } from "@azerothian/utilize/transform-params";
 import type { Definition, Permission, PermissionContext } from "@azerothian/utilize";
 import { ThroughInputError } from "@azerothian/ormize";
 import type { Ormize } from "@azerothian/ormize";
@@ -112,7 +113,7 @@ export function createActivities(
   /** Public `{ limit, offset }` -> the engine's cursor arg shape (`first` / `after.index`). */
   const listArgs = (name: string, call: Call, req: FindArgs) => {
     assertPagination(req.limit, req.offset);
-    assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name));
+    assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name), regexOperatorsEnabled(orm.getModelAdapter(name)));
     assertOrderAllowed(call.permission, name, req.orderBy, orm.getDefinition(name));
     // The engine's cursor shape, not the public one: `first`/`after.index` rather
     // than `limit`/`offset`.
@@ -219,7 +220,7 @@ export function createActivities(
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "update");
         assertScopedMutation(req.where, req.all);
-        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name));
+        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name), regexOperatorsEnabled(orm.getModelAdapter(name)));
         assertPagination(req.limit, undefined);
         const input = validate ? validateInput(call.schemas, name, "update", req.input) : req.input;
         const rows = await orm.processUpdate(name, null, { input, where: req.where || {}, limit: req.limit }, call.context, { permission: call.permission });
@@ -230,7 +231,7 @@ export function createActivities(
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "destroy");
         assertScopedMutation(req.where, req.all);
-        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name));
+        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name), regexOperatorsEnabled(orm.getModelAdapter(name)));
         const rows = await orm.processDelete(name, null, req.where || {}, call.context);
         return present(call.schemas, name, rows);
       });
@@ -243,7 +244,7 @@ export function createActivities(
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "select");
         assertScopedMutation(req.where, req.all);
-        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name));
+        assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name), regexOperatorsEnabled(orm.getModelAdapter(name)));
         assertPagination(req.limit, undefined);
         const rows = await orm.processSelect(
           name,
@@ -289,7 +290,7 @@ export function createActivities(
       // optional — keeps the read-only treatment it has always had.
       const transforms = mutationInstanceMethods(definition);
       for (const method of methodNames(definition, "instanceMethods")) {
-        const isTransform = !!transforms[method];
+        const isTransform = Object.hasOwn(transforms, method);
         activities[instanceMethodActivityName(name, method)] = (req: ActivityRequest<InstanceMethodArgs>) =>
           invoke(name, req, true, async (call) => {
             const gate = isTransform
@@ -316,7 +317,18 @@ export function createActivities(
               // "run it with no params". gqlize's "named but not asked for"
               // reading of a falsy value only exists because its `apply` input
               // lists every exposed transform at once; an activity names one.
-              const params = req.args === undefined || req.args === null || req.args === false ? true : req.args;
+              //
+              // The params are then held to the transform's declared `args`, as
+              // gqlize's `apply` input type holds them.
+              const checked = coerceTransformParams(
+                transforms[method],
+                req.args === undefined || req.args === null || req.args === false ? true : req.args,
+                method,
+              );
+              if (!checked.ok) {
+                fail(ErrorType.Validation, `temporalize: ${name}.${method}: ${checked.message}`);
+              }
+              const params = checked.value;
               const rows = await orm.processUpdate(name, null, {
                 input: {},
                 where: { [pkName(name)]: { eq: requireId(name, req.id) } },

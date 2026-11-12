@@ -690,6 +690,110 @@ What this changes:
   nestize, ormize-zod4 and temporalize listed it too. Register the join model yourself if you need
   to reach its rows.
 
+### Nested relationship verbs follow the target's permissions
+
+A nested relationship write now needs the **related** model's own permission for what it does to
+that model's rows. That holds in gqlize, by what the relationship input offers, and in nestize, by a
+check on the nested body.
+
+| Verb | Needs, on the related model |
+| --- | --- |
+| `create` | `mutationCreate` (already true: its create input) |
+| `update`, `select` | `mutationUpdate` (already true: its update input) |
+| `add`, `set`, `remove` on a `hasMany` / `hasOne` | `mutationUpdate`. **New**: they rewrite the related row's foreign key. |
+| `add`, `set`, `remove` on a `belongsTo` / `belongsToMany` | nothing more: they write the source's own key or a join row |
+| `delete` | `mutationDelete`. **New**. |
+| `restore` | `mutationRestore`. **New**. |
+
+Before, these verbs were offered without asking. A caller denied `mutationDelete` on `Comment` could
+still delete comments by reaching them through `Post`.
+
+**What changes for you:**
+
+- **gqlize.** A schema that denies those permissions on a related model loses the matching fields on
+  the relationship input. A client that sent them gets a validation error instead of a write. A
+  relationship whose verbs are all denied is left off the input. A model left with nothing writable
+  loses its create/update input, as one with no writable columns already did. To keep the old
+  behaviour, allow the operation on the related model.
+- **nestize.** `POST /:resource/:id/:relation`, `DELETE /:resource/:id/:relation/:relId` and
+  `POST /:resource/select` with an `input` used to pass the nested body straight to the engine. Now:
+
+  | Body problem | Answer |
+  | --- | --- |
+  | A verb the related model's permissions deny | `403` |
+  | An unknown verb or key | `400` |
+  | A column the related model's create or update schema leaves out (checked strictly) | `400` |
+  | A filter on a hidden field, or with an operator outside the allow-list below | `400` |
+
+### ormize checks `mutationInstanceMethods` before running a transform
+
+Before, only gqlize's `apply` type and nestize's instance-method route kept a denied transform from
+running. The engine ran whatever `apply` it was handed, so a host passing a caller's `apply` to
+`orm.processCreate` / `processUpdate` / `processCsv` directly skipped the gate.
+
+Now the engine checks `permission.mutationInstanceMethods` on the ormize instance's own permission
+bag (`new Ormize({ permission })` or `setPermission`) before each transform, and throws if it is
+denied. Nothing changes if that bag is unset, or if it is the same bag you give gqlize and nestize.
+If you set an ormize bag that denies a transform your own server code still runs, allow it there.
+
+Related, in gqlize:
+
+- `apply` is no longer offered on a model field that has neither `create` nor `update`, where it
+  could not run.
+- A model that may be updated, but has nothing writable by hand, keeps `update` when one of its
+  transforms is allowed. Its `{Def}UpdateInput` then holds only `where` and `limit`.
+
+### nestize and temporalize check a transform's params against its `args`
+
+gqlize types each transform's params from the `args` it declares under
+`expose.instanceMethods.mutations`, so a GraphQL caller can only send those args, with those types.
+nestize's `POST /:resource/:id/_actions/:method`, its CSV `apply` (`?apply=`, `<part>.apply`) and
+temporalize's `<Model>.instanceMethods.<name>` activity passed whatever they were given straight to
+the method: undeclared keys, values of any type, operator objects.
+
+They now check the params the way gqlize does:
+
+- A transform with `args` takes an object of them. An unknown key, a missing required arg or a value
+  its declared type can't coerce is refused. Defaults fill in, and custom scalars and enums coerce
+  through their own `parseValue`, so a transform gets the same values on every surface.
+- A transform with no `args` takes no params. A bare call (no body, `{}` or `true`) still runs it.
+- A refusal is `400` in nestize, and a non-retryable `TemporalizeValidation` failure in temporalize.
+  Nothing is written.
+
+> **Watch for:** a transform that reads params it never declared. Declare them under its `args`
+> with GraphQL input types, which gqlize needs anyway:
+> `appendSuffix: { args: { suffix: { type: GraphQLString } } }`. An arg declared with a type that
+> isn't a GraphQL input type (a Sequelize `DataTypes.STRING`, say) is refused too, since gqlize
+> couldn't build a schema from it either.
+
+### REST and Temporal filters take filter operators only
+
+nestize's `?filter=` and every other REST filter, and temporalize's `where`, are now checked
+operator by operator. Inside a field, only the operators gqlize's filter types offer are accepted:
+
+- `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `not`, `is`;
+- `like`, `notLike`, `iLike`, `notILike`;
+- `startsWith`, `endsWith`, `substring`;
+- `in`, `notIn`, `between`, `notBetween`;
+- Postgres' array and range operators.
+
+Before, any key was passed through, and the sequelize adapter turns every Sequelize `Op` name into
+that operator. `{"name": {"col": "passwordHash"}}` therefore compared `name` against a column the
+caller may not filter on, which is a way to read it.
+
+**Refused now:**
+
+- ORM internals such as `col`, `raw`, `values`, `any`, `all` and `match`, and `or` / `and` inside a
+  field;
+- the regex operators (`regexp`, `iRegexp`, …), unless the model's adapter has
+  `enableRegexpOperators`, as gqlize already required;
+- Sequelize's nested JSON-path filters (`{"meta": {"video": {"url": …}}}`), which gqlize never
+  offered.
+
+A definition's own `whereOperators` keep taking whatever value their handler reads. The lists are
+exported from `@azerothian/utilize` (`FILTER_VALUE_OPERATORS`, `FILTER_LIST_OPERATORS`,
+`FILTER_REGEX_OPERATORS`).
+
 ### Adapters agree on enum type names and enum value names
 
 Enum handling had drifted between the two shipped adapters. The sequelize adapter capitalised the
@@ -869,6 +973,13 @@ Not required for migration, but this is what the split bought:
 - [ ] Mutations that wrote primary keys or foreign keys audited — either moved to nested relationship
       inputs or opted in with `writable: true` / `writableForeignKeys`.
 - [ ] Callers that relied on unpaginated lists updated to page explicitly.
+- [ ] Nested relationship verbs checked against the related model's own permissions (`delete` /
+      `restore`, and `add` / `set` / `remove` on a `hasMany` / `hasOne` needing its update).
+- [ ] A permission bag on the ormize instance allows every transform your own code runs through `apply`.
+- [ ] Every param a transform reads over REST or Temporal is declared under its `args`, with a
+      GraphQL input type.
+- [ ] REST / Temporal filters use filter operators only (no `col`, nested JSON paths, or regex unless
+      the adapter enables it).
 - [ ] `enableRegexpOperators: true` set if you use `$regexp` and friends.
 - [ ] `where` / `orderBy` usage checked against your permission config.
 - [ ] Backward pagination (`last`/`before`) avoided — see the known issue above.
