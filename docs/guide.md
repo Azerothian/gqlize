@@ -184,8 +184,12 @@ Definition keys you'll commonly use:
   methods, and hooks named in both run both.
 
 > **Junction models.** A `through` model that only carries FK columns (+ your extra columns) has
-> no relationships of its own; exclude it from the schema with a permission gate so it isn't
-> exposed: `createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`.
+> no relationships of its own. Hiding it with `permission.model`
+> (`createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`) keeps it out of the
+> schema *and* turns its relationships into plain many-to-many ones, with no `through`. To keep
+> `through` but drop its root operations, gate those instead (`permission.query`,
+> `permission.mutation`). A join model ormize generates for a cross-adapter `belongsToMany` is never
+> exposed, by any projection.
 
 ### Field arguments & field resolvers
 
@@ -818,7 +822,8 @@ Post { edges { node { title author(required: true) { name } } } }
 ```
 
 You can also drive eager loading explicitly with the `include` argument (fields: `required`,
-`separate`, `where`, `orderBy`, and nested `include`). It merges with the selection:
+`separate`, `where`, `orderBy`, and nested `include`). It merges with the selection. On Sequelize
+it is a list of objects; on Valkey a single object (`include: { comments: { required: true } }`):
 
 ```graphql
 Post(include: { comments: { required: true, where: { body: { eq: "hi" } } } }) {
@@ -828,6 +833,42 @@ Post(include: { comments: { required: true, where: { body: { eq: "hi" } } } }) {
 
 Non-paginated relations fold into a single JOINed query; a nested `hasMany` with pagination
 (`first`/`last`) is loaded via a batched `separate:true` query so per-parent limits are correct.
+
+### Many-to-many join data (`through`)
+
+A `belongsToMany` whose join model you registered as a definition, and which the permission bag
+lets be seen, is in **through mode** (the same rule the [nested writes](#nested-relationship-writes)
+use). Its connection then carries the join row on every edge, and takes two extra arguments:
+
+```graphql
+Post { edges { node { title
+  tags(throughWhere: { sortOrder: { gte: 1 } }, throughOrderBy: sortOrderASC, first: 10) {
+    total
+    edges {
+      through { sortOrder label }   # the PostTag row behind this link
+      node { name }
+    }
+  }
+} } }
+```
+
+- `through` is the join model's own type, so its field permissions, global ids and output hooks
+  apply. A join row its output hooks reject removes the whole edge.
+- `throughWhere` filters links by join columns; `total` counts the filtered links.
+- `throughOrderBy` orders links by join columns, ahead of `orderBy` (which, with the primary key,
+  breaks ties). Nulls sort last ascending, first descending. The page is cut in memory, because the
+  order spans the join table and the target table.
+- `required: true` with `throughWhere` (and/or `where`) keeps only parents that have a matching
+  link. This works on every adapter, Valkey included.
+- **The join model's row scope decides which links exist.** A join row its read scope hides is
+  no link at all: no edge, not counted, and it does not satisfy `required`. That holds in plain
+  mode too (a hidden join model), wherever the join model is a registered definition.
+
+Each side declares its own relationship; the reverse list is not created for you. Its connection
+is named after the parent (`PostTagBelongsToManyTagsList`, edge `PostTagBelongsToManyTagsEdge`),
+because its edge carries this parent's join model. A through-mode relationship is never JOINed into
+the parent query: it is read per parent (join rows, then targets), so it costs two queries per
+parent rather than riding along with the parent's.
 
 ### Count-only (`total`)
 
@@ -1240,7 +1281,7 @@ mutation {
   models {
     Post(update: {
       where: { title: { eq: "New" } },
-      input: { tags: { add: [ { where: { name: { eq: "a" } } }, { where: { name: { eq: "b" } } } ] } }
+      input: { tags: { add: [ { name: { eq: "a" } }, { name: { eq: "b" } } ] } }
     }) { id }
   }
 }
@@ -1259,10 +1300,17 @@ Post(update: { where: { title: { eq: "New" } }, input: { author: { set: { name: 
 Post(update: { where: { title: { eq: "New" } }, input: { author: { remove: true } } }) { id author { name } }
 
 # hasMany / belongsToMany: replace the whole set with the matching records
-Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { where: { name: { eq: "c" } } } ] } } }) { id }
+Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { name: { eq: "c" } } ] } } }) { id }
 ```
 
-**belongsToMany `through` attributes** — write join-table columns when associating:
+**belongsToMany `through` attributes**: write join-table columns when associating. This needs a
+join model you registered as a definition (here `PostTag`) that the permission bag lets be seen.
+Then `add`/`set` entries are always `{ where, through? }` (a bare filter is refused, over REST
+and Temporal too), and `through` is typed by the join model's columns (`PostTagsThroughInput`):
+those its `mutationCreateInput` allows, minus the two join keys, every primary/foreign key and
+`ignoreFields`. Each `set` entry's `through` applies to the rows that entry matched. Without such a join model (an implicit table, one
+ormize generated, or one hidden by `permission.model`) the relationship is a plain many-to-many:
+entries are bare filters and there is no `through`.
 
 ```graphql
 Post(update: {
@@ -1294,7 +1342,7 @@ mutation {
       input: {
         posts: { select: [{
           where: { status: { eq: "draft" } },
-          input: { tags: { add: [ { where: { name: { eq: "featured" } } } ] } }
+          input: { tags: { add: [ { name: { eq: "featured" } } ] } }
         }] }
       }
     }]) { id name }        # returns the found authors (unchanged)

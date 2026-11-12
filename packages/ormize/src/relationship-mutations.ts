@@ -9,13 +9,14 @@
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
-import { mergeScopeWhere } from "@azerothian/utilize/gate";
+import { isThroughInputField, isThroughMode, mergeScopeWhere } from "@azerothian/utilize/gate";
 import type { PortableWhere, ScopeOperation } from "@azerothian/utilize/gate";
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, OrmAdapter,
   RequestContext, Selection,
 } from "@azerothian/utilize/types/index";
 import Events from "./events";
+import { ThroughInputError } from "./through-input-error";
 import type {
   InstanceRow, MutationFilter, MutationHost, MutationInput, MutationInputTree,
   RelationshipMutation, ResolveOptions,
@@ -197,14 +198,97 @@ async function assertLinkInScope(s: MutationScope, targets: AdapterRow[]) {
   await s.host.assertRowsInScope(s.targetName, "update", s.targetContext, targets, s.targetOptions);
 }
 
+/** Whether a value is a plain object with no keys but `where` and `through`. */
+function hasOnlyLinkKeys(arg: unknown): arg is LinkEntry {
+  return !!arg && typeof arg === "object" && !Array.isArray(arg)
+    && Object.keys(arg).every((k) => k === "where" || k === "through");
+}
+
+/**
+ * Whether this relationship carries join-row data for the caller: a
+ * `belongsToMany` in through mode under the projection's own permission bag
+ * (`selection.permission`), so the engine agrees with the input type the
+ * projection offered. A caller with no bag (a trusted server-side call) gets
+ * through mode whenever the join model is registered.
+ */
+const isThroughModeFor = (s: MutationScope) => isThroughMode(s.selection?.permission, s.association);
+
+/**
+ * Split one `add`/`set` entry into the filter that finds the target rows and
+ * the join-row columns to write with them, refusing an entry whose shape is
+ * not the one the relationship's mode takes.
+ *
+ * - Through mode: every entry is `{ where, through? }`. A bare filter is
+ *   refused, so the shape is checked here and not only by GraphQL's types.
+ * - Otherwise (plain many-to-many, hasMany): every entry is a bare filter. An
+ *   entry that looks like the wrapper (`where` plus nothing but `through`) is
+ *   refused rather than read as a filter on columns with those names, unless
+ *   the target really has a `where` column.
+ */
+async function splitLinkEntry(s: MutationScope, arg: unknown): Promise<{filter: unknown; through?: MutationInput}> {
+  if (!s.isBtm) {
+    return {filter: arg};
+  }
+  const {source, name} = s.association;
+  if (!isThroughModeFor(s)) {
+    const targetHasWhere = Object.prototype.hasOwnProperty.call(s.targetAdapter.getFields(s.targetName) || {}, "where");
+    if (hasOnlyLinkKeys(arg) && "where" in arg && !targetHasWhere) {
+      throw new ThroughInputError(source, name,
+        `this relationship carries no join-row data (its join model is not a registered, visible definition), ` +
+        `so add/set entries are bare filters on ${s.targetName}, not { where, through }.`);
+    }
+    return {filter: arg};
+  }
+  if (!hasOnlyLinkKeys(arg)) {
+    throw new ThroughInputError(source, name,
+      `add/set entries are { where, through } objects; got keys ${JSON.stringify(Object.keys((arg || {})))}.`);
+  }
+  const through = arg.through === undefined || arg.through === null ? undefined : await checkThrough(s, arg.through);
+  return {filter: arg.where, through};
+}
+
+/**
+ * A caller's `through` payload, checked against what the join model accepts
+ * and then run through its own create rules.
+ *
+ * The payload reaches the join row through the association accessor, which
+ * merges it with the two join keys — and on some adapters lets it win, or
+ * writes it as-is onto a link that already exists. So every key must pass
+ * `isThroughInputField` under the projection's permission bag: never one of
+ * the two join keys (it would point the link at a row the caller never named),
+ * never a primary or foreign key, never an `ignoreFields` column, never a
+ * column `mutationCreateInput` denies, never an unknown column. Any other key
+ * is refused, not dropped: the input type a projection offers holds exactly
+ * these, so anything else is a caller that bypassed it. What passes then goes
+ * through `processInputs` on the join model (`override.input`, its create
+ * scope's `set`).
+ */
+async function checkThrough(s: MutationScope, through: MutationInput): Promise<MutationInput | undefined> {
+  const joinName = s.association.through as string;
+  const joinFields = s.host.getModelAdapter(joinName).getFields(joinName) || {};
+  const joinDef = s.host.getDefinition(joinName);
+  const joinKeys = [s.association.foreignKey, s.association.otherKey].filter(Boolean) as string[];
+  if (typeof through !== "object" || Array.isArray(through)) {
+    throw new ThroughInputError(s.association.source, s.association.name, "`through` must be an object of join-row columns.");
+  }
+  const refused = Object.keys(through).filter((key) => !joinFields[key]
+    || !isThroughInputField(s.selection?.permission, joinName, key, joinFields[key], joinKeys, joinDef?.ignoreFields));
+  if (refused.length > 0) {
+    throw new ThroughInputError(s.association.source, s.association.name,
+      `\`through\` may not write ${refused.map((k) => `'${k}'`).join(", ")} on ${joinName}.`);
+  }
+  const processed = await s.host.processInputs(joinName, through, s.args, s.context, s.selection?.raw, undefined, "create");
+  for (const key of joinKeys) {
+    delete processed[key];
+  }
+  return Object.keys(processed).length > 0 ? processed : undefined;
+}
+
 /** Attach existing records that a filter selects. */
 const applyAdd = async(s: MutationScope, entries: (MutationFilter | LinkEntry)[]) => {
   await waterfall(entries, async(arg: MutationFilter | LinkEntry) => {
-    // belongsToMany add entries are `{where, through}`; other collections
-    // pass the filter directly.
-    const entry = (arg || {}) as LinkEntry;
-    const through = s.isBtm ? entry.through : undefined;
-    const results = await findByFilter(s, s.isBtm ? entry.where : (arg));
+    const {filter, through} = await splitLinkEntry(s, arg);
+    const results = await findByFilter(s, filter);
     if (results.length > 0) {
       await s.row[s.association.accessors.addMultiple](results, withThrough(s, through));
       await assertLinkInScope(s, results);
@@ -222,16 +306,29 @@ const applySet = async(s: MutationScope, value: MutationFilter | (MutationFilter
     return;
   }
   // Collections: replace the entire set with all matching existing records.
-  const all: AdapterRow[] = [];
-  let through: MutationInput | undefined;
+  const entries: {rows: AdapterRow[]; through?: MutationInput}[] = [];
   await waterfall(value as (MutationFilter | LinkEntry)[], async(arg: MutationFilter | LinkEntry) => {
-    const entry = (arg || {}) as LinkEntry;
-    if (s.isBtm && entry.through !== undefined) {
-      through = entry.through;
-    }
-    all.push(...await findByFilter(s, s.isBtm ? entry.where : (arg)));
+    const entry = await splitLinkEntry(s, arg);
+    entries.push({rows: await findByFilter(s, entry.filter), through: entry.through});
   });
-  await s.row[s.association.accessors.set](all, withThrough(s, through));
+  const all = entries.flatMap((e) => e.rows);
+  if (!entries.some((e) => e.through !== undefined)) {
+    await s.row[s.association.accessors.set](all, s.defaultOptions);
+    await assertLinkInScope(s, all);
+    return;
+  }
+  // Each entry carries its own join-row values, and the accessor's `set` takes
+  // one `through` for the whole set. So the set is cleared and each entry
+  // linked with its own values, which also fills a required join column on a
+  // new link. A link kept from before is rewritten with the values given (or
+  // the column defaults), as the Valkey and cross-adapter `set` always did;
+  // where two entries match the same row, the later one's values win.
+  await s.row[s.association.accessors.set]([], s.defaultOptions);
+  for (const entry of entries) {
+    if (entry.rows.length > 0) {
+      await s.row[s.association.accessors.addMultiple](entry.rows, withThrough(s, entry.through));
+    }
+  }
   await assertLinkInScope(s, all);
 };
 

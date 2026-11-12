@@ -30,7 +30,8 @@ export function generateZodSchemas(orm: Ormize, options: GenerateOptions = {}): 
       "generateZodSchemas: no model definitions found. Define models and call `await orm.initialise()` before generating."
     );
   }
-  const modelNames = allNames.filter((name) => isModelAllowed(permission, name));
+  // A join model ormize generated holds links only and is never exposed.
+  const modelNames = allNames.filter((name) => !defs[name].generated && isModelAllowed(permission, name));
 
   const entity: ZodObjectMap = {};
   const create: ZodObjectMap = {};

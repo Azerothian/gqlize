@@ -12,6 +12,7 @@ import type {
   LoadedRow,
 } from "./primitives";
 import type { Definition } from "./definitions";
+import type { Permission } from "../gate";
 
 /**
  * How a read treats soft-deleted rows: exclude them (the default, and what a
@@ -67,6 +68,14 @@ export interface IncludeDescriptor {
    */
   deleted?: DeletedFilter;
   include?: IncludeMap[];
+  /**
+   * A `belongsToMany` in through mode (`Association.throughModel`): the join
+   * model, and a filter on its rows. Such a descriptor is never handed to an
+   * adapter. The engine only ever plans one for a `required` relation, and
+   * turns it into a key filter on the parent before the query runs (see
+   * `applyThroughRequired` in ormize), so it behaves the same on every adapter.
+   */
+  through?: { model: string; where?: AdapterWhere };
 }
 
 /** One level of the include plan, keyed by relationship name. */
@@ -132,6 +141,15 @@ export type Selection = {
    * codec check the id against that key's declared target type.
    */
   translateId?: (value: unknown, fieldName?: string) => unknown;
+  /**
+   * The permission bag of the projection making the call — for gqlize, the bag
+   * its schema was built with. The write engine reads it where an input's shape
+   * or a payload depends on what the projection offered: whether a
+   * `belongsToMany` is in through mode, and which join-row columns a `through`
+   * payload may write (`isThroughMode`, `isThroughInputField`). Absent means a
+   * trusted server-side caller, held only to the structural rules.
+   */
+  permission?: Permission;
   /**
    * Query-shaping hooks contributed by the `input` of each selected exposed
    * method. Run after `processListArgsToOptions` **and after

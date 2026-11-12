@@ -289,6 +289,58 @@ export function isInputFieldWritable(
   return isStructurallyWritable(meta) && isInputFieldAllowed(permission, model, field, kind);
 }
 
+/** What {@link isThroughMode} reads off an association. */
+export type ThroughModeAssociation = {
+  associationType: string;
+  through?: string;
+  throughModel?: boolean;
+};
+
+/**
+ * Whether a `belongsToMany` carries join-row data in a projection: its join
+ * model is one the author registered, and the permission bag lets the model be
+ * seen. Otherwise it projects as a plain many-to-many — `add`/`set` take bare
+ * filters and no `through` is offered. Permissions decide visibility: a join
+ * model hidden by `permission.model` is not reachable through a relationship
+ * either.
+ */
+export function isThroughMode(permission: Permission | undefined, association: ThroughModeAssociation): boolean {
+  return association.associationType === "belongsToMany"
+    && !!association.throughModel
+    && !!association.through
+    && isModelAllowed(permission, association.through);
+}
+
+/**
+ * Whether a join-model column may be written through a `belongsToMany`
+ * `through` payload.
+ *
+ * Stricter than {@link isInputFieldWritable}:
+ *  - `joinKeys` (the association's own two columns) are never accepted — the
+ *    accessor sets them, and a payload that could set them would point the
+ *    link at a row the caller never named;
+ *  - no primary or foreign key is accepted even with `writable: true`, because
+ *    the payload does not pass through the id codec, so a Relay id would reach
+ *    the datastore undecoded;
+ *  - `ignoreFields` is honoured, as on every other generated input.
+ *
+ * The write engine applies the structural half of this on every route; the
+ * permission half is applied by each projection with its own permission bag.
+ */
+export function isThroughInputField(
+  permission: Permission | undefined,
+  joinModel: string,
+  field: string,
+  meta: WritableFieldMeta | undefined,
+  joinKeys: string[],
+  ignoreFields: string[] | undefined,
+): boolean {
+  return !joinKeys.includes(field)
+    && !ignoreFields?.includes(field)
+    && !(meta?.primaryKey || meta?.foreignKey)
+    && isInputFieldAllowed(permission, joinModel, field, "create");
+}
+
 /**
  * Every key any consumer reads off an `options.permission` bag — the union
  * across gqlize, nestize, temporalize and ormize-zod4, mirroring

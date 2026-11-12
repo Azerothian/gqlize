@@ -126,7 +126,11 @@ export type AdapterRow = unknown;
  * true total behind it — which is *not* `models.length` once a per-parent limit
  * has been applied, so relay `pageInfo` needs it reported separately.
  */
-export type AdapterRelationshipPage = { total: number; models: AdapterRow[] };
+/**
+ * One page of a relationship. `through` is set only for a `belongsToMany` in
+ * through mode: the join row behind each entry of `models`, by position.
+ */
+export type AdapterRelationshipPage = { total: number; models: AdapterRow[]; through?: (AdapterRow | undefined)[] };
 
 /** `getCreateFunction(defName)` — insert one row. */
 export type AdapterCreateFunction = (input: FieldValues, options: AdapterQueryOptions) => Promise<AdapterRow>;

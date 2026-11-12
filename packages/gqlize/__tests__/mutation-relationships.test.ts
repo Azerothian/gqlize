@@ -90,7 +90,7 @@ describe("relationship mutations", () => {
     const schema = await createSchema(db, schemaOpts);
 
     await graphql({schema, source: `mutation { models {
-      Post(update: { where: { title: { eq: "post1" } }, input: { tags: { add: [{ where: { name: { eq: "tagone" } } }, { where: { name: { eq: "tagtwo" } } }] } } }) { id }
+      Post(update: { where: { title: { eq: "post1" } }, input: { tags: { add: [{ name: { eq: "tagone" } }, { name: { eq: "tagtwo" } }] } } }) { id }
     } }`});
     expect(await post.countTags()).toEqual(2);
 
@@ -113,7 +113,7 @@ describe("relationship mutations", () => {
     const schema = await createSchema(db, schemaOpts);
 
     const res = await graphql({schema, source: `mutation { models {
-      Post(update: { where: { title: { eq: "post1" } }, input: { tags: { set: [{ where: { name: { eq: "tagthree" } } }] } } }) { id }
+      Post(update: { where: { title: { eq: "post1" } }, input: { tags: { set: [{ name: { eq: "tagthree" } }] } } }) { id }
     } }`});
     validateResult(res);
     const names = (await post.getTags()).map((t: {get: (key: string) => string}) => t.get("name"));
@@ -125,7 +125,7 @@ describe("relationship mutations", () => {
     const {Post, Tag, PostTag} = db.models;
     await Post.create({title: "post1"});
     await Tag.create({name: "tagone"});
-    const schema = await createSchema(db, schemaOpts);
+    const schema = await createSchema(db, {})  // PostTag visible: through mode;
 
     const res = await graphql({schema, source: `mutation { models {
       Post(update: { where: { title: { eq: "post1" } }, input: { tags: { add: [{ where: { name: { eq: "tagone" } }, through: { sortOrder: 7 } }] } } }) { id }
@@ -180,7 +180,7 @@ describe("relationship mutations", () => {
     const res = await graphql({schema, source: `mutation { models {
       Author(select: [{ where: { name: { eq: "author1" } }, input: {
         posts: { select: [{ where: { title: { eq: "keep" } }, input: {
-          tags: { add: [{ where: { name: { eq: "t1" } } }] }
+          tags: { add: [{ name: { eq: "t1" } }] }
         } }] }
       } }]) { id name }
     } }`});
@@ -210,7 +210,7 @@ describe("relationship mutations", () => {
     const res = await graphql({schema, source: `mutation { models {
       Author(select: [{ where: { name: { eq: "a1" } }, input: {
         posts: { select: [{ where: { title: { eq: "p2" } }, input: {
-          tags: { add: [{ where: { name: { eq: "t1" } } }] }
+          tags: { add: [{ name: { eq: "t1" } }] }
         } }] }
       } }]) { id }
     } }`});
@@ -230,7 +230,7 @@ describe("relationship mutations", () => {
     const res = await graphql({schema, source: `mutation { models {
       Post(select: [{ where: { title: { eq: "original" } }, input: {
         title: "HACKED",
-        tags: { add: [{ where: { name: { eq: "t1" } } }] }
+        tags: { add: [{ name: { eq: "t1" } }] }
       } }]) { id title }
     } }`});
     validateResult(res);
@@ -255,7 +255,7 @@ describe("relationship mutations", () => {
     const res = await graphql({schema, source: `mutation { models {
       Comment(select: [{ where: { body: { eq: "c1" } }, input: {
         post: { select: { where: { title: { eq: "post1" } }, input: {
-          tags: { add: [{ where: { name: { eq: "t1" } } }] }
+          tags: { add: [{ name: { eq: "t1" } }] }
         } } }
       } }]) { id }
     } }`});

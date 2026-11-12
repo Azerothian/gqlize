@@ -387,6 +387,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `define` | Field map. Each value is a `DefinitionField`: `type`, `allowNull`, `primaryKey`, `foreignKey`, `unique`, `defaultValue`, `values` (enum), `validate`, `description`, `comment`, `deprecated` (the `@deprecated` reason for the generated field), plus `args` and `resolve` (per-field GraphQL arguments and a field resolver — see [guide: Field arguments & field resolvers](guide.md#field-arguments--field-resolvers)), `writable` (opt a pk/fk back into mutation input; `false` opts a fk out of `writableForeignKeys`) and `ignoreGlobalKey`. |
 | `override` | Per-field custom GraphQL type plus `input`/`output` transform functions (e.g. storing JSON in a string column but exposing a typed object). |
 | `ignoreFields` | Columns to exclude from every generated type: the output type, both mutation inputs, the `where` filter and the `orderBy` enum. nestize and temporalize refuse them in filters and ordering too. |
+| `generated` | Set by ormize, not by authors: marks the join model it registers for a cross-adapter `belongsToMany` that names no registered `through` model (`generateJoinModels`, `packages/ormize/src/engine/relationships.ts`). No projection exposes such a model — gqlize (`visible-models.ts`), nestize, ormize-zod4 and temporalize all skip it — and its relationship is a plain many-to-many (`Association.throughModel` is false). |
 | `relationships` | Array of `Relationship`: `{ model, name, type, options }` where `type ∈ hasOne | belongsTo | hasMany | belongsToMany` and `options` carries `as`, `foreignKey`, `sourceKey`, `through`, `constraints`. `name`, a known `type` and a `model` naming an already-defined target are all validated at wiring time, before either the same-adapter or cross-adapter branch runs, and each throws naming the relationship. Cross-adapter key columns are re-checked in a post-pass at the end of `initialise()` (see §3). |
 | `whereOperators` / `whereOperatorTypes` | Custom filter operators (async functions returning a where fragment) and their GraphQL input types. |
 | `expose` | Declares which methods surface to GraphQL: `expose.classMethods.{query,mutations}` and `expose.instanceMethods.{query,mutations}`, each an `ExposedMethod`: `{ type?, args?, before?, after?, fields?, include?, input?, output?, orderBy?, where? }`. `type` may be a string model reference (`"Task"`) or a list (`"Task[]"`), or a concrete GraphQL type. See [Exposed methods](#exposed-methods). |
@@ -654,8 +655,25 @@ accessors (recursion depends on the graphql patch, see §12). The sub-fields per
 - **hasMany / belongsToMany:** `create` (new records), `update` (`where`+`input` pairs),
   `add` (associate existing by where), `set` (replace the entire set with matching existing
   records), `remove` (disassociate matching), `delete` (delete matching), `restore` (undelete
-  soft-deleted matching, paranoid models). For **belongsToMany**, `add`/`set` entries are
-  `{ where, through }` where `through` (a JSON payload) writes join-table column values.
+  soft-deleted matching, paranoid models). `add`/`set` entries are bare filters, with one
+  exception: a **belongsToMany in through mode** takes `{ where, through }`, `through` writing
+  join-row columns. Through mode (`isThroughMode`, `packages/utilize/src/gate.ts`) needs
+  `Association.throughModel` (the join model is a definition the author registered, set by
+  `Ormize.getAssociations`; an implicit table or a `generated` one is not) and a permission bag
+  that lets the join model be seen. `through` is a typed input (`<Model><Rel>ThroughInput`) of the
+  join model's columns that pass `isThroughInputField` — its `mutationCreateInput`, minus the two
+  join keys, every primary/foreign key (the payload is not run through the id codec) and
+  `ignoreFields` — all optional, and is omitted when no column qualifies. The engine
+  (`splitLinkEntry` in `relationship-mutations.ts`) makes the same decisions on every route with
+  the caller's permission bag, which each projection passes as `Selection.permission` (gqlize: the
+  bag its schema was built with, visible-model fold included, via `GqlizeBinding.buildPermission`;
+  nestize and temporalize: the bag for the call; a direct server call passes none and is held to
+  the structural rules only). It refuses, with `ThroughInputError`, a bare filter in through mode,
+  a `{ where, through }` entry outside it, and any `through` key `isThroughInputField` rejects;
+  what passes runs through `processInputs` on the join model. nestize answers the error with 403,
+  temporalize with a non-retryable `Forbidden`. A `set` whose entries carry `through` clears the
+  links and links each entry with its own values (a kept link is rewritten with those values or the
+  column defaults); a `set` with no `through` is one accessor call, as before.
 - **belongsTo / hasOne:** `create`, `update`, `set` (associate an existing record found by a
   where filter → `accessors.set`), `remove` (`Boolean` → disassociate via `set(null)`),
   `delete`, `restore`.
@@ -719,7 +737,16 @@ the query through the adapter. Key properties:
 - **Merge, not override.** The selection-derived tree and any explicit `include` args (parent
   level and nested) are merged by relation name and path (`where` → AND, `required` → OR,
   orderBy/pagination precedence) — a parent `include` and a nested `include` for the same
-  section combine rather than clobber each other.
+  section combine rather than clobber each other. Every element of a list-shaped `include` merges,
+  not only the first.
+- **One plan shape.** The `include` argument is a list on an adapter with `includeIsList` and a
+  single object on one without (Valkey). The engine normalises either, at every depth, into
+  `IncludeMap[]` of complete descriptors (`completeIncludePlan`,
+  `packages/utilize/src/utils/include-plan.ts`): `target` and `associationType` are read off the
+  live association, since a client-written descriptor has neither, and a through-mode
+  `belongsToMany` gets `through` so it is never JOINed. This runs where the plan enters
+  `resolveFindAll` and the per-parent `resolveManyRelationship`, before scoping. Adapters are only
+  ever handed `IncludeMap[]`; `includeIsList` decides the argument's GraphQL type and nothing else.
 - **Adapter-aware.** Only relationships whose target is on the **same adapter** as the parent
   are folded into the parent query. Cross-adapter relationships (a different adapter — no shared
   database to JOIN) are left to their own resolvers, which run them as separate root queries.
@@ -859,6 +886,26 @@ server has no way to produce. `total` stays nullable because it is a separate CO
 builder may legitimately skip, and `edges.node` stays nullable because the row is fetched a page at
 a time and resolved per edge — it can go away in between. Every field above was nullable in 6.x; see
 [the migration note](migration-6-to-7.md#relay-connection-fields-are-non-null).
+
+A `belongsToMany` in through mode (`isThroughMode`, see §5's relationship writes) adds `through:
+<JoinModel>` to its edge and `throughWhere` / `throughOrderBy` (the join model's own filter and
+order types) to its field, and its connection is named after the parent too
+(`<Parent><Target>BelongsToMany<Rel>List`), so it never shares an edge type with another parent's
+relationship of the same name. It is read by one path on every adapter
+(`packages/ormize/src/engine/through-reads.ts`): the join rows for the parent, filtered by
+`throughWhere` and the join model's read scope, then the targets through `resolveFindAll` restricted
+to the keys those rows point at (the target's own scope, hooks and read cache apply). The page
+carries the join rows (`AdapterRelationshipPage.through`); the connection resolver runs each
+through the join model's OUTPUT hooks and drops the edge if one is rejected. With
+`throughOrderBy`, edges sort by join columns, then the target's order and primary key, and are
+windowed in memory with the connection's own offset arithmetic. The path is keyed on
+`Association.throughModel` alone, so a join model the permission bag hides still has its read scope
+applied — it just offers no `through` or join-row arguments, and the engine refuses them
+(`ThroughInputError`). A through-mode relation is never in the include plan except as a `required`
+filter: `applyThroughRequired` replaces it, before the adapter sees the plan, with
+`<sourceKey> in [...]` on the model above it — the keys with a visible link matching
+`throughWhere` and the (scoped) target `where`. A parent left with no keys at the root answers
+with an empty page.
 
 They come with cursor args `after`, `first`, `before`, `last`, `orderBy`, merged with the adapter's
 default list args (`where` filter + `include`). Cursors are index-based and carry the name of

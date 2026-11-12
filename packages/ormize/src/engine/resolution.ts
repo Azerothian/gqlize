@@ -5,9 +5,11 @@
 
 import { whereOperatorsFor, expandOrderBy } from "@azerothian/utilize/exposed-methods";
 import { clampPageSize } from "@azerothian/utilize/utils/page-size";
+import { completeIncludePlan, toIncludeLevels } from "@azerothian/utilize/utils/include-plan";
 import { applyScopeWhere } from "../scope";
 import { scopeIncludePlan } from "../scope";
 import { joinScope } from "../cross-adapter";
+import { applyThroughRequired, assertThroughArgs, isThroughRead, resolveThroughRelationship } from "./through-reads";
 import type {
   AdapterRow, AdapterQueryOptions, RequestContext,
   Selection, IncludeMap, FindAllArgs, OrderEntry, Association,
@@ -204,6 +206,13 @@ async function resolveCrossAdapterRelationship(self: ResolutionHost, defName: st
 }
 
 export async function resolveManyRelationship(self: ResolutionHost, defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) {
+  assertThroughArgs(association, args, selection);
+  if (isThroughRead(association)) {
+    // Join rows first, then targets — on every adapter, cross-adapter included
+    // (see `through-reads.ts`). Ahead of the cross-adapter branch, which it
+    // generalises: that one only ever reads the keys off the join rows.
+    return resolveThroughRelationship(self, resolveFindAll, defName, association, source, args, context, selection);
+  }
   if (association.crossAdapter) {
     // Routed through `resolveFindAll`, which scopes the target itself.
     return resolveCrossAdapterRelationship(self, defName, association, source, args, context, selection);
@@ -226,6 +235,17 @@ export async function resolveManyRelationship(self: ResolutionHost, defName: str
   let a = args;
   if (rowScope?.where) {
     a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, rowScope)};
+  }
+  // A nested connection's own `include` argument goes to the adapter's
+  // per-parent query: normalised as at the root, and a through-mode relation in
+  // it is a key filter here rather than an adapter JOIN.
+  if (a.include !== undefined) {
+    a = {...a, include: completeIncludePlan(toIncludeLevels(a.include), defName, (n) => self.getAssociations(n))};
+    const throughFiltered = await applyThroughRequired(self, defName, a, context, selection);
+    if (throughFiltered === false) {
+      return { total: 0, models: [] };
+    }
+    a = throughFiltered;
   }
   a = expandComputedOrder(self, defName, a, {context, info: selection?.raw});
   const offset = cursorOffset(args);
@@ -351,6 +371,12 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   if (selection?.include && !a.include) {
     a = {...a, include: selection.include};
   }
+  // One shape from here on: a list of complete descriptors, whatever shape the
+  // `include` argument had (a single object on an `includeIsList = false`
+  // adapter) and whatever a client left out of its descriptors (#68).
+  if (a.include !== undefined) {
+    a = {...a, include: completeIncludePlan(toIncludeLevels(a.include), defName, (n) => self.getAssociations(n))};
+  }
   // F4. An eagerly-loaded relationship is fetched by *this* query, so its own
   // resolver never gets a filter in edgeways — the include plan is the only
   // place its model's scope can be applied.
@@ -368,6 +394,13 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   if (scopedInclude !== a.include) {
     a = {...a, include: scopedInclude};
   }
+  // After the scope pass, so a required link's target is already scoped: the
+  // through-mode descriptors become a key filter on this query.
+  const throughFiltered = await applyThroughRequired(self, defName, a, context, selection);
+  if (throughFiltered === false) {
+    return { total: 0, models: [] };
+  }
+  a = throughFiltered;
   a = expandComputedOrder(self, defName, a, {context, info: selection?.raw});
   // Row-level scope, merged while the filter is still in the caller's
   // vocabulary. That is also what gives the count the same filter, since

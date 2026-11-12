@@ -382,7 +382,7 @@ describe("nested verbs — hasMany", () => {
     const res = await graphql({schema, source: `mutation { models {
       Author(select: [{where: {name: {eq: "a1"}}, input: {
         posts: {select: [{where: {title: {eq: "p1"}}, input: {
-          tags: {add: [{where: {name: {eq: "t1"}}}]}
+          tags: {add: [{name: {eq: "t1"}}]}
         }}]}
       }}]) { id }
     } }`});
@@ -404,7 +404,7 @@ describe("nested verbs — belongsToMany", () => {
     const {Post, Tag, PostTag} = db.models;
     await Post.create({title: "p1"});
     await Tag.create({name: "t1"});
-    const schema = await createSchema(db, schemaOpts);
+    const schema = await createSchema(db, {}); // PostTag visible: through mode
 
     const res = await graphql({schema, source: `mutation { models {
       Post(update: {where: {title: {eq: "p1"}}, input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {sortOrder: 5, label: "first"}}]}}}) {
@@ -444,7 +444,7 @@ describe("nested verbs — belongsToMany", () => {
       Tag.create({name: "t1"}), Tag.create({name: "t2"}), Tag.create({name: "t3"}),
     ]);
     await post.addTags([t1, t2]);
-    const schema = await createSchema(db, schemaOpts);
+    const schema = await createSchema(db, {}); // PostTag visible: through mode
 
     const res = await graphql({schema, source: `mutation { models {
       Post(update: {where: {title: {eq: "p1"}}, input: {tags: {set: [{where: {name: {eq: "t3"}}, through: {sortOrder: 1}}]}}}) {
@@ -492,7 +492,7 @@ describe("nested verbs — depth 2", () => {
     const res = await graphql({schema, source: `mutation { models {
       Author(update: {where: {name: {eq: "a1"}}, input: {
         posts: {update: {where: {title: {eq: "p1"}}, input: {
-          tags: {add: [{where: {name: {eq: "t1"}}}]}
+          tags: {add: [{name: {eq: "t1"}}]}
         }}}
       }}) { id }
     } }`});
@@ -510,7 +510,7 @@ describe("nested verbs — depth 2", () => {
     const schema = await createSchema(db, schemaOpts);
 
     const res = await graphql({schema, source: `mutation { models {
-      Author(create: {name: "a1", posts: {create: {title: "p1", tags: {add: [{where: {name: {eq: "t1"}}}, {where: {name: {eq: "t2"}}}]}}}}) {
+      Author(create: {name: "a1", posts: {create: {title: "p1", tags: {add: [{name: {eq: "t1"}}, {name: {eq: "t2"}}]}}}}) {
         id posts { edges { node { title } } }
       }
     } }`});

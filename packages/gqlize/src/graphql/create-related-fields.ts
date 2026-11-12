@@ -1,6 +1,6 @@
-import createListObject from "./create-list-object";
+import createListObject, { type ListObjectExtras } from "./create-list-object";
 import {capitalize} from "@azerothian/utilize/utils/word";
-import { deprecationFor, isRelationshipAllowed } from "@azerothian/utilize";
+import { deprecationFor, isRelationshipAllowed, isThroughMode } from "@azerothian/utilize";
 import { SchemaCache, GqlFieldMap, GqlizeOptions, Definition, Association } from '../types';
 import GQLManager from '../manager';
 import { GraphQLBoolean, type GraphQLOutputType } from "graphql";
@@ -102,8 +102,43 @@ export default function createRelatedFieldsFunc(
   };
 }
 
+/**
+ * A through-mode `belongsToMany`'s additions to its connection: the join row on
+ * each edge (`through`, the join model's own type) and `throughWhere` /
+ * `throughOrderBy` on the field. `undefined` for every other relationship, and
+ * for one whose join model the permission bag hides or that has no type.
+ */
+function throughExtras(instance: GQLManager, schemaCache: SchemaCache, relationship: Association, options: GqlizeOptions): ListObjectExtras | undefined {
+  if (!isThroughMode(options.permission, relationship)) {
+    return undefined;
+  }
+  const joinName = relationship.through as string;
+  const joinType = schemaCache.types[joinName];
+  if (!joinType) {
+    return undefined;
+  }
+  const filter = instance.getFilterGraphQLType(joinName);
+  const orderBy = instance.getOrderByGraphQLType(joinName);
+  return {
+    edgeFields: () => ({
+      through: {
+        type: joinType,
+        description: `The ${joinName} row behind this link`,
+      },
+    }),
+    args: {
+      ...(filter ? {throughWhere: {type: filter, description: `Only links whose ${joinName} row matches`}} : {}),
+      ...(orderBy ? {throughOrderBy: {type: orderBy, description: `Order the links by ${joinName} columns, before \`orderBy\``}} : {}),
+    },
+  };
+}
+
 function createManyObject(instance: GQLManager, schemaCache: SchemaCache, defName: string, targetDef: Definition, targetObject: GraphQLOutputType, prefix: string, relationship: Association, comment: string, options: GqlizeOptions) {
   if(targetDef?.name) {
+    // The edge of a through-mode relationship carries this parent's join model,
+    // so its connection cannot be the one other parents of the same target
+    // share by name: it is named after the parent too.
+    const extras = throughExtras(instance, schemaCache, relationship, options);
     // The association is looked up on the *parent* (`defName`) while the rows
     // themselves belong to the target — hence both names in the descriptor.
     return createListObject(instance, schemaCache, targetDef.name, targetObject, {
@@ -111,6 +146,6 @@ function createManyObject(instance: GQLManager, schemaCache: SchemaCache, defNam
       defName: targetDef.name,
       parentDefName: defName,
       relName: relationship.name,
-    }, prefix, `${relationship.associationType}${capitalize(relationship.name)}`, undefined, comment, options);
+    }, extras ? defName : prefix, `${relationship.associationType}${capitalize(relationship.name)}`, undefined, comment, options, extras);
   }
 }

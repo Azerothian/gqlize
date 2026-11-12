@@ -1,6 +1,7 @@
 import { isAllowed, isModelAllowed } from "@azerothian/utilize";
 import { definitionMethods, mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import type { Definition, Permission, PermissionContext } from "@azerothian/utilize";
+import { ThroughInputError } from "@azerothian/ormize";
 import type { Ormize } from "@azerothian/ormize";
 import { TemporalizeRegistry } from "./registry";
 import type { SchemaSet } from "./registry";
@@ -89,7 +90,18 @@ export function createActivities(
       fail(ErrorType.UnknownModel, `temporalize: unknown or not permitted model '${name}'`);
     }
     const call: Call = { context, permission, schemas: registry.schemas(permission) };
-    const body = () => fn(call);
+    // A `through` entry the permission bag does not offer is a caller error,
+    // like every other guard failure here: non-retryable, typed Forbidden.
+    const body = async () => {
+      try {
+        return await fn(call);
+      } catch (err) {
+        if (err instanceof ThroughInputError) {
+          fail(ErrorType.Forbidden, `temporalize: ${err.message}`);
+        }
+        throw err;
+      }
+    };
     return orm.runWithContext(context, () => {
       // Mutating activities may issue several engine calls (load-then-mutate for
       // instance methods); one coordinator makes them commit or roll back together.
@@ -199,7 +211,7 @@ export function createActivities(
       invoke(name, req, true, async (call) => {
         assertMutable(call, name, "create");
         const input = validate ? validateInput(call.schemas, name, "create", req.input) : req.input;
-        const rows = await orm.processCreate(name, null, { input }, call.context);
+        const rows = await orm.processCreate(name, null, { input }, call.context, { permission: call.permission });
         return present(call.schemas, name, rows);
       });
 
@@ -210,7 +222,7 @@ export function createActivities(
         assertFilterAllowed(call.permission, name, req.where, orm.getDefinition(name));
         assertPagination(req.limit, undefined);
         const input = validate ? validateInput(call.schemas, name, "update", req.input) : req.input;
-        const rows = await orm.processUpdate(name, null, { input, where: req.where || {}, limit: req.limit }, call.context);
+        const rows = await orm.processUpdate(name, null, { input, where: req.where || {}, limit: req.limit }, call.context, { permission: call.permission });
         return present(call.schemas, name, rows);
       });
 
@@ -237,7 +249,10 @@ export function createActivities(
           name,
           null,
           { input: req.input, where: req.where || {}, limit: req.limit },
-          call.context
+          call.context,
+          // The engine reads the bag for what depends on it inside `input`:
+          // a belongsToMany's add/set entry shape and its `through` columns.
+          { permission: call.permission }
         );
         return present(call.schemas, name, rows);
       });

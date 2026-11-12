@@ -191,6 +191,14 @@ export type Definition = {
   /** Field names excluded from every generated type. */
   ignoreFields?: string[];
   /**
+   * Set by ormize on a join model it created itself for a cross-adapter
+   * `belongsToMany` that declared no registered `through` model. Not for
+   * authors. Such a model exists only to hold links, so no projection
+   * (GraphQL, REST, Zod, Temporal) exposes it: a route that wrote its rows
+   * directly would bypass the relationship verbs and the join-key guard.
+   */
+  generated?: boolean;
+  /**
    * Deprecates the model as a whole: the root query list field and the root
    * mutation field for this model are both generated `@deprecated` with this
    * reason. GraphQL cannot deprecate an object type itself, so the mark lands

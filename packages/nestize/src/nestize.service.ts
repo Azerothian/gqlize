@@ -15,7 +15,8 @@ import {
 } from "@azerothian/utilize";
 import * as guards from "@azerothian/utilize/guards";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
-import type { AdapterWhere, Association, Fail, GuardFailure } from "@azerothian/utilize";
+import type { AdapterWhere, Association, Fail, GuardFailure, Selection } from "@azerothian/utilize";
+import { ThroughInputError } from "@azerothian/ormize";
 import type { MutationInputTree, Ormize } from "@azerothian/ormize";
 import { NestizeSchemaRegistry } from "./schema-registry";
 import {
@@ -167,6 +168,30 @@ export class NestizeService {
     return models[0] as PlainRow;
   }
 
+  /**
+   * What every write hands the engine: this module's permission bag. The
+   * relationship and `select` routes pass their body through unvalidated, so
+   * the engine applies the bag to what depends on it — the shape of a
+   * `belongsToMany` `add`/`set` entry and the columns a `through` payload may
+   * write. Built per call: `permission` is fixed, but a getter keeps it in
+   * one place.
+   */
+  private get selection(): Selection {
+    return { permission: this.permission };
+  }
+
+  /** Run an engine write, answering a refused `through` entry with 403 rather than 500. */
+  private async write<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof ThroughInputError) {
+        throw new ForbiddenException(err.message);
+      }
+      throw err;
+    }
+  }
+
   private relationOrThrow(name: string, relation: string): Association {
     if (this.options.includeRelations === false) {
       throw new NotFoundException(`Unknown relation '${relation}'`);
@@ -210,7 +235,7 @@ export class NestizeService {
     }
     const schema = this.registry.create(name);
     const input = schema ? schema.parse(body) : body;
-    const results = await this.orm.processCreate(name, null, { input }, { req });
+    const results = await this.write(() => this.orm.processCreate(name, null, { input }, { req }, this.selection));
     // `processCreate` always returns a list; a single-row create is unwrapped so
     // the REST response is the resource itself rather than a one-element array.
     return this.presentOne(name, results);
@@ -228,7 +253,7 @@ export class NestizeService {
     this.assertFilterAllowed(name, where);
     this.assertScopedMutation(where, query?.all === "true" || query?.all === true);
     const { limit } = parseListQuery(query);
-    const results = await this.orm.processUpdate(name, null, { input, where, limit }, { req });
+    const results = await this.write(() => this.orm.processUpdate(name, null, { input, where, limit }, { req }, this.selection));
     return this.present(name, results);
   }
 
@@ -260,7 +285,7 @@ export class NestizeService {
       }
       this.assertScopedMutation(where, body?.all === true);
     }
-    const found = await this.orm.processSelect(name, null, { input, where, limit }, { req });
+    const found = await this.write(() => this.orm.processSelect(name, null, { input, where, limit }, { req }, this.selection));
     return { rows: this.present(name, found) };
   }
 
@@ -289,12 +314,13 @@ export class NestizeService {
     }
     const pk = this.pkName(name);
     const where = { [pk]: { eq: this.coerceId(id) } };
-    const results = await this.orm.processUpdate(
+    const results = await this.write(() => this.orm.processUpdate(
       name,
       null,
       { input: { [relation]: body }, where, limit: 1 },
-      { req }
-    );
+      { req },
+      this.selection,
+    ));
     return this.present(name, results);
   }
 
@@ -319,7 +345,8 @@ export class NestizeService {
       name,
       null,
       { input: { [relation]: subOp }, where, limit: 1 },
-      { req }
+      { req },
+      this.selection,
     );
     return this.present(name, results);
   }
