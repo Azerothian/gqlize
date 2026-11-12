@@ -138,6 +138,19 @@ describe("csvImport", () => {
     ]);
   });
 
+  it("links a through-mode belongsToMany by label, its join columns in the same entry", async() => {
+    // PostTag visible: `tags.@ref` fills the `where` of a `{ where, through }`
+    // add entry, and `tags.add.through.sortOrder` the `through` beside it.
+    const {schema, models} = await build({model: () => true});
+    await imported(schema, [
+      {model: "Post", operation: "create", file: "title,tags.@ref,tags.add.through.sortOrder\nHello,t1|t2,4\n"},
+      TAGS,
+    ]);
+    expect((await posts(schema))[0].tags).toEqual(["blue", "red"]);
+    const joins = await models.PostTag.findAll();
+    expect(joins.map((j) => j.get({plain: true}).sortOrder)).toEqual([4, 4]);
+  });
+
   it("fills a foreign key or a verb's filter from a reference", async() => {
     const {schema} = await build();
     await imported(schema, [

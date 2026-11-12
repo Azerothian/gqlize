@@ -99,16 +99,19 @@ order: lint needs a program that compiles.
   must agree with the encoder in `create-basic-fields.ts`. Otherwise a key decodes on the way in but isn't
   encoded on the way out.
 - **Relationship verbs.** The eight verbs (`create, update, add, set, remove, delete, restore, select`)
-  are declared twice: in `gqlize/src/graphql/create-mutation-input.ts` and `ormize/src/relationship-mutations.ts`.
-  Keep both in the same order and in sync.
+  are declared in `gqlize/src/graphql/create-mutation-input.ts`, `ormize/src/relationship-mutations.ts`
+  and nestize's REST body check (`nestize/src/relationship-input.ts`, typed by utilize's `RelationshipVerb`).
+  Keep them in the same order and in sync.
 - **belongsToMany `through`.** Whether `add`/`set` entries are `{ where, through }` or bare filters
   is decided by `Association.throughModel` (set in `Ormize.getAssociations`) plus `isThroughMode`
   (`utilize/src/gate.ts`) under the caller's permission bag. The GraphQL builder
   (`create-mutation-input.ts`) and the engine (`splitLinkEntry` in
   `ormize/src/relationship-mutations.ts`) both read them; a projection that calls the engine must
   pass its bag as `Selection.permission` (gqlize's `buildPermission`, set by the live build *and*
-  the materializer) or the engine will expect a different entry shape than the schema offered.
-  Don't decide it locally. A join model with `generated: true` stays out of every projection.
+  the materializer; nestize's `selection`; CSV uploads and imports included) or the engine will
+  expect a different entry shape than the schema offered. Don't decide it locally: nestize's
+  `checkInputTree` reads `isThroughMode` only to find which filter to check, and leaves a
+  wrong-shaped entry and every `through` key for the engine to refuse. A join model with `generated: true` stays out of every projection.
   Reads of a registered join model's relationship go through `engine/through-reads.ts` on every
   adapter (keyed on `throughModel` alone, so the join model's read scope always hides links); never
   let one reach an adapter's JOIN. The include builder plans it only as a `required` filter, which

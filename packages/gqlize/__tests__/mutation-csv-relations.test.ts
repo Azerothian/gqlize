@@ -127,11 +127,41 @@ describe("csv mutations: relationship headers", () => {
     for (const name of ["red", "green", "blue"]) {
       await models.Tag.create({name});
     }
-    await uploaded(schema, "createCsv", "title,tags.add.name[in],tags.add.through\np1,red|blue,\"{\"\"sortOrder\"\":3}\"\n");
+    // PostTag is hidden here, so `tags` is a plain many-to-many: the add
+    // entry is a bare filter and there is no `through` to reach.
+    await uploaded(schema, "createCsv", "title,tags.add.name[in]\np1,red|blue\n");
+    const [p1] = await posts(schema);
+    expect(p1.tags.map((t) => t.name)).toEqual(["blue", "red"]);
+    expect(await models.PostTag.findAll()).toHaveLength(2);
+    expect(await headerError(schema, "createCsv", "title,tags.add.name,tags.add.through.sortOrder\np2,red,3\n"))
+      .toMatchObject({code: "CSV_HEADER", column: "tags.add.through.sortOrder"});
+  });
+
+  it("writes join-row columns through tags.add.through.<column> in through mode", async() => {
+    // PostTag visible: `{ where, through }` entries, `through` typed by PostTag.
+    const {schema, models} = await build({model: () => true});
+    for (const name of ["red", "green", "blue"]) {
+      await models.Tag.create({name});
+    }
+    await uploaded(schema, "createCsv", "title,tags.add.name[in],tags.add.through.sortOrder\np1,red|blue,3\n");
     const [p1] = await posts(schema);
     expect(p1.tags.map((t) => t.name)).toEqual(["blue", "red"]);
     const joins = await models.PostTag.findAll();
     expect(joins.map((j) => j.get({plain: true}).sortOrder)).toEqual([3, 3]);
+    // The join keys are no `through` field, so a CSV can't point a link elsewhere.
+    expect(await headerError(schema, "createCsv", "title,tags.add.name,tags.add.through.tagId\np2,red,1\n"))
+      .toMatchObject({code: "CSV_HEADER"});
+  });
+
+  it("checks through-mode join columns against the join model's mutationCreateInput", async() => {
+    const {schema, models} = await build({
+      model: () => true,
+      mutationCreateInput: (model: string, field: string) => !(model === "PostTag" && field === "sortOrder"),
+    });
+    await models.Tag.create({name: "red"});
+    expect(await headerError(schema, "createCsv", "title,tags.add.name,tags.add.through.sortOrder\np1,red,3\n"))
+      .toMatchObject({code: "CSV_HEADER"});
+    expect(await models.PostTag.findAll()).toEqual([]);
   });
 
   it("applies two operators on one field as one filter", async() => {

@@ -292,7 +292,7 @@ the where type for match columns, with the leading `where.` removed):
    `[n]` picks the entry (default `0`).
 2. **An implicit level** is entered when the segment is not a field of the current type:
    - the entry's `input` (on `update` / `select` entries), when that type has the field;
-   - otherwise the entry's `where` (on belongsToMany `add` / `set` entries), when that type has it.
+   - otherwise the entry's `where` (on the `{ where, through }` `add` / `set` entries of a belongsToMany in through mode), when that type has it.
 3. **`where` on a filter.** A `where` segment on a type that is already a filter is skipped, so
    `author.set.where.name` ≡ `author.set.name`.
 4. **The last segment**:

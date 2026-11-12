@@ -327,7 +327,11 @@ Some things that make headers easier to write:
 - **`where` is optional where it carries no choice.** `author.set.where.name` and `author.set.name`
   are the same header. On an `update` or `select`, `where.` picks the rows and a bare field is a
   value to write, so you never spell out `input`. On a many-to-many `add`/`set` entry, a bare field
-  is its filter, and `tags.add.through` is the join-row data (a JSON cell).
+  is its filter. When the relationship is in through mode (its join model is a registered
+  definition the permissions let the caller see), `tags.add.through.<column>` writes a join-row
+  column, one cell per column, taking only the columns the `<Model><Rel>ThroughInput` type offers
+  (never the join keys). A plain many-to-many has no `through`, so such a header is a
+  `CSV_HEADER` error.
 - **Columns under one verb build one entry.** `tags.add.name[startsWith]` and `tags.add.name[ne]`
   together make one filter, `{ name: { startsWith, ne } }`, not two adds.
 - **`[n]` starts another entry.** `comments.create.body` and `comments.create[1].body` create two
