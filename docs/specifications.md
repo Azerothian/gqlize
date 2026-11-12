@@ -1440,10 +1440,14 @@ each with its own subpath export:
 ## 11. Build, Test & Tooling
 
 - **Orchestration:** Turborepo + pnpm. Root scripts: `build` (`turbo run build`), `test`
-  (`turbo run test`), `typecheck` (`tsc -b && turbo run typecheck`), `watch`.
+  (`turbo run test`), `test:packaging` (native `node:test` over the built `publish/` dirs), `typecheck` (`tsc -b && turbo run typecheck`), `watch`.
 - **Compilation:** **SWC** emits two module formats per package into a `publish/` dir —
   `import` → ESM (extensions fixed by each package's `scripts/fix-esm-extensions.ts`),
-  `require` → CJS. Type declarations via `tsc`. A `bun` export condition serves the raw
+  `require` → CJS. A `module-sync` condition, listed before both, sends Node's `require()` and
+  `import` to the ESM file, so a process loads each module once (two copies would mean two
+  `GQLTDate` scalars in one schema, #82). `require` → CJS remains for tools that don't know
+  `module-sync`. `pnpm test:packaging` checks the built manifests and loads them both ways.
+  Type declarations via `tsc`. A `bun` export condition serves the raw
   `.ts` source so Bun can run source directly. Each package's `scripts/prepare-package.ts`
   generates the per-file `exports` map and rewrites `workspace:*` ranges at publish time.
 - **Tests:** **Jest** with `@swc/jest`. Each package's `jest.config.js` uses a
@@ -1483,8 +1487,9 @@ each with its own subpath export:
   the check exists to move forward.
 - **Runtime:** Node.js ≥ 24.
 - **Binary:** `@azerothian/gqlize` ships a `gqlize` command. `scripts/prepare-package.ts` sets
-  `bin: { gqlize: "./cjs/cli/index.js" }` — the CJS build, because it runs on every supported Node
-  without an `exports`/extension dance. SWC preserves the leading `#!/usr/bin/env node` verbatim, so
+  `bin: { gqlize: "./lib/cli/index.mjs" }` — the ESM build, the same copy of gqlize that a config
+  importing `@azerothian/gqlize` resolves to through `module-sync`. Running the CLI from `cjs/`
+  would give it a second copy of module state, such as the build registry `gqlize check` reads. SWC preserves the leading `#!/usr/bin/env node` verbatim, so
   no post-processing step is needed.
 - **Publishing:** per-package `pnpm build` → `publish/` → `package:npm` / `package:yalc`.
 - **CI:** `.github/workflows/` — `ci.yml` (Install → Typecheck → Lint → Build → Test → **Schema

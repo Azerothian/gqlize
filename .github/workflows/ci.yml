@@ -62,6 +62,13 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Jest maps every workspace import to src/, so it never sees the published
+      # `exports` conditions. This loads the built publish/ dirs through Node's
+      # own resolver, by require() and import(), and checks they share one
+      # instance of each export (#82).
+      - name: Packaging
+        run: pnpm test:packaging
+
       # Schema drift, and the DB-free-generation gate in one. Each example's
       # `orm()` never connects (see its `src/orm.ts`), and this job has no SQL
       # service — so a change that reintroduces a connection on the schema-build
