@@ -6,7 +6,8 @@ import { globalKeyTargets } from "@azerothian/utilize/utils/global-keys";
 import { GraphQLResolveInfo } from "graphql";
 import type { FieldNode } from "graphql";
 import logger from "@azerothian/utilize/utils/logger";
-import buildIncludeFromSelection, { mergeIncludeMaps, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
+import buildIncludeFromSelection, { mergeIncludeMaps, normaliseExplicitInclude, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
+import { toIncludePlan } from "@azerothian/utilize/utils/include-plan";
 import { methodOptionHooks, methodProjection, queryInstanceMethods, type MethodSelection } from "@azerothian/utilize/exposed-methods";
 import { getArgumentValues, type GraphQLObjectType } from "graphql";
 import type { CsvImportRequest, CsvOperation, CsvRequest, MutationFilter, MutationInputTree } from "@azerothian/ormize";
@@ -311,9 +312,13 @@ export default class GqlizeBinding {
             astInclude = adapter.replaceIdInInclude(astInclude, defName, info.variableValues, {codec: this.idCodec});
           }
           // `include` is one of the open keys on the args bag — see {@link FindAllArgs}.
-          const explicit = a.include as IncludeMap[] | undefined;
+          // Normalised first: an `includeIsList = false` adapter's argument is
+          // one object, and reading `[0]` off it merged against `{}`, silently
+          // dropping what the client asked for (#68). Every level is folded in,
+          // not just the first.
+          const explicit = toIncludePlan(a.include);
           if (astInclude && explicit) {
-            a.include = [mergeIncludeMaps(explicit[0] || {}, astInclude[0] || {})];
+            a.include = [mergeIncludeMaps(normaliseExplicitInclude(explicit), normaliseExplicitInclude(astInclude))];
           } else if (astInclude) {
             a.include = astInclude;
           }
@@ -327,10 +332,9 @@ export default class GqlizeBinding {
       // the definition's author, not an inference from the selection set.
       const methodInclude = this.normalizeDeclaredInclude(defName, declared.include);
       if (methodInclude) {
-        const existing = a.include as IncludeMap[] | undefined;
-        a.include = [mergeIncludeMaps(existing?.[0] || {}, methodInclude)];
+        a.include = [mergeIncludeMaps(normaliseExplicitInclude(toIncludePlan(a.include)), methodInclude)];
       }
-      selection.include = a.include as IncludeMap[] | undefined;
+      selection.include = toIncludePlan(a.include);
     }
     if (methods.length > 0) {
       const definition = this.getDefinition(defName);

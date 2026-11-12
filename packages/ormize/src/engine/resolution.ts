@@ -4,6 +4,7 @@
 // Free functions over explicit host interfaces (see `ResolutionHost`).
 
 import { whereOperatorsFor, expandOrderBy } from "@azerothian/utilize/exposed-methods";
+import { toIncludePlan } from "@azerothian/utilize/utils/include-plan";
 import { clampPageSize } from "@azerothian/utilize/utils/page-size";
 import { applyScopeWhere } from "../scope";
 import { scopeIncludePlan } from "../scope";
@@ -344,6 +345,12 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   // consumes the rewritten form is handed `a` explicitly, so nothing needs the
   // caller's object to change underneath it.
   let a = args;
+  // The plan in the one shape everything below reads: a list of levels. An
+  // `includeIsList = false` adapter's `include` argument is one object (#68).
+  const include = toIncludePlan(a.include);
+  if (include !== a.include) {
+    a = {...a, include};
+  }
   const selectedFields = selection?.fields;
   // The eager-include plan is built by the caller (gqlize, from the GraphQL
   // selection set) and passed via `selection.include`; apply it when the args

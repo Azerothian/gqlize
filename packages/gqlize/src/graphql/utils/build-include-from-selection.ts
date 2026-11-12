@@ -10,6 +10,7 @@ import type { AdapterWhere, Association, CursorCodec, DeletedFilter, GqlizeAdapt
 // `processListArgsToOptions`, so without it `orders(first: 10000000)` on a
 // nested connection is an unbounded per-parent fetch (DoS / amplification).
 import {clampPageSize, DEFAULT_PAGE_SIZE} from "@azerothian/utilize/utils/page-size";
+import { toIncludePlan } from "@azerothian/utilize/utils/include-plan";
 
 /**
  * The arguments of a relationship field, resolved against the request's
@@ -177,10 +178,10 @@ function mergeIncludeDescriptors(a: IncludeDescriptor, b: IncludeDescriptor): In
     where: mergeWhere(a.where, b.where),
     orderBy: b.orderBy || a.orderBy,
   };
-  const childA = (a.include && a.include[0]) || undefined;
-  const childB = (b.include && b.include[0]) || undefined;
-  if (childA || childB) {
-    merged.include = [mergeIncludeMaps(childA, childB)];
+  // Every nested level is folded in, not just the first, and a single-object
+  // `include` (an `includeIsList = false` adapter's) counts as one level (#68).
+  if (a.include || b.include) {
+    merged.include = [mergeIncludeMaps(normaliseExplicitInclude(toIncludePlan(a.include)), normaliseExplicitInclude(toIncludePlan(b.include)))];
   }
   return merged;
 }
