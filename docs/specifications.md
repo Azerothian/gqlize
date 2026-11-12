@@ -873,7 +873,16 @@ the query through the adapter. Key properties:
 - **Merge, not override.** The selection-derived tree and any explicit `include` args (parent
   level and nested) are merged by relation name and path (`where` → AND, `required` → OR,
   orderBy/pagination precedence) — a parent `include` and a nested `include` for the same
-  section combine rather than clobber each other.
+  section combine rather than clobber each other. Every element of a list-shaped `include` merges,
+  not only the first.
+- **One plan shape.** The `include` argument is a list on an adapter with `includeIsList` and a
+  single object on one without (Valkey). The engine normalises either, at every depth, into
+  `IncludeMap[]` of complete descriptors (`completeIncludePlan`,
+  `packages/utilize/src/utils/include-plan.ts`): `target` and `associationType` are read off the
+  live association, since a client-written descriptor has neither, and a through-mode
+  `belongsToMany` gets `through` so it is never JOINed. This runs where the plan enters
+  `resolveFindAll` and the per-parent `resolveManyRelationship`, before scoping. Adapters are only
+  ever handed `IncludeMap[]`; `includeIsList` decides the argument's GraphQL type and nothing else.
 - **Adapter-aware.** Only relationships whose target is on the **same adapter** as the parent
   are folded into the parent query. Cross-adapter relationships (a different adapter — no shared
   database to JOIN) are left to their own resolvers, which run them as separate root queries.

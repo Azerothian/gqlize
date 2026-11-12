@@ -166,6 +166,7 @@ describe("valkey belongsToMany through — reads", () => {
     await addWithThrough(orm, "mine", "t1", { sortOrder: 2 });
     await addWithThrough(orm, "mine", "t2", { sortOrder: 1 });
     await addWithThrough(orm, "victim", "t2", { sortOrder: 5 });
+    await createOne(orm, "Post", { title: "lonely" });
     return createSchema(orm);
   }
   const query = async (schema: Awaited<ReturnType<typeof linked>>, source: string) => {
@@ -190,5 +191,11 @@ describe("valkey belongsToMany through — reads", () => {
     const data = await query(schema, `{ models { Post { edges { node { title
       tags(required: true, throughWhere: {sortOrder: {eq: 5}}) { edges { node { name } } } } } } } }`);
     expect(data.models.Post.edges.map((e: { node: { title: string } }) => e.node.title)).toEqual(["victim"]);
+  });
+
+  it("required through the single-object include argument filters by links (#68)", async () => {
+    const schema = await linked("btm-r3");
+    const data = await query(schema, `{ models { Post(orderBy: titleASC, include: {tags: {required: true}}) { edges { node { title } } } } }`);
+    expect(data.models.Post.edges.map((e: { node: { title: string } }) => e.node.title)).toEqual(["mine", "victim"]);
   });
 });

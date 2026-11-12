@@ -29,6 +29,7 @@ cleanly — that section is where working code breaks.
    - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
    - [Multi-row mutations return every affected row](#multi-row-mutations-return-every-affected-row)
    - [`belongsToMany` `add`/`set` take bare filters; `through` needs a registered join model](#belongstomany-addset-take-bare-filters-through-needs-a-registered-join-model)
+   - [Every element of an explicit `include` is applied](#every-element-of-an-explicit-include-is-applied)
    - [Adapters agree on enum type names and enum value names](#adapters-agree-on-enum-type-names-and-enum-value-names)
    - [`field: String` works on every adapter](#field-string-works-on-every-adapter)
    - [`OrderEntry` in temporalize is now `SortEntry`](#orderentry-in-temporalize-is-now-sortentry)
@@ -793,6 +794,13 @@ caller may not filter on, which is a way to read it.
 A definition's own `whereOperators` keep taking whatever value their handler reads. The lists are
 exported from `@azerothian/utilize` (`FILTER_VALUE_OPERATORS`, `FILTER_LIST_OPERATORS`,
 `FILTER_REGEX_OPERATORS`).
+
+### Every element of an explicit `include` is applied
+
+A list-shaped `include` argument used to merge only its first element with the selection's plan;
+the rest were dropped without an error. Every element now merges. On Valkey, whose `include`
+argument is a single object, any query that supplied it failed with `include is not iterable`
+(#68); it now works, and a through-mode `belongsToMany` in it filters parents with `required`.
 
 ### Adapters agree on enum type names and enum value names
 

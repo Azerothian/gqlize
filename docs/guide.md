@@ -823,7 +823,8 @@ Post { edges { node { title author(required: true) { name } } } }
 ```
 
 You can also drive eager loading explicitly with the `include` argument (fields: `required`,
-`separate`, `where`, `orderBy`, and nested `include`). It merges with the selection:
+`separate`, `where`, `orderBy`, and nested `include`). It merges with the selection. On Sequelize
+it is a list of objects; on Valkey a single object (`include: { comments: { required: true } }`):
 
 ```graphql
 Post(include: { comments: { required: true, where: { body: { eq: "hi" } } } }) {
