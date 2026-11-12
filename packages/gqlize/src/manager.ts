@@ -6,7 +6,7 @@ import { globalKeyTargets } from "@azerothian/utilize/utils/global-keys";
 import { GraphQLResolveInfo } from "graphql";
 import type { FieldNode } from "graphql";
 import logger from "@azerothian/utilize/utils/logger";
-import buildIncludeFromSelection, { mergeIncludeMaps, normaliseExplicitInclude, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
+import buildIncludeFromSelection, { mergeIncludeMaps, normaliseExplicitInclude, getChildSelectionSet, flattenFieldNodes, isConnectionCsvSelected, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
 import { methodOptionHooks, methodProjection, queryInstanceMethods, type MethodSelection } from "@azerothian/utilize/exposed-methods";
 import { getArgumentValues, type GraphQLObjectType } from "graphql";
 import type { CsvImportRequest, CsvOperation, CsvRequest, MutationFilter, MutationInputTree } from "@azerothian/ormize";
@@ -267,8 +267,9 @@ export default class GqlizeBinding {
     // Widening here — next to `withCrossAdapterJoinKeys`, which widens for
     // exactly this class of reason — is what makes the declaration mean anything.
     const declared = methods.length > 0 ? methodProjection(this.getDefinition(defName), selectedNames) : {};
-    const fields = declared.fields === "*"
-      ? undefined // opted out of narrowing: load every column
+    const csvExport = !!info && Array.isArray(info.fieldNodes) && isConnectionCsvSelected(info.fieldNodes[0], info);
+    const fields = declared.fields === "*" || csvExport
+      ? undefined // opted out of narrowing, or a CSV export that writes every column: load them all
       : this.withCrossAdapterJoinKeys(defName, declared.fields?.length
         ? [...new Set([...(selectedNames || []), ...declared.fields])]
         : selectedNames);

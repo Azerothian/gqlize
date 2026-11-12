@@ -10,6 +10,7 @@ import {
 import { buildClassMethodResolver, buildInstanceMethodResolver } from "./methods";
 import { buildMutationModelResolver } from "./mutation";
 import { buildCsvImportResolver } from "./csv-import";
+import { buildConnectionCsvResolver } from "./csv-export";
 import { buildContainerResolver } from "./misc";
 import type { BindingContext, FieldBinding } from "./types";
 
@@ -43,6 +44,8 @@ export function buildResolver(
       return buildClassMethodResolver(binding, ctx);
     case "mutationModel":
       return buildMutationModelResolver(binding, ctx);
+    case "connectionCsv":
+      return buildConnectionCsvResolver(binding, ctx) as unknown as GraphQLFieldResolver<AdapterRow, RequestContext>;
     case "csvImport":
       return buildCsvImportResolver(ctx) as GraphQLFieldResolver<AdapterRow, RequestContext>;
     case "container":

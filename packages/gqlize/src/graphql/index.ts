@@ -9,13 +9,14 @@ import {
 import createNodeInterface from "./utils/create-node-interface";
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
-import { PERMISSION_KEYS, isModelAllowed, isMutationAllowed, modelDeprecation, unknownPermissionKeys } from "@azerothian/utilize";
+import { PERMISSION_KEYS, isModelAllowed, isMutationAllowed, isQueryCsvAllowed, modelDeprecation, unknownPermissionKeys } from "@azerothian/utilize";
 import createModelType from "./create-model-type";
 import createListObject from "./create-list-object";
 import createClassMethods from "./create-class-methods";
 import createMutationModel from "./create-mutation-model";
 import createMutationInput, { createMutationInputPlan } from "./create-mutation-input";
 import { csvImportFieldConfig } from "./objects/csv-import";
+import { csvExportFieldConfig } from "./objects/csv-export";
 import createSchemaCache from "./create-schema-cache";
 import { foldVisibleModels } from "./utils/visible-models";
 import pruneModelTypes from "./utils/model-types";
@@ -90,10 +91,18 @@ export function createListObjects(instance: GQLManager, schemaCache: SchemaCache
           return o;
         }
       }
+      // CSV export rides on the root list: the `csv` field formats the page the
+      // connection fetched. Offered where an upload would be (CSV on for the
+      // model), and only if `queryCsv` allows it.
+      const csvExport = instance.csvEnabled(defName) && isQueryCsvAllowed(options.permission, defName);
       const listObject = createListObject(instance, schemaCache, defName, schemaCache.types[defName], {
         source: "findAll",
         defName,
-      }, "", "", undefined, undefined, options);
+      }, "", "", undefined, undefined, options, csvExport ? {
+        connectionFields: () => ({
+          csv: bindField(csvExportFieldConfig(defName), {kind: "connectionCsv", defName}, {instance, options}),
+        }),
+      } : {});
       // GraphQL cannot deprecate an object type, so `definition.deprecated`
       // lands on the fields that lead to the model — this one and the model's
       // mutation field. Copied rather than marked in place: `createListObject`

@@ -88,6 +88,22 @@ type ItemList {
 
   """List of edges for Item"""
   edges: [ItemEdge!]!
+
+  """
+  This page of Item rows as CSV text: a header line of column names, then one line per row. Ids are the same global ids the rows carry, `\N` is NULL, and the file can be uploaded back through `updateCsv`.
+  """
+  csv(
+    """
+    Which of Item's columns to write, in this order. Default: every column the caller may read.
+    """
+    columns: [String!]
+
+    """The field separator, one character. Default `,`."""
+    delimiter: String
+
+    """Whether to write the header line. Default `true`."""
+    header: Boolean
+  ): String!
 }
 
 type PageInfo {
@@ -418,6 +434,22 @@ type TaskList {
 
   """List of edges for Task"""
   edges: [TaskEdge!]!
+
+  """
+  This page of Task rows as CSV text: a header line of column names, then one line per row. Ids are the same global ids the rows carry, `\N` is NULL, and the file can be uploaded back through `updateCsv`.
+  """
+  csv(
+    """
+    Which of Task's columns to write, in this order. Default: every column the caller may read.
+    """
+    columns: [String!]
+
+    """The field separator, one character. Default `,`."""
+    delimiter: String
+
+    """Whether to write the header line. Default `true`."""
+    header: Boolean
+  ): String!
 }
 
 """Task edge"""

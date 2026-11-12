@@ -72,7 +72,17 @@ export function isConnectionRowsSelected(fieldNode: FieldNode | undefined, info:
   if (!fieldNode || !fieldNode.selectionSet) {
     return true;
   }
-  return flattenFieldNodes(fieldNode.selectionSet, info).some((f) => f.name.value === "edges");
+  // `csv` (a root list's export) formats the page's rows, so it needs them too.
+  return flattenFieldNodes(fieldNode.selectionSet, info).some((f) => f.name.value === "edges" || f.name.value === "csv");
+}
+
+/**
+ * Whether a root list connection selects its `csv` export, which writes every
+ * column the caller may read, not just the ones `edges { node }` names — so the
+ * read must not be narrowed to the selected node fields.
+ */
+export function isConnectionCsvSelected(fieldNode: FieldNode | undefined, info: GraphQLResolveInfo): boolean {
+  return !!fieldNode?.selectionSet && flattenFieldNodes(fieldNode.selectionSet, info).some((f) => f.name.value === "csv");
 }
 
 // Memoizes the flattened field list per selection-set AST node. Node identity is

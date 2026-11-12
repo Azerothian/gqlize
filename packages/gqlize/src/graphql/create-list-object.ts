@@ -30,6 +30,8 @@ import { DataSourceDescriptor } from "./resolvers/types";
  */
 export type ListObjectExtras = {
   edgeFields?: () => GraphQLFieldConfigMap<unknown, unknown>;
+  /** Fields on the connection type itself, beside `pageInfo`/`total`/`edges` (a root list's `csv`). */
+  connectionFields?: () => GraphQLFieldConfigMap<unknown, unknown>;
   args?: GraphQLFieldConfigArgumentMap;
 };
 
@@ -80,6 +82,7 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
             })))),
             description: `List of edges for ${name}`,
           },
+          ...(extras.connectionFields ? extras.connectionFields() : {}),
         };
       },
     }),
