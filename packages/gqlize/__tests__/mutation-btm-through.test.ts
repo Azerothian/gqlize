@@ -10,7 +10,7 @@
  */
 import {graphql, GraphQLInputObjectType, type GraphQLSchema} from "graphql";
 import Sequelize from "sequelize";
-import {Ormize as Database} from "@azerothian/ormize";
+import {Ormize as Database, ThroughInputError} from "@azerothian/ormize";
 import {createSchema} from "../src";
 import {registerDialectAdapter} from "./helper/dialect";
 import {describe, it, expect} from "@jest/globals";
@@ -136,12 +136,24 @@ describe("belongsToMany through — writes", () => {
     expect(tagIds).not.toContain(t2.get("id"));
   });
 
-  it("through mode still accepts a bare filter", async () => {
+  it("plain mode by permission: a hidden join model takes bare filters end to end", async () => {
     const db = await build(true);
-    const {mine} = await seed(db);
+    await seed(db);
+    const t2 = await db.models.Tag.create({name: "t2"}) as unknown as Row;
+    const schema = await createSchema(db, {permission: {model: (n: string) => n !== "PostTag"}});
+    const res = await graphql({schema, source: `mutation { models {
+      Post(update: {where: {title: {eq: "mine"}}, input: {tags: {add: [{name: {eq: "t2"}}]}}}) { id }
+    } }`});
+    expect(res.errors).toBeUndefined();
+    expect((await joinRows(db, "PostTag")).map((r) => r.tagId)).toContain(t2.get("id"));
+  });
+
+  it("through mode: the engine refuses a bare filter", async () => {
+    const db = await build(true);
+    await seed(db);
     await db.models.Tag.create({name: "t2"});
-    await db.processUpdate("Post", null, {where: {title: {eq: "mine"}}, input: {tags: {add: [{name: {eq: "t2"}}]}}}, {}, undefined);
-    expect((await joinRows(db, "PostTag")).filter((r) => r.postId === mine.get("id"))).toHaveLength(2);
+    await expect(db.processUpdate("Post", null, {where: {title: {eq: "mine"}}, input: {tags: {add: [{name: {eq: "t2"}}]}}}, {}, undefined))
+      .rejects.toBeInstanceOf(ThroughInputError);
   });
 
   it("plain mode: the engine refuses a { where, through } entry", async () => {
@@ -150,31 +162,81 @@ describe("belongsToMany through — writes", () => {
     await expect(db.processUpdate("Post", null, {
       where: {title: {eq: "mine"}},
       input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {postId: 1}}]}},
-    }, {}, undefined)).rejects.toThrow(/no registered join model/);
+    }, {}, undefined)).rejects.toThrow(/carries no join-row data/);
   });
 
-  it("the engine drops join keys from through on an existing link", async () => {
+  it("plain mode under the caller's bag: a hidden join model refuses the wrapper", async () => {
     const db = await build(true);
-    const {victim, mine, tag} = await seed(db);
-    await db.processUpdate("Post", null, {
+    await seed(db);
+    const permission = {model: (n: string) => n !== "PostTag"};
+    await expect(db.processUpdate("Post", null, {
       where: {title: {eq: "mine"}},
-      input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {postId: victim.get("id"), tagId: 999, sortOrder: 3}}]}},
-    }, {}, undefined);
+      input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {sortOrder: 1}}]}},
+    }, {}, {permission})).rejects.toBeInstanceOf(ThroughInputError);
+  });
+
+  it.each([
+    ["a join key", {postId: 1}],
+    ["the other join key", {tagId: 1}],
+    ["an ignoreFields column", {secret: "x"}],
+    ["an unknown column", {nope: 1}],
+  ])("the engine refuses %s in through and writes nothing", async (_label, through) => {
+    const db = await build(true);
+    const {mine, tag} = await seed(db);
+    await expect(db.processUpdate("Post", null, {
+      where: {title: {eq: "mine"}},
+      input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {...through, sortOrder: 3}}]}},
+    }, {}, undefined)).rejects.toBeInstanceOf(ThroughInputError);
     expect(await joinRows(db, "PostTag")).toEqual([
-      expect.objectContaining({postId: mine.get("id"), tagId: tag.get("id"), sortOrder: 3}),
+      expect.objectContaining({postId: mine.get("id"), tagId: tag.get("id"), sortOrder: null}),
     ]);
   });
 
-  it("the engine drops join keys and ignoreFields from through on a new link", async () => {
+  it("the engine applies the caller's mutationCreateInput to through", async () => {
     const db = await build(true);
-    const {victim} = await seed(db);
-    const t2 = await db.models.Tag.create({name: "t2"}) as unknown as Row;
+    await seed(db);
+    const permission = {mutationCreateInput: (m: string, f: string) => !(m === "PostTag" && f === "label")};
+    await expect(db.processUpdate("Post", null, {
+      where: {title: {eq: "mine"}},
+      input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {label: "x"}}]}},
+    }, {}, {permission})).rejects.toThrow(/'label'/);
     await db.processUpdate("Post", null, {
       where: {title: {eq: "mine"}},
-      input: {tags: {set: [{where: {name: {eq: "t2"}}, through: {postId: victim.get("id"), secret: "x", label: "ok"}}]}},
+      input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {sortOrder: 2}}]}},
+    }, {}, {permission});
+    expect((await joinRows(db, "PostTag"))[0].sortOrder).toBe(2);
+  });
+
+  it("set gives each entry its own through and drops unlisted links", async () => {
+    const db = await build(true);
+    const {mine} = await seed(db);
+    const t2 = await db.models.Tag.create({name: "t2"}) as unknown as Row;
+    const t3 = await db.models.Tag.create({name: "t3"}) as unknown as Row;
+    const schema = await createSchema(db, {});
+    const res = await graphql({schema, source: `mutation { models {
+      Post(update: {where: {title: {eq: "mine"}}, input: {tags: {set: [
+        {where: {name: {eq: "t2"}}, through: {sortOrder: 2, label: "two"}},
+        {where: {name: {eq: "t3"}}, through: {sortOrder: 3}},
+      ]}}}) { id }
+    } }`});
+    expect(res.errors).toBeUndefined();
+    const rows = (await joinRows(db, "PostTag")).filter((r) => r.postId === mine.get("id"));
+    const byTag = Object.fromEntries(rows.map((r) => [r.tagId, r]));
+    expect(Object.keys(byTag).map(Number).sort()).toEqual([t2.get("id"), t3.get("id")].map(Number).sort());
+    expect(byTag[String(t2.get("id"))]).toEqual(expect.objectContaining({sortOrder: 2, label: "two"}));
+    expect(byTag[String(t3.get("id"))]).toEqual(expect.objectContaining({sortOrder: 3, label: null}));
+  });
+
+  it("set without any through keeps the single replace", async () => {
+    const db = await build(true);
+    const {mine} = await seed(db);
+    await db.processUpdate("Post", null, {
+      where: {title: {eq: "mine"}},
+      input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {sortOrder: 9}}]}},
     }, {}, undefined);
-    const rows = await joinRows(db, "PostTag");
-    expect(rows).toEqual([expect.objectContaining({tagId: t2.get("id"), label: "ok", secret: null})]);
-    expect(rows[0].postId).not.toBe(victim.get("id"));
+    await db.processUpdate("Post", null, {where: {title: {eq: "mine"}}, input: {tags: {set: [{where: {name: {eq: "t1"}}}]}}}, {}, undefined);
+    const rows = (await joinRows(db, "PostTag")).filter((r) => r.postId === mine.get("id"));
+    // Sequelize keeps an existing link's columns when `set` passes no values.
+    expect(rows.map((r) => r.sortOrder)).toEqual([9]);
   });
 });

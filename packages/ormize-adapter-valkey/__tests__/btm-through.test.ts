@@ -83,7 +83,7 @@ describe("valkey belongsToMany through", () => {
     const orm = await buildValkey("btm-v1");
     await seed(orm);
     expect(orm.getAssociations("Post").tags.throughModel).toBe(false);
-    await expect(addWithThrough(orm, "mine", "t1", { postId: "x" })).rejects.toThrow(/no registered join model/);
+    await expect(addWithThrough(orm, "mine", "t1", { postId: "x" })).rejects.toThrow(/carries no join-row data/);
   });
 
   it("the adapter writes the join keys after the payload", async () => {
@@ -98,15 +98,29 @@ describe("valkey belongsToMany through", () => {
     expect(rows[0].id).not.toBe("forged");
   });
 
-  it("a registered join model takes through, minus the join keys", async () => {
+  it("a registered join model takes through and refuses a join key", async () => {
     const orm = await buildValkey("btm-v3", true);
     const { victim, mine, tag } = await seed(orm);
     expect(orm.getAssociations("Post").tags.throughModel).toBe(true);
-    await addWithThrough(orm, "mine", "t1", { postId: victim.id, sortOrder: 4 });
-    // Again, on the now-existing link: an update must not move it either.
-    await addWithThrough(orm, "mine", "t1", { postId: victim.id, sortOrder: 5 });
+    await addWithThrough(orm, "mine", "t1", { sortOrder: 4 });
+    // On the now-existing link: a payload naming a join key is refused outright.
+    await expect(addWithThrough(orm, "mine", "t1", { postId: victim.id, sortOrder: 5 })).rejects.toThrow(/may not write 'postId'/);
+    await addWithThrough(orm, "mine", "t1", { sortOrder: 5 });
     const rows = await joinRows(orm, "PostTagV");
     expect(rows.map((r) => [r.postId, r.tagId, Number(r.sortOrder)])).toEqual([[mine.id, tag.id, 5]]);
+  });
+
+  it("set gives each entry its own through", async () => {
+    const orm = await buildValkey("btm-v4", true);
+    const { mine } = await seed(orm);
+    const t2 = await createOne(orm, "Tag", { name: "t2" });
+    await orm.processUpdate("Post", null, { where: { title: { eq: "mine" } }, input: { tags: { set: [
+      { where: { name: { eq: "t1" } }, through: { sortOrder: 1 } },
+      { where: { name: { eq: "t2" } }, through: { sortOrder: 2 } },
+    ] } } }, {}, undefined);
+    const rows = (await joinRows(orm, "PostTagV")).filter((r) => r.postId === mine.id);
+    expect(Object.fromEntries(rows.map((r) => [r.tagId, Number(r.sortOrder)]))[t2.id as string]).toBe(2);
+    expect(rows.map((r) => Number(r.sortOrder)).sort()).toEqual([1, 2]);
   });
 });
 
@@ -115,7 +129,7 @@ describe("cross-adapter generated join model", () => {
     const orm = await buildCross("btm-x1");
     await seed(orm);
     expect(orm.getAssociations("Post").tags.throughModel).toBe(false);
-    await expect(addWithThrough(orm, "mine", "t1", { postId: "x" })).rejects.toThrow(/no registered join model/);
+    await expect(addWithThrough(orm, "mine", "t1", { postId: "x" })).rejects.toThrow(/carries no join-row data/);
   });
 
   it("the cross-adapter accessor writes the join keys after the payload", async () => {

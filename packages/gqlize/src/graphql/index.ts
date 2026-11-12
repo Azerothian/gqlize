@@ -16,7 +16,7 @@ import createClassMethods from "./create-class-methods";
 import createMutationModel from "./create-mutation-model";
 import createMutationInput from "./create-mutation-input";
 import createSchemaCache from "./create-schema-cache";
-import computeVisibleModels from "./utils/visible-models";
+import { foldVisibleModels } from "./utils/visible-models";
 import pruneModelTypes from "./utils/model-types";
 import assertSchemaValid from "./utils/validate-schema";
 import GQLManager from '../manager';
@@ -149,16 +149,11 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   // visible field and fold the answer back into the permission bag as a stricter
   // `model` predicate, so every builder below (and the adapters' include types)
   // sees the same set of models.
-  const visibleModels = computeVisibleModels(instance, definitions, gqlizeOptions);
-  // The fold also keeps generated join models (never visible) out of every
-  // builder, so it runs whenever the visible set is smaller than the defined one.
-  const options: GqlizeOptions = visibleModels.size === Object.keys(definitions).length ? gqlizeOptions : {
-    ...gqlizeOptions,
-    permission: {
-      ...(gqlizeOptions.permission || {}),
-      model: (defName: string) => visibleModels.has(defName),
-    },
-  };
+  // Generated join models are never visible, so they drop out here too.
+  const options: GqlizeOptions = foldVisibleModels(instance, definitions, gqlizeOptions);
+  // The engine reads the same bag to decide each belongsToMany's `add`/`set`
+  // shape and its `through` columns, so it agrees with the inputs built below.
+  instance.buildPermission = options.permission;
 
   const {nodeInterface, nodeField, nodeTypeMapper} = createNodeInterface(instance, options);
   const {extend = {}, root} = options;

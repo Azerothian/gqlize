@@ -103,11 +103,12 @@ order: lint needs a program that compiles.
   Keep both in the same order and in sync.
 - **belongsToMany `through`.** Whether `add`/`set` entries are `{ where, through }` or bare filters
   is decided by `Association.throughModel` (set in `Ormize.getAssociations`) plus `isThroughMode`
-  (`utilize/src/gate.ts`). The GraphQL builder (`create-mutation-input.ts`), the engine
-  (`splitLinkEntry` in `ormize/src/relationship-mutations.ts`) and nestize's
-  `assertThroughAllowed` all read them, so don't decide it locally. The engine must keep stripping
-  join keys and the join row's primary key from `through` on every route. A join model with
-  `generated: true` stays out of every projection.
+  (`utilize/src/gate.ts`) under the caller's permission bag. The GraphQL builder
+  (`create-mutation-input.ts`) and the engine (`splitLinkEntry` in
+  `ormize/src/relationship-mutations.ts`) both read them; a projection that calls the engine must
+  pass its bag as `Selection.permission` (gqlize's `buildPermission`, set by the live build *and*
+  the materializer) or the engine will expect a different entry shape than the schema offered.
+  Don't decide it locally. A join model with `generated: true` stays out of every projection.
 - **Permission keys.** A new key on `Permission` goes in exactly one of `BUILD_TIME_PERMISSION_KEYS` or
   `RESOLUTION_TIME_PERMISSION_KEYS` (`utilize/src/gate.ts`). The typecheck fails if it's missing from
   both or listed in both. Code under `gqlize/src/graphql/*` builds the schema synchronously, so it must

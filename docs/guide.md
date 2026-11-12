@@ -1268,10 +1268,10 @@ Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { name: 
 
 **belongsToMany `through` attributes**: write join-table columns when associating. This needs a
 join model you registered as a definition (here `PostTag`) that the permission bag lets be seen.
-Then `add`/`set` entries become `{ where, through }` (a bare filter is still accepted by the
-engine, but the GraphQL entry type is the wrapper), and `through` is typed by the join model's
-columns (`PostTagsThroughInput`): those its `mutationCreateInput` allows, minus the two join keys,
-every primary/foreign key and `ignoreFields`. Without such a join model (an implicit table, one
+Then `add`/`set` entries are always `{ where, through? }` (a bare filter is refused, over REST
+and Temporal too), and `through` is typed by the join model's columns (`PostTagsThroughInput`):
+those its `mutationCreateInput` allows, minus the two join keys, every primary/foreign key and
+`ignoreFields`. Each `set` entry's `through` applies to the rows that entry matched. Without such a join model (an implicit table, one
 ormize generated, or one hidden by `permission.model`) the relationship is a plain many-to-many:
 entries are bare filters and there is no `through`.
 

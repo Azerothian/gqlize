@@ -38,6 +38,14 @@ export default class GqlizeBinding {
    * engine, and it is constructed once per schema rather than per request.
    */
   options: GqlizeOptions;
+  /**
+   * The permission bag the schema was built with — `options.permission` with
+   * the visible-model fold applied. Set by the schema build (live or
+   * materialized) and handed to the engine on every call as
+   * `Selection.permission`, so the engine's view of each `belongsToMany`'s
+   * input shape matches the one the schema offered.
+   */
+  buildPermission?: Permission;
   constructor(orm: AnyOrmize, options: GqlizeOptions = {}) {
     this.orm = orm;
     this.options = options;
@@ -266,6 +274,7 @@ export default class GqlizeBinding {
         : selectedNames);
     const idTargets = this.globalKeyTargetsFor(defName);
     const selection: Selection = {
+      permission: this.buildPermission ?? this.options.permission,
       raw: info,
       variableValues: info?.variableValues,
       fields,

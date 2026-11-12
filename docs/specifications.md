@@ -664,11 +664,16 @@ accessors (recursion depends on the graphql patch, see §12). The sub-fields per
   join model's columns that pass `isThroughInputField` — its `mutationCreateInput`, minus the two
   join keys, every primary/foreign key (the payload is not run through the id codec) and
   `ignoreFields` — all optional, and is omitted when no column qualifies. The engine
-  (`splitLinkEntry` in `relationship-mutations.ts`) applies the structural half on every route: it
-  drops those keys and runs the rest through `processInputs` on the join model, and it refuses a
-  `{ where, through }` entry on a relationship that is not through mode. Projections that skip
-  GraphQL validation apply the permission half themselves (nestize's relationship and `select`
-  routes). In through mode the engine also accepts a bare filter.
+  (`splitLinkEntry` in `relationship-mutations.ts`) makes the same decisions on every route with
+  the caller's permission bag, which each projection passes as `Selection.permission` (gqlize: the
+  bag its schema was built with, visible-model fold included, via `GqlizeBinding.buildPermission`;
+  nestize and temporalize: the bag for the call; a direct server call passes none and is held to
+  the structural rules only). It refuses, with `ThroughInputError`, a bare filter in through mode,
+  a `{ where, through }` entry outside it, and any `through` key `isThroughInputField` rejects;
+  what passes runs through `processInputs` on the join model. nestize answers the error with 403,
+  temporalize with a non-retryable `Forbidden`. A `set` whose entries carry `through` clears the
+  links and links each entry with its own values (a kept link is rewritten with those values or the
+  column defaults); a `set` with no `through` is one accessor call, as before.
 - **belongsTo / hasOne:** `create`, `update`, `set` (associate an existing record found by a
   where filter → `accessors.set`), `remove` (`Boolean` → disassociate via `set(null)`),
   `delete`, `restore`.

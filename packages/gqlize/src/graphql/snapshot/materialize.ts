@@ -18,6 +18,7 @@ import {
   type GraphQLType,
 } from "graphql";
 
+import { foldVisibleModels } from "../utils/visible-models";
 import GqlizeBinding from "../../manager";
 import type {
   AnyOrmize,
@@ -162,6 +163,9 @@ export async function materializeSchema(
     }
   }
   const instance = new GqlizeBinding(orm, options);
+  // The bag the artifact's inputs were built with, as the live build computes
+  // it — the engine reads it to agree with them (see `foldVisibleModels`).
+  instance.buildPermission = foldVisibleModels(instance, orm.getDefinitions() || {}, options).permission;
   const {extend = {}, root} = options;
   const ledger = snapshot.ledger;
   const registry = createScalarRegistry(options.scalars);

@@ -666,12 +666,18 @@ What this changes:
 - A relationship through an implicit join table, a join model hidden by `permission.model`, or a
   join model ormize generated is a plain many-to-many. Its entries are bare filters and it has no
   `through`. The engine refuses a `{ where, through }` entry there, on every route.
-- An unknown `through` key is a validation error in GraphQL and a 403 from nestize's relationship
-  and `select` routes, instead of being passed to the adapter.
-- On every route, including direct `processUpdate` calls and Temporal activities, the engine drops
-  the join keys and the join row's primary key from `through`. Before, a payload holding them
-  could point a link at a row the caller never named. Sequelize did this when the link already
-  existed; the Valkey adapter and cross-adapter relationships did it for new links too.
+- In through mode a bare filter is refused; outside it, the wrapper is. The engine checks this on
+  every route with the caller's permission bag, so REST and Temporal agree with GraphQL.
+- A `through` key that is not one of those columns is refused — a validation error in GraphQL, a
+  `ThroughInputError` from the engine (403 from nestize, a non-retryable `Forbidden` from
+  temporalize) — instead of being passed to the adapter. That includes the join keys and the join
+  row's primary key, refused on every route including direct `processUpdate` calls. Before, a
+  payload holding them could point a link at a row the caller never named: Sequelize did this when
+  the link already existed, and the Valkey adapter and cross-adapter relationships did it for new
+  links too.
+- A `set` applies each entry's own `through` to the rows that entry matched (it used to apply the
+  last one to all). When any entry carries `through`, links kept from before are rewritten with
+  the given values or the column defaults.
 - The join model ormize generates for a cross-adapter `belongsToMany` with no `through` model is no
   longer exposed. In GraphQL it had its own type and mutations with both join keys writable, and
   nestize, ormize-zod4 and temporalize listed it too. Register the join model yourself if you need
