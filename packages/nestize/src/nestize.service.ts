@@ -12,6 +12,8 @@ import {
   isModelAllowed,
   isMutationAllowed,
   isRelationshipAllowed,
+  isThroughInputField,
+  isThroughMode,
 } from "@azerothian/utilize";
 import * as guards from "@azerothian/utilize/guards";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
@@ -260,6 +262,7 @@ export class NestizeService {
       }
       this.assertScopedMutation(where, body?.all === true);
     }
+    this.assertThroughAllowed(name, input);
     const found = await this.orm.processSelect(name, null, { input, where, limit }, { req });
     return { rows: this.present(name, found) };
   }
@@ -287,6 +290,7 @@ export class NestizeService {
     if (!isMutationAllowed(this.permission, name, "update")) {
       throw new ForbiddenException(`Update not allowed for ${name}`);
     }
+    this.assertThroughAllowed(name, { [relation]: body });
     const pk = this.pkName(name);
     const where = { [pk]: { eq: this.coerceId(id) } };
     const results = await this.orm.processUpdate(
@@ -322,6 +326,62 @@ export class NestizeService {
       { req }
     );
     return this.present(name, results);
+  }
+
+  /**
+   * Refuse a `belongsToMany` `through` payload the permission bag would not let
+   * GraphQL accept, anywhere in a relationship-mutation tree.
+   *
+   * The relationship and `select` routes hand their body to the engine as-is,
+   * unlike create/update, whose bodies the Zod schemas reduce to permitted
+   * columns. The engine strips join keys and primary/foreign keys on every
+   * route, but only a projection holds the permission bag, so the per-column
+   * `mutationCreateInput` check and "the join model is visible at all" are
+   * made here. Walks into nested `create`, `update` and `select` entries, which
+   * apply relationship mutations of their own.
+   */
+  private assertThroughAllowed(name: string, tree: unknown): void {
+    if (!tree || typeof tree !== "object" || Array.isArray(tree)) {
+      return;
+    }
+    const associations = this.orm.getAssociations(name) || {};
+    for (const relName of Object.keys(tree)) {
+      const assoc = associations[relName];
+      const ops = (tree as Record<string, unknown>)[relName];
+      if (!assoc || !ops || typeof ops !== "object") {
+        continue;
+      }
+      const verbs = ops as Record<string, unknown>;
+      const list = (v: unknown): unknown[] => Array.isArray(v) ? v : (v ? [v] : []);
+      for (const verb of ["add", "set"]) {
+        for (const entry of list(verbs[verb])) {
+          const through = entry && typeof entry === "object" ? (entry as Record<string, unknown>).through : undefined;
+          if (through === undefined || through === null) {
+            continue;
+          }
+          if (!isThroughMode(this.permission, assoc)) {
+            throw new ForbiddenException(`'${name}.${relName}' does not accept join-row values`);
+          }
+          const joinName = assoc.through as string;
+          const joinFields = this.orm.getFields(joinName) || {};
+          const joinKeys = [assoc.foreignKey, assoc.otherKey].filter(Boolean) as string[];
+          const ignoreFields = this.orm.getDefinition(joinName)?.ignoreFields;
+          for (const field of Object.keys(through)) {
+            if (!joinFields[field] || !isThroughInputField(this.permission, joinName, field, joinFields[field], joinKeys, ignoreFields)) {
+              throw new ForbiddenException(`Join-row field '${field}' is not writable through '${name}.${relName}'`);
+            }
+          }
+        }
+      }
+      for (const entry of list(verbs.create)) {
+        this.assertThroughAllowed(assoc.target, entry);
+      }
+      for (const verb of ["update", "select"]) {
+        for (const entry of list(verbs[verb])) {
+          this.assertThroughAllowed(assoc.target, (entry as Record<string, unknown> | undefined)?.input);
+        }
+      }
+    }
   }
 
   // --- class / instance methods (`_actions`) ---------------------------------

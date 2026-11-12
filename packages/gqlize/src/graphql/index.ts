@@ -150,6 +150,8 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
   // `model` predicate, so every builder below (and the adapters' include types)
   // sees the same set of models.
   const visibleModels = computeVisibleModels(instance, definitions, gqlizeOptions);
+  // The fold also keeps generated join models (never visible) out of every
+  // builder, so it runs whenever the visible set is smaller than the defined one.
   const options: GqlizeOptions = visibleModels.size === Object.keys(definitions).length ? gqlizeOptions : {
     ...gqlizeOptions,
     permission: {

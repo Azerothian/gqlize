@@ -8,6 +8,7 @@ const base = baseProject('ormize-adapter-valkey');
 const POSTGRES_SUITES = [
   '<rootDir>/__tests__/relations.test.ts',
   '<rootDir>/__tests__/cross-adapter.test.ts',
+  '<rootDir>/__tests__/btm-through.test.ts',
   '<rootDir>/__tests__/adapter-parity.test.ts',
   '<rootDir>/__tests__/model-api.test.ts',
   '<rootDir>/__tests__/ormize.test.ts',

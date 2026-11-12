@@ -48,6 +48,9 @@ export type NativeAssociationInternals = NativeAssociation & {
   targetKey?: string;
   /** The resolved column name behind `identifier`, when they differ. */
   identifierField?: string;
+  /** `belongsToMany` only: the join model and the join column pointing at the target. */
+  through?: { model?: { name: string } };
+  otherKey?: string;
 };
 
 /**

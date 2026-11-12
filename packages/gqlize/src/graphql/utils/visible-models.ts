@@ -21,7 +21,10 @@ import { Definitions, GqlizeOptions } from "../../types";
  */
 export default function computeVisibleModels(instance: GQLManager, definitions: Definitions, options: GqlizeOptions): Set<string> {
   const defNames = Object.keys(definitions);
-  const visible = new Set(defNames.filter((defName) => isModelAllowed(options.permission, defName)));
+  // A join model ormize generated (`generated`) only holds links; exposing it
+  // would give a route that writes join rows outside the relationship verbs.
+  const visible = new Set(defNames.filter((defName) =>
+    !definitions[defName].generated && isModelAllowed(options.permission, defName)));
 
   // Mirrors `create-basic-fields`: overrides and `ignoreFields` are removed from
   // the candidate keys, and an empty candidate list short-circuits *before* the

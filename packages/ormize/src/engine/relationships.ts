@@ -288,6 +288,9 @@ export async function generateJoinModels(self: RelationshipHost) {
       // model that claims to soft delete and does not.
       options: {timestamps: false, paranoid: false},
       relationships: [],
+      // Holds links and nothing else: no projection exposes it, and the
+      // relationship does not offer `through` (see `Association.throughModel`).
+      generated: true,
     }, adapterName);
   }
 }

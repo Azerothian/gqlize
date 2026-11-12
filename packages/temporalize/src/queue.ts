@@ -4,7 +4,9 @@ import type { QueueMap, TemporalizeOptions } from "./types";
 /** Definitions the options allow us to generate for, in registration order. */
 export function listModels(orm: Ormize, options: TemporalizeOptions = {}): string[] {
   const defs = orm.getDefinitions() || {};
-  const names = Object.keys(defs);
+  // A join model ormize generated holds links only: no activities for it,
+  // since writing its rows directly would bypass the relationship verbs.
+  const names = Object.keys(defs).filter((name) => !defs[name].generated);
   if (!options.models) {
     return names;
   }

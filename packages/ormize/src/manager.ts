@@ -431,6 +431,17 @@ export default class Ormize<
         ...buildCrossAdapterAssociation(defName, rel),
       };
     }
+    // Whether a `belongsToMany` carries join-row data: only when its join model
+    // is one the author registered. An implicit table (never a definition) and
+    // a join model ormize generated (`generated`) make it a plain many-to-many.
+    for (const relName of Object.keys(associations)) {
+      const association = associations[relName];
+      if (association.associationType !== "belongsToMany") {
+        continue;
+      }
+      const joinDef = association.through ? this.defs[association.through] : undefined;
+      associations[relName] = {...association, throughModel: !!joinDef && !joinDef.generated};
+    }
     return associations;
   }
 

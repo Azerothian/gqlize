@@ -184,8 +184,12 @@ Definition keys you'll commonly use:
   methods, and hooks named in both run both.
 
 > **Junction models.** A `through` model that only carries FK columns (+ your extra columns) has
-> no relationships of its own; exclude it from the schema with a permission gate so it isn't
-> exposed: `createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`.
+> no relationships of its own. Hiding it with `permission.model`
+> (`createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`) keeps it out of the
+> schema *and* turns its relationships into plain many-to-many ones, with no `through`. To keep
+> `through` but drop its root operations, gate those instead (`permission.query`,
+> `permission.mutation`). A join model ormize generates for a cross-adapter `belongsToMany` is never
+> exposed, by any projection.
 
 ### Field arguments & field resolvers
 
@@ -1240,7 +1244,7 @@ mutation {
   models {
     Post(update: {
       where: { title: { eq: "New" } },
-      input: { tags: { add: [ { where: { name: { eq: "a" } } }, { where: { name: { eq: "b" } } } ] } }
+      input: { tags: { add: [ { name: { eq: "a" } }, { name: { eq: "b" } } ] } }
     }) { id }
   }
 }
@@ -1259,12 +1263,17 @@ Post(update: { where: { title: { eq: "New" } }, input: { author: { set: { name: 
 Post(update: { where: { title: { eq: "New" } }, input: { author: { remove: true } } }) { id author { name } }
 
 # hasMany / belongsToMany: replace the whole set with the matching records
-Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { where: { name: { eq: "c" } } } ] } } }) { id }
+Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { name: { eq: "c" } } ] } } }) { id }
 ```
 
-**belongsToMany `through` attributes**: write join-table columns when associating. Register the
-join model (here `PostTag`) as a definition and `through` is typed by its columns (`PostTagsThrough`).
-If you leave the join table implicit, `through` is untyped JSON.
+**belongsToMany `through` attributes**: write join-table columns when associating. This needs a
+join model you registered as a definition (here `PostTag`) that the permission bag lets be seen.
+Then `add`/`set` entries become `{ where, through }` (a bare filter is still accepted by the
+engine, but the GraphQL entry type is the wrapper), and `through` is typed by the join model's
+columns (`PostTagsThroughInput`): those its `mutationCreateInput` allows, minus the two join keys,
+every primary/foreign key and `ignoreFields`. Without such a join model (an implicit table, one
+ormize generated, or one hidden by `permission.model`) the relationship is a plain many-to-many:
+entries are bare filters and there is no `through`.
 
 ```graphql
 Post(update: {
@@ -1296,7 +1305,7 @@ mutation {
       input: {
         posts: { select: [{
           where: { status: { eq: "draft" } },
-          input: { tags: { add: [ { where: { name: { eq: "featured" } } } ] } }
+          input: { tags: { add: [ { name: { eq: "featured" } } ] } }
         }] }
       }
     }]) { id name }        # returns the found authors (unchanged)

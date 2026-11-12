@@ -101,6 +101,13 @@ order: lint needs a program that compiles.
 - **Relationship verbs.** The eight verbs (`create, update, add, set, remove, delete, restore, select`)
   are declared twice: in `gqlize/src/graphql/create-mutation-input.ts` and `ormize/src/relationship-mutations.ts`.
   Keep both in the same order and in sync.
+- **belongsToMany `through`.** Whether `add`/`set` entries are `{ where, through }` or bare filters
+  is decided by `Association.throughModel` (set in `Ormize.getAssociations`) plus `isThroughMode`
+  (`utilize/src/gate.ts`). The GraphQL builder (`create-mutation-input.ts`), the engine
+  (`splitLinkEntry` in `ormize/src/relationship-mutations.ts`) and nestize's
+  `assertThroughAllowed` all read them, so don't decide it locally. The engine must keep stripping
+  join keys and the join row's primary key from `through` on every route. A join model with
+  `generated: true` stays out of every projection.
 - **Permission keys.** A new key on `Permission` goes in exactly one of `BUILD_TIME_PERMISSION_KEYS` or
   `RESOLUTION_TIME_PERMISSION_KEYS` (`utilize/src/gate.ts`). The typecheck fails if it's missing from
   both or listed in both. Code under `gqlize/src/graphql/*` builds the schema synchronously, so it must

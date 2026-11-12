@@ -28,7 +28,8 @@ export class NestizeSchemaRegistry {
     this.schemas = generateZodSchemas(this.orm, { permission: this.options.permission });
     const defs = this.orm.getDefinitions() || {};
     this.resources = createNameResolver(
-      Object.keys(defs).filter((name) => isModelAllowed(this.options.permission, name)),
+      // A join model ormize generated holds links only and is never exposed.
+      Object.keys(defs).filter((name) => !defs[name].generated && isModelAllowed(this.options.permission, name)),
     );
   }
 

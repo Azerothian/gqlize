@@ -137,3 +137,20 @@ describe("ormize-zod4 - generateZodSchemas", () => {
     });
   });
 });
+
+describe("ormize-zod4 - generated join models", () => {
+  it("emits no schemas for a join model ormize generated", async () => {
+    const orm = new Ormize();
+    orm.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "sqlite");
+    await orm.addDefinition(ItemDef);
+    await orm.addDefinition(TaskDef);
+    // What ormize registers for a cross-adapter belongsToMany with no join model.
+    await orm.addDefinition({ name: "ItemLink", define: { itemId: { type: DataTypes.INTEGER } }, generated: true });
+    await orm.initialise();
+    await orm.sync();
+    const { entity, create, update } = generateZodSchemas(orm);
+    expect(Object.keys(entity).sort()).toEqual(["Item", "Task"]);
+    expect(create.ItemLink).toBeUndefined();
+    expect(update.ItemLink).toBeUndefined();
+  });
+});

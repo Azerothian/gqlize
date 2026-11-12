@@ -9,7 +9,7 @@
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
-import { mergeScopeWhere } from "@azerothian/utilize/gate";
+import { isThroughInputField, mergeScopeWhere } from "@azerothian/utilize/gate";
 import type { PortableWhere, ScopeOperation } from "@azerothian/utilize/gate";
 import type {
   AdapterQueryOptions, AdapterRow, AdapterWhere, Association, Definition, OrmAdapter,
@@ -197,14 +197,83 @@ async function assertLinkInScope(s: MutationScope, targets: AdapterRow[]) {
   await s.host.assertRowsInScope(s.targetName, "update", s.targetContext, targets, s.targetOptions);
 }
 
+/**
+ * Whether an `add`/`set` entry is the `{ where, through }` wrapper rather than
+ * a bare filter: an object whose keys are `where` and optionally `through`,
+ * on a target with no column called `where` (for which `{ where: … }` is a
+ * legitimate filter).
+ */
+function isLinkEntry(s: MutationScope, arg: unknown): arg is LinkEntry {
+  if (!arg || typeof arg !== "object" || Array.isArray(arg)) {
+    return false;
+  }
+  const keys = Object.keys(arg);
+  if (!keys.includes("where") || !keys.every((k) => k === "where" || k === "through")) {
+    return false;
+  }
+  return !Object.prototype.hasOwnProperty.call(s.targetAdapter.getFields(s.targetName) || {}, "where");
+}
+
+/**
+ * Split one `add`/`set` entry into the filter that finds the target rows and
+ * the join-row columns to write with them.
+ *
+ * Only a `belongsToMany` whose join model the author registered
+ * (`association.throughModel`) carries join-row data; for it an entry may be a
+ * wrapper or, when a projection hides the join model, a bare filter. Every
+ * other collection takes bare filters, and a wrapper there is rejected rather
+ * than read as a filter on columns called `where` and `through`.
+ */
+async function splitLinkEntry(s: MutationScope, arg: unknown): Promise<{filter: unknown; through?: MutationInput}> {
+  if (!s.isBtm || !isLinkEntry(s, arg)) {
+    return {filter: arg};
+  }
+  if (!s.association.throughModel) {
+    throw new Error(
+      `ormize: '${s.association.source}.${s.association.name}' has no registered join model, so its add/set entries ` +
+      `are bare filters on ${s.targetName}, not { where, through }. Register the join model as a definition to write join-row columns.`,
+    );
+  }
+  const through = arg.through === undefined || arg.through === null ? undefined : await sanitizeThrough(s, arg.through);
+  return {filter: arg.where, through};
+}
+
+/**
+ * A caller's `through` payload, reduced to what the join model's own create
+ * rules accept.
+ *
+ * The payload reaches the join row through the association accessor, which
+ * merges it with the two join keys — and on some adapters lets it win, or
+ * writes it as-is onto a link that already exists. So the two join keys are
+ * always dropped (a payload carrying them would point the link at a row the
+ * caller never named), as are primary and foreign keys and `ignoreFields`
+ * (see `isThroughInputField`), and what remains goes through `processInputs`
+ * on the join model: its structural allow-list, `override.input`, and its
+ * create scope's `set`.
+ */
+async function sanitizeThrough(s: MutationScope, through: MutationInput): Promise<MutationInput | undefined> {
+  const joinName = s.association.through as string;
+  const joinFields = s.host.getModelAdapter(joinName).getFields(joinName) || {};
+  const joinDef = s.host.getDefinition(joinName);
+  const joinKeys = [s.association.foreignKey, s.association.otherKey].filter(Boolean) as string[];
+  const picked = Object.keys(through).reduce((o, key) => {
+    if (joinFields[key] && isThroughInputField(undefined, joinName, key, joinFields[key], joinKeys, joinDef?.ignoreFields)) {
+      o[key] = through[key];
+    }
+    return o;
+  }, {} as MutationInput);
+  const processed = await s.host.processInputs(joinName, picked, s.args, s.context, s.selection?.raw, undefined, "create");
+  for (const key of joinKeys) {
+    delete processed[key];
+  }
+  return Object.keys(processed).length > 0 ? processed : undefined;
+}
+
 /** Attach existing records that a filter selects. */
 const applyAdd = async(s: MutationScope, entries: (MutationFilter | LinkEntry)[]) => {
   await waterfall(entries, async(arg: MutationFilter | LinkEntry) => {
-    // belongsToMany add entries are `{where, through}`; other collections
-    // pass the filter directly.
-    const entry = (arg || {}) as LinkEntry;
-    const through = s.isBtm ? entry.through : undefined;
-    const results = await findByFilter(s, s.isBtm ? entry.where : (arg));
+    const {filter, through} = await splitLinkEntry(s, arg);
+    const results = await findByFilter(s, filter);
     if (results.length > 0) {
       await s.row[s.association.accessors.addMultiple](results, withThrough(s, through));
       await assertLinkInScope(s, results);
@@ -222,14 +291,16 @@ const applySet = async(s: MutationScope, value: MutationFilter | (MutationFilter
     return;
   }
   // Collections: replace the entire set with all matching existing records.
+  // The accessor takes one `through` for the whole set, so the last entry
+  // that carries one wins, as it always has.
   const all: AdapterRow[] = [];
   let through: MutationInput | undefined;
   await waterfall(value as (MutationFilter | LinkEntry)[], async(arg: MutationFilter | LinkEntry) => {
-    const entry = (arg || {}) as LinkEntry;
-    if (s.isBtm && entry.through !== undefined) {
+    const entry = await splitLinkEntry(s, arg);
+    if (entry.through !== undefined) {
       through = entry.through;
     }
-    all.push(...await findByFilter(s, s.isBtm ? entry.where : (arg)));
+    all.push(...await findByFilter(s, entry.filter));
   });
   await s.row[s.association.accessors.set](all, withThrough(s, through));
   await assertLinkInScope(s, all);

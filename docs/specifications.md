@@ -387,6 +387,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `define` | Field map. Each value is a `DefinitionField`: `type`, `allowNull`, `primaryKey`, `foreignKey`, `unique`, `defaultValue`, `values` (enum), `validate`, `description`, `comment`, `deprecated` (the `@deprecated` reason for the generated field), plus `args` and `resolve` (per-field GraphQL arguments and a field resolver — see [guide: Field arguments & field resolvers](guide.md#field-arguments--field-resolvers)), `writable` (opt a pk/fk back into mutation input; `false` opts a fk out of `writableForeignKeys`) and `ignoreGlobalKey`. |
 | `override` | Per-field custom GraphQL type plus `input`/`output` transform functions (e.g. storing JSON in a string column but exposing a typed object). |
 | `ignoreFields` | Columns to exclude from every generated type: the output type, both mutation inputs, the `where` filter and the `orderBy` enum. nestize and temporalize refuse them in filters and ordering too. |
+| `generated` | Set by ormize, not by authors: marks the join model it registers for a cross-adapter `belongsToMany` that names no registered `through` model (`generateJoinModels`, `packages/ormize/src/engine/relationships.ts`). No projection exposes such a model — gqlize (`visible-models.ts`), nestize, ormize-zod4 and temporalize all skip it — and its relationship is a plain many-to-many (`Association.throughModel` is false). |
 | `relationships` | Array of `Relationship`: `{ model, name, type, options }` where `type ∈ hasOne | belongsTo | hasMany | belongsToMany` and `options` carries `as`, `foreignKey`, `sourceKey`, `through`, `constraints`. `name`, a known `type` and a `model` naming an already-defined target are all validated at wiring time, before either the same-adapter or cross-adapter branch runs, and each throws naming the relationship. Cross-adapter key columns are re-checked in a post-pass at the end of `initialise()` (see §3). |
 | `whereOperators` / `whereOperatorTypes` | Custom filter operators (async functions returning a where fragment) and their GraphQL input types. |
 | `expose` | Declares which methods surface to GraphQL: `expose.classMethods.{query,mutations}` and `expose.instanceMethods.{query,mutations}`, each an `ExposedMethod`: `{ type?, args?, before?, after?, fields?, include?, input?, output?, orderBy?, where? }`. `type` may be a string model reference (`"Task"`) or a list (`"Task[]"`), or a concrete GraphQL type. See [Exposed methods](#exposed-methods). |
@@ -654,12 +655,20 @@ accessors (recursion depends on the graphql patch, see §12). The sub-fields per
 - **hasMany / belongsToMany:** `create` (new records), `update` (`where`+`input` pairs),
   `add` (associate existing by where), `set` (replace the entire set with matching existing
   records), `remove` (disassociate matching), `delete` (delete matching), `restore` (undelete
-  soft-deleted matching, paranoid models). For **belongsToMany**, `add`/`set` entries are
-  `{ where, through }` where `through` writes join-table column values. When the join model is a
-  registered model, `through` is a typed input (`<Model><Rel>Through`) holding the join model's
-  columns that pass its create-input gates, all optional, minus the two join keys and any other
-  global key (the payload is not run through the id codec). It is omitted when no column qualifies.
-  An implicit join table (no registered model) keeps the untyped JSON scalar.
+  soft-deleted matching, paranoid models). `add`/`set` entries are bare filters, with one
+  exception: a **belongsToMany in through mode** takes `{ where, through }`, `through` writing
+  join-row columns. Through mode (`isThroughMode`, `packages/utilize/src/gate.ts`) needs
+  `Association.throughModel` (the join model is a definition the author registered, set by
+  `Ormize.getAssociations`; an implicit table or a `generated` one is not) and a permission bag
+  that lets the join model be seen. `through` is a typed input (`<Model><Rel>ThroughInput`) of the
+  join model's columns that pass `isThroughInputField` — its `mutationCreateInput`, minus the two
+  join keys, every primary/foreign key (the payload is not run through the id codec) and
+  `ignoreFields` — all optional, and is omitted when no column qualifies. The engine
+  (`splitLinkEntry` in `relationship-mutations.ts`) applies the structural half on every route: it
+  drops those keys and runs the rest through `processInputs` on the join model, and it refuses a
+  `{ where, through }` entry on a relationship that is not through mode. Projections that skip
+  GraphQL validation apply the permission half themselves (nestize's relationship and `select`
+  routes). In through mode the engine also accepts a bare filter.
 - **belongsTo / hasOne:** `create`, `update`, `set` (associate an existing record found by a
   where filter → `accessors.set`), `remove` (`Boolean` → disassociate via `set(null)`),
   `delete`, `restore`.

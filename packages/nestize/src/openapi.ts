@@ -59,7 +59,8 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
   const tags: { name: string }[] = [];
 
   const defs = orm.getDefinitions() || {};
-  const names = Object.keys(defs).filter((n) => isModelAllowed(permission, n));
+  // A join model ormize generated holds links only and is never exposed.
+  const names = Object.keys(defs).filter((n) => !defs[n].generated && isModelAllowed(permission, n));
 
   for (const name of names) {
     const resource = name.toLowerCase();

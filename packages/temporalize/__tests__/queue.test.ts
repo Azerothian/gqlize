@@ -67,3 +67,13 @@ describe("queue naming", () => {
     });
   });
 });
+
+describe("listModels and generated join models", () => {
+  it("leaves out a join model ormize generated", async () => {
+    const orm = await buildOrm();
+    // What ormize registers for a cross-adapter belongsToMany with no join model.
+    await orm.addDefinition({ name: "ItemLink", define: {}, generated: true });
+    expect(listModels(orm)).not.toContain("ItemLink");
+    expect(listModels(orm)).toContain("Task");
+  });
+});

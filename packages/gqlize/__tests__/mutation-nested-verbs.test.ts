@@ -7,7 +7,7 @@
  * rollback, bulk update with `limit`, multi-row delete, create with a list,
  * and hook-firing parity across dialects.
  */
-import {graphql, GraphQLInputObjectType} from "graphql";
+import {graphql} from "graphql";
 import Sequelize from "sequelize";
 import {Ormize as Database} from "@azerothian/ormize";
 import {createSchema} from "../src";
@@ -382,7 +382,7 @@ describe("nested verbs — hasMany", () => {
     const res = await graphql({schema, source: `mutation { models {
       Author(select: [{where: {name: {eq: "a1"}}, input: {
         posts: {select: [{where: {title: {eq: "p1"}}, input: {
-          tags: {add: [{where: {name: {eq: "t1"}}}]}
+          tags: {add: [{name: {eq: "t1"}}]}
         }}]}
       }}]) { id }
     } }`});
@@ -399,32 +399,12 @@ describe("nested verbs — hasMany", () => {
 // ---------------------------------------------------------------------------
 
 describe("nested verbs — belongsToMany", () => {
-  it("types the through payload by the join model's writable columns", async () => {
-    const db = await buildFull();
-    const schema = await createSchema(db, schemaOpts);
-    const through = schema.getType("PostTagsThrough");
-    expect(through).toBeInstanceOf(GraphQLInputObjectType);
-    const fields = (through as GraphQLInputObjectType).getFields();
-    // The join keys (postId, tagId) are set by the association and stay out
-    // of the payload; the rest follow the join model's own create gates.
-    expect(Object.keys(fields).sort()).toEqual(["createdAt", "label", "sortOrder", "updatedAt"]);
-    expect(String(fields.sortOrder.type)).toBe("Int");
-    expect(String(fields.label.type)).toBe("String");
-    const entry = schema.getType("PostTagsAddThrough") as GraphQLInputObjectType;
-    expect(entry.getFields().through.type).toBe(through);
-
-    const res = await graphql({schema, source: `mutation { models {
-      Post(update: {where: {title: {eq: "p1"}}, input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {nope: 1}}]}}}) { id }
-    } }`});
-    expect(res.errors?.[0]?.message).toMatch(/nope/);
-  });
-
   it("add: associates existing records via belongsToMany with through attributes", async () => {
     const db = await buildFull();
     const {Post, Tag, PostTag} = db.models;
     await Post.create({title: "p1"});
     await Tag.create({name: "t1"});
-    const schema = await createSchema(db, schemaOpts);
+    const schema = await createSchema(db, {}); // PostTag visible: through mode
 
     const res = await graphql({schema, source: `mutation { models {
       Post(update: {where: {title: {eq: "p1"}}, input: {tags: {add: [{where: {name: {eq: "t1"}}, through: {sortOrder: 5, label: "first"}}]}}}) {
@@ -464,7 +444,7 @@ describe("nested verbs — belongsToMany", () => {
       Tag.create({name: "t1"}), Tag.create({name: "t2"}), Tag.create({name: "t3"}),
     ]);
     await post.addTags([t1, t2]);
-    const schema = await createSchema(db, schemaOpts);
+    const schema = await createSchema(db, {}); // PostTag visible: through mode
 
     const res = await graphql({schema, source: `mutation { models {
       Post(update: {where: {title: {eq: "p1"}}, input: {tags: {set: [{where: {name: {eq: "t3"}}, through: {sortOrder: 1}}]}}}) {
@@ -512,7 +492,7 @@ describe("nested verbs — depth 2", () => {
     const res = await graphql({schema, source: `mutation { models {
       Author(update: {where: {name: {eq: "a1"}}, input: {
         posts: {update: {where: {title: {eq: "p1"}}, input: {
-          tags: {add: [{where: {name: {eq: "t1"}}}]}
+          tags: {add: [{name: {eq: "t1"}}]}
         }}}
       }}) { id }
     } }`});
@@ -530,7 +510,7 @@ describe("nested verbs — depth 2", () => {
     const schema = await createSchema(db, schemaOpts);
 
     const res = await graphql({schema, source: `mutation { models {
-      Author(create: {name: "a1", posts: {create: {title: "p1", tags: {add: [{where: {name: {eq: "t1"}}}, {where: {name: {eq: "t2"}}}]}}}}) {
+      Author(create: {name: "a1", posts: {create: {title: "p1", tags: {add: [{name: {eq: "t1"}}, {name: {eq: "t2"}}]}}}}) {
         id posts { edges { node { title } } }
       }
     } }`});

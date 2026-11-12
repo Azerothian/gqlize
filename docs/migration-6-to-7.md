@@ -28,7 +28,7 @@ cleanly — that section is where working code breaks.
    - [Adapter list and relationship methods take a request object](#adapter-list-and-relationship-methods-take-a-request-object)
    - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
    - [Multi-row mutations return every affected row](#multi-row-mutations-return-every-affected-row)
-   - [`belongsToMany` `through` is typed by the join model](#belongstomany-through-is-typed-by-the-join-model)
+   - [`belongsToMany` `add`/`set` take bare filters; `through` needs a registered join model](#belongstomany-addset-take-bare-filters-through-needs-a-registered-join-model)
    - [Adapters agree on enum type names and enum value names](#adapters-agree-on-enum-type-names-and-enum-value-names)
    - [`field: String` works on every adapter](#field-string-works-on-every-adapter)
    - [`OrderEntry` in temporalize is now `SortEntry`](#orderentry-in-temporalize-is-now-sortentry)
@@ -642,18 +642,40 @@ The rows written were always correct — only the mutation's own return value wa
 that read `data.models.Post[0]` after a single-row filter is unaffected; code that counted the
 returned array, or that tested for `[null]` to detect "nothing matched", needs updating.
 
-### `belongsToMany` `through` is typed by the join model
+### `belongsToMany` `add`/`set` take bare filters; `through` needs a registered join model
 
-The `through` field on a `belongsToMany` `add` / `set` entry used to be the untyped JSON scalar.
-When the join model is a registered definition, it is now an input object named
-`<Model><Rel>Through` (for example `PostTagsThrough`). Its fields are the join model's columns that
-pass that model's create-input gates, all optional. The two join keys and any other global key are
-left out. So:
+In 6.x a `belongsToMany` `add` / `set` entry was a bare filter, as for `hasMany`. Early 7.x betas
+wrapped every entry as `{ where, through }`, with `through` an untyped JSON scalar. That is reverted
+to the 6.x shape, with one exception.
 
-- A key that is not one of those columns is now a validation error instead of being silently
-  passed to the adapter.
-- If the join model has no qualifying column, `through` is removed from the entry type.
-- A join table you never registered as a model keeps the JSON scalar.
+**Plain many-to-many** (the default): entries are bare filters again.
+
+```graphql
+# 7.0 betas:  tags: { add: [ { where: { name: { eq: "a" } } } ] }
+# now, as 6.x: tags: { add: [ { name: { eq: "a" } } ] }
+```
+
+**Through mode** (a join model you registered as a definition, and the permission bag lets it be
+seen): entries are `{ where, through }`, and `through` is a typed input named
+`<Model><Rel>ThroughInput` (for example `PostTagsThroughInput`). Its fields are the join model's
+columns that pass its `mutationCreateInput`, all optional. The two join keys, every primary and
+foreign key, and `ignoreFields` are left out.
+
+What this changes:
+
+- A relationship through an implicit join table, a join model hidden by `permission.model`, or a
+  join model ormize generated is a plain many-to-many. Its entries are bare filters and it has no
+  `through`. The engine refuses a `{ where, through }` entry there, on every route.
+- An unknown `through` key is a validation error in GraphQL and a 403 from nestize's relationship
+  and `select` routes, instead of being passed to the adapter.
+- On every route, including direct `processUpdate` calls and Temporal activities, the engine drops
+  the join keys and the join row's primary key from `through`. Before, a payload holding them
+  could point a link at a row the caller never named. Sequelize did this when the link already
+  existed; the Valkey adapter and cross-adapter relationships did it for new links too.
+- The join model ormize generates for a cross-adapter `belongsToMany` with no `through` model is no
+  longer exposed. In GraphQL it had its own type and mutations with both join keys writable, and
+  nestize, ormize-zod4 and temporalize listed it too. Register the join model yourself if you need
+  to reach its rows.
 
 ### Adapters agree on enum type names and enum value names
 
@@ -853,8 +875,9 @@ Not required for migration, but this is what the split bought:
       nothing in 6.x and now warn.
 - [ ] Callers that read the return value of a multi-row `update` / `delete` / `select` audited —
       the list now holds every affected row, and an empty match is `[]` rather than `[null]`.
-- [ ] `belongsToMany` `through` payloads checked against the join model's typed input — unknown
-      keys are now rejected.
+- [ ] `belongsToMany` `add`/`set` entries written as bare filters, unless the join model is a
+      registered, visible definition; `through` payloads checked against `<Model><Rel>ThroughInput`.
+- [ ] Clients of a cross-adapter `belongsToMany`'s generated join model moved to a registered one.
 - [ ] Hand-written `permission` bags checked against the build-time unknown-key warning.
 - [ ] Third-party adapters recompiled against the typed `OrmAdapter` / `GqlizeAdapter`, and
       `setBuildPermission` implemented if their filter/order/include builders gate on a permission

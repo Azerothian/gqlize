@@ -3,13 +3,11 @@ import {
   GraphQLID, GraphQLBoolean,
 } from "graphql";
 import type { GraphQLInputFieldConfig, GraphQLInputFieldConfigMap, GraphQLInputType, GraphQLNullableInputType, ThunkObjMap } from "graphql";
-import JSONType from "@azerothian/graphql-types/json";
 
 import createGQLInputObject from "./create-gql-input-object";
-import { deprecationFor, isInputFieldWritable, isMutationAllowed } from "@azerothian/utilize";
+import { deprecationFor, isInputFieldWritable, isMutationAllowed, isThroughInputField, isThroughMode } from "@azerothian/utilize";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import {waterfallSync} from "@azerothian/utilize/utils/waterfall";
-import {throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
 import GQLManager from '../manager';
 import { Definition, DefinitionFields, SchemaCache, Association, GqlizeOptions } from '../types';
 import { recordExternalType } from "./snapshot/ledger";
@@ -65,47 +63,30 @@ function hasInputFields(defName: string, definition: Definition, defFields: Defi
   });
 }
 
-/** The join model a `belongsToMany` writes through, and the two keys on it that the association owns. */
-function resolveJoinModel(instance: GQLManager, defName: string, relName: string, association: Association) {
-  const rel = (instance.getDefinition(defName)?.relationships || [])
-    .find((r) => (r.name || r.options?.as) === relName);
-  const through = association.through || throughModelName(rel?.options?.through);
-  const otherKey = association.otherKey || rel?.options?.otherKey || throughOtherKey(rel?.options?.through);
-  return {through, joinKeys: [association.foreignKey, otherKey].filter(Boolean) as string[]};
-}
-
 /**
  * The `through` field of a `belongsToMany` add/set entry, typed by the join
- * model's columns.
+ * model's columns. Only called in through mode (`isThroughMode`): the join model
+ * is one the author registered and the permission bag lets it be seen.
  *
- * The payload is handed to the association accessor verbatim and written as a
- * create on the join model, so the columns offered are the ones a create on
- * that model would accept (the same structural and permission gates), all
- * optional. Left out on top of that:
- *  - the two join keys, which the accessor sets itself;
- *  - any other global key: the payload is not run through the id codec, so a
- *    Relay id typed in here would reach the database undecoded.
+ * The columns offered are the ones `isThroughInputField` accepts — the join
+ * model's create-input permission, minus the two join keys, every primary and
+ * foreign key (the payload is not run through the id codec) and `ignoreFields`.
+ * The write engine drops the same keys again on every route.
  *
- * Returns `JSONType` when the join model is not a registered model (an implicit
- * join table: its columns are not known at build time), and `undefined` when it
- * is registered but has nothing writable — an input object with no fields is
- * not valid GraphQL, and there would be nothing to send anyway.
+ * Returns `undefined` when no column qualifies: an input object with no fields
+ * is not valid GraphQL, and there would be nothing to send anyway.
  */
 function createThroughType(instance: GQLManager, defName: string, relName: string, association: Association, schemaCache: SchemaCache, options: GqlizeOptions): GraphQLInputType | undefined {
-  const {through, joinKeys} = resolveJoinModel(instance, defName, relName, association);
-  const joinDef = through ? instance.getDefinition(through) : undefined;
-  if (!through || !joinDef) {
-    return JSONType;
-  }
+  const through = association.through as string;
+  const joinDef = instance.getDefinition(through);
+  const joinKeys = [association.foreignKey, association.otherKey].filter(Boolean) as string[];
   const joinFields = instance.getFields(through);
-  const globalKeys = instance.getGlobalKeys(through);
-  const fieldNames = Object.keys(joinFields).filter((fieldName) => !joinKeys.includes(fieldName)
-    && !globalKeys.includes(fieldName)
-    && isColumnInput(joinDef, through, fieldName, "create", joinFields, options));
+  const fieldNames = Object.keys(joinFields).filter((fieldName) =>
+    isThroughInputField(options.permission, through, fieldName, joinFields[fieldName], joinKeys, joinDef?.ignoreFields));
   if (fieldNames.length === 0) {
     return undefined;
   }
-  return createGQLInputObject(`${defName}${capitalize(relName)}Through`, () => fieldNames.reduce((fields, fieldName) => {
+  return createGQLInputObject(`${defName}${capitalize(relName)}ThroughInput`, () => fieldNames.reduce((fields, fieldName) => {
     const field = joinFields[fieldName];
     fields[fieldName] = {
       type: instance.getGraphQLInputType(through, `${fieldName}Optional`, field.type) as GraphQLInputType,
@@ -236,14 +217,16 @@ export function generateInputFields(instance: GQLManager, defName: string, defin
         },
       }, schemaCache, "");
     }
-    const isBelongsToMany = association.associationType === "belongsToMany";
-    const isCollection = association.associationType === "hasMany" || isBelongsToMany;
-    // belongsToMany add/set accept an optional `through` payload to write
-    // join-table column values for the associated records.
-    const throughType = isBelongsToMany
+    const isCollection = association.associationType === "hasMany" || association.associationType === "belongsToMany";
+    // A belongsToMany whose join model is registered and visible takes
+    // `{ where, through }` entries on add/set, `through` writing join-row
+    // columns. Every other collection, including a plain belongsToMany, takes
+    // the bare filter — the write engine decides the same way.
+    const throughMode = isThroughMode(options.permission, association);
+    const throughType = throughMode
       ? createThroughType(instance, defName, relName, association, schemaCache, options)
       : undefined;
-    const throughInput = isBelongsToMany
+    const throughInput = throughMode
       ? createGQLInputObject(`${defName}${capitalize(relName)}AddThrough`, {
         where: {
           type: filterType,

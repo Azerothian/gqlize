@@ -122,7 +122,7 @@ describe("read cache", () => {
     expect(await tagsOf()).toEqual([]);
     // `BookTags` is an implicit join table: no definition, so no hooks of its
     // own. The verb runs inside the mutation entry point, whose footprint names it.
-    await run(schema, `mutation { models { Book(update: {where: {title: {eq: "cobol"}}, input: {tags: {add: [{where: {name: {eq: "red"}}}]}}}) { id } } }`);
+    await run(schema, `mutation { models { Book(update: {where: {title: {eq: "cobol"}}, input: {tags: {add: [{name: {eq: "red"}}]}}}) { id } } }`);
     expect(await tagsOf()).toEqual(["red"]);
   });
 
