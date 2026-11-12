@@ -1,0 +1,30 @@
+{
+  "name": "@azerothian/example-mikro-orm-basic",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runnable demo of the MikroORM ormize adapter: an existing MikroORM instance registered as-is, with no ormize definitions authored, projected to a GraphQL API.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node -r @swc-node/register src/server.ts",
+    "query": "node -r @swc-node/register src/run.ts",
+    "schema:build": "node -r @swc-node/register ../../packages/gqlize/src/cli/index.ts build",
+    "schema:check": "node -r @swc-node/register ../../packages/gqlize/src/cli/index.ts check",
+    "schema:print": "node -r @swc-node/register ../../packages/gqlize/src/cli/index.ts print"
+  },
+  "dependencies": {
+    "@azerothian/gqlize": "workspace:*",
+    "@azerothian/ormize": "workspace:*",
+    "@azerothian/ormize-adapter-mikro-orm": "workspace:*",
+    "@mikro-orm/core": "^7.2.1",
+    "@mikro-orm/sqlite": "^7.2.1",
+    "graphql": "17.0.2",
+    "graphql-relay": "^0.10.2",
+    "graphql-yoga": "^5.21.2"
+  },
+  "devDependencies": {
+    "@swc-node/register": "^1.10.10",
+    "@swc/core": "^1.15.43",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -16,7 +16,7 @@ import { inheritScopeMemo } from "./scope";
 import { buildScopeHooks, buildScopeInstanceHooks } from "./scope-hooks";
 import { auditDefinitionScopeSurfaces, auditExtendFields, reportScopeSurfaces } from "./scope-audit";
 import type { ScopeHook } from "./scope-hooks";
-import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
+import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf, ModelsOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, DataTypeDescriptor, InitialiseOptions, NativeDataType,
   RequestContext, Selection, FindAllArgs, Association, CsvOptions, ResolvedCsvLimits } from '@azerothian/utilize/types/index';
 import type { MutationApply, MutationFilter, MutationHost, MutationInput,
@@ -254,7 +254,7 @@ export default class Ormize<
   // Adapter registration
   // -------------------------------------------------------------------------
 
-  registerAdapter = <A extends OrmAdapter>(adapter: A, overrideName?: string): Ormize<TModels, BaseOf<A>> => {
+  registerAdapter = <A extends OrmAdapter>(adapter: A, overrideName?: string): Ormize<TModels & ModelsOf<A>, BaseOf<A>> => {
     if (overrideName) {
       adapter.adapterName = overrideName;
     }
@@ -265,8 +265,10 @@ export default class Ormize<
       this.defaultAdapter = adapter.adapterName;
     }
     this.adapters[adapter.adapterName] =  adapter;
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- ts7 needs it
-    return this as unknown as Ormize<TModels, BaseOf<A>>;
+    // The runtime is unchanged; the return type narrows the typesystem base URI
+    // from the adapter's `__base` brand, and folds in whatever models the adapter
+    // registers on its own (`__models`, for a backend that owns its schema).
+    return this as unknown as Ormize<TModels & ModelsOf<A>, BaseOf<A>>;
   }
 
   /**
@@ -617,6 +619,11 @@ export default class Ormize<
 
   /**
    * Wire the registered definitions into models, relationships and join models.
+   *
+   * Adapter discovery (`discoverDefinitions`) runs here too, after the `define()`
+   * queue: a backend that owns its schema reads its own metadata, without a
+   * connection, so an instance whose every model was discovered can still be
+   * built offline (`initialise({ddl: false})`).
    */
   initialise = async(options?: InitialiseOptions) => {
     if (this._pendingDefs.length > 0) {
@@ -626,6 +633,7 @@ export default class Ormize<
         await this.addDefinition(def, adapterName);
       }
     }
+    await this.discoverAdapterDefinitions();
     await Promise.all(Object.keys(this.defs).map((defName) => {
       const def = this.defs[defName];
       const sourceAdapter = this.getModelAdapter(defName);
@@ -641,6 +649,28 @@ export default class Ormize<
     }));
     this._initialised = true;
     this.auditScopeSurfaces();
+  }
+
+  /**
+   * Add the definitions each adapter already knows about — for a backend that owns
+   * its own schema, this is where its models arrive instead of through `define()`.
+   * A name already defined is skipped, so an authored definition wins over the
+   * discovered one and a second `initialise()` is a no-op. Serial: each
+   * `addDefinition` writes `this.defs`, which the next `hasDefinition` must see.
+   */
+  private async discoverAdapterDefinitions() {
+    for (const adapterName of Object.keys(this.adapters)) {
+      const adapter = this.adapters[adapterName];
+      if (!adapter.discoverDefinitions) {
+        continue;
+      }
+      for (const def of await adapter.discoverDefinitions()) {
+        if (!def.name || this.hasDefinition(def.name)) {
+          continue;
+        }
+        await this.addDefinition(def, adapterName);
+      }
+    }
   }
 
   reset = async(options?: AdapterQueryOptions) => {

@@ -86,6 +86,15 @@ export interface OrmAdapter {
    * relation on any adapter.
    */
   readonly supportsJoins?: boolean;
+  /**
+   * The definitions this adapter already knows about, for a backend that owns its
+   * own schema (an existing MikroORM instance, an introspected database). Called
+   * once per adapter from `Ormize.initialise()`, after the `define()` queue has
+   * drained, so an authored definition of the same name wins. Absent means every
+   * model arrives through `define()`/`addDefinition()`. Must not open a
+   * connection: it is on the path `initialise({ddl: false})` keeps offline.
+   */
+  discoverDefinitions?(): Definition[] | Promise<Definition[]>;
   createModel(def: Definition, hooks?: HookMap): Promise<Model>;
   /**
    * Register hooks on the adapter's *connection* rather than on a model, for

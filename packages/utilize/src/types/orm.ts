@@ -101,3 +101,19 @@ export type BaseOf<A> = A extends { readonly __base?: infer B }
     ? B
     : IORBase
   : IORBase;
+
+/**
+ * The model map an adapter contributes on its own, without any `define()` call.
+ *
+ * An adapter that owns its schema (see `OrmAdapter.discoverDefinitions`) brands
+ * the models it will register onto itself as `readonly __models?`, and
+ * `registerAdapter` folds that map into `TModels` — so `db.models.User` is typed
+ * even though no definition was ever authored for it.
+ *
+ * The test is `unknown extends M`, not `[M] extends [undefined]`: an adapter with
+ * no `__models` property at all infers `M` as `unknown`, and that has to collapse
+ * to the empty map so the SQL and Valkey adapters leave `TModels` untouched.
+ */
+export type ModelsOf<A> = A extends { readonly __models?: infer M }
+  ? (unknown extends M ? {} : NonNullable<M>)
+  : {};
