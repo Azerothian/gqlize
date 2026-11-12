@@ -52,6 +52,7 @@ NestizeModule.forRootAsync({
 | `PATCH` | `/:resource?filter=…`                  | update matching rows                |
 | `DELETE`| `/:resource?filter=…`                  | delete matching rows                |
 | `POST`  | `/:resource/select`                    | select + relationship sub-mutations |
+| `GET`   | `/:resource/_csv`                      | Export the listed rows as CSV (`filter`, `order`, `limit`, `offset`, `columns`) |
 | `POST`  | `/:resource/_csv/:operation`           | CSV create / update / delete ([below](#csv-uploads)) |
 | `POST`  | `/_csv`                                | Several CSV files as one import ([below](#multi-file-import)) |
 | `GET`   | `/:resource/:id/:relation`             | fetch a relationship                |

@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { INestApplication } from "@nestjs/common";
 import type { Ormize } from "@azerothian/ormize";
 import { generateZodSchemas } from "@azerothian/ormize-zod4";
-import { isModelAllowed, isMutationAllowed, isMutationCsvAllowed, isRelationshipAllowed } from "@azerothian/utilize";
+import { isModelAllowed, isMutationAllowed, isMutationCsvAllowed, isQueryCsvAllowed, isRelationshipAllowed } from "@azerothian/utilize";
 import { CSV_OPERATIONS } from "./csv";
 import { OpenApiOptions } from "./types";
 
@@ -192,6 +192,33 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
             },
             "400": { description: "The CSV, or one of its rows, was refused; nothing was written" },
             "413": { description: "The CSV is over the byte or row limit" },
+          },
+        },
+      };
+    }
+
+    // CSV export: a read, so documented in read-only mode too, whenever CSV is
+    // on for the model and `queryCsv` allows it.
+    if (orm.csvLimits(name) && isQueryCsvAllowed(permission, name)) {
+      paths[joinPath(pathPrefix, `${resource}/_csv`)] = {
+        get: {
+          tags: [name],
+          summary: `Export ${name} rows as CSV`,
+          description:
+            "The rows `GET` on the collection would list, as CSV: a header line, then one line per row. `\\N` is null. " +
+            "At most the model's CSV row limit. The file can be uploaded back as an update.",
+          parameters: [
+            { name: "filter", in: "query", required: false, schema: { type: "string" } },
+            { name: "order", in: "query", required: false, schema: { type: "string" } },
+            { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+            { name: "offset", in: "query", required: false, schema: { type: "integer" } },
+            { name: "columns", in: "query", required: false, schema: { type: "string" }, description: "Comma-separated columns, in order. Default: every readable column" },
+            { name: "delimiter", in: "query", required: false, schema: { type: "string" }, description: "Field separator. Default `,`" },
+            { name: "header", in: "query", required: false, schema: { type: "boolean" }, description: "Write the header line. Default `true`" },
+          ],
+          responses: {
+            "200": { description: `${name} rows as CSV`, content: { "text/csv": { schema: { type: "string" } } } },
+            "400": { description: "An unknown column, a refused filter or a bad delimiter" },
           },
         },
       };

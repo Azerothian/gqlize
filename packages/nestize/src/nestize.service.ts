@@ -12,6 +12,7 @@ import {
   isModelAllowed,
   isMutationAllowed,
   isMutationCsvAllowed,
+  isQueryCsvAllowed,
   isRelationshipAllowed,
 } from "@azerothian/utilize";
 import * as guards from "@azerothian/utilize/guards";
@@ -19,7 +20,7 @@ import { regexOperatorsEnabled } from "@azerothian/utilize/filter-operators";
 import { mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
 import { coerceTransformParams } from "@azerothian/utilize/transform-params";
 import type { AdapterWhere, Association, Fail, GuardFailure, Selection } from "@azerothian/utilize";
-import { CsvUploadError, ThroughInputError } from "@azerothian/ormize";
+import { CsvUploadError, ThroughInputError, writeCsv } from "@azerothian/ormize";
 import type { CsvImportFile, CsvImportOperation, MutationInputTree, Ormize } from "@azerothian/ormize";
 import { csvApply, csvHttpError, csvUploadOf, isCsvOperation, restCsvRequest } from "./csv";
 import { readCsvParts } from "./csv-multipart";
@@ -247,6 +248,52 @@ export class NestizeService {
     }
     const { total, models } = await this.orm.resolveFindAll(name, null, args, { req });
     return { total, rows: this.present(name, models) };
+  }
+
+  /**
+   * `GET /:resource/_csv`: the rows `GET /:resource` would list, as CSV text.
+   *
+   * 404 unless the instance has CSV on for the model, as for the upload routes;
+   * 403 when `queryCsv` denies it. The filter, order and paging are the list
+   * route's, under the same guards, and the columns are the ones `present`
+   * keeps, so a file holds nothing the JSON list would not. At most the model's
+   * `maxRows` rows: the most an upload of the same model may carry back.
+   * `?columns=a,b` picks and orders the columns, `?delimiter=;` and
+   * `?header=false` shape the file.
+   */
+  async csvExport(resource: string, query: RestQuery, req: RestRequest): Promise<string> {
+    const name = this.mustResolve(resource);
+    const limits = this.orm.csvLimits(name);
+    if (!limits) {
+      throw new NotFoundException(`Cannot GET /${resource}/_csv`);
+    }
+    if (!isQueryCsvAllowed(this.permission, name)) {
+      throw new ForbiddenException(`CSV export not allowed for ${name}`);
+    }
+    const { args } = parseListQuery(query);
+    this.assertFilterAllowed(name, args.where);
+    this.assertOrderAllowed(name, args.orderBy);
+    args.first = Math.min(args.first ?? limits.maxRows, limits.maxRows);
+    const readable = Object.keys(this.registry.entity(name)?.shape || {});
+    const requested = typeof query?.columns === "string" ? query.columns.split(",").map((c) => c.trim()).filter((c) => c !== "") : undefined;
+    for (const column of requested || []) {
+      if (!readable.includes(column)) {
+        throw new BadRequestException(`"${column}" is not a column this CSV can hold`);
+      }
+    }
+    if (requested && new Set(requested).size !== requested.length) {
+      throw new BadRequestException("A column is named twice");
+    }
+    const { models } = await this.orm.resolveFindAll(name, null, args, { req });
+    const rows = this.present(name, models) as { [column: string]: unknown }[];
+    try {
+      return writeCsv(requested || readable, Array.isArray(rows) ? rows : [], {
+        delimiter: typeof query?.delimiter === "string" ? query.delimiter : undefined,
+        header: query?.header !== "false" && query?.header !== false,
+      });
+    } catch (e) {
+      throw e instanceof CsvUploadError ? csvHttpError(e) : e;
+    }
   }
 
   async findOne(resource: string, id: unknown, req: RestRequest): Promise<unknown> {

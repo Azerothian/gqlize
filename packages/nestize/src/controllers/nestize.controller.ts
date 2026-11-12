@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   Param,
   Patch,
@@ -59,6 +60,14 @@ export class NestizeController {
     @Req() req: RestRequest
   ) {
     return this.service.csv(resource, operation, query, req);
+  }
+
+  // 1c. CSV export: literal `_csv` before `GET /:resource/:id`, which would
+  // take it as an id.
+  @Get(":resource/_csv")
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  csvExport(@Param("resource") resource: string, @Query() query: RestQuery, @Req() req: RestRequest) {
+    return this.service.csvExport(resource, query, req);
   }
 
   // 2-3. class-method actions (`/:resource/_actions/:method`)
