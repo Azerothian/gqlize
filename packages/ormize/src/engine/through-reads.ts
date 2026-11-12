@@ -6,16 +6,16 @@
 // `resolution.ts`: the join rows are loaded first (scoped, filtered by
 // `throughWhere`), and the targets are then fetched through `resolveFindAll`
 // restricted to the keys those rows point at, so the target keeps its own scope,
-// hooks and read cache. `applyThroughRequired` is the `required` half: it turns
-// a planned through-mode include into a key filter on the parent.
+// hooks and read cache. The `required` half is `required-filter.ts`, which turns
+// a planned through-mode include (with `linkedSourceKeys`) into a key filter on
+// the parent, as it does for every relation no JOIN can apply.
 
 import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import { clampPageSize, MAX_PAGE_SIZE } from "@azerothian/utilize/utils/page-size";
-import { isThroughMode, mergeScopeWhere } from "@azerothian/utilize/gate";
-import type { PortableWhere } from "@azerothian/utilize/gate";
+import { isThroughMode } from "@azerothian/utilize/gate";
 import type {
   AdapterQueryOptions, AdapterRow, AdapterRelationshipPage, AdapterWhere, Association, FindAllArgs,
-  IncludeDescriptor, IncludeMap, OrderEntry, RequestContext, Selection,
+  IncludeDescriptor, OrderEntry, RequestContext, Selection,
 } from "@azerothian/utilize/types/index";
 import { filterMerger } from "../cross-adapter";
 import { ThroughInputError } from "../through-input-error";
@@ -234,7 +234,7 @@ export async function resolveThroughRelationship(
  * join row matching its join filter and the join model's read scope, pointing
  * at a target matching its (already scoped) `where`.
  */
-async function linkedSourceKeys(
+export async function linkedSourceKeys(
   self: ResolutionHost, association: Association, descriptor: IncludeDescriptor,
   context: RequestContext, selection?: Selection,
 ): Promise<unknown[]> {
@@ -268,76 +268,4 @@ async function linkedSourceKeys(
     }
   }
   return out;
-}
-
-/**
- * Take the through-mode descriptors out of an include plan, turning each into a
- * key filter on the model it hangs off: "only parents with a visible matching
- * link". At the root that filter lands on `where`; deeper, on the `where` of the
- * descriptor above it. `false` when the root is left matching nothing.
- *
- * Adapter-independent on purpose: the join model's read scope has to decide
- * which links count, which an adapter's JOIN knows nothing about, and an adapter
- * that ignores `required` (Valkey) still filters correctly.
- */
-export async function applyThroughRequired(
-  self: ResolutionHost, defName: string, args: FindAllArgs, context: RequestContext, selection?: Selection,
-): Promise<FindAllArgs | false> {
-  const plan = args.include as IncludeMap[] | undefined;
-  const hasThrough = (levels: IncludeMap[] | undefined): boolean => (levels || []).some((level) =>
-    Object.values(level).some((d) => Boolean(d.through) || hasThrough(d.include)));
-  if (!plan || !hasThrough(plan)) {
-    return args;
-  }
-  // Set when a required link matches no parent at all. At the root that is an
-  // empty page, answered without asking the backend; deeper it is `in: []` on
-  // the descriptor above, as `scopeIncludePlan` writes "nothing" for an include.
-  let rootNone = false;
-  const walk = async(parentName: string, levels: IncludeMap[], root: boolean): Promise<{include: IncludeMap[]; filter?: PortableWhere}> => {
-    let filter: PortableWhere | undefined;
-    const out: IncludeMap[] = [];
-    for (const level of levels) {
-      const mapped: IncludeMap = {};
-      for (const relName of Object.keys(level)) {
-        const descriptor = level[relName];
-        const association = self.getAssociations(parentName)[relName] as Association | undefined;
-        if (descriptor.through && association && isThroughRead(association)) {
-          // A through-mode relation is never JOINed: only `required` plans one.
-          if (descriptor.required) {
-            const keys = await linkedSourceKeys(self, association, descriptor, context, selection);
-            if (root && keys.length === 0) {
-              rootNone = true;
-            }
-            filter = mergeScopeWhere(filter, {[association.sourceKey]: {in: keys}});
-          }
-          continue;
-        }
-        if (descriptor.include && association) {
-          // `association.target`, not `descriptor.target`: a descriptor from an
-          // explicit `include` argument does not carry one.
-          const nested = await walk(association.target, descriptor.include, false);
-          mapped[relName] = {
-            ...descriptor,
-            include: nested.include.length > 0 ? nested.include : undefined,
-            ...(nested.filter ? {where: mergeScopeWhere(descriptor.where, nested.filter)} : {}),
-          };
-          continue;
-        }
-        mapped[relName] = descriptor;
-      }
-      if (Object.keys(mapped).length > 0) {
-        out.push(mapped);
-      }
-    }
-    return {include: out, filter};
-  };
-  const {include, filter} = await walk(defName, plan, true);
-  if (rootNone) {
-    return false;
-  }
-  const next: FindAllArgs = {...args, include};
-  if (filter) {
-    next.where = mergeScopeWhere(args.where as PortableWhere | undefined, filter);
-  }
-  return next;
 }

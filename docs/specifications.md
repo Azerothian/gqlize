@@ -928,6 +928,16 @@ the query through the adapter. Key properties:
   beneath a `required` hasMany/belongsToMany: Sequelize 6 places such a join inside the
   paginated subquery, away from the collection it joins through, and the Sequelize adapter
   moves it back to the outer query (a `beforeFindAfterOptions` hook on its instance).
+- **`required` where no JOIN applies.** A through-mode `belongsToMany`, a cross-adapter relation,
+  and every relation of a model whose adapter sets `supportsJoins: false` (Valkey) cannot be
+  JOINed. The include builder still plans a `required` one (a cross-adapter one as a filter-only
+  descriptor), and `applyEngineRequired` (`ormize/src/engine/required-filter.ts`) replaces it,
+  after the scope pass and before the adapter sees the plan, with a key filter on the model above:
+  `<foreignKey> in [...]` for a `belongsTo`, `<sourceKey> in [...]` for a `hasOne`/`hasMany`/
+  `belongsToMany`, the keys read unpaged from the target's rows matching the descriptor's `where`,
+  its read scope and any `required` relations nested under it. Every other engine-applied
+  descriptor is dropped from the plan; its rows come from its own resolver. A root left with no
+  keys answers an empty page without a query. So `required` means the same on every adapter.
 - **Accurate totals.** When a per-parent limit is applied, the nested connection's `total` is
   fetched with a `count` (firing `beforeCount`) rather than reported as the page length. hasMany
   counts run against the target model with the foreign-key filter so `beforeCount` fires (the
@@ -965,6 +975,7 @@ relation is deliberately left to its own resolver — a strategy, not a failure.
 | Accurate `total` under a per-parent limit | holds (an extra count per parent) |
 | Count-only (`total` without `edges`) skips the findAll | holds — `query-count.test.ts` |
 | Cross-adapter relations are left to their own resolvers | holds — `ormize-adapter-valkey/__tests__/cross-adapter.test.ts` |
+| `required` filters parents on Valkey and across adapters too | holds — `ormize-adapter-valkey/__tests__/required.test.ts` |
 | Soft-delete `deleted:` carried per include node | holds — `paranoid.test.ts` |
 | A row-level scope never becomes a filter on the parent | holds — see the note below |
 | Child find hooks fire exactly once, JOIN or separate | holds — `query-count.test.ts` |
@@ -1052,7 +1063,7 @@ windowed in memory with the connection's own offset arithmetic. The path is keye
 `Association.throughModel` alone, so a join model the permission bag hides still has its read scope
 applied — it just offers no `through` or join-row arguments, and the engine refuses them
 (`ThroughInputError`). A through-mode relation is never in the include plan except as a `required`
-filter: `applyThroughRequired` replaces it, before the adapter sees the plan, with
+filter: `applyEngineRequired` replaces it, before the adapter sees the plan, with
 `<sourceKey> in [...]` on the model above it — the keys with a visible link matching
 `throughWhere` and the (scoped) target `where`. A parent left with no keys at the root answers
 with an empty page.

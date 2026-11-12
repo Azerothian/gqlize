@@ -73,7 +73,7 @@ export interface IncludeDescriptor {
    * model, and a filter on its rows. Such a descriptor is never handed to an
    * adapter. The engine only ever plans one for a `required` relation, and
    * turns it into a key filter on the parent before the query runs (see
-   * `applyThroughRequired` in ormize), so it behaves the same on every adapter.
+   * `applyEngineRequired` in ormize), so it behaves the same on every adapter.
    */
   through?: { model: string; where?: AdapterWhere };
 }

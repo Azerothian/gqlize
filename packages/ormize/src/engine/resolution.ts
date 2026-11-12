@@ -9,7 +9,8 @@ import { completeIncludePlan, toIncludeLevels } from "@azerothian/utilize/utils/
 import { applyScopeWhere } from "../scope";
 import { scopeIncludePlan } from "../scope";
 import { joinScope } from "../cross-adapter";
-import { applyThroughRequired, assertThroughArgs, isThroughRead, resolveThroughRelationship } from "./through-reads";
+import { assertThroughArgs, isThroughRead, resolveThroughRelationship } from "./through-reads";
+import { applyEngineRequired } from "./required-filter";
 import type {
   AdapterRow, AdapterQueryOptions, RequestContext,
   Selection, IncludeMap, FindAllArgs, OrderEntry, Association,
@@ -238,14 +239,14 @@ export async function resolveManyRelationship(self: ResolutionHost, defName: str
   }
   // A nested connection's own `include` argument goes to the adapter's
   // per-parent query: normalised as at the root, and a through-mode relation in
-  // it is a key filter here rather than an adapter JOIN.
+  // it, like every relation no JOIN can apply, is a key filter here.
   if (a.include !== undefined) {
     a = {...a, include: completeIncludePlan(toIncludeLevels(a.include), defName, (n) => self.getAssociations(n))};
-    const throughFiltered = await applyThroughRequired(self, defName, a, context, selection);
-    if (throughFiltered === false) {
+    const required = await applyEngineRequired(self, defName, a, context, selection);
+    if (required === false) {
       return { total: 0, models: [] };
     }
-    a = throughFiltered;
+    a = required;
   }
   a = expandComputedOrder(self, defName, a, {context, info: selection?.raw});
   const offset = cursorOffset(args);
@@ -394,13 +395,14 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   if (scopedInclude !== a.include) {
     a = {...a, include: scopedInclude};
   }
-  // After the scope pass, so a required link's target is already scoped: the
-  // through-mode descriptors become a key filter on this query.
-  const throughFiltered = await applyThroughRequired(self, defName, a, context, selection);
-  if (throughFiltered === false) {
+  // After the scope pass, so a required relation's target is already scoped:
+  // every relation no adapter JOIN can apply (through-mode, cross-adapter, or
+  // on an adapter without joins) becomes a key filter on this query.
+  const required = await applyEngineRequired(self, defName, a, context, selection);
+  if (required === false) {
     return { total: 0, models: [] };
   }
-  a = throughFiltered;
+  a = required;
   a = expandComputedOrder(self, defName, a, {context, info: selection?.raw});
   // Row-level scope, merged while the filter is still in the caller's
   // vocabulary. That is also what gives the count the same filter, since

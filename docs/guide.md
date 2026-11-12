@@ -832,6 +832,10 @@ Post(include: { comments: { required: true, where: { body: { eq: "hi" } } } }) {
 }
 ```
 
+`required` means the same on every adapter. Where no JOIN can apply it (on Valkey, across two
+adapters, or a many-to-many in through mode) ormize filters the parents itself, by the keys of the
+related rows the caller may see.
+
 Non-paginated relations fold into a single JOINed query; a nested `hasMany` with pagination
 (`first`/`last`) is loaded via a batched `separate:true` query so per-parent limits are correct.
 

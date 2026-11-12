@@ -8,7 +8,7 @@ import type { Association, IncludeDescriptor, IncludeMap } from "../types/index"
  * one without (Valkey), and a client-written descriptor carries only what the
  * client typed: no `target`, no `associationType`, at any depth. The engine is
  * written for `IncludeMap[]` of complete descriptors throughout — scoping
- * (`scopeIncludePlan`), through-mode filtering (`applyThroughRequired`) and
+ * (`scopeIncludePlan`), through-mode filtering (`applyEngineRequired`) and
  * the adapters all read `target` — so a plan is normalised here once, where it
  * enters, rather than each reader coping (#68).
  *

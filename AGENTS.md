@@ -115,7 +115,7 @@ order: lint needs a program that compiles.
   Reads of a registered join model's relationship go through `engine/through-reads.ts` on every
   adapter (keyed on `throughModel` alone, so the join model's read scope always hides links); never
   let one reach an adapter's JOIN. The include builder plans it only as a `required` filter, which
-  `applyThroughRequired` strips out before the adapter runs.
+  `applyEngineRequired` strips out before the adapter runs.
 - **Permission keys.** A new key on `Permission` goes in exactly one of `BUILD_TIME_PERMISSION_KEYS` or
   `RESOLUTION_TIME_PERMISSION_KEYS` (`utilize/src/gate.ts`). The typecheck fails if it's missing from
   both or listed in both. Code under `gqlize/src/graphql/*` builds the schema synchronously, so it must

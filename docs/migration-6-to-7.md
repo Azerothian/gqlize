@@ -795,6 +795,17 @@ A definition's own `whereOperators` keep taking whatever value their handler rea
 exported from `@azerothian/utilize` (`FILTER_VALUE_OPERATORS`, `FILTER_LIST_OPERATORS`,
 `FILTER_REGEX_OPERATORS`).
 
+### `required` filters on Valkey and across adapters
+
+`required: true` (on a relationship field or in `include`) keeps only parents with a matching
+related row the caller may see. On Sequelize that was always true for relations within one
+database. It was silently ignored on Valkey, and for any relationship between two adapters, so
+every parent came back. Now ormize applies it there itself, as a key filter on the parent built
+from the related rows that match the relation's `where` and read scope.
+
+A query that sent `required` on Valkey or across adapters now returns fewer rows: the ones it
+asked for. If you relied on getting every parent, drop `required`.
+
 ### Every element of an explicit `include` is applied
 
 A list-shaped `include` argument used to merge only its first element with the selection's plan;
