@@ -69,3 +69,34 @@ export function completeIncludePlan(
     return out;
   });
 }
+
+/**
+ * A plan in either argument shape as a list of levels, at the root and under
+ * every descriptor, without reading associations: for a caller that has none to
+ * hand. Copy-on-write; a plan already in shape comes back as the same object.
+ * The engine itself uses {@link completeIncludePlan}, which does this and more.
+ */
+export function toIncludePlan(include: unknown): IncludeMap[] | undefined {
+  const levels = toIncludeLevels(include);
+  if (!levels) {
+    return levels;
+  }
+  let changed = levels.length !== (Array.isArray(include) ? include.length : -1);
+  const out = levels.map((level) => {
+    let copy: IncludeMap | undefined;
+    for (const relName of Object.keys(level)) {
+      const descriptor = level[relName];
+      if (!descriptor || typeof descriptor !== "object" || descriptor.include === undefined) {
+        continue;
+      }
+      const nested = toIncludePlan(descriptor.include);
+      if (nested !== descriptor.include) {
+        copy ??= {...level};
+        copy[relName] = {...descriptor, include: nested};
+      }
+    }
+    changed ||= copy !== undefined;
+    return copy ?? level;
+  });
+  return changed ? out : (include as IncludeMap[]);
+}

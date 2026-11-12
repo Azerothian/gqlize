@@ -254,11 +254,7 @@ export function buildIncludeMapFromSelection(
       continue; // cross-adapter: resolved as its own root query elsewhere
     }
     const collection = isCollection(association.associationType);
-    if (collection && !isConnectionRowsSelected(sel, info)) {
-      // Only `total` (no `edges`/rows) requested — do not eager-load; the nested
-      // resolver runs a count-only query (fires beforeCount/afterCount) instead.
-      continue;
-    }
+    const countOnly = collection && !isConnectionRowsSelected(sel, info);
     let fieldArgs: IncludeFieldArgs = {};
     try {
       const fieldDef = typeFields[relName];
@@ -269,6 +265,13 @@ export function buildIncludeMapFromSelection(
       }
     } catch (e) {
       fieldArgs = {};
+    }
+    if (countOnly && fieldArgs.required !== true) {
+      // Only `total` (no `edges`/rows) requested — do not eager-load; the nested
+      // resolver runs a count-only query (fires beforeCount/afterCount) instead.
+      // A `required` one stays in the plan: it is what filters the parent rows,
+      // and dropping it with the rows handed back every parent.
+      continue;
     }
     // A belongsToMany in through mode is resolved per parent by the engine's
     // through path (join rows first, then targets), which no JOIN can stand in
