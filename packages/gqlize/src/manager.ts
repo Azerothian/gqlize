@@ -6,10 +6,10 @@ import { globalKeyTargets } from "@azerothian/utilize/utils/global-keys";
 import { GraphQLResolveInfo } from "graphql";
 import type { FieldNode } from "graphql";
 import logger from "@azerothian/utilize/utils/logger";
-import buildIncludeFromSelection, { mergeIncludeMaps, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
+import buildIncludeFromSelection, { mergeIncludeMaps, normaliseExplicitInclude, getChildSelectionSet, flattenFieldNodes, isConnectionCsvSelected, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
 import { methodOptionHooks, methodProjection, queryInstanceMethods, type MethodSelection } from "@azerothian/utilize/exposed-methods";
 import { getArgumentValues, type GraphQLObjectType } from "graphql";
-import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
+import type { CsvImportRequest, CsvOperation, CsvRequest, MutationFilter, MutationInputTree } from "@azerothian/ormize";
 import { AdapterRow, AnyOrmize, Association, DeclaredIncludeMap, FindAllArgs, GlobalKeyTargets, GqlizeAdapter, GqlizeOptions, IncludeMap, NativeDataType, Permission, RequestContext, Selection } from './types';
 
 /**
@@ -38,6 +38,14 @@ export default class GqlizeBinding {
    * engine, and it is constructed once per schema rather than per request.
    */
   options: GqlizeOptions;
+  /**
+   * The permission bag the schema was built with — `options.permission` with
+   * the visible-model fold applied. Set by the schema build (live or
+   * materialized) and handed to the engine on every call as
+   * `Selection.permission`, so the engine's view of each `belongsToMany`'s
+   * input shape matches the one the schema offered.
+   */
+  buildPermission?: Permission;
   constructor(orm: AnyOrmize, options: GqlizeOptions = {}) {
     this.orm = orm;
     this.options = options;
@@ -259,13 +267,15 @@ export default class GqlizeBinding {
     // Widening here — next to `withCrossAdapterJoinKeys`, which widens for
     // exactly this class of reason — is what makes the declaration mean anything.
     const declared = methods.length > 0 ? methodProjection(this.getDefinition(defName), selectedNames) : {};
-    const fields = declared.fields === "*"
-      ? undefined // opted out of narrowing: load every column
+    const csvExport = !!info && Array.isArray(info.fieldNodes) && isConnectionCsvSelected(info.fieldNodes[0], info);
+    const fields = declared.fields === "*" || csvExport
+      ? undefined // opted out of narrowing, or a CSV export that writes every column: load them all
       : this.withCrossAdapterJoinKeys(defName, declared.fields?.length
         ? [...new Set([...(selectedNames || []), ...declared.fields])]
         : selectedNames);
     const idTargets = this.globalKeyTargetsFor(defName);
     const selection: Selection = {
+      permission: this.buildPermission ?? this.options.permission,
       raw: info,
       variableValues: info?.variableValues,
       fields,
@@ -311,9 +321,11 @@ export default class GqlizeBinding {
             astInclude = adapter.replaceIdInInclude(astInclude, defName, info.variableValues, {codec: this.idCodec});
           }
           // `include` is one of the open keys on the args bag — see {@link FindAllArgs}.
-          const explicit = a.include as IncludeMap[] | undefined;
-          if (astInclude && explicit) {
-            a.include = [mergeIncludeMaps(explicit[0] || {}, astInclude[0] || {})];
+          // Every element of it, in either argument shape: an `explicit[0]`
+          // merge dropped the rest of a list, and all of a single-object
+          // argument (an `includeIsList = false` adapter, #68).
+          if (astInclude && a.include !== undefined) {
+            a.include = [mergeIncludeMaps(normaliseExplicitInclude(a.include), astInclude[0] || {})];
           } else if (astInclude) {
             a.include = astInclude;
           }
@@ -327,8 +339,7 @@ export default class GqlizeBinding {
       // the definition's author, not an inference from the selection set.
       const methodInclude = this.normalizeDeclaredInclude(defName, declared.include);
       if (methodInclude) {
-        const existing = a.include as IncludeMap[] | undefined;
-        a.include = [mergeIncludeMaps(existing?.[0] || {}, methodInclude)];
+        a.include = [mergeIncludeMaps(normaliseExplicitInclude(a.include), methodInclude)];
       }
       selection.include = a.include as IncludeMap[] | undefined;
     }
@@ -375,7 +386,7 @@ export default class GqlizeBinding {
   processCreate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processCreate(defName, source, args, context, this.buildSelection(defName, info));
   }
-  processUpdate = (defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
+  processUpdate = (defName: string, source: AdapterRow, args: { input?: MutationInputTree; where: MutationFilter; limit?: number; apply?: { [methodName: string]: unknown } }, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processUpdate(defName, source, args, context, this.buildSelection(defName, info));
   }
   processSelect = (defName: string, source: AdapterRow, args: { input?: MutationInputTree; where?: MutationFilter; limit?: number }, context: RequestContext, info: GraphQLResolveInfo) => {
@@ -386,6 +397,19 @@ export default class GqlizeBinding {
   }
   processRestore = (defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, info: GraphQLResolveInfo) => {
     return this.orm.processRestore(defName, source, args, context, this.buildSelection(defName, info));
+  }
+  /**
+   * Whether `defName` takes CSV uploads at all — see `GqlizeOptions.csv`.
+   * Tolerates an ormize that predates the method (gqlize's peer range is
+   * wider than the release it shipped in): no method, no CSV.
+   */
+  csvEnabled = (defName: string): boolean => typeof this.orm.csvLimits === "function" && Boolean(this.orm.csvLimits(defName));
+  processCsv = (defName: string, operation: CsvOperation, request: CsvRequest, context: RequestContext, info: GraphQLResolveInfo) => {
+    return this.orm.processCsv(defName, operation, request, context, this.buildSelection(defName, info));
+  }
+  /** A multi-file CSV import, each model's writes carrying the selection that decodes its global ids. */
+  processCsvImport = (request: CsvImportRequest, context: RequestContext) => {
+    return this.orm.processCsvImport({ ...request, selection: (defName) => this.buildSelection(defName, undefined) }, context);
   }
 }
 

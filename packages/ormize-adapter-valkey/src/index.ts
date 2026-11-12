@@ -171,6 +171,8 @@ export default class ValkeyAdapter implements GqlizeAdapter {
     : undefined);
   /** One include object keyed by relationship name — there is no JOIN to repeat. */
   readonly includeIsList = false;
+  /** No JOINs at all: ormize applies `required` itself (`engine/required-filter.ts`). */
+  readonly supportsJoins = false;
 
   getFilterGraphQLType = (defName: string, definition: Definition, permission?: Permission) => getFilterGraphQLType(this, defName, definition, permission);
   getOrderByGraphQLType = (defName: string, permission?: Permission) => getOrderByGraphQLType(this, defName, permission);
@@ -345,6 +347,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
         associationType: type,
         // belongsToMany join descriptor (through model + the two foreign keys).
         through: join?.through,
+        otherKey: join?.fkB,
         fkA: join?.fkA,
         fkB: join?.fkB,
         // Sequelize-style accessor names (singular for the -one variants, plural
@@ -613,12 +616,21 @@ export default class ValkeyAdapter implements GqlizeAdapter {
         const joinFkA = fkA as string;
         const joinFkB = fkB as string;
         const add = async (recs: ValkeyRow | ValkeyRow[], options: AdapterQueryOptions) => {
-          const throughData = (options && options.through) || {};
+          // The join row's keys and primary key are never taken from `through`:
+          // a payload carrying them would point the link at a row the caller
+          // never named, or overwrite another link. The keys are also written
+          // last, after whatever the payload holds.
+          const throughData = { ...((options && options.through) || {}) };
+          if (isBtm) {
+            delete throughData[joinFkA];
+            delete throughData[joinFkB];
+            delete throughData[this.model(joinThrough).primaryKey];
+          }
           for (const t of arr(recs)) {
             const tid = t[tpk(target)];
             if (isBtm) {
               const existing = await this.findAll(joinThrough, { where: { and: [{ [joinFkA]: record[srcKey] }, { [joinFkB]: tid }] }, transaction: options?.transaction });
-              if (!existing.length) await this.getCreateFunction(joinThrough)({ [joinFkA]: record[srcKey], [joinFkB]: tid, ...throughData }, options);
+              if (!existing.length) await this.getCreateFunction(joinThrough)({ ...throughData, [joinFkA]: record[srcKey], [joinFkB]: tid }, options);
               else if (Object.keys(throughData).length) await this.persistPatch(joinThrough, existing[0][this.model(joinThrough).primaryKey], throughData, options);
             } else {
               await this.persistPatch(target, tid, { [fk]: record[srcKey] }, options);

@@ -26,6 +26,15 @@ export type Association = {
    */
   through?: string;
   otherKey?: string;
+  /**
+   * `belongsToMany` only: true when `through` names a model the author
+   * registered (not one an adapter or ormize made implicitly). Only then does
+   * the relationship carry join-row data: `add`/`set` entries take
+   * `{ where, through }`. Otherwise it behaves as a plain many-to-many and
+   * entries are bare filters. Set by `Ormize.getAssociations`, which both the
+   * schema builders and the relationship verbs read, so the two agree.
+   */
+  throughModel?: boolean;
   accessors: {
     add: string;
     set: string;

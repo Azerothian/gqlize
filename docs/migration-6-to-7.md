@@ -28,6 +28,8 @@ cleanly — that section is where working code breaks.
    - [Adapter list and relationship methods take a request object](#adapter-list-and-relationship-methods-take-a-request-object)
    - [Definition `type` slots are `unknown`, not `any`](#definition-type-slots-are-unknown-not-any)
    - [Multi-row mutations return every affected row](#multi-row-mutations-return-every-affected-row)
+   - [`belongsToMany` `add`/`set` take bare filters; `through` needs a registered join model](#belongstomany-addset-take-bare-filters-through-needs-a-registered-join-model)
+   - [Every element of an explicit `include` is applied](#every-element-of-an-explicit-include-is-applied)
    - [Adapters agree on enum type names and enum value names](#adapters-agree-on-enum-type-names-and-enum-value-names)
    - [`field: String` works on every adapter](#field-string-works-on-every-adapter)
    - [`OrderEntry` in temporalize is now `SortEntry`](#orderentry-in-temporalize-is-now-sortentry)
@@ -643,6 +645,177 @@ The rows written were always correct — only the mutation's own return value wa
 that read `data.models.Post[0]` after a single-row filter is unaffected; code that counted the
 returned array, or that tested for `[null]` to detect "nothing matched", needs updating.
 
+### `belongsToMany` `add`/`set` take bare filters; `through` needs a registered join model
+
+In 6.x a `belongsToMany` `add` / `set` entry was a bare filter, as for `hasMany`. Early 7.x betas
+wrapped every entry as `{ where, through }`, with `through` an untyped JSON scalar. That is reverted
+to the 6.x shape, with one exception.
+
+**Plain many-to-many** (the default): entries are bare filters again.
+
+```graphql
+# 7.0 betas:  tags: { add: [ { where: { name: { eq: "a" } } } ] }
+# now, as 6.x: tags: { add: [ { name: { eq: "a" } } ] }
+```
+
+**Through mode** (a join model you registered as a definition, and the permission bag lets it be
+seen): entries are `{ where, through }`, and `through` is a typed input named
+`<Model><Rel>ThroughInput` (for example `PostTagsThroughInput`). Its fields are the join model's
+columns that pass its `mutationCreateInput`, all optional. The two join keys, every primary and
+foreign key, and `ignoreFields` are left out.
+
+What this changes:
+
+- A relationship through an implicit join table, a join model hidden by `permission.model`, or a
+  join model ormize generated is a plain many-to-many. Its entries are bare filters and it has no
+  `through`. The engine refuses a `{ where, through }` entry there, on every route.
+- In through mode a bare filter is refused; outside it, the wrapper is. The engine checks this on
+  every route with the caller's permission bag, so REST and Temporal agree with GraphQL.
+- A `through` key that is not one of those columns is refused — a validation error in GraphQL, a
+  `ThroughInputError` from the engine (403 from nestize, a non-retryable `Forbidden` from
+  temporalize) — instead of being passed to the adapter. That includes the join keys and the join
+  row's primary key, refused on every route including direct `processUpdate` calls. Before, a
+  payload holding them could point a link at a row the caller never named: Sequelize did this when
+  the link already existed, and the Valkey adapter and cross-adapter relationships did it for new
+  links too.
+- A `set` applies each entry's own `through` to the rows that entry matched (it used to apply the
+  last one to all). When any entry carries `through`, links kept from before are rewritten with
+  the given values or the column defaults.
+- Reads in through mode: each edge has `through` (the join row), and the connection takes
+  `throughWhere` / `throughOrderBy`. Its types are renamed after the parent, e.g. `TagBelongsToManyTagsList`
+  becomes `PostTagBelongsToManyTagsList` — update fragments that name them. Such a relationship is
+  no longer JOINed into the parent query; it is read per parent.
+- Wherever the join model is a registered definition, its read scope now hides links: a join row
+  out of scope is no edge, is not counted, and does not satisfy `required`. Before, only a
+  cross-adapter `belongsToMany` applied it.
+- The join model ormize generates for a cross-adapter `belongsToMany` with no `through` model is no
+  longer exposed. In GraphQL it had its own type and mutations with both join keys writable, and
+  nestize, ormize-zod4 and temporalize listed it too. Register the join model yourself if you need
+  to reach its rows.
+
+### Nested relationship verbs follow the target's permissions
+
+A nested relationship write now needs the **related** model's own permission for what it does to
+that model's rows. That holds in gqlize, by what the relationship input offers, and in nestize, by a
+check on the nested body.
+
+| Verb | Needs, on the related model |
+| --- | --- |
+| `create` | `mutationCreate` (already true: its create input) |
+| `update`, `select` | `mutationUpdate` (already true: its update input) |
+| `add`, `set`, `remove` on a `hasMany` / `hasOne` | `mutationUpdate`. **New**: they rewrite the related row's foreign key. |
+| `add`, `set`, `remove` on a `belongsTo` / plain `belongsToMany` | nothing more: they write the source's own key or a join row nobody can see |
+| `add`, `set`, `remove` on a `belongsToMany` in through mode | the **join model's** `mutationCreate` (`add`), `mutationDelete` (`remove`), or both (`set`); plus its `mutationUpdate` when a `through` payload rewrites a link that already exists. **New.** |
+| `delete` | `mutationDelete`. **New**. |
+| `restore` | `mutationRestore`. **New**. |
+
+Before, these verbs were offered without asking. A caller denied `mutationDelete` on `Comment` could
+still delete comments by reaching them through `Post`.
+
+**What changes for you:**
+
+- **gqlize.** A schema that denies those permissions on a related model loses the matching fields on
+  the relationship input. A client that sent them gets a validation error instead of a write. A
+  relationship whose verbs are all denied is left off the input. A model left with nothing writable
+  loses its create/update input, as one with no writable columns already did. To keep the old
+  behaviour, allow the operation on the related model.
+- **nestize.** `POST /:resource/:id/:relation`, `DELETE /:resource/:id/:relation/:relId` and
+  `POST /:resource/select` with an `input` used to pass the nested body straight to the engine. Now:
+
+  | Body problem | Answer |
+  | --- | --- |
+  | A verb the related model's permissions deny | `403` |
+  | An unknown verb or key | `400` |
+  | A column the related model's create or update schema leaves out (checked strictly) | `400` |
+  | A filter on a hidden field, or with an operator outside the allow-list below | `400` |
+
+### ormize checks `mutationInstanceMethods` before running a transform
+
+Before, only gqlize's `apply` type and nestize's instance-method route kept a denied transform from
+running. The engine ran whatever `apply` it was handed, so a host passing a caller's `apply` to
+`orm.processCreate` / `processUpdate` / `processCsv` directly skipped the gate.
+
+Now the engine checks `permission.mutationInstanceMethods` on the ormize instance's own permission
+bag (`new Ormize({ permission })` or `setPermission`) before each transform, and throws if it is
+denied. Nothing changes if that bag is unset, or if it is the same bag you give gqlize and nestize.
+If you set an ormize bag that denies a transform your own server code still runs, allow it there.
+
+Related, in gqlize:
+
+- `apply` is no longer offered on a model field that has neither `create` nor `update`, where it
+  could not run.
+- A model that may be updated, but has nothing writable by hand, keeps `update` when one of its
+  transforms is allowed. Its `{Def}UpdateInput` then holds only `where` and `limit`.
+
+### nestize and temporalize check a transform's params against its `args`
+
+gqlize types each transform's params from the `args` it declares under
+`expose.instanceMethods.mutations`, so a GraphQL caller can only send those args, with those types.
+nestize's `POST /:resource/:id/_actions/:method`, its CSV `apply` (`?apply=`, `<part>.apply`) and
+temporalize's `<Model>.instanceMethods.<name>` activity passed whatever they were given straight to
+the method: undeclared keys, values of any type, operator objects.
+
+They now check the params the way gqlize does:
+
+- A transform with `args` takes an object of them. An unknown key, a missing required arg or a value
+  its declared type can't coerce is refused. Defaults fill in, and custom scalars and enums coerce
+  through their own `parseValue`, so a transform gets the same values on every surface.
+- A transform with no `args` takes no params. A bare call (no body, `{}` or `true`) still runs it.
+- A refusal is `400` in nestize, and a non-retryable `TemporalizeValidation` failure in temporalize.
+  Nothing is written.
+
+> **Watch for:** a transform that reads params it never declared. Declare them under its `args`
+> with GraphQL input types, which gqlize needs anyway:
+> `appendSuffix: { args: { suffix: { type: GraphQLString } } }`. An arg declared with a type that
+> isn't a GraphQL input type (a Sequelize `DataTypes.STRING`, say) is refused too, since gqlize
+> couldn't build a schema from it either.
+
+### REST and Temporal filters take filter operators only
+
+nestize's `?filter=` and every other REST filter, and temporalize's `where`, are now checked
+operator by operator. Inside a field, only the operators gqlize's filter types offer are accepted:
+
+- `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `not`, `is`;
+- `like`, `notLike`, `iLike`, `notILike`;
+- `startsWith`, `endsWith`, `substring`;
+- `in`, `notIn`, `between`, `notBetween`;
+- Postgres' array and range operators.
+
+Before, any key was passed through, and the sequelize adapter turns every Sequelize `Op` name into
+that operator. `{"name": {"col": "passwordHash"}}` therefore compared `name` against a column the
+caller may not filter on, which is a way to read it.
+
+**Refused now:**
+
+- ORM internals such as `col`, `raw`, `values`, `any`, `all` and `match`, and `or` / `and` inside a
+  field;
+- the regex operators (`regexp`, `iRegexp`, …), unless the model's adapter has
+  `enableRegexpOperators`, as gqlize already required;
+- Sequelize's nested JSON-path filters (`{"meta": {"video": {"url": …}}}`), which gqlize never
+  offered.
+
+A definition's own `whereOperators` keep taking whatever value their handler reads. The lists are
+exported from `@azerothian/utilize` (`FILTER_VALUE_OPERATORS`, `FILTER_LIST_OPERATORS`,
+`FILTER_REGEX_OPERATORS`).
+
+### `required` filters on Valkey and across adapters
+
+`required: true` (on a relationship field or in `include`) keeps only parents with a matching
+related row the caller may see. On Sequelize that was always true for relations within one
+database. It was silently ignored on Valkey, and for any relationship between two adapters, so
+every parent came back. Now ormize applies it there itself, as a key filter on the parent built
+from the related rows that match the relation's `where` and read scope.
+
+A query that sent `required` on Valkey or across adapters now returns fewer rows: the ones it
+asked for. If you relied on getting every parent, drop `required`.
+
+### Every element of an explicit `include` is applied
+
+A list-shaped `include` argument used to merge only its first element with the selection's plan;
+the rest were dropped without an error. Every element now merges. On Valkey, whose `include`
+argument is a single object, any query that supplied it failed with `include is not iterable`
+(#68); it now works, and a through-mode `belongsToMany` in it filters parents with `required`.
+
 ### Adapters agree on enum type names and enum value names
 
 Enum handling had drifted between the two shipped adapters. The sequelize adapter capitalised the
@@ -822,6 +995,13 @@ Not required for migration, but this is what the split bought:
 - [ ] Mutations that wrote primary keys or foreign keys audited — either moved to nested relationship
       inputs or opted in with `writable: true` / `writableForeignKeys`.
 - [ ] Callers that relied on unpaginated lists updated to page explicitly.
+- [ ] Nested relationship verbs checked against the related model's own permissions (`delete` /
+      `restore`, and `add` / `set` / `remove` on a `hasMany` / `hasOne` needing its update).
+- [ ] A permission bag on the ormize instance allows every transform your own code runs through `apply`.
+- [ ] Every param a transform reads over REST or Temporal is declared under its `args`, with a
+      GraphQL input type.
+- [ ] REST / Temporal filters use filter operators only (no `col`, nested JSON paths, or regex unless
+      the adapter enables it).
 - [ ] `enableRegexpOperators: true` set if you use `$regexp` and friends.
 - [ ] `where` / `orderBy` usage checked against your permission config.
 - [ ] Backward pagination (`last`/`before`) avoided — see the known issue above.
@@ -841,6 +1021,9 @@ Not required for migration, but this is what the split bought:
       nothing in 6.x and now warn.
 - [ ] Callers that read the return value of a multi-row `update` / `delete` / `select` audited —
       the list now holds every affected row, and an empty match is `[]` rather than `[null]`.
+- [ ] `belongsToMany` `add`/`set` entries written as bare filters, unless the join model is a
+      registered, visible definition; `through` payloads checked against `<Model><Rel>ThroughInput`.
+- [ ] Clients of a cross-adapter `belongsToMany`'s generated join model moved to a registered one.
 - [ ] Hand-written `permission` bags checked against the build-time unknown-key warning.
 - [ ] Third-party adapters recompiled against the typed `OrmAdapter` / `GqlizeAdapter`, and
       `setBuildPermission` implemented if their filter/order/include builders gate on a permission

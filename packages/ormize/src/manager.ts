@@ -18,7 +18,7 @@ import { auditDefinitionScopeSurfaces, auditExtendFields, reportScopeSurfaces } 
 import type { ScopeHook } from "./scope-hooks";
 import { Definitions, GqlizeOptions, Definition, HookMap, Relationship, AnyTypedDef, ModelNameOf, IORModel, IORBase, BaseOf } from './types';
 import { OrmAdapter, AdapterRow, AdapterQueryOptions, DataTypeDescriptor, InitialiseOptions, NativeDataType,
-  RequestContext, Selection, FindAllArgs, Association } from '@azerothian/utilize/types/index';
+  RequestContext, Selection, FindAllArgs, Association, CsvOptions, ResolvedCsvLimits } from '@azerothian/utilize/types/index';
 import type { MutationApply, MutationFilter, MutationHost, MutationInput,
   MutationInputTree } from "./types/engine";
 import ReadCache from "./read-cache";
@@ -54,7 +54,12 @@ import {
   runWithContext as _runWithContext,
   getContext as _getContext,
   withTransaction as _withTransaction,
+  // csv
+  processCsv as _processCsv,
+  processCsvImport as _processCsvImport,
 } from "./engine";
+import type { CsvImportHost, CsvImportRequest, CsvImportResult, CsvOperation, CsvRequest } from "./engine";
+import { resolveCsvLimits, resolveCsvMaxFiles } from "./csv/limits";
 import type { HookFunction, HookHost, MutationEntryHost, ReadCacheHost, RelationshipHost, ResolutionHost, ScopeHost,
   TransactionHost, WiredRelationship } from "./engine";
 
@@ -93,16 +98,21 @@ export default class Ormize<
   /** Whether `initialise()` has run, so a later `setPermission` knows to re-audit. */
   private _initialised = false;
   /**
-   * The permission bag, for the one key the engine reads at *resolution* time.
+   * The permission bag, for the keys the engine reads per request.
    *
-   * Every other key is consumed by gqlize while building the schema and never
-   * reaches here. `scope` is the exception, which is why the engine needs the
-   * bag at all — see `RESOLUTION_TIME_PERMISSION_KEYS` in `@azerothian/utilize`.
+   * Most keys are consumed by gqlize while building the schema and never
+   * reach here. `scope` is the main exception, which is why the engine needs
+   * the bag at all — see `RESOLUTION_TIME_PERMISSION_KEYS` in
+   * `@azerothian/utilize`. The engine also rechecks `mutationInstanceMethods`
+   * (synchronous, like every build-time key) before running an `apply`
+   * transform, for hosts that call the write methods directly.
    */
   private permission: Permission | undefined;
   private onScopeMiss: ScopeMissBehaviour;
   /** See `GqlizeOptions.writableForeignKeys`; applied in `getFields`. */
   private writableForeignKeys: boolean;
+  /** `GqlizeOptions.csv`, folded with each definition's own by `csvLimits`. */
+  private csv: boolean | CsvOptions | undefined;
   /**
    * The row-level scope, re-imposed on the adapter's own model hooks (§13).
    *
@@ -150,6 +160,7 @@ export default class Ormize<
     this.permission = options.permission;
     this.onScopeMiss = options.onScopeMiss || "empty";
     this.writableForeignKeys = options.writableForeignKeys === true;
+    this.csv = options.csv;
     this.readCache = options.cache ? new ReadCache(options.cache, {
       definitionCache: (defName) => this.defs[defName]?.cache,
       hasOpaqueHooks: (defName, operation) => OPAQUE_READ_HOOKS[operation].some((hookName) => {
@@ -431,6 +442,17 @@ export default class Ormize<
         ...buildCrossAdapterAssociation(defName, rel),
       };
     }
+    // Whether a `belongsToMany` carries join-row data: only when its join model
+    // is one the author registered. An implicit table (never a definition) and
+    // a join model ormize generated (`generated`) make it a plain many-to-many.
+    for (const relName of Object.keys(associations)) {
+      const association = associations[relName];
+      if (association.associationType !== "belongsToMany") {
+        continue;
+      }
+      const joinDef = association.through ? this.defs[association.through] : undefined;
+      associations[relName] = {...association, throughModel: !!joinDef && !joinDef.generated};
+    }
     return associations;
   }
 
@@ -481,6 +503,21 @@ export default class Ormize<
    * private, and a private member cannot satisfy a structurally-required public
    * one — see {@link MutationHost}.
    */
+  /**
+   * What `processCsv` reads. Everything on it is public already, so unlike
+   * {@link engine} it is a plain forwarding object — kept anyway so the
+   * module is written against an interface rather than the whole class.
+   */
+  private csvHost: CsvImportHost = {
+    csvLimits: (defName) => this.csvLimits(defName),
+    csvMaxFiles: () => this.csvMaxFiles(),
+    getModelAdapter: (defName) => this.getModelAdapter(defName),
+    transaction: (fn) => this.transaction(fn),
+    processCreate: (defName, source, args, context, selection) => this.processCreate(defName, source, args, context, selection),
+    processUpdate: (defName, source, args, context, selection) => this.processUpdate(defName, source, args, context, selection),
+    processDelete: (defName, source, args, context, selection) => this.processDelete(defName, source, args, context, selection),
+  };
+
   private host: MutationHost = {
     getModelAdapter: (modelName) => this.getModelAdapter(modelName),
     optionsForAdapter: (fromDefName, toDefName, options) => this.optionsForAdapter(fromDefName, toDefName, options),
@@ -675,7 +712,7 @@ export default class Ormize<
     return _processCreate(this.engine, defName, source, args, context, selection);
   }
 
-  processUpdate = async(defName: string, source: AdapterRow, args: { input: MutationInputTree; where: MutationFilter; limit?: number; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+  processUpdate = async(defName: string, source: AdapterRow, args: { input?: MutationInputTree; where: MutationFilter; limit?: number; apply?: MutationApply }, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return _processUpdate(this.engine, defName, source, args, context, selection);
   }
 
@@ -689,6 +726,37 @@ export default class Ormize<
 
   processRestore = async(defName: string, source: AdapterRow, args: MutationFilter, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
     return _processRestore(this.engine, defName, source, args, context, selection);
+  }
+
+  /**
+   * The limits a CSV upload to `defName` runs under, or `undefined` when the
+   * model takes none — `GqlizeOptions.csv` is off, or the definition says
+   * `csv: false`. The surfaces read this to decide whether to offer CSV at all.
+   */
+  csvLimits = (defName: string): ResolvedCsvLimits | undefined => {
+    return resolveCsvLimits(this.csv, this.defs[defName]?.csv);
+  }
+
+  /** How many files one multi-file CSV import may carry, or `undefined` when CSV is off. */
+  csvMaxFiles = (): number | undefined => resolveCsvMaxFiles(this.csv);
+
+  /**
+   * Apply a CSV upload as one create, update or delete per row, all-or-nothing.
+   * See `./engine/csv` — and note it only *transports* the rows: permission to
+   * perform the operation is the caller's to check, as for `processCreate`.
+   */
+  processCsv = async(defName: string, operation: CsvOperation, request: CsvRequest, context: RequestContext, selection?: Selection): Promise<AdapterRow[]> => {
+    return _processCsv(this.csvHost, defName, operation, request, context, selection);
+  }
+
+  /**
+   * Apply several CSV uploads, each a create or an update on its own model, as
+   * one all-or-nothing unit, rows in one file referring to rows another writes
+   * through `@ref` labels. See `./engine/csv-import`. As with `processCsv`,
+   * permission to perform each file's operation is the caller's to check.
+   */
+  processCsvImport = async(request: CsvImportRequest, context: RequestContext): Promise<CsvImportResult> => {
+    return _processCsvImport(this.csvHost, request, context);
   }
 
   // -------------------------------------------------------------------------

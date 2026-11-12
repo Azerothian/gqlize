@@ -719,10 +719,12 @@ describe("cross-adapter relationships — a generated join model", () => {
     await orm.sync();
     return { orm, schema: await createSchema(orm) };
   };
-  const link = async (schema: GraphQLSchema) => {
+  // A generated join model makes a plain many-to-many (bare filter entries);
+  // a registered one is through mode (`{ where, through }` entries).
+  const link = async (schema: GraphQLSchema, entry = `{ name: { eq: "r1" } }`) => {
     await q(schema, `mutation { models { Left(create: { name: "l1" }) { name } } }`);
     await q(schema, `mutation { models { Right(create: { name: "r1" }) { name } } }`);
-    await q(schema, `mutation { models { Left(update: { where: { name: { eq: "l1" } }, input: { rights: { add: [{ where: { name: { eq: "r1" } } }] } } }) { name } } }`);
+    await q(schema, `mutation { models { Left(update: { where: { name: { eq: "l1" } }, input: { rights: { add: [${entry}] } } }) { name } } }`);
     return (await q(schema, `{ models { Left { edges { node { rights { edges { node { name } } } } } } } }`))
       .models.Left.edges[0].node.rights.edges.map((e: Edge) => e.node.name);
   };
@@ -787,7 +789,7 @@ describe("cross-adapter relationships — a generated join model", () => {
     await orm.sync();
     const schema = await createSchema(orm);
     expect(orm.defsAdapters.LeftRight).toBe(sqlName);
-    expect(await link(schema)).toEqual(["r1"]);
+    expect(await link(schema, `{ where: { name: { eq: "r1" } } }`)).toEqual(["r1"]);
     // The registered columns survive — nothing was regenerated over them.
     expect(Object.keys(orm.getFields("LeftRight"))).toContain("note");
   });

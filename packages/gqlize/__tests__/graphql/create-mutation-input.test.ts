@@ -2,7 +2,7 @@ import { Ormize } from "@azerothian/ormize";
 import GqlizeBinding from "../../src/manager";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
 import Sequelize from "sequelize";
-import createMutationInput from "../../src/graphql/create-mutation-input";
+import createMutationInput, { createMutationInputPlan } from "../../src/graphql/create-mutation-input";
 import createSchemaCache from "../../src/graphql/create-schema-cache";
 import {test,expect} from "@jest/globals";
 
@@ -25,9 +25,10 @@ test("createMutationInput", async() => {
   await db.sync();
   const inputTypes = {};
   const schemaCache = createSchemaCache();
-  // `mutableDefNames` is which models can contribute a relationship input;
-  // the live build derives it from the permission-visible set.
-  const result = createMutationInput(db, "Item", schemaCache, inputTypes, {}, new Set(["Item"]));
+  // The plan decides which models get create/update inputs, from the set of
+  // mutable models the live build derives from the permission-visible set.
+  const plan = createMutationInputPlan(db, {}, new Set(["Item"]));
+  const result = createMutationInput(db, "Item", schemaCache, inputTypes, {}, plan);
   expect(result).toBeDefined();
   expect(result.required).toBeDefined();
   expect(result.optional).toBeDefined();

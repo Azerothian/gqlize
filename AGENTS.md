@@ -100,8 +100,23 @@ order: lint needs a program that compiles.
   must agree with the encoder in `create-basic-fields.ts`. Otherwise a key decodes on the way in but isn't
   encoded on the way out.
 - **Relationship verbs.** The eight verbs (`create, update, add, set, remove, delete, restore, select`)
-  are declared twice: in `gqlize/src/graphql/create-mutation-input.ts` and `ormize/src/relationship-mutations.ts`.
-  Keep both in the same order and in sync.
+  are declared in `gqlize/src/graphql/create-mutation-input.ts`, `ormize/src/relationship-mutations.ts`
+  and nestize's REST body check (`nestize/src/relationship-input.ts`, typed by utilize's `RelationshipVerb`).
+  Keep them in the same order and in sync.
+- **belongsToMany `through`.** Whether `add`/`set` entries are `{ where, through }` or bare filters
+  is decided by `Association.throughModel` (set in `Ormize.getAssociations`) plus `isThroughMode`
+  (`utilize/src/gate.ts`) under the caller's permission bag. The GraphQL builder
+  (`create-mutation-input.ts`) and the engine (`splitLinkEntry` in
+  `ormize/src/relationship-mutations.ts`) both read them; a projection that calls the engine must
+  pass its bag as `Selection.permission` (gqlize's `buildPermission`, set by the live build *and*
+  the materializer; nestize's `selection`; CSV uploads and imports included) or the engine will
+  expect a different entry shape than the schema offered. Don't decide it locally: nestize's
+  `checkInputTree` reads `isThroughMode` only to find which filter to check, and leaves a
+  wrong-shaped entry and every `through` key for the engine to refuse. A join model with `generated: true` stays out of every projection.
+  Reads of a registered join model's relationship go through `engine/through-reads.ts` on every
+  adapter (keyed on `throughModel` alone, so the join model's read scope always hides links); never
+  let one reach an adapter's JOIN. The include builder plans it only as a `required` filter, which
+  `applyEngineRequired` strips out before the adapter runs.
 - **Permission keys.** A new key on `Permission` goes in exactly one of `BUILD_TIME_PERMISSION_KEYS` or
   `RESOLUTION_TIME_PERMISSION_KEYS` (`utilize/src/gate.ts`). The typecheck fails if it's missing from
   both or listed in both. Code under `gqlize/src/graphql/*` builds the schema synchronously, so it must
@@ -146,7 +161,7 @@ split it by concern into modules a reader can find by name. Don't split it into 
   because callers pass them around detached.
 - **Type barrels.** `utilize/src/types/index.ts` only re-exports the themed files beside it
   (`adapter.ts`, `definitions.ts`, `selection.ts`, `options.ts`, `cache.ts`, `codecs.ts`,
-  `relationships.ts`, `primitives.ts`). Import from `types/index` and add new types to the themed
+  `relationships.ts`, `primitives.ts`, `csv.ts`). Import from `types/index` and add new types to the themed
   file they belong in.
 - **Test files.** Split a test file by `describe` topic. Put shared setup in `__tests__/helper/` (for
   example `ormize/__tests__/helper/scope-fixtures.ts`). Every new file has to be listed wherever the
@@ -166,6 +181,8 @@ Where the core logic lives:
 | Row scope: engine side / model-hook backstop / audit | `ormize/src/engine/scope-bridge.ts`, `scope-hooks.ts`, `scope-audit.ts` |
 | Relationship wiring and cross-adapter join models | `ormize/src/engine/relationships.ts`, `cross-adapter.ts` |
 | Read-cache tagging / the cache itself | `ormize/src/engine/read-cache-bridge.ts`, `read-cache/` |
+| CSV mutation uploads: reading under limits / row-by-row writes / per-surface cell conversion | `ormize/src/csv/`, `ormize/src/engine/csv.ts`, `gqlize/src/graphql/resolvers/csv.ts`, `nestize/src/csv.ts` |
+| Multi-file CSV imports: labels, ordering, placeholder swap / GraphQL root field / REST multipart | `ormize/src/engine/csv-import.ts`, `gqlize/src/graphql/resolvers/csv-import.ts` + `objects/csv-import.ts`, `nestize/src/csv-multipart.ts` |
 | Sequelize reads / writes / model creation | `ormize-adapter-sequelize/src/reads.ts`, `writes.ts`, `model-creation.ts` |
 
 ## Code style

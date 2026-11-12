@@ -21,7 +21,10 @@ import { Definitions, GqlizeOptions } from "../../types";
  */
 export default function computeVisibleModels(instance: GQLManager, definitions: Definitions, options: GqlizeOptions): Set<string> {
   const defNames = Object.keys(definitions);
-  const visible = new Set(defNames.filter((defName) => isModelAllowed(options.permission, defName)));
+  // A join model ormize generated (`generated`) only holds links; exposing it
+  // would give a route that writes join rows outside the relationship verbs.
+  const visible = new Set(defNames.filter((defName) =>
+    !definitions[defName].generated && isModelAllowed(options.permission, defName)));
 
   // Mirrors `create-basic-fields`: overrides and `ignoreFields` are removed from
   // the candidate keys, and an empty candidate list short-circuits *before* the
@@ -76,6 +79,28 @@ export default function computeVisibleModels(instance: GQLManager, definitions: 
     });
   }
   return visible;
+}
+
+/**
+ * `options` with {@link computeVisibleModels} folded into its permission bag
+ * as a stricter `model` predicate, so every consumer agrees on which models
+ * exist: the builders, the adapters' include types, and — through
+ * `GqlizeBinding.buildPermission` — the write engine, which reads the bag to
+ * decide whether a `belongsToMany` takes `{ where, through }`. Returns
+ * `options` itself when nothing is hidden.
+ */
+export function foldVisibleModels(instance: GQLManager, definitions: Definitions, options: GqlizeOptions): GqlizeOptions {
+  const visibleModels = computeVisibleModels(instance, definitions, options);
+  if (visibleModels.size === Object.keys(definitions).length) {
+    return options;
+  }
+  return {
+    ...options,
+    permission: {
+      ...(options.permission || {}),
+      model: (defName: string) => visibleModels.has(defName),
+    },
+  };
 }
 
 function isAllowedInstanceMethod(options: GqlizeOptions, defName: string, methodName: string) {

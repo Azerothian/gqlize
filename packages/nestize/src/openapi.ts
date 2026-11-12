@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { INestApplication } from "@nestjs/common";
 import type { Ormize } from "@azerothian/ormize";
 import { generateZodSchemas } from "@azerothian/ormize-zod4";
-import { isModelAllowed, isRelationshipAllowed } from "@azerothian/utilize";
+import { isModelAllowed, isMutationAllowed, isMutationCsvAllowed, isQueryCsvAllowed, isRelationshipAllowed } from "@azerothian/utilize";
+import { CSV_OPERATIONS } from "./csv";
 import { OpenApiOptions } from "./types";
 
 /**
@@ -57,9 +58,12 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
   const components: { schemas: Record<string, JsonObject> } = { schemas: {} };
   const paths: Record<string, JsonObject> = {};
   const tags: { name: string }[] = [];
+  /** The `<resource>.<operation>` file parts `POST /_csv` would take. */
+  const importParts: string[] = [];
 
   const defs = orm.getDefinitions() || {};
-  const names = Object.keys(defs).filter((n) => isModelAllowed(permission, n));
+  // A join model ormize generated holds links only and is never exposed.
+  const names = Object.keys(defs).filter((n) => !defs[n].generated && isModelAllowed(permission, n));
 
   for (const name of names) {
     const resource = name.toLowerCase();
@@ -144,6 +148,81 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
       };
     }
     paths[collectionPath] = collection;
+
+    // CSV uploads: documented exactly when the route would accept one — CSV on
+    // for the model, `mutationCsv` allowed, and at least one operation the
+    // caller may perform (the enum lists only those).
+    const csvOperations = CSV_OPERATIONS.filter((op) => isMutationAllowed(permission, name, op)
+      && (op !== "create" || inputSchemas.create[name]) && (op !== "update" || inputSchemas.update[name]));
+    if (!readOnly && orm.csvLimits(name) && isMutationCsvAllowed(permission, name) && csvOperations.length > 0) {
+      for (const op of csvOperations) {
+        if (op !== "delete") {
+          importParts.push(`${resource}.${op}`);
+        }
+      }
+      paths[joinPath(pathPrefix, `${resource}/_csv/{operation}`)] = {
+        post: {
+          tags: [name],
+          summary: `Create, update or delete ${name} rows from a CSV file`,
+          description:
+            "One write per data row, all-or-nothing. The header names the fields. update and delete match rows on `keys` " +
+            "(default: the primary key); delete takes only those columns. An empty cell is left out; `\\N` is null.",
+          parameters: [
+            { name: "operation", in: "path", required: true, schema: { type: "string", enum: csvOperations } },
+            { name: "keys", in: "query", required: false, schema: { type: "string" }, description: "Comma-separated columns to match rows on" },
+            { name: "delimiter", in: "query", required: false, schema: { type: "string" }, description: "Field separator. Default `,`" },
+            {
+              name: "apply", in: "query", required: false, schema: { type: "string" },
+              description: "create and update only: a JSON object of instance-method transforms to run on each row, "
+                + "each `true` or an object of arguments. An update that applies a transform may carry only its key columns",
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: { "text/csv": { schema: { type: "string" } } },
+          },
+          responses: {
+            "200": {
+              description: `The ${name} rows written`,
+              content: {
+                "application/json": {
+                  schema: { type: "object", properties: { rows: { type: "array", items: ref(name) } } },
+                },
+              },
+            },
+            "400": { description: "The CSV, or one of its rows, was refused; nothing was written" },
+            "413": { description: "The CSV is over the byte or row limit" },
+          },
+        },
+      };
+    }
+
+    // CSV export: a read, so documented in read-only mode too, whenever CSV is
+    // on for the model and `queryCsv` allows it.
+    if (orm.csvLimits(name) && isQueryCsvAllowed(permission, name)) {
+      paths[joinPath(pathPrefix, `${resource}/_csv`)] = {
+        get: {
+          tags: [name],
+          summary: `Export ${name} rows as CSV`,
+          description:
+            "The rows `GET` on the collection would list, as CSV: a header line, then one line per row. `\\N` is null. " +
+            "At most the model's CSV row limit. The file can be uploaded back as an update.",
+          parameters: [
+            { name: "filter", in: "query", required: false, schema: { type: "string" } },
+            { name: "order", in: "query", required: false, schema: { type: "string" } },
+            { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+            { name: "offset", in: "query", required: false, schema: { type: "integer" } },
+            { name: "columns", in: "query", required: false, schema: { type: "string" }, description: "Comma-separated columns, in order. Default: every readable column" },
+            { name: "delimiter", in: "query", required: false, schema: { type: "string" }, description: "Field separator. Default `,`" },
+            { name: "header", in: "query", required: false, schema: { type: "boolean" }, description: "Write the header line. Default `true`" },
+          ],
+          responses: {
+            "200": { description: `${name} rows as CSV`, content: { "text/csv": { schema: { type: "string" } } } },
+            "400": { description: "An unknown column, a refused filter or a bad delimiter" },
+          },
+        },
+      };
+    }
 
     // Advanced select. NOTE: when `input` is supplied this route performs
     // relationship create/update/delete on matched rows (it is not a pure read),
@@ -252,6 +331,63 @@ export function buildOpenApiDocument(orm: Ormize, options: OpenApiOptions = {}):
         }
       }
     }
+  }
+
+  // The multi-file import: documented when at least one file part would be taken.
+  if (importParts.length > 0) {
+    paths[joinPath(pathPrefix, "_csv")] = {
+      post: {
+        tags: ["CSV"],
+        summary: "Create or update rows of several resources from CSV files, as one unit",
+        description:
+          "multipart/form-data, one file part per CSV, named `<resource>.create` or `<resource>.update` (a bare " +
+          "`<resource>` creates). Text parts `<part>.keys`, `<part>.delimiter` and `<part>.apply` (a JSON object of " +
+          "instance-method transforms) set a file's options. A file's `@ref` " +
+          "column labels its rows; a `<foreignKey>.@ref` column in any file writes a labelled row's key. Files run in the " +
+          "order their references need, all-or-nothing. Parts: " + importParts.join(", "),
+        requestBody: {
+          required: true,
+          content: {
+            "multipart/form-data": {
+              schema: {
+                type: "object",
+                properties: Object.fromEntries(importParts.map((part) => [part, { type: "string", format: "binary" }])),
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "What each file wrote, and each label's key",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    files: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          name: { type: "string" },
+                          resource: { type: "string" },
+                          operation: { type: "string", enum: ["create", "update"] },
+                          rows: { type: "array", items: { type: "object" } },
+                        },
+                      },
+                    },
+                    refs: { type: "object", additionalProperties: true },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "A file, row or reference was refused; nothing was written" },
+          "403": { description: "A file's resource or operation is not allowed" },
+          "413": { description: "Too many files, or a file over its byte or row limit" },
+        },
+      },
+    };
   }
 
   return {

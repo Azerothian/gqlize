@@ -695,7 +695,7 @@ mutation {
     # find "start", then (among ITS items) find "item1" and add a sub-tag — without changing either
     Task(select: [{
       where: { name: { eq: "start" } },
-      input: { items: { select: [{ where: { name: { eq: "item1" } }, input: { tags: { add: [{ where: { name: { eq: "urgent" } } }] } } }] } }
+      input: { items: { select: [{ where: { name: { eq: "item1" } }, input: { tags: { add: [{ name: { eq: "urgent" } }] } } }] } }
     }]) { id }
   }
 }

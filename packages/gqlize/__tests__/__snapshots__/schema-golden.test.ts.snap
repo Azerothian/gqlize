@@ -3736,14 +3736,14 @@ input ItemBtmTasksBelongsToManyInput {
   update: [ItemBtmTasksUpdate]
 
   """
-  This will add any matching existing elements (with optional through attributes) to the current Item
+  This will add any matching elements with a relationship to the current Item
   """
-  add: [ItemBtmTasksAddThrough]
+  add: [GQLTQueryTaskWhere]
 
   """
-  This will replace the entire btmTasks set with the matching existing elements (with optional through attributes)
+  This will replace the entire btmTasks set with the matching existing elements
   """
-  set: [ItemBtmTasksAddThrough]
+  set: [GQLTQueryTaskWhere]
 
   """
   This will remove the relationship from any matching elements from the current Item
@@ -3776,20 +3776,6 @@ input ItemBtmTasksUpdate {
   """
   input: TaskOptionalInput
 }
-
-""""""
-input ItemBtmTasksAddThrough {
-  """Filter used to find the existing elements to associate"""
-  where: GQLTQueryTaskWhere
-
-  """
-  Attribute values to write on the join table for the associated elements
-  """
-  through: GQLTJson
-}
-
-"""The \`JSON\` scalar type represents raw JSON as values."""
-scalar GQLTJson
 
 """"""
 input ItemBtmTasksSelect {
@@ -3852,14 +3838,14 @@ input TaskBtmItemsBelongsToManyInput {
   update: [TaskBtmItemsUpdate]
 
   """
-  This will add any matching existing elements (with optional through attributes) to the current Task
+  This will add any matching elements with a relationship to the current Task
   """
-  add: [TaskBtmItemsAddThrough]
+  add: [GQLTQueryItemWhere]
 
   """
-  This will replace the entire btmItems set with the matching existing elements (with optional through attributes)
+  This will replace the entire btmItems set with the matching existing elements
   """
-  set: [TaskBtmItemsAddThrough]
+  set: [GQLTQueryItemWhere]
 
   """
   This will remove the relationship from any matching elements from the current Task
@@ -3891,17 +3877,6 @@ input TaskBtmItemsUpdate {
   This will update the items that you targeted with the filter in the where element
   """
   input: ItemOptionalInput
-}
-
-""""""
-input TaskBtmItemsAddThrough {
-  """Filter used to find the existing elements to associate"""
-  where: GQLTQueryItemWhere
-
-  """
-  Attribute values to write on the join table for the associated elements
-  """
-  through: GQLTJson
 }
 
 """"""
@@ -7399,14 +7374,14 @@ input ItemBtmTasksBelongsToManyInput {
   update: [ItemBtmTasksUpdate]
 
   """
-  This will add any matching existing elements (with optional through attributes) to the current Item
+  This will add any matching elements with a relationship to the current Item
   """
-  add: [ItemBtmTasksAddThrough]
+  add: [GQLTQueryTaskWhere]
 
   """
-  This will replace the entire btmTasks set with the matching existing elements (with optional through attributes)
+  This will replace the entire btmTasks set with the matching existing elements
   """
-  set: [ItemBtmTasksAddThrough]
+  set: [GQLTQueryTaskWhere]
 
   """
   This will remove the relationship from any matching elements from the current Item
@@ -7439,20 +7414,6 @@ input ItemBtmTasksUpdate {
   """
   input: TaskOptionalInput
 }
-
-""""""
-input ItemBtmTasksAddThrough {
-  """Filter used to find the existing elements to associate"""
-  where: GQLTQueryTaskWhere
-
-  """
-  Attribute values to write on the join table for the associated elements
-  """
-  through: GQLTJson
-}
-
-"""The \`JSON\` scalar type represents raw JSON as values."""
-scalar GQLTJson
 
 """"""
 input ItemBtmTasksSelect {
@@ -7515,14 +7476,14 @@ input TaskBtmItemsBelongsToManyInput {
   update: [TaskBtmItemsUpdate]
 
   """
-  This will add any matching existing elements (with optional through attributes) to the current Task
+  This will add any matching elements with a relationship to the current Task
   """
-  add: [TaskBtmItemsAddThrough]
+  add: [GQLTQueryItemWhere]
 
   """
-  This will replace the entire btmItems set with the matching existing elements (with optional through attributes)
+  This will replace the entire btmItems set with the matching existing elements
   """
-  set: [TaskBtmItemsAddThrough]
+  set: [GQLTQueryItemWhere]
 
   """
   This will remove the relationship from any matching elements from the current Task
@@ -7554,17 +7515,6 @@ input TaskBtmItemsUpdate {
   This will update the items that you targeted with the filter in the where element
   """
   input: ItemOptionalInput
-}
-
-""""""
-input TaskBtmItemsAddThrough {
-  """Filter used to find the existing elements to associate"""
-  where: GQLTQueryItemWhere
-
-  """
-  Attribute values to write on the join table for the associated elements
-  """
-  through: GQLTJson
 }
 
 """"""

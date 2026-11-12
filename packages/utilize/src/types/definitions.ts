@@ -20,6 +20,7 @@ import type {
   ExposedMethodOrderBy,
   ExposedMethodWhere,
 } from "./selection";
+import type { CsvLimits } from "./csv";
 
 /**
  * A field's validation rules, keyed by validator name. The values are `unknown`
@@ -191,6 +192,14 @@ export type Definition = {
   /** Field names excluded from every generated type. */
   ignoreFields?: string[];
   /**
+   * Set by ormize on a join model it created itself for a cross-adapter
+   * `belongsToMany` that declared no registered `through` model. Not for
+   * authors. Such a model exists only to hold links, so no projection
+   * (GraphQL, REST, Zod, Temporal) exposes it: a route that wrote its rows
+   * directly would bypass the relationship verbs and the join-key guard.
+   */
+  generated?: boolean;
+  /**
    * Deprecates the model as a whole: the root query list field and the root
    * mutation field for this model are both generated `@deprecated` with this
    * reason. GraphQL cannot deprecate an object type itself, so the mark lands
@@ -244,6 +253,12 @@ export type Definition = {
    * statement that those hooks give every caller the same result.
    */
   cache?: false | {ttl?: number};
+  /**
+   * This model's part in CSV mutation uploads ({@link GqlizeOptions.csv}).
+   * `false` keeps the model out; an object overrides the instance-wide limits.
+   * Has no effect while the instance has CSV off.
+   */
+  csv?: false | CsvLimits;
   options?: DefinitionOptions
 };
 

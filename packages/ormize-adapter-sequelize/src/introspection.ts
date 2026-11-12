@@ -199,6 +199,13 @@ export function getAssociationsImpl(
         sourceKey: assoc.sourceKey || assoc.source.primaryKeyAttribute,
         accessors: assoc.accessors,
       };
+      // A `belongsToMany` reports its join model and the column on it that
+      // points at the target, as the other adapters do. ormize reads `through`
+      // to decide whether the relationship carries join-row data.
+      if (rels[key].associationType === "belongsToMany" && assoc.through?.model) {
+        rels[key].through = assoc.through.model.name;
+        rels[key].otherKey = assoc.otherKey;
+      }
       return rels;
     },
     {} as { [relName: string]: Association }

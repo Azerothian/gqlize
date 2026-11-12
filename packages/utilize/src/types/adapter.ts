@@ -78,6 +78,14 @@ export interface InitialiseOptions {
  */
 export interface OrmAdapter {
   adapterName: string;
+  /**
+   * Whether the adapter applies an include plan as a JOIN. Default `true`.
+   * An adapter that sets `false` (Valkey) never reads `include`, so ormize
+   * applies every `required` relation of its models itself, as a key filter on
+   * the parent (`engine/required-filter.ts`), as it does for a cross-adapter
+   * relation on any adapter.
+   */
+  readonly supportsJoins?: boolean;
   createModel(def: Definition, hooks?: HookMap): Promise<Model>;
   /**
    * Register hooks on the adapter's *connection* rather than on a model, for

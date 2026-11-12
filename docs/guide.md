@@ -32,6 +32,7 @@ Every example below is drawn from the behaviour exercised in the test suite
 7. [Mutations](#7-mutations)
    - [Create / update / delete](#create--update--delete)
    - [Restoring soft-deleted rows](#restoring-soft-deleted-rows)
+   - [CSV uploads](#csv-uploads)
    - [Nested relationship writes](#nested-relationship-writes)
    - [Class-method mutations](#class-method-mutations)
    - [Instance-method transforms (`apply`)](#instance-method-transforms-apply)
@@ -184,8 +185,12 @@ Definition keys you'll commonly use:
   methods, and hooks named in both run both.
 
 > **Junction models.** A `through` model that only carries FK columns (+ your extra columns) has
-> no relationships of its own; exclude it from the schema with a permission gate so it isn't
-> exposed: `createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`.
+> no relationships of its own. Hiding it with `permission.model`
+> (`createSchema(db, { permission: { model: (n) => n !== "PostTag" } })`) keeps it out of the
+> schema *and* turns its relationships into plain many-to-many ones, with no `through`. To keep
+> `through` but drop its root operations, gate those instead (`permission.query`,
+> `permission.mutation`). A join model ormize generates for a cross-adapter `belongsToMany` is never
+> exposed, by any projection.
 
 ### Field arguments & field resolvers
 
@@ -818,7 +823,8 @@ Post { edges { node { title author(required: true) { name } } } }
 ```
 
 You can also drive eager loading explicitly with the `include` argument (fields: `required`,
-`separate`, `where`, `orderBy`, and nested `include`). It merges with the selection:
+`separate`, `where`, `orderBy`, and nested `include`). It merges with the selection. On Sequelize
+it is a list of objects; on Valkey a single object (`include: { comments: { required: true } }`):
 
 ```graphql
 Post(include: { comments: { required: true, where: { body: { eq: "hi" } } } }) {
@@ -826,8 +832,48 @@ Post(include: { comments: { required: true, where: { body: { eq: "hi" } } } }) {
 }
 ```
 
+`required` means the same on every adapter. Where no JOIN can apply it (on Valkey, across two
+adapters, or a many-to-many in through mode) ormize filters the parents itself, by the keys of the
+related rows the caller may see.
+
 Non-paginated relations fold into a single JOINed query; a nested `hasMany` with pagination
 (`first`/`last`) is loaded via a batched `separate:true` query so per-parent limits are correct.
+
+### Many-to-many join data (`through`)
+
+A `belongsToMany` whose join model you registered as a definition, and which the permission bag
+lets be seen, is in **through mode** (the same rule the [nested writes](#nested-relationship-writes)
+use). Its connection then carries the join row on every edge, and takes two extra arguments:
+
+```graphql
+Post { edges { node { title
+  tags(throughWhere: { sortOrder: { gte: 1 } }, throughOrderBy: sortOrderASC, first: 10) {
+    total
+    edges {
+      through { sortOrder label }   # the PostTag row behind this link
+      node { name }
+    }
+  }
+} } }
+```
+
+- `through` is the join model's own type, so its field permissions, global ids and output hooks
+  apply. A join row its output hooks reject removes the whole edge.
+- `throughWhere` filters links by join columns; `total` counts the filtered links.
+- `throughOrderBy` orders links by join columns, ahead of `orderBy` (which, with the primary key,
+  breaks ties). Nulls sort last ascending, first descending. The page is cut in memory, because the
+  order spans the join table and the target table.
+- `required: true` with `throughWhere` (and/or `where`) keeps only parents that have a matching
+  link. This works on every adapter, Valkey included.
+- **The join model's row scope decides which links exist.** A join row its read scope hides is
+  no link at all: no edge, not counted, and it does not satisfy `required`. That holds in plain
+  mode too (a hidden join model), wherever the join model is a registered definition.
+
+Each side declares its own relationship; the reverse list is not created for you. Its connection
+is named after the parent (`PostTagBelongsToManyTagsList`, edge `PostTagBelongsToManyTagsEdge`),
+because its edge carries this parent's join model. A through-mode relationship is never JOINed into
+the parent query: it is read per parent (join rows, then targets), so it costs two queries per
+parent rather than riding along with the parent's.
 
 ### Count-only (`total`)
 
@@ -1204,6 +1250,50 @@ as updates, and `after` receives `Events.MUTATION_UPDATE`.
 `restore` is gated by the `mutationRestore` permission, and appears only on models that actually
 soft delete.
 
+### CSV uploads
+
+`create`, `update` and `delete` can also take a CSV file, applied as one write per data row, all or
+nothing. Several linked files can go in one import. It is off until the `Ormize` instance turns it
+on:
+
+```ts
+new Ormize({ csv: true })                                              // 1000 rows, 5 MB, 10 files
+new Ormize({ csv: { maxRows: 10_000, maxBytes: 50e6, maxFiles: 5 } })
+const Audit = { name: "Audit", csv: false, /* … */ }                   // keep one model out
+```
+
+```graphql
+mutation ($file: GQLTUpload!) { models { Post(createCsv: $file) { id title } } }
+mutation ($file: GQLTUpload!) { models { Post(updateCsv: $file, csv: { keys: ["slug"] }) { id } } }
+mutation ($files: [CsvImportFile!]!) { csvImport(files: $files) { files { name count } refs } }
+```
+
+```csv
+title,rank,author.set.name,tags.add.name[in]
+Hello,1,Ann,red|blue
+```
+
+- A header names a field, or a dotted path into the same input a JSON mutation takes:
+  [relationship verbs](#nested-relationship-writes) (`author.set.name`) and filter operators
+  (`where.rank[gte]`).
+- An empty cell leaves a column alone, and `\N` writes `null`.
+- In a multi-file import, an `@ref` column labels rows, and `author.@ref` points at them from another
+  file.
+- Permissions, the [key guard](#writing-primary--foreign-keys), row scope and hooks hold exactly as
+  for JSON. The `mutationCsv` permission can take CSV away on top.
+- nestize serves the same uploads at `POST /:resource/_csv/:operation` and `POST /_csv`.
+- The other direction: a model's list has a `csv` field that writes the page as a file, which
+  uploads back through `updateCsv`
+  (`Post(where: …, first: 500) { csv(columns: ["id", "title", "rank"]) }`). nestize serves it at
+  `GET /:resource/_csv`. `queryCsv` gates it. See [Exporting rows](csv.md#exporting-rows).
+
+**Read next:**
+
+- [CSV uploads](csv.md): how to use it, from the first upload to linked multi-file imports, error
+  handling and server setup.
+- [CSV API reference](csv-api.md): every option, schema type, route, header rule, conversion and
+  error code.
+
 ### Nested relationship writes
 
 A relationship field inside a create/update `input` accepts operations that vary by association
@@ -1240,7 +1330,7 @@ mutation {
   models {
     Post(update: {
       where: { title: { eq: "New" } },
-      input: { tags: { add: [ { where: { name: { eq: "a" } } }, { where: { name: { eq: "b" } } } ] } }
+      input: { tags: { add: [ { name: { eq: "a" } }, { name: { eq: "b" } } ] } }
     }) { id }
   }
 }
@@ -1259,10 +1349,22 @@ Post(update: { where: { title: { eq: "New" } }, input: { author: { set: { name: 
 Post(update: { where: { title: { eq: "New" } }, input: { author: { remove: true } } }) { id author { name } }
 
 # hasMany / belongsToMany: replace the whole set with the matching records
-Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { where: { name: { eq: "c" } } } ] } } }) { id }
+Post(update: { where: { title: { eq: "New" } }, input: { tags: { set: [ { name: { eq: "c" } } ] } } }) { id }
 ```
 
-**belongsToMany `through` attributes** — write join-table columns when associating:
+**belongsToMany `through` attributes**: write join-table columns when associating. This needs a
+join model you registered as a definition (here `PostTag`) that the permission bag lets be seen.
+Then `add`/`set` entries are always `{ where, through? }` (a bare filter is refused, over REST
+and Temporal too), and `through` is typed by the join model's columns (`PostTagsThroughInput`):
+those its `mutationCreateInput` allows, minus the two join keys, every primary/foreign key and
+`ignoreFields`. Each `set` entry's `through` applies to the rows that entry matched. Without such a join model (an implicit table, one
+ormize generated, or one hidden by `permission.model`) the relationship is a plain many-to-many:
+entries are bare filters and there is no `through`.
+
+In through mode the links are rows of the join model, so its own permissions decide the link
+verbs: `add` needs its `mutationCreate`, `remove` its `mutationDelete`, `set` both, and a `through`
+written over a link that already exists also needs its `mutationUpdate`. A verb they deny is left
+off the input (and refused over REST and Temporal).
 
 ```graphql
 Post(update: {
@@ -1294,7 +1396,7 @@ mutation {
       input: {
         posts: { select: [{
           where: { status: { eq: "draft" } },
-          input: { tags: { add: [ { where: { name: { eq: "featured" } } } ] } }
+          input: { tags: { add: [ { name: { eq: "featured" } } ] } }
         }] }
       }
     }]) { id name }        # returns the found authors (unchanged)
@@ -1368,7 +1470,20 @@ transform wins over a value that hook set.
 > cannot undo.
 
 Transforms are gated by `permission.mutationInstanceMethods`; a denied transform contributes no
-field to `apply`. See [§8 Permissions](#8-permissions).
+field to `apply`. nestize's `_actions` route and CSV `apply`, and temporalize's instance-method
+activity, check a transform's params against its declared `args` the same way the `apply` type
+does, so a param a transform reads must be declared there, with a GraphQL input type. See [§8 Permissions](#8-permissions). ormize checks the same key on its own
+permission bag before running a transform, so a host calling `orm.processUpdate(…, {apply})`
+directly is held to it too.
+
+A model whose permitted writes are all transforms (nothing writable by hand) keeps `update`, with
+`where` and `limit` but no `input`:
+
+```graphql
+mutation { models { Post(update: [{ where: { id: { eq: "UG9zdDox" } } }], apply: { markChecked: true }) { id } } }
+```
+
+CSV uploads and imports take `apply` too; see [CSV uploads](csv.md#transforms-apply).
 
 ---
 
@@ -1390,6 +1505,7 @@ const schema = await createSchema(db, {
     mutationUpdate: (modelName) => true,
     mutationDelete: (modelName) => true,
     mutationRestore: (modelName) => true,                       // hide `restore` on a paranoid model
+    mutationCsv: (modelName) => true,                           // hide `createCsv` & co. (needs `csv` on the Ormize)
     mutationCreateInput: (modelName, fieldName) => true,        // hide a create-input field
     mutationUpdateInput: (modelName, fieldName) => true,
     queryDeleted: (modelName) => true,                          // hide the `deleted` argument

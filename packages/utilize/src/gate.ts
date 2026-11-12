@@ -64,6 +64,22 @@ export type Permission = {
    * adapter reports `softDeletes`.
    */
   mutationRestore?: (defName: string, options?: PermissionContext) => boolean;
+  /**
+   * Gates the CSV upload arguments (`createCsv` / `updateCsv` / `deleteCsv`)
+   * on a model's mutation field, and nestize's `/:resource/_csv/:kind` routes.
+   * An *extra* gate, not a replacement: a CSV create is still a create, so
+   * `mutationCreate` and the input-field predicates apply to it as well. Only
+   * consulted for a model the `Ormize` instance has CSV enabled on.
+   */
+  mutationCsv?: (defName: string, options?: PermissionContext) => boolean;
+  /**
+   * Gates CSV export of a model's rows: the `csv` field on its root list
+   * connection (`<Model>List.csv`) and nestize's `GET /:resource/_csv`. An
+   * *extra* gate on top of `query` and the field predicates, which still decide
+   * what rows and columns the file holds. Only consulted for a model the
+   * `Ormize` instance has CSV enabled on.
+   */
+  queryCsv?: (defName: string, options?: PermissionContext) => boolean;
   mutationCreateInput?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
   mutationUpdateInput?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
   field?: (defName: string, fieldName: string, options?: PermissionContext) => boolean;
@@ -232,6 +248,100 @@ export function isMutationAllowed(permission: Permission | undefined, model: str
   return isAllowed(mutationPredicate(permission, kind), model, permission?.options);
 }
 
+/** The eight nested relationship verbs, in the order both declarations of them use. */
+export type RelationshipVerb = "create" | "update" | "add" | "set" | "remove" | "delete" | "restore" | "select";
+
+/**
+ * Whether a nested relationship verb may run against the relationship's
+ * *target*, by the target's own mutation permissions. The source's own
+ * permission to write is the caller's to check separately.
+ *
+ * - `create` needs the target's create, `update` and `select` its update.
+ * - `add` / `set` / `remove` on a `hasMany` / `hasOne` rewrite the target's
+ *   foreign key, so they need the target's update. On a `belongsTo` they write
+ *   the source's own key, so the source's write covers them. On a plain
+ *   `belongsToMany` they write a join row nobody can see, which the source's
+ *   write covers too; in through mode the join rows are a registered model's
+ *   own, so its permissions apply ({@link isThroughLinkAllowed}).
+ * - `delete` / `restore` need the target's delete / restore.
+ *
+ * gqlize offers a verb on a relationship input only where this allows it, and
+ * nestize refuses a nested input that uses one it does not.
+ */
+export function isRelationshipVerbAllowed(
+  permission: Permission | undefined,
+  association: { associationType: string; target: string; through?: string; throughModel?: boolean },
+  verb: RelationshipVerb,
+): boolean {
+  const target = association.target;
+  switch (verb) {
+    case "create":
+      return isMutationAllowed(permission, target, "create");
+    case "update":
+    case "select":
+      return isMutationAllowed(permission, target, "update");
+    case "add":
+    case "set":
+    case "remove": {
+      const rewritesTarget = association.associationType === "hasMany" || association.associationType === "hasOne";
+      return (!rewritesTarget || isMutationAllowed(permission, target, "update"))
+        && isThroughLinkAllowed(permission, association, verb);
+    }
+    case "delete":
+      return isMutationAllowed(permission, target, "delete");
+    case "restore":
+      return isMutationAllowed(permission, target, "restore");
+  }
+}
+
+/**
+ * What a link verb on a through-mode `belongsToMany` does to the join model's
+ * rows: `add` creates links, `remove` deletes them, and `set` does both. (An
+ * entry's `through` that rewrites a link that already exists is an update too;
+ * whether one does depends on the data, so the write engine checks that part.)
+ */
+export function throughLinkOperations(verb: "add" | "set" | "remove"): MutationKind[] {
+  switch (verb) {
+    case "add":
+      return ["create"];
+    case "set":
+      return ["create", "delete"];
+    case "remove":
+      return ["delete"];
+  }
+}
+
+/**
+ * Whether a link verb may write the join rows of a `belongsToMany`. Only a
+ * relationship in through mode ({@link isThroughMode}) asks: its join model is a
+ * registered model the caller can see, whose rows its own `mutationCreate` /
+ * `mutationDelete` govern. Every other relationship is allowed here.
+ */
+export function isThroughLinkAllowed(
+  permission: Permission | undefined, association: ThroughModeAssociation, verb: "add" | "set" | "remove",
+): boolean {
+  if (!isThroughMode(permission, association)) {
+    return true;
+  }
+  return throughLinkOperations(verb).every((kind) => isMutationAllowed(permission, association.through as string, kind));
+}
+
+/**
+ * Whether a caller may export a model's rows as CSV (`permission.queryCsv`).
+ * Checked alongside the model's `query` gate, never instead.
+ */
+export function isQueryCsvAllowed(permission: Permission | undefined, model: string): boolean {
+  return isAllowed(permission?.queryCsv, model, permission?.options);
+}
+
+/**
+ * Whether a caller may send a mutation as a CSV upload (`permission.mutationCsv`).
+ * Checked alongside {@link isMutationAllowed} for the operation, never instead.
+ */
+export function isMutationCsvAllowed(permission: Permission | undefined, model: string): boolean {
+  return isAllowed(permission?.mutationCsv, model, permission?.options);
+}
+
 /**
  * Whether an input field is exposed for a create/update mutation
  * (`permission.mutationCreateInput` / `permission.mutationUpdateInput`). These
@@ -289,6 +399,58 @@ export function isInputFieldWritable(
   return isStructurallyWritable(meta) && isInputFieldAllowed(permission, model, field, kind);
 }
 
+/** What {@link isThroughMode} reads off an association. */
+export type ThroughModeAssociation = {
+  associationType: string;
+  through?: string;
+  throughModel?: boolean;
+};
+
+/**
+ * Whether a `belongsToMany` carries join-row data in a projection: its join
+ * model is one the author registered, and the permission bag lets the model be
+ * seen. Otherwise it projects as a plain many-to-many — `add`/`set` take bare
+ * filters and no `through` is offered. Permissions decide visibility: a join
+ * model hidden by `permission.model` is not reachable through a relationship
+ * either.
+ */
+export function isThroughMode(permission: Permission | undefined, association: ThroughModeAssociation): boolean {
+  return association.associationType === "belongsToMany"
+    && !!association.throughModel
+    && !!association.through
+    && isModelAllowed(permission, association.through);
+}
+
+/**
+ * Whether a join-model column may be written through a `belongsToMany`
+ * `through` payload.
+ *
+ * Stricter than {@link isInputFieldWritable}:
+ *  - `joinKeys` (the association's own two columns) are never accepted — the
+ *    accessor sets them, and a payload that could set them would point the
+ *    link at a row the caller never named;
+ *  - no primary or foreign key is accepted even with `writable: true`, because
+ *    the payload does not pass through the id codec, so a Relay id would reach
+ *    the datastore undecoded;
+ *  - `ignoreFields` is honoured, as on every other generated input.
+ *
+ * The write engine applies the structural half of this on every route; the
+ * permission half is applied by each projection with its own permission bag.
+ */
+export function isThroughInputField(
+  permission: Permission | undefined,
+  joinModel: string,
+  field: string,
+  meta: WritableFieldMeta | undefined,
+  joinKeys: string[],
+  ignoreFields: string[] | undefined,
+): boolean {
+  return !joinKeys.includes(field)
+    && !ignoreFields?.includes(field)
+    && !(meta?.primaryKey || meta?.foreignKey)
+    && isInputFieldAllowed(permission, joinModel, field, "create");
+}
+
 /**
  * Every key any consumer reads off an `options.permission` bag — the union
  * across gqlize, nestize, temporalize and ormize-zod4, mirroring
@@ -308,6 +470,8 @@ export const BUILD_TIME_PERMISSION_KEYS = [
   "mutationUpdate",
   "mutationDelete",
   "mutationRestore",
+  "mutationCsv",
+  "queryCsv",
   "mutationCreateInput",
   "mutationUpdateInput",
   "field",

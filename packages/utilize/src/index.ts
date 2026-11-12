@@ -6,4 +6,5 @@ export { default as createRoleBasedPermissions } from "./permissions";
 export * from "./permissions";
 export * from "./gate";
 export * from "./guards";
+export * from "./filter-operators";
 export * from "./utils/deprecation";

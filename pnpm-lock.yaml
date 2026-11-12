@@ -478,6 +478,9 @@ importers:
       '@azerothian/utilize':
         specifier: workspace:*
         version: link:../utilize
+      busboy:
+        specifier: ^1.6.0
+        version: 1.6.0
       zod:
         specifier: ^4.0.0
         version: 4.4.3
@@ -527,6 +530,9 @@ importers:
       '@swc/jest':
         specifier: 'catalog:'
         version: 0.2.39(@swc/core@1.15.43)
+      '@types/busboy':
+        specifier: ^1.5.5
+        version: 1.5.5
       '@types/jest':
         specifier: 'catalog:'
         version: 30.0.0
@@ -539,6 +545,9 @@ importers:
       copyfiles:
         specifier: 'catalog:'
         version: 2.4.1
+      graphql:
+        specifier: 17.0.2
+        version: 17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce)
       jest:
         specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
@@ -575,6 +584,9 @@ importers:
       '@azerothian/utilize':
         specifier: workspace:*
         version: link:../utilize
+      csv-parse:
+        specifier: ^7.0.3
+        version: 7.0.3
       pluralize:
         specifier: ^8.0.0
         version: 8.0.0
@@ -983,6 +995,9 @@ importers:
       copyfiles:
         specifier: 'catalog:'
         version: 2.4.1
+      graphql:
+        specifier: 17.0.2
+        version: 17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce)
       jest:
         specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
@@ -1071,6 +1086,9 @@ importers:
       copyfiles:
         specifier: 'catalog:'
         version: 2.4.1
+      graphql:
+        specifier: 17.0.2
+        version: 17.0.2(patch_hash=3ff722c66789cd187fa74f645583d0d5b683a92ff369df9b9b5276d8263e03ce)
       jest:
         specifier: 'catalog:'
         version: 30.4.2(@types/node@26.1.1)(node-notifier@10.0.1)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.43)(@types/node@26.1.1)(typescript@7.0.2))
@@ -2503,6 +2521,9 @@ packages:
   '@types/babel__traverse@7.28.0':
     resolution: {integrity: sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==}
 
+  '@types/busboy@1.5.5':
+    resolution: {integrity: sha512-IwqrfVFxWa23c4WeE7uZswssCqGfvnl5Q7b1pdshbT3HaQDa3UIbJx5BAxtcj9nZYX9tVDArM9TUv9SpvORbpQ==}
+
   '@types/cookiejar@2.1.5':
     resolution: {integrity: sha512-he+DHOWReW0nghN24E1WUqM0efK4kI9oTqDm6XmK8ZPe2djZ90BSNdGnIyCLzCPw7/pogPlGbzI2wHGGmi4O/Q==}
 
@@ -3373,6 +3394,9 @@ packages:
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
     engines: {node: '>= 8'}
+
+  csv-parse@7.0.3:
+    resolution: {integrity: sha512-YFd3QM/yo17vH91L1IOZuvl09zM0zEEtdfTcOCKWcMdM++MNaQSyp09slXyFCLaPXvHstQFx/xC8myiFHSMUvw==}
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -7096,6 +7120,10 @@ snapshots:
     dependencies:
       '@babel/types': 7.29.7
 
+  '@types/busboy@1.5.5':
+    dependencies:
+      '@types/node': 24.13.3
+
   '@types/cookiejar@2.1.5': {}
 
   '@types/debug@4.1.13':
@@ -7971,6 +7999,8 @@ snapshots:
       path-key: 3.1.1
       shebang-command: 2.0.0
       which: 2.0.2
+
+  csv-parse@7.0.3: {}
 
   debug@4.4.3(supports-color@8.1.1):
     dependencies:

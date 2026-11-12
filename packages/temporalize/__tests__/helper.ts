@@ -1,5 +1,6 @@
 import { expect } from "@jest/globals";
 import { DataTypes } from "sequelize";
+import { GraphQLString } from "graphql";
 import { Ormize } from "@azerothian/ormize";
 import type { Definition } from "@azerothian/ormize";
 import SequelizeAdapter from "@azerothian/ormize-adapter-sequelize";
@@ -47,7 +48,7 @@ const ItemDef: Definition = {
   // only thing that says whether the activity reads or writes.
   expose: {
     instanceMethods: {
-      mutations: { relabel: {} },
+      mutations: { relabel: { args: { to: { type: GraphQLString } } } },
     },
   },
 };
