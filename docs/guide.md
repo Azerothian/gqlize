@@ -1278,6 +1278,10 @@ Hello,1,Ann,red|blue
 - Permissions, the [key guard](#writing-primary--foreign-keys), row scope and hooks hold exactly as
   for JSON. The `mutationCsv` permission can take CSV away on top.
 - nestize serves the same uploads at `POST /:resource/_csv/:operation` and `POST /_csv`.
+- The other direction: a model's list has a `csv` field that writes the page as a file, which
+  uploads back through `updateCsv`
+  (`Post(where: …, first: 500) { csv(columns: ["id", "title", "rank"]) }`). nestize serves it at
+  `GET /:resource/_csv`. `queryCsv` gates it. See [Exporting rows](csv.md#exporting-rows).
 
 **Read next:**
 

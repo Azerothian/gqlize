@@ -717,6 +717,20 @@ is. Two further conditions: `orm.csvLimits(defName)` is set, and the build-time
 `permission.mutationCsv(defName)` allows it. Whether a model has CSV is part of the `models`
 fingerprint (recorded only when on, so existing artifacts stay current).
 
+**Export.** The read side. A root list connection (`<Model>List`, data source `findAll`) gets a
+`csv(columns: [String!], delimiter: String, header: Boolean): String!` field when
+`orm.csvLimits(defName)` is set and the build-time `permission.queryCsv(defName)` allows it
+(binding kind `connectionCsv`, resolver `resolvers/csv-export.ts`). It formats the page the
+connection fetched, so `where`, `orderBy`, paging, row scope and OUTPUT hooks are the list's own.
+Its columns are the node type's leaf fields with no arguments that are not exposed methods; each
+cell is the node field's own resolver output run through the field type's `serialize`, so ids are
+global ids and enums their names. Selecting `csv` counts as selecting rows
+(`isConnectionRowsSelected`) and widens the read to every column (`isConnectionCsvSelected` in
+`buildSelection`). Relationship connections have no `csv`. The text comes from ormize's
+`writeCsv` (`src/csv/write.ts`): RFC 4180 quoting, CRLF, `\N` for null, an empty cell for a value
+the row lacks, so a file reads back through `readCsv` unchanged. nestize's `GET /:resource/_csv`
+does the same over the list route's query, capped at the model's `maxRows`.
+
 **Engine.** `processCsv` (`packages/ormize/src/engine/csv.ts`) is a transport, not a write path:
 every row becomes one `processCreate` / `processUpdate` / `processDelete` call. The
 mass-assignment allow-list, `override.input`, scope, hooks, `apply` and read-cache invalidation
@@ -1117,7 +1131,8 @@ than a decision, and it is consulted per request rather than per schema.
 | `model(defName, options)` | Whether the model type is generated at all. |
 | `query(defName, options)` | The list query for a model. |
 | `mutation` / `mutationCreate` / `mutationUpdate` / `mutationDelete` / `mutationRestore` | Mutation operations. `mutationRestore` gates the `restore` argument, which is only generated for a model the adapter reports as soft-deleting. They gate the nested relationship verbs on the **target** model too, by `isRelationshipVerbAllowed` (utilize): `create` needs its create; `update` / `select` its update; `add` / `set` / `remove` on a `hasMany` / `hasOne` its update (they rewrite its foreign key); `delete` / `restore` its delete / restore. gqlize offers only the allowed verbs and leaves out a relationship with none; nestize refuses a nested body that uses a denied one. |
-| `mutationCsv(defName, options)` | The `createCsv` / `updateCsv` / `deleteCsv` arguments and nestize's `_csv` routes, *in addition to* the operation's own gate. Only consulted for a model with CSV on (§5). |
+| `mutationCsv(defName, options)` | The `createCsv` / `updateCsv` / `deleteCsv` arguments and nestize's `_csv` upload routes, *in addition to* the operation's own gate. Only consulted for a model with CSV on (§5). |
+| `queryCsv(defName, options)` | CSV export: the `csv` field on the model's root list connection and nestize's `GET /:resource/_csv`, *in addition to* `query` and the field gates. Only consulted for a model with CSV on (§5). |
 | `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
 | `queryDeleted(defName, options)` | The `deleted` argument on a soft-deleting model's list fields and include input — i.e. whether this caller may read soft-deleted rows at all. Row-level visibility is still `scope`'s: a caller allowed deleted rows sees only the deleted rows inside their scope. |

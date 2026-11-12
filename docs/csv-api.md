@@ -66,6 +66,11 @@ gate (`mutationCreate` / `mutationUpdate` / `mutationDelete`). When it returns `
 
 Absent means allowed.
 
+### `Permission.queryCsv`
+
+`queryCsv(defName, options) => boolean`, build-time. Gates CSV export (`<Model>List.csv` and
+`GET /:resource/_csv`) on top of `query` and the field gates. Only asked for a model with CSV on.
+
 ## GraphQL schema
 
 ### Model mutation field arguments
@@ -160,6 +165,19 @@ type GQLTCsvImportFileResult {
 | Hooks | Each row goes through its model's `after` hook with the event for its file's operation. |
 | Artifacts | The resolver is the `csvImport` binding kind, so a schema built to a JSON artifact and materialized keeps it. |
 
+### `<Model>List.csv` (export)
+
+On a model's root list connection, when CSV is on for the model and `queryCsv` allows it.
+
+| Argument | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `columns` | `[String!]` | every readable column | Columns to write, in order. An unknown or unreadable one is a `CSV_UNSUPPORTED` error. |
+| `delimiter` | `String` | `,` | One character, not a quote or a line break. |
+| `header` | `Boolean` | `true` | Write the header line. |
+
+Returns `String!`: the page's rows, CRLF line endings, values as the JSON read serialises them
+(global ids, enum names, ISO dates), `\N` for null.
+
 ### Error extensions
 
 A refused upload is one `GraphQLError`:
@@ -207,6 +225,13 @@ something.
 
 Conversion uses column types and the zod schema of `POST /:resource` (create) or `PATCH /:resource`
 (update). Key columns are checked against the same filter permission as `?filter=`.
+
+### `GET /:resource/_csv`
+
+CSV export. Query: `filter`, `order`, `limit`, `offset` (as `GET /:resource`), `columns` (comma
+list), `delimiter`, `header=false`. Answers `200 text/csv`, at most the model's `maxRows` rows.
+`404` when CSV is off for the model, `403` when `queryCsv` denies it, `400` for an unknown column,
+a refused filter or a bad delimiter.
 
 ### `POST /_csv`
 
@@ -492,6 +517,10 @@ supply `refTarget`. gqlize and nestize both do, so a label of the wrong model is
 naming the column, rather than a write of another model's key.
 
 ### Helpers
+
+`writeCsv(columns, rows, { delimiter?, header? })` and `csvCellText(value)` (`src/csv/write.ts`)
+write the export format: the inverse of `readCsv` and `csvCellValue`.
+
 
 | Export | Signature | Does |
 | --- | --- | --- |

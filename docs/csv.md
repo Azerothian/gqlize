@@ -665,6 +665,41 @@ const rows = await orm.processCsv("Post", "create", {
 The engine transports rows. It doesn't check operation permissions, which is the caller's job, as
 it is for `orm.processCreate`.
 
+## Exporting rows
+
+CSV works in the other direction too. Where a model takes uploads, its list can be read out as a
+file, and that file uploads back as an update: export, edit in a spreadsheet, upload.
+
+**GraphQL.** The model's root list has a `csv` field holding the page as text:
+
+```graphql
+query {
+  models {
+    Task(where: { done: { eq: false } }, orderBy: [nameASC], first: 500) {
+      csv(columns: ["id", "name", "rank"])
+    }
+  }
+}
+```
+
+- The rows are the page the list returns: its `where`, `orderBy`, `first`/`after` and row scope.
+- The columns default to every field the caller may read, in schema order. `columns` picks and
+  orders them; a field the caller can't read is an error, not an empty column. Relationships are not
+  columns; export the related model's own list.
+- `id` and foreign keys are the same global ids a JSON read returns, so `updateCsv` matches the
+  file's `id` column as is. `\N` is null; a date is ISO 8601.
+- `delimiter` (one character) and `header: false` shape the file.
+
+**REST.** `GET /:resource/_csv` takes the list route's `filter`, `order`, `limit` and `offset`, plus
+`columns=a,b`, `delimiter` and `header=false`, and answers `text/csv`. Ids are raw keys, as on every
+REST route. It returns at most the model's `maxRows` rows, so anything it writes fits an upload.
+
+Export is gated like upload: CSV must be on for the model, and `permission.queryCsv` can take it away
+from a caller who keeps the normal list.
+
+One thing doesn't round-trip: an empty string is written as an empty cell, and an upload reads an
+empty cell as "leave this column alone".
+
 ## Limits and things it does not do
 
 - **Memory.** A file is held in memory while it is converted, which is what lets every row be
