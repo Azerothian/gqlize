@@ -878,6 +878,26 @@ builder may legitimately skip, and `edges.node` stays nullable because the row i
 a time and resolved per edge — it can go away in between. Every field above was nullable in 6.x; see
 [the migration note](migration-6-to-7.md#relay-connection-fields-are-non-null).
 
+A `belongsToMany` in through mode (`isThroughMode`, see §5's relationship writes) adds `through:
+<JoinModel>` to its edge and `throughWhere` / `throughOrderBy` (the join model's own filter and
+order types) to its field, and its connection is named after the parent too
+(`<Parent><Target>BelongsToMany<Rel>List`), so it never shares an edge type with another parent's
+relationship of the same name. It is read by one path on every adapter
+(`packages/ormize/src/engine/through-reads.ts`): the join rows for the parent, filtered by
+`throughWhere` and the join model's read scope, then the targets through `resolveFindAll` restricted
+to the keys those rows point at (the target's own scope, hooks and read cache apply). The page
+carries the join rows (`AdapterRelationshipPage.through`); the connection resolver runs each
+through the join model's OUTPUT hooks and drops the edge if one is rejected. With
+`throughOrderBy`, edges sort by join columns, then the target's order and primary key, and are
+windowed in memory with the connection's own offset arithmetic. The path is keyed on
+`Association.throughModel` alone, so a join model the permission bag hides still has its read scope
+applied — it just offers no `through` or join-row arguments, and the engine refuses them
+(`ThroughInputError`). A through-mode relation is never in the include plan except as a `required`
+filter: `applyThroughRequired` replaces it, before the adapter sees the plan, with
+`<sourceKey> in [...]` on the model above it — the keys with a visible link matching
+`throughWhere` and the (scoped) target `where`. A parent left with no keys at the root answers
+with an empty page.
+
 They come with cursor args `after`, `first`, `before`, `last`, `orderBy`, merged with the adapter's
 default list args (`where` filter + `include`). Cursors are index-based and carry the name of
 the connection that minted them, so a cursor is rejected by any other connection, whose index

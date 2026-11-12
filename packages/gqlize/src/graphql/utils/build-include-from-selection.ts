@@ -23,6 +23,8 @@ type IncludeFieldArgs = {
   separate?: unknown;
   where?: AdapterWhere;
   orderBy?: OrderEntry[];
+  /** A through-mode belongsToMany's filter on its join rows. */
+  throughWhere?: AdapterWhere;
   deleted?: DeletedFilter;
   first?: unknown;
   last?: unknown;
@@ -177,6 +179,13 @@ function mergeIncludeDescriptors(a: IncludeDescriptor, b: IncludeDescriptor): In
     where: mergeWhere(a.where, b.where),
     orderBy: b.orderBy || a.orderBy,
   };
+  // Both sides name the same join model; their join-row filters AND together.
+  if (a.through || b.through) {
+    merged.through = {
+      model: (a.through || b.through)!.model,
+      where: mergeWhere(a.through?.where, b.through?.where),
+    };
+  }
   const childA = (a.include && a.include[0]) || undefined;
   const childB = (b.include && b.include[0]) || undefined;
   if (childA || childB) {
@@ -260,6 +269,15 @@ export function buildIncludeMapFromSelection(
     } catch (e) {
       fieldArgs = {};
     }
+    // A belongsToMany in through mode is resolved per parent by the engine's
+    // through path (join rows first, then targets), which no JOIN can stand in
+    // for: the join model's own read scope decides which edges exist. So it is
+    // planned only when `required`, and then only as a parent filter that the
+    // engine applies itself (`applyThroughRequired`) before any adapter sees it.
+    const throughMode = association.associationType === "belongsToMany" && association.throughModel === true;
+    if (throughMode && fieldArgs.required !== true) {
+      continue;
+    }
     const childType = info.schema.getType(association.target) as GraphQLObjectType | undefined;
     const childSelectionSet = getChildSelectionSet(sel.selectionSet, collection, info);
     const nested = buildIncludeMapFromSelection(instance, association.target, childSelectionSet, childType, info, cursorCodec);
@@ -271,6 +289,12 @@ export function buildIncludeMapFromSelection(
     };
     if (fieldArgs.where) {
       descriptor.where = fieldArgs.where;
+    }
+    if (throughMode) {
+      descriptor.through = {
+        model: association.through as string,
+        ...(fieldArgs.throughWhere ? {where: fieldArgs.throughWhere} : {}),
+      };
     }
     if (fieldArgs.orderBy) {
       descriptor.orderBy = fieldArgs.orderBy;

@@ -833,6 +833,42 @@ Post(include: { comments: { required: true, where: { body: { eq: "hi" } } } }) {
 Non-paginated relations fold into a single JOINed query; a nested `hasMany` with pagination
 (`first`/`last`) is loaded via a batched `separate:true` query so per-parent limits are correct.
 
+### Many-to-many join data (`through`)
+
+A `belongsToMany` whose join model you registered as a definition, and which the permission bag
+lets be seen, is in **through mode** (the same rule the [nested writes](#nested-relationship-writes)
+use). Its connection then carries the join row on every edge, and takes two extra arguments:
+
+```graphql
+Post { edges { node { title
+  tags(throughWhere: { sortOrder: { gte: 1 } }, throughOrderBy: sortOrderASC, first: 10) {
+    total
+    edges {
+      through { sortOrder label }   # the PostTag row behind this link
+      node { name }
+    }
+  }
+} } }
+```
+
+- `through` is the join model's own type, so its field permissions, global ids and output hooks
+  apply. A join row its output hooks reject removes the whole edge.
+- `throughWhere` filters links by join columns; `total` counts the filtered links.
+- `throughOrderBy` orders links by join columns, ahead of `orderBy` (which, with the primary key,
+  breaks ties). Nulls sort last ascending, first descending. The page is cut in memory, because the
+  order spans the join table and the target table.
+- `required: true` with `throughWhere` (and/or `where`) keeps only parents that have a matching
+  link. This works on every adapter, Valkey included.
+- **The join model's row scope decides which links exist.** A join row its read scope hides is
+  no link at all: no edge, not counted, and it does not satisfy `required`. That holds in plain
+  mode too (a hidden join model), wherever the join model is a registered definition.
+
+Each side declares its own relationship; the reverse list is not created for you. Its connection
+is named after the parent (`PostTagBelongsToManyTagsList`, edge `PostTagBelongsToManyTagsEdge`),
+because its edge carries this parent's join model. A through-mode relationship is never JOINed into
+the parent query: it is read per parent (join rows, then targets), so it costs two queries per
+parent rather than riding along with the parent's.
+
 ### Count-only (`total`)
 
 Select only `total` (no `edges`) to run a **count** instead of fetching rows:

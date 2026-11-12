@@ -678,6 +678,13 @@ What this changes:
 - A `set` applies each entry's own `through` to the rows that entry matched (it used to apply the
   last one to all). When any entry carries `through`, links kept from before are rewritten with
   the given values or the column defaults.
+- Reads in through mode: each edge has `through` (the join row), and the connection takes
+  `throughWhere` / `throughOrderBy`. Its types are renamed after the parent, e.g. `TagBelongsToManyTagsList`
+  becomes `PostTagBelongsToManyTagsList` — update fragments that name them. Such a relationship is
+  no longer JOINed into the parent query; it is read per parent.
+- Wherever the join model is a registered definition, its read scope now hides links: a join row
+  out of scope is no edge, is not counted, and does not satisfy `required`. Before, only a
+  cross-adapter `belongsToMany` applied it.
 - The join model ormize generates for a cross-adapter `belongsToMany` with no `through` model is no
   longer exposed. In GraphQL it had its own type and mutations with both join keys writable, and
   nestize, ormize-zod4 and temporalize listed it too. Register the join model yourself if you need

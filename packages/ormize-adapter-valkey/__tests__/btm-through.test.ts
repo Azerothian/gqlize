@@ -8,6 +8,7 @@
  * caller never named (both adapters put the caller's values after the keys).
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "@jest/globals";
+import { graphql } from "graphql";
 import { createSchema } from "@azerothian/gqlize";
 import { Ormize } from "@azerothian/ormize";
 import { DataTypes } from "@azerothian/utilize/types/data-type";
@@ -36,7 +37,7 @@ async function buildValkey(prefix: string, registeredJoin = false) {
   orm.registerAdapter(new ValkeyAdapter({ prefix }, client), "valkey");
   const through = "PostTagV";
   if (registeredJoin) {
-    await orm.addDefinition({ name: through, define: { sortOrder: { type: DataTypes.Int } }, options: {} }, "valkey");
+    await orm.addDefinition({ name: through, define: { sortOrder: { type: DataTypes.Int, index: true } }, options: {} }, "valkey");
   }
   await orm.addDefinition({ name: "Post", define: { id: { type: DataTypes.UUID, primaryKey: true }, title: { type: DataTypes.String, index: true } }, options: {},
     relationships: [{ type: "belongsToMany", model: "Tag", name: "tags", options: { through, foreignKey: "postId", otherKey: "tagId" } }] }, "valkey");
@@ -153,5 +154,41 @@ describe("cross-adapter generated join model", () => {
     expect(schema.getType(`${through}RequiredInput`)).toBeUndefined();
     // The relationship itself is still there, as a plain many-to-many.
     expect(schema.getType("PostTagsBelongsToManyInput")).toBeDefined();
+  });
+});
+
+describe("valkey belongsToMany through — reads", () => {
+  /** mine → t1 (2), t2 (1); victim → t2 (5). */
+  async function linked(prefix: string) {
+    const orm = await buildValkey(prefix, true);
+    await seed(orm);
+    await createOne(orm, "Tag", { name: "t2" });
+    await addWithThrough(orm, "mine", "t1", { sortOrder: 2 });
+    await addWithThrough(orm, "mine", "t2", { sortOrder: 1 });
+    await addWithThrough(orm, "victim", "t2", { sortOrder: 5 });
+    return createSchema(orm);
+  }
+  const query = async (schema: Awaited<ReturnType<typeof linked>>, source: string) => {
+    const res = await graphql({ schema, source });
+    expect(res.errors).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- walked by field name
+    return res.data as any;
+  };
+
+  it("puts the join row on each edge and orders by it", async () => {
+    const schema = await linked("btm-r1");
+    const data = await query(schema, `{ models { Post(where: {title: {eq: "mine"}}) { edges { node {
+      tags(throughOrderBy: sortOrderDESC) { total edges { through { sortOrder } node { name } } } } } } } }`);
+    const tags = data.models.Post.edges[0].node.tags;
+    expect(tags.total).toBe(2);
+    expect(tags.edges.map((e: { node: { name: string }; through: { sortOrder: number } }) => [e.node.name, e.through.sortOrder]))
+      .toEqual([["t1", 2], ["t2", 1]]);
+  });
+
+  it("required filters parents by join columns", async () => {
+    const schema = await linked("btm-r2");
+    const data = await query(schema, `{ models { Post { edges { node { title
+      tags(required: true, throughWhere: {sortOrder: {eq: 5}}) { edges { node { name } } } } } } } }`);
+    expect(data.models.Post.edges.map((e: { node: { title: string } }) => e.node.title)).toEqual(["victim"]);
   });
 });

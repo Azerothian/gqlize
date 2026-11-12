@@ -8,6 +8,7 @@ import {
   GraphQLString,
   GraphQLBoolean,
   type GraphQLFieldConfigArgumentMap,
+  type GraphQLFieldConfigMap,
   type GraphQLOutputType,
 } from "graphql";
 
@@ -22,7 +23,17 @@ import { DataSourceDescriptor } from "./resolvers/types";
  * closure over it, so the same connection can be rebuilt from a serialized
  * schema. The resolver itself lives in `resolvers/connection.ts`.
  */
-export default function createListObject(instance: GQLManager, schemaCache: SchemaCache, targetDefName: string, targetType: GraphQLOutputType, data: DataSourceDescriptor, prefix = "", suffix = "", customArgs?: GraphQLFieldConfigArgumentMap, comment?: string, options: GqlizeOptions = {}) {
+/**
+ * What a connection adds on top of the standard shape: fields on its edge type
+ * and arguments on the field. A through-mode `belongsToMany` uses both — the
+ * join row on each edge, and filtering/ordering by join columns.
+ */
+export type ListObjectExtras = {
+  edgeFields?: () => GraphQLFieldConfigMap<unknown, unknown>;
+  args?: GraphQLFieldConfigArgumentMap;
+};
+
+export default function createListObject(instance: GQLManager, schemaCache: SchemaCache, targetDefName: string, targetType: GraphQLOutputType, data: DataSourceDescriptor, prefix = "", suffix = "", customArgs?: GraphQLFieldConfigArgumentMap, comment?: string, options: GqlizeOptions = {}, extras: ListObjectExtras = {}) {
   const name = `${capitalize(prefix)}${capitalize(targetDefName)}${capitalize(suffix)}`;
   if (schemaCache.lists[name]) {
     return schemaCache.lists[name]; //TODO: figure out why this is getting hit?
@@ -51,7 +62,7 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
           edges: {
             type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({
               name: `${name}Edge`,
-              fields: {
+              fields: () => ({
                 // `node` stays nullable. The connection resolver drops edges
                 // whose node an OUTPUT hook rejected, so it is non-null today,
                 // but the value is fetched a page at a time and resolved per
@@ -63,7 +74,8 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
                 cursor: {
                   type: new GraphQLNonNull(GraphQLString),
                 },
-              },
+                ...(extras.edgeFields ? extras.edgeFields() : {}),
+              }),
               description: `${name} edge`,
             })))),
             description: `List of edges for ${name}`,
@@ -99,7 +111,7 @@ export default function createListObject(instance: GQLManager, schemaCache: Sche
         type: orderBy,
         description: "If provided this will sort the results by the supplied column and direction",
       },
-    } : {}, instance.getDefaultListArgs(targetDefName)),
+    } : {}, instance.getDefaultListArgs(targetDefName), extras.args || {}),
   }, {
     kind: "connection",
     connectionName: name,

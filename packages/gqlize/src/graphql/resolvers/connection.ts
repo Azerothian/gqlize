@@ -102,6 +102,15 @@ export function buildConnectionResolver(
   const codec = ctx.options.cursor || defaultCursorCodec;
   const definition = instance.getDefinition(binding.targetDefName);
   const resolveData = buildDataSource(binding.data, ctx);
+  // A through-mode belongsToMany hands back the join row behind each target
+  // (`through`), which carries the join model's own OUTPUT hooks.
+  const joinDefinition = (() => {
+    if (binding.data.source !== "manyRelationship") {
+      return undefined;
+    }
+    const join = instance.getAssociations(binding.data.parentDefName)?.[binding.data.relName]?.through;
+    return join ? instance.getDefinition(join) : undefined;
+  })();
 
   return async function resolve(
     source: AdapterRow,
@@ -123,7 +132,7 @@ export function buildConnectionResolver(
         throw new GraphQLError(`Cursor does not belong to the ${name} connection`);
       }
     }
-    const { total, models } = await resolveData(source, a, context, info);
+    const { total, models, through } = await resolveData(source, a, context, info);
     // Carry each edge's absolute position alongside it. The page flags below need
     // it, and re-decoding the cursor just minted to get it back would make every
     // codec pay for a round trip it has no other reason to support.
@@ -153,12 +162,24 @@ export function buildConnectionResolver(
         if (!node) {
           return undefined;
         }
+        // A link whose join row the join model's read rules reject is no link:
+        // the whole edge goes, not just its `through`.
+        let joinRow: unknown;
+        if (through) {
+          joinRow = through[idx] && joinDefinition
+            ? await processAfter(through[idx], a, context, info, joinDefinition, Events.OUTPUT)
+            : through[idx];
+          if (!joinRow) {
+            return undefined;
+          }
+        }
         const index = idx + pageOffset;
         return {
           index,
           edge: {
             cursor: toCursor(name, index, codec),
             node,
+            ...(through ? {through: joinRow} : {}),
           },
         };
       }),
