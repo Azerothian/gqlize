@@ -2,8 +2,9 @@ import fs, { glob } from "node:fs/promises";
 import path from "node:path";
 
 /// Generate publish/package.json: build the `exports` map (one entry per src
-/// file) with dual ESM/CJS output plus a `bun` condition that resolves to the
-/// TypeScript source, fix the top-level main/module/types fields, resolve
+/// file) with dual ESM/CJS output, a `module-sync` condition that gives Node one
+/// copy of each module, and a `bun` condition that resolves to the TypeScript
+/// source; fix the top-level main/module/types fields, resolve
 /// workspace: dependency ranges to concrete versions, and strip dev-only fields.
 ///
 /// Shared by every package: run from the package directory (`pnpm` already sets
@@ -79,13 +80,24 @@ async function updatePackageJson() {
   const packagePublishJsonPath = path.join(process.cwd(), './publish/package.json');
   const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
 
+  // `module-sync` must come before `import`/`require`: the first matching key
+  // wins, and Node (>= 22.12, so every supported runtime) matches it for both
+  // `import` and `require()`. That sends both through the one ESM file, so a
+  // process loads each module once. Without it, `require` got cjs/ and
+  // `import` got lib/, each with its own instances of every module-level
+  // singleton (scalars, enum types, error classes, symbols), and a schema that
+  // mixed the two failed on duplicate type names (#82). graphql itself
+  // resolves the same way. `require` and `import` remain the fallbacks for
+  // tools that don't know `module-sync`.
+  const runtimeEntry = (stem: string) => ({
+    "types": `./types/${stem}.d.ts`,
+    "bun": `./src/${stem}.ts`,
+    "module-sync": `./lib/${stem}.mjs`,
+    "import": `./lib/${stem}.mjs`,
+    "require": `./cjs/${stem}.js`,
+  });
   const exports: Record<string, Record<string, string>> = {
-    ".": {
-      "types": "./types/index.d.ts",
-      "bun": "./src/index.ts",
-      "import": "./lib/index.mjs",
-      "require": "./cjs/index.js",
-    },
+    ".": runtimeEntry("index"),
   };
   for (const file of files) {
     let fileName = path.basename(file, '.ts');
@@ -102,12 +114,7 @@ async function updatePackageJson() {
         "types": `./types/${dir}${fileName}.d.ts`,
       };
     } else {
-      exports[`./${dir}${fileName}`] = {
-        "types": `./types/${dir}${fileName}.d.ts`,
-        "bun": `./src/${dir}${fileName}.ts`,
-        "import": `./lib/${dir}${fileName}.mjs`,
-        "require": `./cjs/${dir}${fileName}.js`,
-      };
+      exports[`./${dir}${fileName}`] = runtimeEntry(`${dir}${fileName}`);
     }
   }
   packageJson.exports = exports;

@@ -27,7 +27,7 @@
     "build": "rm -Rf ./publish || true; mkdir ./publish && run-p build:*",
     "build:readme": "cp ./README.md ./publish/README.md",
     "build:src": "copyfiles -u 1 \"src/**/*\" publish/src",
-    "build:package": "tsx ../../scripts/build/prepare-package.ts --bin gqlize=./cjs/cli/index.js",
+    "build:package": "tsx ../../scripts/build/prepare-package.ts --bin gqlize=./lib/cli/index.mjs",
     "build:main": "tsx ../../scripts/build/swc-build.ts esm && tsx ../../scripts/build/fix-esm-extensions.ts",
     "build:types": "tsc -p tsconfig.types.json --outDir publish/types",
     "build:cjs": "tsx ../../scripts/build/swc-build.ts cjs",

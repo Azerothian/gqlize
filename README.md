@@ -142,11 +142,14 @@ examples/
 ## Module formats
 
 Each package's `build` produces a `publish/` directory consumed by npm. `scripts/prepare-package.ts`
-generates the `exports` map (one entry per source file) with three conditions:
+generates the `exports` map (one entry per source file) with four conditions:
 
+- **`module-sync`** → `./lib/*.mjs` — listed first, so Node (≥ 22.12) loads the ES module for
+  `require()` as well as `import`. A process that mixes the two still gets one copy of each module,
+  so it never holds two instances of a scalar such as `GQLTDate` (#82).
 - **`import`** → `./lib/*.mjs` — native ES modules (SWC, with relative import extensions rewritten
   for Node's ESM resolver by `scripts/fix-esm-extensions.ts`).
-- **`require`** → `./cjs/*.js` — CommonJS (SWC).
+- **`require`** → `./cjs/*.js` — CommonJS (SWC), for tools that don't know `module-sync`.
 - **`bun`** → `./src/*.ts` — the TypeScript **source**, so [Bun](https://bun.sh/) runs it directly
   with no build step.
 

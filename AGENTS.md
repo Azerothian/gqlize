@@ -42,6 +42,7 @@ pnpm typecheck   # tsc -b (src) + per-package tsconfig.test.json (__tests__)
 pnpm lint        # eslint, type-aware, --max-warnings 0
 pnpm build       # each package → its publish/ dir
 pnpm test        # jest across all packages; runs against src/, no build needed
+pnpm test:packaging   # node:test over the built publish/ dirs (needs pnpm build)
 pnpm --filter @azerothian/example-gqlize-basic schema:check   # CI schema-drift gate
 ```
 
@@ -61,7 +62,7 @@ pnpm --filter @azerothian/ormize-cache-ioredis exec jest \
   --testMatch '**/__tests__/bench/*.bench.ts' --coverage=false
 ```
 
-CI (`.github/workflows/ci.yml`) runs typecheck → lint → build → test → schema drift. Do them in that
+CI (`.github/workflows/ci.yml`) runs typecheck → lint → build → test → packaging → schema drift. Do them in that
 order: lint needs a program that compiles.
 
 ## Tests
@@ -141,6 +142,11 @@ order: lint needs a program that compiles.
 - **Cache key format.** `cacheEntryKey` (`utilize/src/utils/cache-key.ts`) and the `LOOKUP` Lua script
   in `ormize-cache-ioredis` build the same entry key independently. Change both together, or the Redis
   store never hits.
+- **One module copy per process.** `scripts/build/prepare-package.ts` lists `module-sync` (→ `lib/*.mjs`)
+  before `import`/`require` in every `exports` entry, so Node's `require()` and `import` load the same
+  file. Without that ordering, a process holds two copies of each module-level singleton (scalars,
+  enum types, error classes, `Symbol()`s, registries). The `gqlize` bin points at `lib/` for the same
+  reason. `pnpm test:packaging` checks both.
 - **Lint ceiling.** Warnings are a ratchet. Never raise the limit; fix the code or lower it.
 
 ## Code layout
