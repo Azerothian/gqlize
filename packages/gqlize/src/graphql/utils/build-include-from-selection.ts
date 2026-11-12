@@ -1,4 +1,5 @@
 import { getArgumentValues, GraphQLResolveInfo, GraphQLObjectType, GraphQLFieldMap, Kind } from "graphql";
+import { toIncludeLevels } from "@azerothian/utilize/utils/include-plan";
 import type { FieldNode, SelectionSetNode } from "graphql";
 import GQLManager from "../../manager";
 import { tryFromCursor } from "../objects/cursor";
@@ -199,11 +200,11 @@ function mergeIncludeDescriptors(a: IncludeDescriptor, b: IncludeDescriptor): In
  * into a single include map.
  */
 export function normaliseExplicitInclude(include: unknown): IncludeMap {
-  if (!Array.isArray(include)) {
-    return {};
-  }
-  return include.reduce((map: IncludeMap, entry: unknown) => {
-    return mergeIncludeMaps(map, entry as IncludeMap);
+  // Either argument shape: a list, or the single object an adapter with
+  // `includeIsList = false` (Valkey) types it as (#68). A single object used to
+  // normalise to `{}`, dropping the client's plan without a word.
+  return (toIncludeLevels(include) || []).reduce((map: IncludeMap, entry: IncludeMap) => {
+    return mergeIncludeMaps(map, entry);
   }, {} as IncludeMap);
 }
 

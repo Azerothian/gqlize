@@ -270,9 +270,10 @@ describe("normaliseExplicitInclude", () => {
     expect(Object.keys(map)).toEqual(["orders", "owner"]);
   });
 
-  it("treats anything that is not an array as no include", () => {
+  it("reads a single object as one level (an includeIsList = false adapter, #68)", () => {
     expect(normaliseExplicitInclude(undefined)).toEqual({});
-    expect(normaliseExplicitInclude({orders: {}})).toEqual({});
+    expect(normaliseExplicitInclude({orders: {}})).toEqual({orders: {}});
+    expect(normaliseExplicitInclude("nonsense")).toEqual({});
   });
 });
 

@@ -5,6 +5,7 @@
 
 import { whereOperatorsFor, expandOrderBy } from "@azerothian/utilize/exposed-methods";
 import { clampPageSize } from "@azerothian/utilize/utils/page-size";
+import { completeIncludePlan, toIncludeLevels } from "@azerothian/utilize/utils/include-plan";
 import { applyScopeWhere } from "../scope";
 import { scopeIncludePlan } from "../scope";
 import { joinScope } from "../cross-adapter";
@@ -235,6 +236,17 @@ export async function resolveManyRelationship(self: ResolutionHost, defName: str
   if (rowScope?.where) {
     a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, rowScope)};
   }
+  // A nested connection's own `include` argument goes to the adapter's
+  // per-parent query: normalised as at the root, and a through-mode relation in
+  // it is a key filter here rather than an adapter JOIN.
+  if (a.include !== undefined) {
+    a = {...a, include: completeIncludePlan(toIncludeLevels(a.include), defName, (n) => self.getAssociations(n))};
+    const throughFiltered = await applyThroughRequired(self, defName, a, context, selection);
+    if (throughFiltered === false) {
+      return { total: 0, models: [] };
+    }
+    a = throughFiltered;
+  }
   a = expandComputedOrder(self, defName, a, {context, info: selection?.raw});
   const offset = cursorOffset(args);
   // --- Backward pagination adjustments for relationships ----------------
@@ -358,6 +370,12 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   // don't already carry one.
   if (selection?.include && !a.include) {
     a = {...a, include: selection.include};
+  }
+  // One shape from here on: a list of complete descriptors, whatever shape the
+  // `include` argument had (a single object on an `includeIsList = false`
+  // adapter) and whatever a client left out of its descriptors (#68).
+  if (a.include !== undefined) {
+    a = {...a, include: completeIncludePlan(toIncludeLevels(a.include), defName, (n) => self.getAssociations(n))};
   }
   // F4. An eagerly-loaded relationship is fetched by *this* query, so its own
   // resolver never gets a filter in edgeways — the include plan is the only

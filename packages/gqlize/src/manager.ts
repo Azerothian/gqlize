@@ -6,7 +6,7 @@ import { globalKeyTargets } from "@azerothian/utilize/utils/global-keys";
 import { GraphQLResolveInfo } from "graphql";
 import type { FieldNode } from "graphql";
 import logger from "@azerothian/utilize/utils/logger";
-import buildIncludeFromSelection, { mergeIncludeMaps, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
+import buildIncludeFromSelection, { mergeIncludeMaps, normaliseExplicitInclude, getChildSelectionSet, flattenFieldNodes, isConnectionRowsSelected } from "./graphql/utils/build-include-from-selection";
 import { methodOptionHooks, methodProjection, queryInstanceMethods, type MethodSelection } from "@azerothian/utilize/exposed-methods";
 import { getArgumentValues, type GraphQLObjectType } from "graphql";
 import type { MutationFilter, MutationInputTree } from "@azerothian/ormize";
@@ -320,9 +320,11 @@ export default class GqlizeBinding {
             astInclude = adapter.replaceIdInInclude(astInclude, defName, info.variableValues, {codec: this.idCodec});
           }
           // `include` is one of the open keys on the args bag — see {@link FindAllArgs}.
-          const explicit = a.include as IncludeMap[] | undefined;
-          if (astInclude && explicit) {
-            a.include = [mergeIncludeMaps(explicit[0] || {}, astInclude[0] || {})];
+          // Every element of it, in either argument shape: an `explicit[0]`
+          // merge dropped the rest of a list, and all of a single-object
+          // argument (an `includeIsList = false` adapter, #68).
+          if (astInclude && a.include !== undefined) {
+            a.include = [mergeIncludeMaps(normaliseExplicitInclude(a.include), astInclude[0] || {})];
           } else if (astInclude) {
             a.include = astInclude;
           }
@@ -336,8 +338,7 @@ export default class GqlizeBinding {
       // the definition's author, not an inference from the selection set.
       const methodInclude = this.normalizeDeclaredInclude(defName, declared.include);
       if (methodInclude) {
-        const existing = a.include as IncludeMap[] | undefined;
-        a.include = [mergeIncludeMaps(existing?.[0] || {}, methodInclude)];
+        a.include = [mergeIncludeMaps(normaliseExplicitInclude(a.include), methodInclude)];
       }
       selection.include = a.include as IncludeMap[] | undefined;
     }
