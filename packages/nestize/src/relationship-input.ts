@@ -19,7 +19,7 @@
 // zod output.
 
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
-import { isInputFieldAllowed, isModelAllowed, isRelationshipAllowed, isRelationshipVerbAllowed } from "@azerothian/utilize";
+import { isInputFieldAllowed, isModelAllowed, isRelationshipAllowed, isRelationshipVerbAllowed, isThroughMode } from "@azerothian/utilize";
 import type { Association, Permission, RelationshipVerb } from "@azerothian/utilize";
 import type { Ormize } from "@azerothian/ormize";
 import type { z } from "zod";
@@ -57,6 +57,21 @@ function entries(value: unknown): unknown[] {
 /** Map a verb's entries, keeping the value's shape (one entry or a list). */
 function mapEntries(value: unknown, fn: (entry: unknown) => unknown): unknown {
   return Array.isArray(value) ? value.map(fn) : fn(value);
+}
+
+/**
+ * A `{ where, through? }` entry on a plain belongsToMany, which takes bare filters. The
+ * engine refuses it (`splitLinkEntry`, a `ThroughInputError`, 403 here) unless
+ * the target has a `where` column; the filter check would otherwise answer
+ * first with a 400 for an unknown `where` field, a different error than the
+ * same body gets on Temporal and direct engine calls.
+ */
+function isRefusedLinkWrapper(host: RelationshipInputHost, association: Association, entry: unknown): boolean {
+  // Only where the engine is sure to refuse it: anything else is a filter and
+  // must pass the filter check, or a `where` key would carry an unchecked one.
+  return association.associationType === "belongsToMany"
+    && !Object.hasOwn(host.orm.getFields(association.target) || {}, "where")
+    && isPlain(entry) && "where" in entry && Object.keys(entry).every((k) => k === "where" || k === "through");
 }
 
 function onlyKeys(entry: Plain, allowed: string[], where: string) {
@@ -172,17 +187,23 @@ function checkVerb(host: RelationshipInputHost, association: Association, relNam
       return mapEntries(value, filter);
     case "add":
     case "set":
-      if (association.associationType === "belongsToMany") {
-        // Each entry is `{ where, through }`: the rows to link, and join-row data.
+      if (isThroughMode(host.permission, association)) {
+        // Through mode (a registered join model this bag can see): each entry
+        // is `{ where, through }`. Only its filter is checked here; `through`
+        // is the engine's (`checkThrough`, under the same bag, 403 when
+        // refused). An entry of any other shape is passed on for the engine to
+        // refuse (`splitLinkEntry`), so the shape rule lives in one place.
         return mapEntries(value, (entry) => {
-          if (!isPlain(entry)) {
-            return bad(`'${relName}.${verb}' takes { where, through }`);
+          if (isPlain(entry) && Object.keys(entry).every((k) => k === "where" || k === "through")) {
+            return { ...entry, where: filter(entry.where) };
           }
-          onlyKeys(entry, ["where", "through"], `'${relName}.${verb}'`);
-          return { ...entry, where: filter(entry.where) };
+          return entry;
         });
       }
-      return mapEntries(value, filter);
+      // Every other collection, a plain belongsToMany included, takes bare
+      // filters. A `{ where, through }` wrapper sent here is left for the
+      // engine to refuse with the error it gives on every route.
+      return mapEntries(value, (entry) => (isRefusedLinkWrapper(host, association, entry) ? entry : filter(entry)));
     case "delete":
     case "restore":
       entries(value).forEach(filter);

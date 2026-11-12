@@ -323,7 +323,9 @@ export class NestizeService {
         input: operation === "create" ? this.registry.create(name) : operation === "update" ? this.registry.update(name) : undefined,
         assertFilterAllowed: (where) => this.assertFilterAllowed(name, where),
       }, { apply: csvApply(this.orm, this.permission, name, operation, query?.apply) });
-      const rows = await this.orm.processCsv(name, operation, request, { req });
+      // The bag goes with every row's write, as on the JSON routes, so whatever
+      // the engine decides by it decides the same way here.
+      const rows = await this.orm.processCsv(name, operation, request, { req }, this.selection);
       return { rows: this.present(name, rows) };
     } catch (e) {
       throw e instanceof CsvUploadError ? csvHttpError(e) : e;
@@ -397,7 +399,7 @@ export class NestizeService {
         };
       });
       const key = (defName: string, row: unknown) => this.orm.getValueFromInstance(defName, row, this.pkName(defName));
-      const result = await this.orm.processCsvImport({ files, refValue: key }, { req });
+      const result = await this.orm.processCsvImport({ files, refValue: key, selection: () => this.selection }, { req });
       return {
         files: result.files.map((file) => ({
           name: file.name,
@@ -444,6 +446,10 @@ export class NestizeService {
     const source = await this.loadInstance(name, id, req);
     const single = assoc.associationType === "belongsTo" || assoc.associationType === "hasOne";
     const { args } = parseListQuery(query);
+    // The related rows are filtered and ordered like a list of the target:
+    // held to the same field and operator allow-list as `GET /:target`.
+    this.assertFilterAllowed(assoc.target, args.where);
+    this.assertOrderAllowed(assoc.target, args.orderBy);
     if (single) {
       const row = await this.orm.resolveSingleRelationship(assoc.target, assoc, source, args, { req });
       return this.present(assoc.target, row);
