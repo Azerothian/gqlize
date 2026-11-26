@@ -285,7 +285,7 @@ export interface OrmAdapter {
    * `"database"` (not `"both"`). The ONE helper every enforcement site reads
    * (RFC §6.6).
    */
-  isDatabaseEnforced?(defName: string): boolean;
+  isDatabaseEnforced?(defName: string, transaction?: unknown, context?: import("./primitives").RequestContext): boolean;
   /**
    * Optional: whether this model is RLS-enabled on this adapter — i.e. the
    * model has `rls.enabled` and the adapter has an `rls` config. Used to decide

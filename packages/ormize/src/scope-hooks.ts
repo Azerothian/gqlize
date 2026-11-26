@@ -29,9 +29,9 @@ import type { AdapterRoutingHost } from "./types/engine";
  * Whether `defName` is database-enforced under RLS, checked via the adapter.
  * RFC §6.6: scope hooks are skipped for database-enforced models.
  */
-function isDbEnforced(host: AdapterRoutingHost, defName: string): boolean {
+function isDbEnforced(host: AdapterRoutingHost, defName: string, transaction: unknown): boolean {
   const adapter = host.getModelAdapter(defName);
-  return adapter.isDatabaseEnforced?.(defName) ?? false;
+  return adapter.isDatabaseEnforced?.(defName, transaction) ?? false;
 }
 
 /**
@@ -199,7 +199,7 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       // RFC §6.6: scope hooks are skipped for database-enforced RLS models,
       // but ONLY when inside a transaction (settings applied). Without a
       // transaction, keep the scope (fail closed).
-      if (options?.transaction && isDbEnforced(host, defName)) {
+      if (isDbEnforced(host, defName, options?.transaction)) {
         return options;
       }
       // In place, by contract, and deliberately not copy-on-write: this is a
@@ -253,7 +253,7 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       }
       // RFC §6.6: skip for database-enforced RLS models, but only inside
       // a transaction (fail closed).
-      if (options?.transaction && isDbEnforced(host, defName)) {
+      if (isDbEnforced(host, defName, options?.transaction)) {
         return row;
       }
       if (!await writable(host, defName, host.getModelAdapter(defName), row, operation, options, hookName === "beforeRestore")) {
@@ -326,24 +326,24 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
  */
 export function buildScopeInstanceHooks(
   isDefinition: (name: string) => boolean,
-  isDbEnforcedModel?: (name: string) => boolean,
+  isDbEnforcedModel?: (name: string, transaction: unknown) => boolean,
 ): {[hookName: string]: (...args: unknown[]) => unknown} {
   return {
     beforeQuery: (options: unknown) => {
       if (isScopeSeen(options) || resolvingScope() || isSystemQuery(options) || isScopeBypass(options)) {
         return;
       }
-      const bag = options as { model?: { name?: string } } | undefined;
+      const bag = options as { model?: { name?: string }; transaction?: unknown } | undefined;
       const defName = bag?.model?.name;
       if (!defName || !isDefinition(defName)) {
         // No model, or one this orm does not own. DDL, a `describeTable`, a
         // migration — nothing a row-level scope has an opinion about.
         return;
       }
-      // RFC §6.6: database-enforced models don't need `scopeAware`/`unscoped`
-      // declarations. The database policy covers them, and the query runs
-      // inside a transaction with the right settings/role applied.
-      if (isDbEnforcedModel?.(defName)) {
+      // RFC §6.6: a statement on a database-enforced model is the policy's to
+      // filter, but only when it runs on a transaction the adapter opened with
+      // a request's settings and role; anything else is still refused here.
+      if (isDbEnforcedModel?.(defName, bag?.transaction)) {
         return;
       }
       throw new ScopeDeniedError(defName, "read");

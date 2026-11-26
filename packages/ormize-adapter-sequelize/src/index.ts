@@ -170,10 +170,13 @@ function validateRlsConfig(rls: AdapterRlsConfig): void {
       `SequelizeAdapter rls.enforce must be "database" or "both", got '${String(rls.enforce)}'.`,
     );
   }
-  if (rls.softDeleteFlag !== undefined && !RLS_SETTING_NAME_PATTERN.test(rls.softDeleteFlag)) {
+  if (rls.softDeleteFlag !== undefined) {
+    // Declared by the RFC (§6.8) but not wired yet: nothing sets the flag on a
+    // transaction. Accepting it would let a deployment believe its flag-gated
+    // SELECT policy works when every soft delete under it fails. Refuse it.
     throw new Error(
-      `SequelizeAdapter rls.softDeleteFlag: invalid setting name '${rls.softDeleteFlag}'. ` +
-      "Names must match [a-z_][a-z0-9_.]* (e.g. 'app.include_deleted').",
+      "SequelizeAdapter rls.softDeleteFlag is not supported yet (RFC row-security §6.8). " +
+      "Keep soft delete out of RLS policies; gqlize applies it as a global filter.",
     );
   }
 }
@@ -330,7 +333,12 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     const t = await this.sequelize.transaction();
     const rlsCfg = this.options.rls;
     if (rlsCfg && context && this.sequelize.getDialect() === "postgres") {
-      await this._applyRlsSettings(t, context, rlsCfg);
+      if (await this._applyRlsSettings(t, context, rlsCfg)) {
+        const identity = this.rlsIdentity(context);
+        if (identity !== undefined) {
+          this.rlsTransactions.set(t, identity);
+        }
+      }
     }
     const resetRls = rlsCfg && context && this.sequelize.getDialect() === "postgres";
     return {
@@ -358,11 +366,35 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * Setting values are always bound via `set_config($1, $2, true)` —
    * never interpolated — and role names are double-quoted identifiers.
    */
+  /**
+   * Transactions this adapter opened with a request's settings applied and its
+   * role switched. Only an operation running on one of these may leave row
+   * filtering to the database (see {@link isDatabaseEnforced}); any other
+   * transaction, whether opened without a context, by another adapter, or by
+   * the caller, has no identity in it, so the engine keeps its own scope.
+   */
+  private rlsTransactions = new WeakMap<object, string>();
+
+  /** The identity a transaction was opened with: its role and settings. */
+  private rlsIdentity = (context: import("@azerothian/utilize/types/primitives").RequestContext): string | undefined => {
+    const cfg = this.options.rls;
+    if (!cfg) {
+      return undefined;
+    }
+    const role = cfg.role(context);
+    if (role === undefined) {
+      return undefined;
+    }
+    const settings = cfg.settings(context);
+    return JSON.stringify([role, Object.keys(settings).sort().map((k) => [k, settings[k]])]);
+  };
+
+  /** Returns whether a role was switched, i.e. whether the transaction carries an identity. */
   private _applyRlsSettings = async (
     t: AdapterTransactionHandle,
     context: import("@azerothian/utilize/types/primitives").RequestContext,
     rlsCfg: AdapterRlsConfig,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const settings = rlsCfg.settings(context);
     // Validate setting names at runtime (matches the build-time pattern).
     for (const name of Object.keys(settings)) {
@@ -393,7 +425,9 @@ export default class SequelizeAdapter implements GqlizeAdapter {
         `SET LOCAL ROLE "${role}"`,
         { transaction: t as import("sequelize").Transaction },
       );
+      return true;
     }
+    return false;
   };
 
   /**
@@ -534,7 +568,26 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * `enforce` is `"database"` (the default, not `"both"`). The ONE helper
    * every enforcement site reads (RFC §6.6).
    */
-  isDatabaseEnforced = (defName: string): boolean => {
+  isDatabaseEnforced = (
+    defName: string, transaction?: unknown,
+    context?: import("@azerothian/utilize/types/primitives").RequestContext,
+  ): boolean => {
+    // Only on a transaction this adapter opened with an identity applied.
+    // Anything else (no transaction, a bare `orm.transaction`, another
+    // adapter's handle) keeps the engine's scope: fail closed.
+    if (!transaction || typeof transaction !== "object") {
+      return false;
+    }
+    const opened = this.rlsTransactions.get(transaction);
+    if (opened === undefined) {
+      return false;
+    }
+    // A request whose identity differs from the one the transaction was opened
+    // with (a principal switched mid-transaction) would be filtered by the
+    // database as the first principal, so the engine keeps its own scope.
+    if (context !== undefined && this.rlsIdentity(context) !== opened) {
+      return false;
+    }
     if (!this.isRlsEnabled(defName)) {
       return false;
     }

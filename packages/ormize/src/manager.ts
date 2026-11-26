@@ -181,11 +181,13 @@ export default class Ormize<
     this.scopeHooks = buildScopeHooks(this.host);
     this.scopeInstanceHooks = buildScopeInstanceHooks(
       (name) => Boolean(this.defs[name]),
-      // RFC §6.6: database-enforced models are exempt from the beforeQuery guard.
-      (name) => {
+      // RFC §6.6: database-enforced models are exempt from the beforeQuery
+      // guard, but only for a statement running on a transaction the adapter
+      // opened with an identity applied.
+      (name, transaction) => {
         const adapterName = this.defsAdapters[name];
         const adapter = adapterName ? this.adapters[adapterName] : undefined;
-        return adapter?.isDatabaseEnforced?.(name) ?? false;
+        return adapter?.isDatabaseEnforced?.(name, transaction) ?? false;
       },
     );
   }
@@ -220,6 +222,11 @@ export default class Ormize<
       (all: ReturnType<typeof auditDefinitionScopeSurfaces>, defName) => {
         const adapterName = this.defsAdapters[defName];
         const adapter = adapterName ? this.adapters[adapterName] : undefined;
+        // Not exempted by RLS yet: direct-model surfaces (class/instance
+        // methods, raw SQL, extend fields) don't run inside an RLS
+        // transaction, so the database would see them with no identity. Until
+        // they do (RFC §6.5), they declare themselves like any scoped surface.
+        // `isDatabaseEnforced` with no transaction is always false.
         const dbEnforced = adapter?.isDatabaseEnforced?.(defName) ?? false;
         return all.concat(auditDefinitionScopeSurfaces(defName, this.defs[defName], dbEnforced));
       },

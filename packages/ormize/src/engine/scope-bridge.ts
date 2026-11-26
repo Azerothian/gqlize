@@ -56,7 +56,7 @@ export interface ScopeHost {
  * (the `where` is stripped).
  */
 export async function resolveRowScope(self: ScopeHost, defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope> {
-  const dbEnforced = isDatabaseEnforced(self, defName, !!context?.transaction);
+  const dbEnforced = isDatabaseEnforced(self, defName, context?.transaction, context);
   if (dbEnforced && (operation === "read" || operation === "delete")) {
     // The database policy handles these operations; the engine injects nothing.
     return undefined;
@@ -266,7 +266,7 @@ export async function assertRowsInScope(
   // RFC §6.6: on a database-enforced RLS model, WITH CHECK replaces the
   // post-write re-check. A violation surfaces as Postgres error 42501, which
   // the error mapper translates to ScopeEscapeError.
-  if (isDatabaseEnforced(self, defName, !!options?.transaction)) {
+  if (isDatabaseEnforced(self, defName, options?.transaction, context)) {
     return;
   }
   // The pair the write ran under, asked again. An update reached an existing
@@ -481,13 +481,15 @@ export function applyGlobalFilters(
  * bypasses RLS on a superuser, table-owner-without-FORCE, or BYPASSRLS role.
  * Skipping the engine scope without a transaction is "neither", never "database".
  */
-export function isDatabaseEnforced(self: ScopeHost, defName: string, transactionActive?: boolean): boolean {
-  if (!transactionActive) {
+export function isDatabaseEnforced(self: ScopeHost, defName: string, transaction?: unknown, context?: RequestContext): boolean {
+  if (!transaction) {
     return false;
   }
   const adapterName = self.defsAdapters[defName];
   const adapter = adapterName ? self.adapters[adapterName] : undefined;
-  return adapter?.isDatabaseEnforced?.(defName) ?? false;
+  // The adapter answers for its own handles only, so a transaction opened
+  // without an identity, or by another adapter, keeps the engine's scope.
+  return adapter?.isDatabaseEnforced?.(defName, transaction, context) ?? false;
 }
 
 /**
