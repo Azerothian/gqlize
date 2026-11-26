@@ -177,6 +177,22 @@ describe("ormize - scope quantifiers: hasMany", () => {
     expect(results.models.map((r: AnyRow) => r.name as string).sort()).toEqual(["Alice", "Charlie"]);
   });
 
+  it("a combinator at the top of an inner filter is kept, not dropped", async () => {
+    // The compiled inner where is `{[Op.and]: …}`: symbol keys only. Treated
+    // as empty, the condition vanished and `some` matched any membership, so
+    // every user with one (Bob included) came back.
+    for (const combinator of ["and", "or"] as const) {
+      const inner = combinator === "and"
+        ? { and: [{ role: { eq: "manager" } }, { groupId: { ne: 0 } }] }
+        : { or: [{ role: { eq: "manager" } }, { role: { eq: "owner" } }] };
+      const scope: ScopePredicate = () => ({ where: { memberships: { some: inner } } });
+      const db = await buildGroupManager({ scope });
+      await seedGroupManager(db);
+      const results = await db.resolveFindAll("User", null, {}, ctx("any"));
+      expect(results.models.map((r: AnyRow) => r.name as string).sort()).toEqual(["Alice", "Charlie"]);
+    }
+  });
+
   it("none: returns users with no memberships", async () => {
     const scope: ScopePredicate = () => ({ where: { memberships: { none: {} } } });
     const db = await buildGroupManager({ scope });

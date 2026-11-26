@@ -240,6 +240,7 @@ async function compileQuantifier(
     return "1=1";
   }
 
+
   // Compile the inner filter using the alias as the prefix.
   const innerSql = await compileInnerWhere(
     host, association.target, innerFilter, alias, qg, sequelize, options, ctx,
@@ -421,7 +422,11 @@ function whereToSql(
   qg: QG,
   sequelize: Sequelize,
 ): string | undefined {
-  if (!where || (typeof where === "object" && Object.keys(where).length === 0)) {
+  // `Reflect.ownKeys`, not `Object.keys`: a compiled where whose top level is
+  // `{[Op.and]: …}` / `{[Op.or]: …}` / `{[Op.not]: …}` has only symbol keys,
+  // and treating it as empty dropped the whole inner condition, so the
+  // quantifier matched any related row and the scope silently widened.
+  if (!where || (typeof where === "object" && Reflect.ownKeys(where).length === 0)) {
     return undefined;
   }
   const model = sequelize.models[modelName];
