@@ -56,6 +56,7 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/writable-foreign-keys.test.ts',
   '<rootDir>/__tests__/read-cache.test.ts',
   '<rootDir>/__tests__/read-cache-equivalence.test.ts',
+  '<rootDir>/__tests__/scope-quantifiers.test.ts',
 ];
 
 // Functional suites re-run against a schema that has been through the artifact
@@ -103,6 +104,7 @@ const ROUNDTRIP_SUITES = [
   '<rootDir>/__tests__/writable-foreign-keys.test.ts',
   '<rootDir>/__tests__/read-cache.test.ts',
   '<rootDir>/__tests__/read-cache-equivalence.test.ts',
+  '<rootDir>/__tests__/scope-quantifiers.test.ts',
 ];
 
 module.exports = {
