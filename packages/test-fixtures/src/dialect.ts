@@ -158,6 +158,87 @@ export function teardownSuite(): Promise<void> {
   return drain(suiteTeardowns);
 }
 
+// --- RLS test helpers (RFC §8) ---
+
+/**
+ * PGlite role helper for RLS tests. Creates a NOLOGIN role, grants it
+ * privileges on the named tables, and runs a callback in a transaction with
+ * `SET LOCAL ROLE` and `set_config(…, true)` for each setting.
+ *
+ * Every RLS test must switch role (PGlite connects as a superuser that owns
+ * the tables, and superusers bypass RLS).
+ */
+export interface RlsRoleHelper {
+  /**
+   * Run `fn` under the named role with the given settings applied.
+   *
+   * @param role     The database role name.
+   * @param settings Map of `{settingName: value}`.
+   * @param fn       The callback. Receives a Sequelize-compatible options object
+   *                 with the transaction handle.
+   */
+  asRole(
+    role: string,
+    settings: { [settingName: string]: string },
+    fn: (options: { transaction: unknown }) => Promise<void>,
+  ): Promise<void>;
+}
+
+/**
+ * Build an RLS role helper for a given adapter.
+ *
+ * @param adapter  The Sequelize adapter instance (structurally: needs
+ *                 `sequelize` with `query` and `transaction`).
+ * @param tables   Table names to grant privileges on.
+ * @param roles    Role names to create upfront (NOLOGIN).
+ */
+export async function createRlsRoleHelper(
+  adapter: { sequelize: { query(sql: string, options?: unknown): Promise<unknown>; transaction<T>(fn: (t: unknown) => Promise<T>): Promise<T> } },
+  tables: string[],
+  roles: string[],
+): Promise<RlsRoleHelper> {
+  const { sequelize } = adapter;
+
+  // Create roles and grant privileges. Each statement separate (PGlite).
+  for (const role of roles) {
+    const [existing] = await sequelize.query(
+      `SELECT 1 FROM pg_roles WHERE rolname = '${role}'`,
+    ) as [Array<unknown>, unknown];
+    if ((existing).length === 0) {
+      await sequelize.query(`CREATE ROLE "${role}" NOLOGIN`);
+      // The role needs to be a member of the current user to allow SET LOCAL ROLE.
+      await sequelize.query(`GRANT "${role}" TO CURRENT_USER`);
+    }
+    for (const table of tables) {
+      await sequelize.query(`GRANT ALL ON "${table}" TO "${role}"`);
+    }
+  }
+
+  return {
+    async asRole(
+      role: string,
+      settings: { [settingName: string]: string },
+      fn: (options: { transaction: unknown }) => Promise<void>,
+    ): Promise<void> {
+      await sequelize.transaction(async (t: unknown) => {
+        const opts = { transaction: t };
+        // Apply settings
+        for (const [name, value] of Object.entries(settings)) {
+          await sequelize.query(
+            `SELECT set_config('${name}', '${value}', true)`,
+            opts,
+          );
+        }
+        // Switch role
+        await sequelize.query(`SET LOCAL ROLE "${role}"`, opts);
+
+        // SET LOCAL ROLE is transaction-scoped — it reverts at COMMIT/ROLLBACK.
+        await fn(opts);
+      });
+    },
+  };
+}
+
 /** Stop every PGlite this file started, and their socket servers. */
 export async function shutdownShared(): Promise<void> {
   const started = slots.splice(0, slots.length);
