@@ -115,6 +115,8 @@ export default class Ormize<
   private writableForeignKeys: boolean;
   /** `GqlizeOptions.csv`, folded with each definition's own by `csvLimits`. */
   private csv: boolean | CsvOptions | undefined;
+  /** `GqlizeOptions.rls`, forwarded to `adapter.syncRowSecurity`. */
+  private rlsOptions: { manageRoles?: boolean } | undefined;
   /**
    * The row-level scope, re-imposed on the adapter's own model hooks (§13).
    *
@@ -163,6 +165,7 @@ export default class Ormize<
     this.onScopeMiss = options.onScopeMiss || "empty";
     this.writableForeignKeys = options.writableForeignKeys === true;
     this.csv = options.csv;
+    this.rlsOptions = options.rls;
     this.readCache = options.cache ? new ReadCache(options.cache, {
       definitionCache: (defName) => this.defs[defName]?.cache,
       hasOpaqueHooks: (defName, operation) => OPAQUE_READ_HOOKS[operation].some((hookName) => {
@@ -242,6 +245,28 @@ export default class Ormize<
       const filters = this.defs[defName]?.options?.filters;
       if (filters && typeof filters === "object") {
         validateFilters(defName, filters);
+      }
+    }
+  }
+
+  /**
+   * Build-time checks for RLS declarations (RFC §6.7).
+   * - RLS-enabled model with no policies -> warning
+   * - Unsupported compiled-policy constructs -> error (handled by compile-policy)
+   */
+  private validateRlsDeclarations() {
+    for (const defName of Object.keys(this.defs)) {
+      const rls = this.defs[defName]?.options?.rls;
+      if (!rls?.enabled) {
+        continue;
+      }
+      const policies = rls.policies || {};
+      if (Object.keys(policies).length === 0) {
+        const warn = console.warn; // eslint-disable-line no-console
+        warn(
+          `RLS: model '${defName}' has rls.enabled but no policies. ` +
+          `All rows will be denied. This is legal but usually an oversight.`,
+        );
       }
     }
   }
@@ -674,6 +699,8 @@ export default class Ormize<
     validateCrossAdapterKeys(this.engine);
     // Validate global filters (RFC §5.1) before the adapters initialise.
     this.validateGlobalFilters();
+    // Validate RLS declarations (RFC §6.7) at build time.
+    this.validateRlsDeclarations();
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       installInstanceHooks(this.engine, adapterName, adapter);
@@ -710,12 +737,37 @@ export default class Ormize<
       const adapter = this.adapters[adapterName];
       return adapter.reset(options);
     }));
+    // After reset() (drop+recreate), reapply RLS policies.
+    await this.syncAdapterRowSecurity();
   }
   sync = async(options?: AdapterQueryOptions) => {
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       return adapter.sync(options);
     }));
+    // After tables exist, reconcile RLS policies (RFC §6.4).
+    await this.syncAdapterRowSecurity();
+  }
+
+  /**
+   * Call `adapter.syncRowSecurity()` on every adapter that implements it,
+   * passing only that adapter's definitions. RFC §6.4.
+   */
+  private syncAdapterRowSecurity = async () => {
+    for (const adapterName of Object.keys(this.adapters)) {
+      const adapter = this.adapters[adapterName];
+      if (!adapter.syncRowSecurity) {
+        continue;
+      }
+      // Collect definitions registered against this adapter.
+      const adapterDefs: { [name: string]: import("./types").Definition } = {};
+      for (const defName of Object.keys(this.defs)) {
+        if (this.defsAdapters[defName] === adapterName) {
+          adapterDefs[defName] = this.defs[defName];
+        }
+      }
+      await adapter.syncRowSecurity(adapterDefs, this.rlsOptions);
+    }
   }
 
   // -------------------------------------------------------------------------
