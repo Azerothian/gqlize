@@ -5,8 +5,11 @@
 // `processFilterArgument` when the where-clause contains keys that match
 // relationship names on the model.
 //
-// Identifiers are quoted through the dialect's query generator; values are
-// escaped through `sequelize.escape()`. Nothing is string-interpolated raw.
+// Every subquery level gets a unique alias (`_q0`, `_q1`, ...) so that
+// self-referential models (e.g. Category.children.children) don't produce
+// ambiguous column references. Identifiers are quoted through the dialect's
+// query generator; values bound through `whereItemsQuery`. Nothing is
+// string-interpolated raw.
 //
 // `belongsToMany` goes through the join table. A registered join model
 // (`Association.throughModel`) gets its own read scope applied inside the
@@ -35,16 +38,19 @@ export interface RelationshipFilterHost {
 
 type QG = { quoteIdentifier(id: string): string; quoteTable(table: string | object): string };
 
+/** Thread-safe alias counter, scoped per top-level compilation. */
+class AliasCounter {
+  private n = 0;
+  next(qg: QG): string { return qg.quoteIdentifier(`_q${this.n++}`); }
+}
+
 /**
  * Walk a `PortableWhere` and compile any relationship quantifier into a
  * Sequelize-native where clause containing `Sequelize.literal()` subqueries.
  *
- * Returns the rewritten where, with quantifier keys replaced by literal SQL
- * and non-quantifier keys left for the normal `replaceWhereOperators` path.
- *
- * `parentRef` is how the outer query's table is referenced in SQL: for the
- * outermost level it is the model name (Sequelize's alias), for inner
- * subquery levels it is the table name.
+ * `parentRef` is how the outer query's table is referenced in SQL. For the
+ * outermost level it is the model name (Sequelize's AS alias). For inner
+ * subquery levels it is the unique alias assigned to that level's FROM clause.
  */
 export async function compileRelationshipFilters(
   host: RelationshipFilterHost,
@@ -53,13 +59,15 @@ export async function compileRelationshipFilters(
   options: AdapterQueryOptions,
   scopeForThrough?: (joinModel: string) => Promise<AdapterWhere | undefined>,
   parentRef?: string,
+  counter?: AliasCounter,
 ): Promise<AdapterWhere> {
   const associations = host.getAssociations(modelName);
   const sequelize = host.sequelize;
   const qg = sequelize.getQueryInterface().queryGenerator as QG;
+  const ctx = counter || new AliasCounter();
 
   // For the outermost level, Sequelize aliases the table as the model name.
-  // For inner levels, the caller passes the actual table reference.
+  // For inner levels, the caller passes the alias it assigned.
   const pRef = parentRef || qg.quoteIdentifier(modelName);
 
   const clauses: AdapterWhere[] = [];
@@ -71,7 +79,7 @@ export async function compileRelationshipFilters(
       const branch = where[key];
       if (lower === "not") {
         const compiled = await compileRelationshipFilters(
-          host, modelName, branch as PortableWhere, options, scopeForThrough, pRef,
+          host, modelName, branch as PortableWhere, options, scopeForThrough, pRef, ctx,
         );
         clauses.push({ [Op.not]: compiled });
       } else {
@@ -79,7 +87,7 @@ export async function compileRelationshipFilters(
         const branches = Array.isArray(branch) ? branch : [branch];
         const compiledBranches = await Promise.all(
           branches.map((b) => compileRelationshipFilters(
-            host, modelName, b as PortableWhere, options, scopeForThrough, pRef,
+            host, modelName, b as PortableWhere, options, scopeForThrough, pRef, ctx,
           )),
         );
         clauses.push({ [opSymbol]: compiledBranches });
@@ -92,7 +100,7 @@ export async function compileRelationshipFilters(
     if (quantifier && association) {
       const sql = await compileQuantifier(
         host, association, quantifier.quantifier, quantifier.inner,
-        pRef, qg, sequelize, options, scopeForThrough,
+        pRef, qg, sequelize, options, scopeForThrough, ctx,
       );
       clauses.push(SequelizeClass.literal(sql));
       continue;
@@ -117,11 +125,14 @@ export async function compileRelationshipFilters(
 /**
  * Compile one quantifier into a SQL string.
  *
- * - `some` -> `EXISTS`
- * - `none` -> `NOT EXISTS`
- * - `every` -> `NOT EXISTS (... AND NOT (inner))`
- * - `is` -> `EXISTS` (singular relationship)
- * - `isNot` -> `NOT EXISTS`
+ * - `some`   -> `EXISTS (SELECT 1 FROM t AS _qN WHERE ...)`
+ * - `none`   -> `NOT EXISTS (...)`
+ * - `every`  -> with empty inner: vacuously true (literal `1=1`)
+ *               with inner: `NOT EXISTS (... AND NOT COALESCE((inner), TRUE))`
+ *               COALESCE handles NULLs: a row whose compared column is NULL
+ *               does not count as violating the predicate.
+ * - `is`     -> `EXISTS (...)` (singular relationship)
+ * - `isNot`  -> `NOT EXISTS (...)`
  */
 async function compileQuantifier(
   host: RelationshipFilterHost,
@@ -133,7 +144,9 @@ async function compileQuantifier(
   sequelize: Sequelize,
   options: AdapterQueryOptions,
   scopeForThrough?: (joinModel: string) => Promise<AdapterWhere | undefined>,
+  counter?: AliasCounter,
 ): Promise<string> {
+  const ctx = counter || new AliasCounter();
   const isBtm = association.associationType === "belongsToMany";
   const isBelongsTo = association.associationType === "belongsTo";
   const isHasOne = association.associationType === "hasOne";
@@ -155,7 +168,7 @@ async function compileQuantifier(
   if (isBtm) {
     return compileBtmQuantifier(
       host, association, quantifier, innerFilter,
-      parentRef, qg, sequelize, options, scopeForThrough,
+      parentRef, qg, sequelize, options, scopeForThrough, ctx,
     );
   }
 
@@ -167,6 +180,7 @@ async function compileQuantifier(
     );
   }
   const targetTable = qg.quoteTable(targetModel.getTableName());
+  const alias = ctx.next(qg);
 
   let parentCol: string;
   let targetCol: string;
@@ -178,18 +192,31 @@ async function compileQuantifier(
     targetCol = qg.quoteIdentifier(association.foreignKey);
   }
 
-  // Compile the inner filter. For nested quantifiers, the target table name
-  // becomes the parent reference of the inner level.
+  const isEmpty = Object.keys(innerFilter).length === 0;
+  const isEvery = quantifier === "every";
+
+  // `every: {}` is vacuously true — every row matches the empty predicate.
+  if (isEvery && isEmpty) {
+    return "1=1";
+  }
+
+  // Compile the inner filter using the alias as the prefix.
   const innerSql = await compileInnerWhere(
-    host, association.target, innerFilter, targetTable, qg, sequelize, options, scopeForThrough,
+    host, association.target, innerFilter, alias, qg, sequelize, options, scopeForThrough, ctx,
   );
 
-  const negate = quantifier === "none" || quantifier === "isNot" || quantifier === "every";
-  const innerNegate = quantifier === "every";
+  const negate = quantifier === "none" || quantifier === "isNot" || isEvery;
 
-  let subquery = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${targetCol} = ${parentRef}.${parentCol}`;
+  let subquery = `SELECT 1 FROM ${targetTable} AS ${alias} WHERE ${alias}.${targetCol} = ${parentRef}.${parentCol}`;
   if (innerSql) {
-    subquery += innerNegate ? ` AND NOT (${innerSql})` : ` AND ${innerSql}`;
+    if (isEvery) {
+      // every = NOT EXISTS(related row WHERE correlation AND NOT inner)
+      // COALESCE: when inner evaluates to NULL (a NULL in a compared column),
+      // treat it as TRUE so the row does not count as a violation.
+      subquery += ` AND NOT COALESCE((${innerSql}), TRUE)`;
+    } else {
+      subquery += ` AND ${innerSql}`;
+    }
   }
 
   return negate ? `NOT EXISTS (${subquery})` : `EXISTS (${subquery})`;
@@ -208,7 +235,9 @@ async function compileBtmQuantifier(
   sequelize: Sequelize,
   options: AdapterQueryOptions,
   scopeForThrough?: (joinModel: string) => Promise<AdapterWhere | undefined>,
+  counter?: AliasCounter,
 ): Promise<string> {
+  const ctx = counter || new AliasCounter();
   const joinModelName = association.through as string;
   const joinModel = sequelize.models[joinModelName];
   if (!joinModel) {
@@ -217,6 +246,7 @@ async function compileBtmQuantifier(
     );
   }
   const joinTable = qg.quoteTable(joinModel.getTableName());
+  const joinAlias = ctx.next(qg);
 
   const targetModel = sequelize.models[association.target];
   if (!targetModel) {
@@ -225,41 +255,52 @@ async function compileBtmQuantifier(
     );
   }
   const targetTable = qg.quoteTable(targetModel.getTableName());
+  const targetAlias = ctx.next(qg);
 
   const sourceKey = qg.quoteIdentifier(association.sourceKey);
   const foreignKey = qg.quoteIdentifier(association.foreignKey);
   const otherKey = qg.quoteIdentifier(association.otherKey as string);
   const targetKey = qg.quoteIdentifier(association.targetKey);
 
+  const isEmpty = Object.keys(innerFilter).length === 0;
+  const isEvery = quantifier === "every";
+
+  // `every: {}` on btm is vacuously true.
+  if (isEvery && isEmpty) {
+    return "1=1";
+  }
+
+  // Compile the inner filter against the target's alias.
   const innerSql = await compileInnerWhere(
-    host, association.target, innerFilter, targetTable, qg, sequelize, options, scopeForThrough,
+    host, association.target, innerFilter, targetAlias, qg, sequelize, options, scopeForThrough, ctx,
   );
 
   let targetExists: string;
   if (innerSql !== undefined) {
-    const innerNegate = quantifier === "every";
-    const targetWhere = innerNegate
-      ? `AND NOT (${innerSql})`
-      : `AND ${innerSql}`;
-    targetExists = `EXISTS (SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${targetKey} = ${joinTable}.${otherKey} ${targetWhere})`;
+    if (isEvery) {
+      targetExists = `EXISTS (SELECT 1 FROM ${targetTable} AS ${targetAlias} WHERE ${targetAlias}.${targetKey} = ${joinAlias}.${otherKey} AND NOT COALESCE((${innerSql}), TRUE))`;
+    } else {
+      targetExists = `EXISTS (SELECT 1 FROM ${targetTable} AS ${targetAlias} WHERE ${targetAlias}.${targetKey} = ${joinAlias}.${otherKey} AND ${innerSql})`;
+    }
   } else {
-    targetExists = `EXISTS (SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${targetKey} = ${joinTable}.${otherKey})`;
+    targetExists = `EXISTS (SELECT 1 FROM ${targetTable} AS ${targetAlias} WHERE ${targetAlias}.${targetKey} = ${joinAlias}.${otherKey})`;
   }
 
+  // Apply join model's read scope.
   let joinScopeClause = "";
   if (association.throughModel && scopeForThrough) {
     const throughScope = await scopeForThrough(joinModelName);
     if (throughScope && Object.keys(throughScope).length > 0) {
-      const throughSql = whereToSql(throughScope, joinModelName, qg, sequelize);
+      const throughSql = whereToSql(throughScope, joinModelName, joinAlias, qg, sequelize);
       if (throughSql) {
         joinScopeClause = ` AND ${throughSql}`;
       }
     }
   }
 
-  const negate = quantifier === "none" || quantifier === "every";
+  const negate = quantifier === "none" || isEvery;
 
-  let subquery = `SELECT 1 FROM ${joinTable} WHERE ${joinTable}.${foreignKey} = ${parentRef}.${sourceKey}`;
+  let subquery = `SELECT 1 FROM ${joinTable} AS ${joinAlias} WHERE ${joinAlias}.${foreignKey} = ${parentRef}.${sourceKey}`;
   subquery += ` AND ${targetExists}`;
   subquery += joinScopeClause;
 
@@ -269,47 +310,51 @@ async function compileBtmQuantifier(
 /**
  * Compile an inner `PortableWhere` to a SQL fragment for use inside a subquery.
  *
- * `targetTableRef` is the quoted table name that will be the FROM in the
- * enclosing subquery -- it becomes the parent reference for any nested
- * quantifiers.
+ * `alias` is the quoted alias of the FROM table in the enclosing subquery.
+ * It is passed as `prefix` to `whereItemsQuery` so column references resolve
+ * to that alias, and it becomes the `parentRef` for any nested quantifiers.
  */
 async function compileInnerWhere(
   host: RelationshipFilterHost,
   modelName: string,
   innerFilter: PortableWhere,
-  targetTableRef: string,
+  alias: string,
   qg: QG,
   sequelize: Sequelize,
   options: AdapterQueryOptions,
   scopeForThrough?: (joinModel: string) => Promise<AdapterWhere | undefined>,
+  counter?: AliasCounter,
 ): Promise<string | undefined> {
   if (Object.keys(innerFilter).length === 0) {
     return undefined;
   }
 
+  const ctx = counter || new AliasCounter();
   const associations = host.getAssociations(modelName);
   const hasQuantifiers = Object.keys(innerFilter).some((k) => {
     return parseQuantifier(innerFilter[k]) !== undefined && associations[k] !== undefined;
   });
 
   if (hasQuantifiers) {
-    // Compile with the target table as the parent reference for inner levels.
     const compiled = await compileRelationshipFilters(
-      host, modelName, innerFilter, options, scopeForThrough, targetTableRef,
+      host, modelName, innerFilter, options, scopeForThrough, alias, ctx,
     );
-    return whereToSql(compiled, modelName, qg, sequelize);
+    return whereToSql(compiled, modelName, alias, qg, sequelize);
   }
 
   const nativeWhere = replaceWhereOperators(innerFilter);
-  return whereToSql(nativeWhere, modelName, qg, sequelize);
+  return whereToSql(nativeWhere, modelName, alias, qg, sequelize);
 }
 
 /**
- * Convert a Sequelize where clause to a SQL fragment using the query generator.
+ * Convert a Sequelize where clause to a SQL fragment, using the dialect's
+ * query generator. The `alias` is used as the table prefix so column references
+ * resolve to the right subquery level.
  */
 function whereToSql(
   where: AdapterWhere,
   modelName: string,
+  alias: string,
   qg: QG,
   sequelize: Sequelize,
 ): string | undefined {
@@ -320,10 +365,11 @@ function whereToSql(
   const generator = sequelize.getQueryInterface().queryGenerator as {
     whereItemsQuery(where: unknown, options?: { model?: unknown; prefix?: string | object }): string;
   };
-  const tableName = model?.getTableName?.();
+  // Use the alias (not the table name) as the prefix. The alias is what the
+  // FROM clause names, so column references must match it.
   const fragment = generator.whereItemsQuery(where, {
     model,
-    prefix: tableName,
+    prefix: alias,
   });
   return fragment || undefined;
 }

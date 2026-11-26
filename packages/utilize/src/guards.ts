@@ -101,11 +101,11 @@ export function assertFilterAllowed(
       }
       continue;
     }
-    // Relationship quantifiers (some, none, every, is, isNot) are not allowed
-    // in client-supplied filters. They may only appear in scope results,
-    // global filters, and direct engine callers. Blocking them here prevents
-    // a client from filtering on a relationship, which would leak whether a
-    // related row exists.
+    // Relationship quantifiers (some, none, every, is, isNot) with an object
+    // inner value are not allowed in client-supplied filters. They may only
+    // appear in scope results, global filters, and direct engine callers.
+    // `parseQuantifier` requires the inner to be a non-null, non-array object,
+    // so legitimate scalar operators like `{ is: null }` are not affected.
     if (parseQuantifier(clause[key])) {
       fail("denied-field", `Relationship quantifier filters are not allowed in client-supplied where clauses (key '${key}')`);
     }

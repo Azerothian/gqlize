@@ -87,7 +87,7 @@ import { replaceWhereOperators, normalizeWhereForDialect } from "./utils/where-o
 import { fixNestedThroughJoin, keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
 import { compileRelationshipFilters } from "./relationship-filters";
 import type { PortableWhere } from "@azerothian/utilize/gate";
-import { getScopeModelName, getScopeThroughCb } from "@azerothian/utilize/gate";
+import { getScopeModelName, getScopeThroughCb, getScopeAssociations } from "@azerothian/utilize/gate";
 
 // Re-export types that were declared in this file and are part of the public surface.
 export type { SequelizeAdapterOptions, SequelizeConnection, AuthoredAttributes } from "./adapter-types";
@@ -537,10 +537,13 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     const modelName = getScopeModelName(where);
     if (modelName) {
       const throughCb = getScopeThroughCb(where);
-      // Compile quantifiers inside the full where (which is a mix of user
-      // where and scope where, merged by `mergeScopeWhere`).
+      // Use engine-level associations when available (they have throughModel).
+      const assocsFn = getScopeAssociations(where);
+      const host = assocsFn
+        ? { sequelize: this.sequelize, getAssociations: assocsFn, processFilterArgument: this.processFilterArgument.bind(this) }
+        : this;
       const compiled = await compileRelationshipFilters(
-        this, modelName, where as PortableWhere, options, throughCb,
+        host, modelName, where as PortableWhere, options, throughCb,
       );
       if (whereOperators) {
         return replaceDefWhereOperators(compiled, whereOperators, options);

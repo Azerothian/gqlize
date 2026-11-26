@@ -914,6 +914,13 @@ function resolveViaPath(
  */
 export const SCOPE_MODEL_NAME = Symbol.for("gqlize.scopeModelName");
 export const SCOPE_THROUGH_CB = Symbol.for("gqlize.scopeThroughCb");
+/**
+ * Symbol carrying the engine-level association lookup on a stamped scope where.
+ * The engine's `getAssociations` has `throughModel` set correctly; the adapter's
+ * does not. The relationship-filter compiler reads this to decide whether the
+ * join model's read scope should be applied inside the subquery.
+ */
+export const SCOPE_ASSOCIATIONS = Symbol.for("gqlize.scopeAssociations");
 
 /** Read the model-name stamp from a where clause. */
 export function getScopeModelName(where: unknown): string | undefined {
@@ -931,6 +938,16 @@ export function getScopeThroughCb(where: unknown): ((joinModel: string) => Promi
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
   return (where as { [SCOPE_THROUGH_CB]?: (joinModel: string) => Promise<any> })[SCOPE_THROUGH_CB];
+}
+
+/** Read the engine-level association lookup from a stamped where clause. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the return type mirrors OrmAdapter.getAssociations
+export function getScopeAssociations(where: unknown): ((modelName: string) => { [relName: string]: any }) | undefined {
+  if (!where || typeof where !== "object") {
+    return undefined;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+  return (where as { [SCOPE_ASSOCIATIONS]?: (modelName: string) => { [relName: string]: any } })[SCOPE_ASSOCIATIONS];
 }
 
 export function collectQuantifierTargets(

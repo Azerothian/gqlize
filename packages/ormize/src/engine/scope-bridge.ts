@@ -7,7 +7,7 @@ import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
 import {
   resolveViaMarkers, collectQuantifierTargets, parseQuantifier, LOGICAL_OPERATORS,
-  ScopeConfigurationError, SCOPE_MODEL_NAME, SCOPE_THROUGH_CB,
+  ScopeConfigurationError, SCOPE_MODEL_NAME, SCOPE_THROUGH_CB, SCOPE_ASSOCIATIONS,
 } from "@azerothian/utilize/gate";
 import { applyScopeWhere, scopeFor, scopeMiss, markSystemQuery } from "../scope";
 import type { ScopeMissBehaviour } from "../scope";
@@ -410,6 +410,12 @@ export function compileScopeWhereIfNeeded(
   Object.defineProperty(where, SCOPE_THROUGH_CB, {
     value: scopeForThrough, enumerable: false, writable: false, configurable: true,
   });
+  // Stamp the engine-level association lookup so the adapter can read
+  // `throughModel` correctly.
+  Object.defineProperty(where, SCOPE_ASSOCIATIONS, {
+    value: (model: string) => self.host.getAssociations(model),
+    enumerable: false, writable: false, configurable: true,
+  });
   return resolved;
 }
 
@@ -437,6 +443,12 @@ export function stampQuantifierInfo(
   if (throughCb) {
     Object.defineProperty(target, SCOPE_THROUGH_CB, {
       value: throughCb, enumerable: false, writable: false, configurable: true,
+    });
+  }
+  const assocsFn = (source.where as { [SCOPE_ASSOCIATIONS]?: unknown })[SCOPE_ASSOCIATIONS];
+  if (assocsFn) {
+    Object.defineProperty(target, SCOPE_ASSOCIATIONS, {
+      value: assocsFn, enumerable: false, writable: false, configurable: true,
     });
   }
 }
