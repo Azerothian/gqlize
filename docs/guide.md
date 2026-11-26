@@ -1878,9 +1878,31 @@ DDL. Stale managed policies are dropped. `new Ormize({ rls: { manageRoles: true 
 **CLI.** `gqlize rls:sql` prints the same DDL as idempotent `DO` blocks, from definitions alone —
 no database connection. Use it to generate a migration file.
 
-**Soft delete rule.** No policy may filter on the `deletedAt` column. `compileRlsPolicies` never
-emits it, and `syncRowSecurity` warns when a hand-written filter-vocabulary policy mentions it
-(raw `sql` policies can't be inspected). See RFC §6.8 for why.
+**Soft delete rule.** No policy may filter on the `deletedAt` column, unless it does so through the
+adapter's soft-delete flag. `compileRlsPolicies` never emits it, and `syncRowSecurity` warns when a
+hand-written filter-vocabulary policy mentions it (raw `sql` policies can't be inspected). See RFC
+§6.8 for why: a SELECT policy that hides deleted rows makes every soft delete fail and restore,
+hard delete and `deleted: INCLUDE/ONLY` quietly do nothing.
+
+If the database itself must hide deleted rows (other clients, raw SQL), set
+`rls.softDeleteFlag: "app.include_deleted"` on the adapter and write the policy against it:
+
+```ts
+see: {
+  for: "select", to: "app_member",
+  using: sql`"ownerId" = (SELECT nullif(current_setting('app.user_id', true), ''))
+    AND ("deletedAt" IS NULL OR current_setting('app.include_deleted', true) = 'on')`,
+},
+```
+
+The adapter sets the flag to `on` for the rest of the request's RLS transaction before the first
+soft delete, restore or hard delete of a paranoid model and the first read of deleted rows. So
+everything after it in that transaction, nested writes and raw SQL included, can see deleted rows;
+the engine's own soft-delete filter still hides them from what it issues. `syncRowSecurity` doesn't
+warn about `deletedAt` when the flag is set.
+
+The `sql` tag takes no interpolated values and throws if given any: a policy is DDL, and per-request
+values go through `rls.setting()`.
 
 **Operational notes.** Two roles: `sync()` needs the table owner (DDL), and the app should run
 requests as a different role. `force: true` keeps the policies applying to app traffic when one
@@ -1957,10 +1979,24 @@ The `system` context has no row scope in the engine, and an RLS adapter runs it 
 has no `bypassRole`. Global filters still apply (`withoutFilters` lifts them). The context is
 marked with a private symbol, so nothing a request sends can pass for it.
 
-**Not yet.** Instance methods and `extend` fields aren't wrapped in the RLS transaction, so on an
-RLS model they declare `scopeAware` / `unscoped` as they would without RLS. `onScopeMiss: "throw"`
-on RLS models and the soft-delete flag (`softDeleteFlag`, refused if set) are still to come; see the
-RFC status.
+**Instance methods** go through `orm.resolveInstanceMethod` (gqlize's and nestize's instance-method
+routes call it) and behave like function class methods: on an RLS model they run in the request's
+RLS transaction, handed over as `context.transaction`, under `bypassRole` when declared `unscoped`,
+and refused with no identity. They still declare `scopeAware` / `unscoped`.
+
+**`extend` fields** run their resolver through `orm.runRequest(context, fn)` when any RLS model is
+registered: one coordinated transaction for the request, so every engine call the resolver makes
+with its `context` shares one transaction per RLS adapter, opened with the request's settings and
+role. Direct model use inside it still needs the declaration.
+
+**`onScopeMiss`** behaves as it does without RLS. The engine still asks the scope predicate on an RLS
+model, leaves the filtering to the policy, and honours an outright deny (`false`): reads return
+nothing, writes follow `onScopeMiss`. A row the policy hides is, as with the engine, just not there.
+
+**Read cache.** RLS reads are cached. The key includes the request's role and settings on every RLS
+model the read touches, and the tags include every model each policy's relationship filters read
+(for a raw `sql` policy, which can't be inspected, every model on the adapter), so a write to a
+table the policy reads invalidates the read. Reads inside a transaction you opened stay uncached.
 
 **Errors.** A `WITH CHECK` violation (Postgres `42501`) surfaces as `ScopeEscapeError`, the same
 error the engine's post-write re-check throws (both `ScopeDeniedError` and `ScopeEscapeError` are
@@ -1968,8 +2004,8 @@ exported from `@azerothian/ormize`).
 A `42501` on a soft-delete or restore is reported as a configuration error pointing at
 RFC §6.8.
 
-**Build-time checks.** An RLS-enabled model on an adapter with no `rls` config is an error.
-`onScopeMiss: "throw"` with RLS models and no `bypassRole` is a warning.
+**Build-time checks.** An RLS-enabled model on an adapter with no `rls` config is an error. An
+RLS-enabled model with no policies is a warning (every row is denied).
 
 ---
 

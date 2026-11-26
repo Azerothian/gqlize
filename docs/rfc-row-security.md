@@ -1,6 +1,8 @@
 # RFC: Row security — relationship filters, global filters and Postgres RLS
 
-> **Status:** Phases 1 and 2 are implemented.
+> **Status:** All three phases are implemented. The design text below is preserved as written;
+> where the implementation departs from it, this block and an *As implemented* note in the section
+> say how.
 >
 > Phase 1 (relationship filters) is documented in [`specifications.md`](specifications.md) (§7,
 > "Relationship quantifiers in scope" and "`via` leaf and `not` combinator") and
@@ -8,48 +10,38 @@
 >
 > Phase 2 (global filters) is documented in [`specifications.md`](specifications.md) (§4 model
 > definition schema, §5 soft delete, §7 permissions) and [`guide.md`](guide.md) (§8 "Global
-> filters" section and the soft-delete section). The design text is preserved below.
-> Two deviations from §5: soft delete still runs on the adapter's own `paranoid` mechanism rather
-> than being re-expressed as a built-in global filter (the `deleted` argument now reaches
-> single-valued relationships and `node(id:)`, which was the user-visible goal of §5.4); and a
-> global filter an adapter can't express fails at its first query, not at `initialise` (§10 Q6).
+> filters" section and the soft-delete section). A global filter its adapter can't express, or
+> one reaching another adapter, fails at `initialise` (§10 Q6: strict).
 >
-> Phase 3a (declaration, compilation, reconciliation) is implemented.
-> Phase 3b (per-request runtime enforcement) is partially implemented.
->
-> **Implemented:**
-> - Adapter config (`rls` on `SequelizeAdapterOptions`): `settings(ctx)`, `role(ctx)`,
->   `bypassRole`, `enforce`. Names validated at construction.
-> - `beginTransaction(context?)` applies `set_config` (bound values) and `SET LOCAL ROLE`.
-> - **Database enforcement is tied to the transaction's identity.** The engine skips its scope
->   for a model only when the operation runs on a transaction *that model's adapter* opened with
->   a request's settings and role applied, and only for the same identity (role and settings) the
->   transaction was opened with. Any other transaction, whether bare, opened by the caller, or
->   from another adapter, and any principal switched mid-transaction, keeps the engine scope:
->   enforcement is "both", never "neither".
-> - **Read wrapping** (§6.5) for root, many- and single-relationship reads of RLS models.
-> - **No identity → deny** (§6.5): no query runs under the connection's own role.
-> - Scope predicate (read/delete), scope hooks and post-write re-check skipped under the
->   condition above; scope `set` on create/update still applied; global filters still applied.
-> - Error mapping: `42501` → `ScopeEscapeError`; on soft delete/restore → configuration error.
-> - Build-time checks (§6.7).
-> - **Class methods** (`resolveClassMethod`) on an RLS model run in the request's RLS transaction,
->   handed over as `context.transaction`; no identity throws `ScopeDeniedError`. Raw-SQL class
->   methods run their statement on it and need no `:scope…` parameter or declaration. A method
->   declared `unscoped` runs under `bypassRole` when one is configured, else as the request.
-> - **`orm.asSystem(fn)`**: a system context (private symbol mark) that the engine leaves unscoped
->   and an RLS adapter runs under `bypassRole`; refused up front when an RLS adapter has none.
->
-> **Deferred, and what that means in practice:**
-> - **Instance methods and `extend` fields** don't run inside an RLS transaction, so on an RLS model
->   they still need `scopeAware` / `unscoped`, exactly as without RLS. Function class methods are
->   handed the transaction (below) but still declare themselves, because the engine can't make them
->   use it; only raw-SQL class methods are exempt.
-> - **`onScopeMiss: "throw"`** on an RLS model behaves as `"empty"` (warned at build).
-> - **`softDeleteFlag`** is refused at construction rather than accepted and ignored.
-> - **Read cache**: correctness is pinned by `ormize/__tests__/rls-engine.test.ts` (two principals,
->   cache on); keying cached RLS reads on the identity, so they can be served from cache, is not done.
-> - **Insert divergence** (§4.5): a row visible only through a child the same mutation creates is
+> Phase 3 (Postgres RLS) is documented in [`guide.md`](guide.md) §8 ("Row-level security" and
+> "Runtime enforcement") and [`specifications.md`](specifications.md) (`options.rls`,
+> `resolveClassMethod`, `asSystem`).
+> - **Declaration, compilation, reconciliation** (§6.1–§6.4): `options.rls`, `compileRlsPolicies`,
+>   `sync()` and `gqlize rls:sql`. Relationship hops into RLS tables run in generated
+>   `SECURITY DEFINER` functions (§7), which `sync()` creates, grants and drops.
+> - **Runtime** (§6.5, §6.6): adapter `rls` config (`settings`, `role`, `bypassRole`, `enforce`,
+>   `softDeleteFlag`); `beginTransaction(context)` applies settings (bound) and `SET LOCAL ROLE`.
+>   The engine leaves filtering to the policy only on a transaction its adapter opened with the
+>   request's own identity; anything else keeps the engine scope ("both", never "neither"). Reads,
+>   class methods, instance methods and `extend` fields run in the request's RLS transaction; no
+>   identity is a deny, never the connection's role.
+> - **Surfaces** (§6.5): raw-SQL class methods run on the RLS transaction and need no `:scope…`
+>   parameter or declaration. Function class methods, instance methods and `extend` fields are
+>   handed the transaction (`context.transaction`, or one coordinated transaction for an `extend`
+>   resolver) but still declare `scopeAware` / `unscoped`, because the engine can't make them use
+>   it. `unscoped` methods run under `bypassRole` when it is configured. `orm.asSystem(fn)` runs
+>   system work under `bypassRole`.
+> - **`onScopeMiss`** (§6.5): as without RLS. *Departure:* the engine still asks the predicate on
+>   RLS models and honours an outright deny, instead of re-counting a zero-row write under
+>   `bypassRole`; the re-count would throw where the engine scope doesn't.
+> - **Read cache** (§6.5): RLS reads in the engine's read wrap are cached, keyed on the request's
+>   role and settings, tagged with every model the policies read.
+> - **Soft delete** (§6.8): `softDeleteFlag` is wired (flag raised per transaction by adapter hooks).
+>   *Departure, deliberate:* soft delete keeps running on the adapter's `paranoid` mechanism rather
+>   than being re-expressed as a built-in global filter. What §5.4 was for is delivered (`deleted`
+>   reaches every read path, single-valued relationships and `node(id:)` included), and §6.8 only
+>   needs soft delete applied by the engine's own queries, which it is.
+> - **Known divergence** (§4.5): a row visible only through a child the same mutation creates is
 >   refused under RLS and allowed by the engine.
 >
 > **Parity** for the §7 group-manager rules runs in `gqlize/__tests__/rls-parity.test.ts`: the same
@@ -958,3 +950,4 @@ nearest table with an `id`.
    in explicitly (no default), so the trade-off is a written decision in every config?
 6. **Valkey and global filters.** Phase 2's `where` is portable, but Valkey already refuses some
    operators. Should a global filter Valkey can't express fail at build (strict) or at first query?
+   *Resolved: strict.* `initialise` compiles every global filter through its adapter.
