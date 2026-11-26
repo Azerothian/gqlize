@@ -14,8 +14,18 @@
 > single-valued relationships and `node(id:)`, which was the user-visible goal of §5.4); and a
 > global filter an adapter can't express fails at its first query, not at `initialise` (§10 Q6).
 >
-> Phase 3a (declaration, compilation, reconciliation) is implemented. Phase 3b
-> (per-request runtime enforcement) remains proposed.
+> Phase 3a (declaration, compilation, reconciliation) is implemented.
+> Phase 3b (per-request runtime enforcement) is implemented. Deviations:
+> - `beginTransaction(context?)` is the only runtime entry point; there is no
+>   separate "read-wrap" transaction yet — reads on RLS models currently run
+>   without a transaction unless the caller provides one through `orm.transaction`.
+>   The scope is still skipped for database-enforced models, and the parity test
+>   proves enforcement via SET LOCAL ROLE.
+> - `orm.asSystem`, `runWithContext` nested-context check, and the soft-delete
+>   flag are declared in the types but not yet wired into the engine — they will
+>   land in a follow-up once the read-wrap transaction is in place.
+> - Read-cache key augmentation for RLS identity is not yet implemented; cache
+>   is bypassed inside `orm.transaction` as before.
 
 ## Contents
 

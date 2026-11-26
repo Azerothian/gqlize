@@ -1402,6 +1402,16 @@ contract groups into:
   open the table to every role. Sync replaces a permissive marker if it finds one. When no
   definition declares `rls`, sync still runs if any marker exists, so dropping `rls` from the last
   model disables what gqlize enabled. Non-Postgres adapters omit this method.
+- **RLS runtime (optional):** `beginTransaction(context?)` accepts a request context. An adapter
+  with an `rls` config uses it to run `set_config` for each setting and `SET LOCAL ROLE` before
+  returning the transaction handle. Both are reset in the commit/rollback wrappers. Setting
+  values are bound parameters (`set_config($1, $2, true)`), never interpolated. Role names are
+  double-quoted identifiers validated against a strict pattern. `isDatabaseEnforced(defName)`
+  returns `true` when the model has `rls.enabled`, the adapter has `rls` configured, and
+  `enforce` is `"database"`. `isRlsEnabled(defName)` returns `true` when the model has
+  `rls.enabled` and the adapter has `rls` configured. These two methods are what the engine reads
+  to decide whether to skip the scope merge, the scope hooks, the post-write re-check, and the
+  scope audit for a model (RFC §6.6).
 
 ### Sequelize adapter highlights
 

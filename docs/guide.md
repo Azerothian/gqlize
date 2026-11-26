@@ -1871,6 +1871,47 @@ requests as a different role. `force: true` keeps the policies applying to app t
 connection does both. Policy changes take `ACCESS EXCLUSIVE` on the table. Index what policy
 subqueries filter on.
 
+### Runtime enforcement (Phase 3b)
+
+The adapter applies per-request settings and role on every transaction it opens:
+
+```ts
+new SequelizeAdapter({
+  rls: {
+    settings: (ctx) => ({
+      "app.user_id": ctx.user.id,
+      "app.group_ids": ctx.user.groupIds,   // arrays comma-joined
+    }),
+    role: (ctx) => `app_${ctx.user.role}`,
+    bypassRole: "app_system",               // optional
+    enforce: "database",                     // default; "both" keeps engine scope too
+    softDeleteFlag: "app.include_deleted",   // optional (§6.8)
+  },
+}, connectionConfig);
+```
+
+**How it works.** When a transaction opens on this adapter, the adapter runs
+`SELECT set_config($1, $2, true)` for each setting (bound values, never interpolated)
+and `SET LOCAL ROLE "role"`. Both revert at COMMIT/ROLLBACK; the adapter resets them
+explicitly as defence in depth.
+
+**Enforcement mode.** `enforce: "database"` (the default): the database policy is the row
+rule, and the engine does NOT inject the scope's `where`/`native` for RLS-enabled models.
+Scope `set` on create/update is still applied. `enforce: "both"` keeps both the engine scope
+and the database policy, for deployments that want the layered defence.
+
+**No identity.** `role(ctx)` returning `undefined` means no authenticated user. The engine
+does not apply `SET LOCAL ROLE`, and RLS-aware code must handle this — the row will be
+visible under the connection's own role unless the deployment returns an explicit
+`app_anonymous` role.
+
+**Errors.** A `WITH CHECK` violation (Postgres `42501`) surfaces as `ScopeEscapeError`.
+A `42501` on a soft-delete or restore is reported as a configuration error pointing at
+RFC §6.8.
+
+**Build-time checks.** An RLS-enabled model on an adapter with no `rls` config is an error.
+`onScopeMiss: "throw"` with RLS models and no `bypassRole` is a warning.
+
 ---
 
 ## 9. Hooks
