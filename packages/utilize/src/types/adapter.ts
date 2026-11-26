@@ -274,8 +274,25 @@ export interface OrmAdapter {
    * (`orm.transaction`): the coordinator begins one per adapter and commits/rolls
    * back them together. `handle` is the adapter-native transaction token that is
    * threaded onto each operation's options.
+   *
+   * `context` is the request context for the current operation. An adapter with
+   * RLS configured uses it to apply per-request settings and role (RFC §6.5).
    */
-  beginTransaction?(): Promise<AdapterTransaction>;
+  beginTransaction?(context?: import("./primitives").RequestContext): Promise<AdapterTransaction>;
+  /**
+   * Optional: whether this model is database-enforced under RLS — i.e. the
+   * model has `rls.enabled`, the adapter has an `rls` config, and `enforce` is
+   * `"database"` (not `"both"`). The ONE helper every enforcement site reads
+   * (RFC §6.6).
+   */
+  isDatabaseEnforced?(defName: string): boolean;
+  /**
+   * Optional: whether this model is RLS-enabled on this adapter — i.e. the
+   * model has `rls.enabled` and the adapter has an `rls` config. Used to decide
+   * whether a read needs a transaction wrapping (RFC §6.5) and whether the
+   * cache key includes the RLS identity.
+   */
+  isRlsEnabled?(defName: string): boolean;
   /** Read: classify an adapter-native type into an abstract `DataTypeDescriptor`. */
   mapDataType(nativeType: NativeDataType): DataTypeDescriptor;
   /** Write: convert an abstract type token/descriptor back to an adapter-native type. */

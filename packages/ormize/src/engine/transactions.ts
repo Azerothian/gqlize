@@ -79,7 +79,7 @@ export async function withTransaction<T>(self: TransactionHost, orm: Ormize, def
   const adapterName = self.defsAdapters[defName];
   const active = getStore()?.transaction;
   if (active) {
-    const handle = await active.handleFor(adapterName);
+    const handle = await active.handleFor(adapterName, context);
     return fn(inheritScopeMemo(context, Object.assign({}, context, { transaction: handle })));
   }
   if (context && context.transaction) {

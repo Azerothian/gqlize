@@ -26,6 +26,15 @@ import { ScopeDeniedError, isSystemQuery, isScopeBypass, resolvingScope } from "
 import type { AdapterRoutingHost } from "./types/engine";
 
 /**
+ * Whether `defName` is database-enforced under RLS, checked via the adapter.
+ * RFC §6.6: scope hooks are skipped for database-enforced models.
+ */
+function isDbEnforced(host: AdapterRoutingHost, defName: string): boolean {
+  const adapter = host.getModelAdapter(defName);
+  return adapter.isDatabaseEnforced?.(defName) ?? false;
+}
+
+/**
  * A hook in the shape `createHook` calls a global one: the model's name, then
  * whatever the adapter passes its own hooks.
  */
@@ -187,6 +196,11 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       if (!request || !options) {
         return options;
       }
+      // RFC §6.6: scope hooks are skipped for database-enforced RLS models.
+      // The database policy replaces the engine's scope filter.
+      if (isDbEnforced(host, defName)) {
+        return options;
+      }
       // In place, by contract, and deliberately not copy-on-write: this is a
       // sequelize `beforeFind`-family hook, and sequelize executes the very
       // object it hands in while later hooks re-read it — `runHooks` discards
@@ -234,6 +248,10 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       markScopeSeen(options);
       const request = enforceFor(options);
       if (!request || !row) {
+        return row;
+      }
+      // RFC §6.6: skip for database-enforced RLS models.
+      if (isDbEnforced(host, defName)) {
         return row;
       }
       if (!await writable(host, defName, host.getModelAdapter(defName), row, operation, options, hookName === "beforeRestore")) {
@@ -306,6 +324,7 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
  */
 export function buildScopeInstanceHooks(
   isDefinition: (name: string) => boolean,
+  isDbEnforcedModel?: (name: string) => boolean,
 ): {[hookName: string]: (...args: unknown[]) => unknown} {
   return {
     beforeQuery: (options: unknown) => {
@@ -317,6 +336,12 @@ export function buildScopeInstanceHooks(
       if (!defName || !isDefinition(defName)) {
         // No model, or one this orm does not own. DDL, a `describeTable`, a
         // migration — nothing a row-level scope has an opinion about.
+        return;
+      }
+      // RFC §6.6: database-enforced models don't need `scopeAware`/`unscoped`
+      // declarations. The database policy covers them, and the query runs
+      // inside a transaction with the right settings/role applied.
+      if (isDbEnforcedModel?.(defName)) {
         return;
       }
       throw new ScopeDeniedError(defName, "read");

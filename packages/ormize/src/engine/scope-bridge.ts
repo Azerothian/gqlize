@@ -49,11 +49,29 @@ export interface ScopeHost {
  * After basic scope resolution, this resolves any `__via` markers the scope
  * sugar emitted into proper quantifier nesting using the association graph,
  * and checks that no quantifier crosses adapter boundaries.
+ *
+ * **RFC §6.6**: on a database-enforced RLS model, the scope predicate is NOT
+ * called for `read` or `delete` — the database policy replaces it. For
+ * `create`/`update` the predicate IS called, but only the `set` half is used
+ * (the `where` is stripped).
  */
 export async function resolveRowScope(self: ScopeHost, defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope> {
+  const dbEnforced = isDatabaseEnforced(self, defName);
+  if (dbEnforced && (operation === "read" || operation === "delete")) {
+    // The database policy handles these operations; the engine injects nothing.
+    return undefined;
+  }
   const resolved = await scopeFor(self.permission, defName, operation, context);
   if (resolved === undefined || resolved === false) {
     return resolved;
+  }
+  // For database-enforced models on create/update, keep only `set` — drop
+  // the `where` half, which the policy already enforces.
+  if (dbEnforced) {
+    if (resolved.set) {
+      return { set: resolved.set };
+    }
+    return undefined;
   }
   if (!resolved.where) {
     return resolved;
@@ -243,6 +261,12 @@ export async function assertRowsInScope(
   rows: import("@azerothian/utilize/types/index").AdapterRow[], options: AdapterQueryOptions | undefined,
 ): Promise<void> {
   if (rows.length === 0) {
+    return;
+  }
+  // RFC §6.6: on a database-enforced RLS model, WITH CHECK replaces the
+  // post-write re-check. A violation surfaces as Postgres error 42501, which
+  // the error mapper translates to ScopeEscapeError.
+  if (isDatabaseEnforced(self, defName)) {
     return;
   }
   // The pair the write ran under, asked again. An update reached an existing
@@ -439,6 +463,36 @@ export function applyGlobalFilters(
     return where;
   }
   return mergeScopeWhere(where, gf);
+}
+
+// ---------------------------------------------------------------------------
+// Database enforcement helper (RFC §6.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `defName` is database-enforced under RLS: the model has `rls.enabled`
+ * on an adapter with `rls` configured and `enforce: "database"`. The ONE helper
+ * every enforcement site reads.
+ *
+ * Returns `false` for models on adapters without RLS, models without
+ * `rls.enabled`, and models under `enforce: "both"` (which keeps the engine
+ * scope alongside the database policy).
+ */
+export function isDatabaseEnforced(self: ScopeHost, defName: string): boolean {
+  const adapterName = self.defsAdapters[defName];
+  const adapter = adapterName ? self.adapters[adapterName] : undefined;
+  return adapter?.isDatabaseEnforced?.(defName) ?? false;
+}
+
+/**
+ * Whether `defName` is RLS-enabled on its adapter: the model has `rls.enabled`
+ * and the adapter has an `rls` config. Used to decide whether a read needs
+ * a transaction wrapping and whether the cache key includes the RLS identity.
+ */
+export function isRlsEnabled(self: ScopeHost, defName: string): boolean {
+  const adapterName = self.defsAdapters[defName];
+  const adapter = adapterName ? self.adapters[adapterName] : undefined;
+  return adapter?.isRlsEnabled?.(defName) ?? false;
 }
 
 // Re-export the symbols the class needs without reaching into scope.ts itself.

@@ -1,4 +1,4 @@
-import { AdapterTransaction, AdapterTransactionHandle } from "@azerothian/utilize/types/index";
+import { AdapterTransaction, AdapterTransactionHandle, RequestContext } from "@azerothian/utilize/types/index";
 import type Ormize from "./manager";
 
 /**
@@ -28,8 +28,11 @@ export default class OrmizeTransaction {
    * The adapter-native transaction handle for `adapterName`, beginning one on
    * first use. Returns `undefined` for adapters that don't support transactions
    * (their operations then run unenrolled, as before).
+   *
+   * `context` is forwarded to `adapter.beginTransaction(context)` so an
+   * RLS-configured adapter can apply per-request settings and role (RFC §6.5).
    */
-  async handleFor(adapterName: string): Promise<AdapterTransactionHandle> {
+  async handleFor(adapterName: string, context?: RequestContext): Promise<AdapterTransactionHandle> {
     const existing = this.txs.get(adapterName);
     if (existing) {
       return existing.handle;
@@ -38,7 +41,7 @@ export default class OrmizeTransaction {
     if (!adapter || typeof adapter.beginTransaction !== "function") {
       return undefined;
     }
-    const tx = await adapter.beginTransaction();
+    const tx = await adapter.beginTransaction(context);
     this.txs.set(adapterName, tx);
     return tx.handle;
   }

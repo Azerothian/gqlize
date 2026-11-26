@@ -6,7 +6,7 @@
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import { isMutationInstanceMethodAllowed, isStructurallyWritable } from "@azerothian/utilize/gate";
 import { whereOperatorsFor, definitionMethods, mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
-import { ScopeDeniedError } from "../scope";
+import { ScopeDeniedError, ScopeEscapeError } from "../scope";
 import { applyRelationshipMutations } from "../relationship-mutations";
 import Events from "../events";
 import type {
@@ -27,6 +27,37 @@ import { resolveRowScope, scopedWriteWhere, assertRowsInScope, scopeMiss as scop
 import type { ReadCacheHost } from "./read-cache-bridge";
 import { writeFootprint } from "./read-cache-bridge";
 import { createResolveContext } from "./resolution";
+
+// ---------------------------------------------------------------------------
+// Postgres RLS error mapping (RFC §6.5)
+// ---------------------------------------------------------------------------
+
+/** Whether an error is a Postgres 42501 (RLS policy violation). */
+function isRlsViolation(err: unknown): boolean {
+  const dbErr = err as { original?: { code?: string }; parent?: { code?: string } };
+  return (dbErr.original?.code ?? dbErr.parent?.code) === "42501";
+}
+
+/**
+ * Map a Postgres `42501` to the appropriate ormize error.
+ *
+ * - On a soft delete / restore / hard delete of a soft-deleted row:
+ *   a configuration error pointing at RFC §6.8 (the user has a SELECT policy
+ *   that hides deleted rows, which breaks these operations).
+ * - Otherwise: `ScopeEscapeError` — the write violated a WITH CHECK policy.
+ */
+function mapRlsViolation(err: unknown, defName: string, operation: ScopeOperation, isSoftDeleteOp?: boolean): never {
+  if (isSoftDeleteOp) {
+    throw new Error(
+      `RLS policy violation on '${defName}' during a soft-delete operation. ` +
+      "A SELECT policy is hiding soft-deleted rows, which prevents soft delete, " +
+      "restore and hard delete from working. See RFC §6.8: either remove " +
+      "deletedAt from the policy, or configure rls.softDeleteFlag so the " +
+      "engine can lift the filter for these operations.",
+    );
+  }
+  throw new ScopeEscapeError(defName, operation);
+}
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -68,6 +99,8 @@ export function mutationEntry<T>(
     idTargets: GlobalKeyTargets;
     translateFilter: NonNullable<Selection["translateFilter"]>;
   }) => Promise<T>,
+  /** Hint for the RLS error mapper: is this a soft-delete operation? */
+  softDeleteHint?: boolean,
 ): Promise<T> {
   return self.withTransaction(defName, context, async(context: RequestContext) => {
     try {
@@ -79,6 +112,13 @@ export function mutationEntry<T>(
         idTargets: self.getGlobalKeyTargets(defName),
         translateFilter: selection?.translateFilter || (<W,>(w: W) => w),
       });
+    } catch (err) {
+      // RFC §6.5: map Postgres 42501 (RLS policy violation) to the
+      // appropriate ormize error.
+      if (isRlsViolation(err)) {
+        mapRlsViolation(err, defName, "update", softDeleteHint);
+      }
+      throw err;
     } finally {
       // Also on a throw: a mutation that wrote some rows and then failed may
       // have committed them on an adapter with no transaction to roll back.
@@ -463,6 +503,8 @@ export async function processDelete(
   defName: string, source: AdapterRow, args: MutationFilter,
   context: RequestContext, selection?: Selection,
 ): Promise<AdapterRow[]> {
+  // RFC §6.8: soft deletes are flagged for the RLS error mapper.
+  const isSoftDelete = self.getModelAdapter(defName).softDeletes?.(defName) ?? false;
   return mutationEntry(self, defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
     const processDeleteFn = adapter.getDeleteFunction(defName, whereOperatorsFor(definition));
     const scoped = await scopedWriteWhere(self, defName, "delete", context, translateFilter(args, globalKeys, idTargets));
@@ -476,7 +518,7 @@ export async function processDelete(
       makeDefinitionBeforeHook(definition, args, context, selection, Events.MUTATION_DELETE),
       identityRow,
     );
-  });
+  }, isSoftDelete);
 }
 
 /**
@@ -517,5 +559,5 @@ export async function processRestore(
     // them where it found them.
     await assertRowsInScope(self, defName, "update", context, results, createResolveContext(context, selection, source));
     return results;
-  });
+  }, true /* restore is always a soft-delete operation for the RLS error mapper */);
 }

@@ -95,8 +95,15 @@ function auditEntry(defName: string, kind: ScopeSurfaceKind, name: string, value
  * ask it, so it asks the answerable question instead — is a row-level scope
  * configured at all — and makes every surface declare itself. A model the
  * predicate never scopes says so in one word, once.
+ *
+ * RFC §6.6: a database-enforced RLS model is exempt from the audit. The
+ * database policy covers every surface the engine cannot see, so the
+ * `scopeAware`/`unscoped` declaration is not required.
  */
-export function auditDefinitionScopeSurfaces(defName: string, def: Definition): ScopeSurfaceFinding[] {
+export function auditDefinitionScopeSurfaces(defName: string, def: Definition, databaseEnforced?: boolean): ScopeSurfaceFinding[] {
+  if (databaseEnforced) {
+    return [];
+  }
   const findings: ScopeSurfaceFinding[] = [];
   const classMethods = definitionMethods(def, "classMethods");
   for (const name of Object.keys(classMethods)) {

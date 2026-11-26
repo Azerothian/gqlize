@@ -144,7 +144,39 @@ import {
 } from "./writes";
 import { rowFields, isEmptyWhere, mergeFilterStatement as mergeFilterStatementImpl } from "./row-helpers";
 
-import type { SequelizeAdapterOptions, SequelizeConnection } from "./adapter-types";
+import type { SequelizeAdapterOptions, SequelizeConnection, AdapterRlsConfig } from "./adapter-types";
+
+/** Postgres role name pattern — same strictness as the setting name pattern in `rls.ts`. */
+const RLS_ROLE_PATTERN = /^[a-z_][a-z0-9_]*$/i;
+/** Postgres setting name pattern — matches `rls.ts`'s `SETTING_NAME_PATTERN`. */
+const RLS_SETTING_NAME_PATTERN = /^[a-z_][a-z0-9_.]*$/i;
+
+/** Validate an RLS runtime config at construction time. */
+function validateRlsConfig(rls: AdapterRlsConfig): void {
+  if (typeof rls.settings !== "function") {
+    throw new Error("SequelizeAdapter rls.settings must be a function (ctx) => {[name]: value}.");
+  }
+  if (typeof rls.role !== "function") {
+    throw new Error("SequelizeAdapter rls.role must be a function (ctx) => string | undefined.");
+  }
+  if (rls.bypassRole !== undefined && !RLS_ROLE_PATTERN.test(rls.bypassRole)) {
+    throw new Error(
+      `SequelizeAdapter rls.bypassRole: invalid role name '${rls.bypassRole}'. ` +
+      "Role names must match [a-z_][a-z0-9_]*.",
+    );
+  }
+  if (rls.enforce !== undefined && rls.enforce !== "database" && rls.enforce !== "both") {
+    throw new Error(
+      `SequelizeAdapter rls.enforce must be "database" or "both", got '${String(rls.enforce)}'.`,
+    );
+  }
+  if (rls.softDeleteFlag !== undefined && !RLS_SETTING_NAME_PATTERN.test(rls.softDeleteFlag)) {
+    throw new Error(
+      `SequelizeAdapter rls.softDeleteFlag: invalid setting name '${rls.softDeleteFlag}'. ` +
+      "Names must match [a-z_][a-z0-9_.]* (e.g. 'app.include_deleted').",
+    );
+  }
+}
 
 export default class SequelizeAdapter implements GqlizeAdapter {
   adapterName: string;
@@ -194,6 +226,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       create: "",
     };
     this.meta = {};
+    // Validate the RLS runtime config (RFC §6.5) at construction time.
+    if (this.options.rls) {
+      validateRlsConfig(this.options.rls);
+    }
   }
   /**
    * Replay the raw DDL that definitions registered through `definition.queries`.
@@ -285,14 +321,108 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * is committed/rolled back explicitly by the cross-adapter coordinator. The
    * `handle` is a Sequelize `Transaction`, threaded onto operation options as
    * `{ transaction }`.
+   *
+   * When an `rls` config is set and `context` is provided, the transaction
+   * begins with `set_config` for each setting and `SET LOCAL ROLE` (RFC §6.5).
+   * Both are reset in the commit/rollback wrappers as defence in depth.
    */
-  beginTransaction = async (): Promise<AdapterTransaction> => {
+  beginTransaction = async (context?: import("@azerothian/utilize/types/primitives").RequestContext): Promise<AdapterTransaction> => {
     const t = await this.sequelize.transaction();
+    const rlsCfg = this.options.rls;
+    if (rlsCfg && context && this.sequelize.getDialect() === "postgres") {
+      await this._applyRlsSettings(t, context, rlsCfg);
+    }
+    const resetRls = rlsCfg && context && this.sequelize.getDialect() === "postgres";
     return {
       handle: t,
-      commit: () => t.commit(),
-      rollback: () => t.rollback(),
+      commit: async () => {
+        // Defence in depth: settings and LOCAL ROLE are transaction-scoped and
+        // revert at COMMIT, but we reset explicitly in case the pool reuses the
+        // connection before the commit propagates.
+        if (resetRls) {
+          await this._resetRlsSettings(t, rlsCfg).catch(() => { /* best effort */ });
+        }
+        return t.commit();
+      },
+      rollback: async () => {
+        if (resetRls) {
+          await this._resetRlsSettings(t, rlsCfg).catch(() => { /* best effort */ });
+        }
+        return t.rollback();
+      },
     };
+  };
+
+  /**
+   * Apply per-request RLS settings and role onto a just-opened transaction.
+   * Setting values are always bound via `set_config($1, $2, true)` —
+   * never interpolated — and role names are double-quoted identifiers.
+   */
+  private _applyRlsSettings = async (
+    t: AdapterTransactionHandle,
+    context: import("@azerothian/utilize/types/primitives").RequestContext,
+    rlsCfg: AdapterRlsConfig,
+  ): Promise<void> => {
+    const settings = rlsCfg.settings(context);
+    // Validate setting names at runtime (matches the build-time pattern).
+    for (const name of Object.keys(settings)) {
+      if (!RLS_SETTING_NAME_PATTERN.test(name)) {
+        throw new Error(
+          `RLS setting name '${name}' is invalid. Names must match [a-z_][a-z0-9_.]*.`,
+        );
+      }
+    }
+    // Apply settings via bound parameters: one set_config per setting.
+    for (const [name, rawValue] of Object.entries(settings)) {
+      const value = Array.isArray(rawValue) ? rawValue.join(",") : String(rawValue);
+      await this.sequelize.query(
+        `SELECT set_config($1, $2, true)`,
+        { bind: [name, value], transaction: t as import("sequelize").Transaction },
+      );
+    }
+    // Set the role. The role name is validated against the identifier pattern
+    // and double-quoted so injection through it is impossible.
+    const role = rlsCfg.role(context);
+    if (role !== undefined) {
+      if (!RLS_ROLE_PATTERN.test(role)) {
+        throw new Error(
+          `RLS role name '${role}' is invalid. Role names must match [a-z_][a-z0-9_]*.`,
+        );
+      }
+      await this.sequelize.query(
+        `SET LOCAL ROLE "${role}"`,
+        { transaction: t as import("sequelize").Transaction },
+      );
+    }
+  };
+
+  /**
+   * Reset settings and role before the connection returns to the pool.
+   * Both are transaction-scoped (`true` / `LOCAL`), so this is defence in depth.
+   */
+  private _resetRlsSettings = async (
+    t: AdapterTransactionHandle,
+    rlsCfg: AdapterRlsConfig,
+  ): Promise<void> => {
+    // RESET ROLE reverts SET LOCAL ROLE.
+    await this.sequelize.query(
+      "RESET ROLE",
+      { transaction: t as import("sequelize").Transaction },
+    ).catch(() => { /* best effort */ });
+    // Reset each setting to empty.
+    const dummyCtx = {} as import("@azerothian/utilize/types/primitives").RequestContext;
+    try {
+      const settings = rlsCfg.settings(dummyCtx);
+      for (const name of Object.keys(settings)) {
+        await this.sequelize.query(
+          `SELECT set_config($1, '', true)`,
+          { bind: [name], transaction: t as import("sequelize").Transaction },
+        ).catch(() => { /* best effort */ });
+      }
+    } catch {
+      // The settings function may throw with a dummy context; that's fine since
+      // the transaction is about to end anyway.
+    }
   };
   // `OrmAdapter.addInstanceFunction` declares `fn` with this exact permissive
   // signature (an arbitrary user-authored function), so narrowing it here would
@@ -366,6 +496,33 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * than an error on this backend.
    */
   enforcesRowScope = true;
+
+  /**
+   * Whether `defName` is RLS-enabled on this adapter: the model has
+   * `rls.enabled` and this adapter has an `rls` runtime config.
+   */
+  isRlsEnabled = (defName: string): boolean => {
+    if (!this.options.rls) {
+      return false;
+    }
+    const model = this.getModel(defName) as SequelizeModelClass | undefined;
+    const def = model?.definition;
+    return def?.options?.rls?.enabled === true;
+  };
+
+  /**
+   * Whether `defName` is database-enforced under RLS: RLS-enabled AND
+   * `enforce` is `"database"` (the default, not `"both"`). The ONE helper
+   * every enforcement site reads (RFC §6.6).
+   */
+  isDatabaseEnforced = (defName: string): boolean => {
+    if (!this.isRlsEnabled(defName)) {
+      return false;
+    }
+    const enforce = this.options.rls?.enforce ?? "database";
+    return enforce === "database";
+  };
+
   /**
    * Sequelize-instance hooks go on the Sequelize object itself. Routing them
    * through `sequelize.define` — which accepts the names without complaint —

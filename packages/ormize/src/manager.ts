@@ -179,7 +179,15 @@ export default class Ormize<
     // already exist. Field initialisers have all run by here, so `this.host`
     // is the same object the cross-adapter and mutation modules were handed.
     this.scopeHooks = buildScopeHooks(this.host);
-    this.scopeInstanceHooks = buildScopeInstanceHooks((name) => Boolean(this.defs[name]));
+    this.scopeInstanceHooks = buildScopeInstanceHooks(
+      (name) => Boolean(this.defs[name]),
+      // RFC §6.6: database-enforced models are exempt from the beforeQuery guard.
+      (name) => {
+        const adapterName = this.defsAdapters[name];
+        const adapter = adapterName ? this.adapters[adapterName] : undefined;
+        return adapter?.isDatabaseEnforced?.(name) ?? false;
+      },
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -209,8 +217,12 @@ export default class Ormize<
       return;
     }
     const findings = Object.keys(this.defs).reduce(
-      (all: ReturnType<typeof auditDefinitionScopeSurfaces>, defName) =>
-        all.concat(auditDefinitionScopeSurfaces(defName, this.defs[defName])),
+      (all: ReturnType<typeof auditDefinitionScopeSurfaces>, defName) => {
+        const adapterName = this.defsAdapters[defName];
+        const adapter = adapterName ? this.adapters[adapterName] : undefined;
+        const dbEnforced = adapter?.isDatabaseEnforced?.(defName) ?? false;
+        return all.concat(auditDefinitionScopeSurfaces(defName, this.defs[defName], dbEnforced));
+      },
       [],
     );
     reportScopeSurfaces(
@@ -251,22 +263,61 @@ export default class Ormize<
 
   /**
    * Build-time checks for RLS declarations (RFC §6.7).
+   * - RLS-enabled model on an adapter with no rls.settings -> error
    * - RLS-enabled model with no policies -> warning
-   * - Unsupported compiled-policy constructs -> error (handled by compile-policy)
+   * - Model on an RLS adapter whose role rules give it a scope but isn't
+   *   RLS-enabled -> warning
+   * - onScopeMiss: "throw" + RLS models + no bypassRole -> warning
    */
   private validateRlsDeclarations() {
+    const warn = console.warn; // eslint-disable-line no-console
+    let hasRlsModels = false;
     for (const defName of Object.keys(this.defs)) {
       const rls = this.defs[defName]?.options?.rls;
       if (!rls?.enabled) {
         continue;
       }
+      hasRlsModels = true;
+      const adapterName = this.defsAdapters[defName];
+      const adapter = adapterName ? this.adapters[adapterName] : undefined;
+      // RFC §6.7: RLS-enabled model on an adapter with no rls config -> error.
+      if (adapter && !adapter.isRlsEnabled?.(defName)) {
+        // The model declares rls.enabled but the adapter has no rls config.
+        throw new Error(
+          `RLS: model '${defName}' has rls.enabled but its adapter '${adapterName}' ` +
+          "has no rls configuration. Configure rls on the adapter, or remove " +
+          "rls.enabled from the model.",
+        );
+      }
       const policies = rls.policies || {};
       if (Object.keys(policies).length === 0) {
-        const warn = console.warn; // eslint-disable-line no-console
         warn(
           `RLS: model '${defName}' has rls.enabled but no policies. ` +
           `All rows will be denied. This is legal but usually an oversight.`,
         );
+      }
+    }
+    // RFC §6.7: onScopeMiss: "throw" + RLS models + no bypassRole -> warning.
+    if (hasRlsModels && this.onScopeMiss === "throw") {
+      for (const adapterName of Object.keys(this.adapters)) {
+        const adapter = this.adapters[adapterName];
+        // Check if any RLS model is on this adapter without a bypassRole.
+        const hasRlsOnAdapter = Object.keys(this.defs).some(
+          (d) => this.defsAdapters[d] === adapterName && this.defs[d]?.options?.rls?.enabled,
+        );
+        if (hasRlsOnAdapter && adapter.isRlsEnabled) {
+          // Check if the adapter has a bypass role configured — only the
+          // sequelize adapter exposes this, so we check structurally.
+          const opts = (adapter as { options?: { rls?: { bypassRole?: string } } }).options;
+          if (!opts?.rls?.bypassRole) {
+            warn(
+              `RLS: onScopeMiss is "throw" and adapter '${adapterName}' has RLS models ` +
+              "but no bypassRole. Without a bypass role, a zero-row update/delete " +
+              "on an RLS model cannot distinguish 'hidden by policy' from 'no such " +
+              "row', so onScopeMiss will behave as 'empty' for those models.",
+            );
+          }
+        }
       }
     }
   }
