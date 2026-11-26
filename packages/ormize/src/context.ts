@@ -12,6 +12,14 @@ import type OrmizeTransaction from "./transaction";
 export interface OrmizeStore {
   transaction?: OrmizeTransaction;
   context?: RequestContext;
+  /**
+   * The coordinator the engine opened for one RLS read and nothing else (RFC
+   * §6.5). It exists only to carry the request's settings and role, so the
+   * read cache may serve and fill reads inside it, keyed on that identity.
+   */
+  readWrap?: OrmizeTransaction;
+  /** Set while the next coordinator `transaction()` opens is a read wrap. */
+  readWrapPending?: boolean;
 }
 
 export const store = new AsyncLocalStorage<OrmizeStore>();

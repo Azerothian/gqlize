@@ -1,4 +1,4 @@
-import type { AdapterQueryOptions, CacheOptions, CacheRequest, CacheStore } from "@azerothian/utilize/types/index";
+import type { AdapterQueryOptions, CacheOptions, CacheRequest, CacheStore, RequestContext } from "@azerothian/utilize/types/index";
 import { getStore } from "../context";
 import { cacheEntryKey } from "@azerothian/utilize/utils/cache-key";
 import { fingerprint, hash } from "./fingerprint";
@@ -26,6 +26,13 @@ export type ReadCacheHost = {
   definitionCache(defName: string): false | {ttl?: number} | undefined;
   /** Whether hooks this cache can't see run inside the adapter call for this read. */
   hasOpaqueHooks(defName: string, operation: CacheRequest["operation"]): boolean;
+  /**
+   * The database identity (role and settings) the read runs under, for every
+   * RLS model among `tags`; `undefined` when none is RLS-enabled. An RLS
+   * policy's filter never shows in the options, so without this in the key one
+   * caller's rows would be served to another.
+   */
+  rlsIdentity?(tags: string[], context: RequestContext): string | undefined;
 };
 
 /** One adapter call in progress, and how many identical reads are waiting on it. */
@@ -158,7 +165,18 @@ export default class ReadCache {
    */
   private shapeOf = (request: CachedRead): {shape: string, tags: string[]} | undefined => {
     const {defName, operation, context, options} = request;
-    if (options.transaction || getStore()?.transaction) {
+    const ambient = getStore();
+    // Inside a transaction a read may see writes nobody else can yet, except in
+    // the engine's own RLS read wrap, which holds this read and nothing else.
+    const inReadWrap = !!ambient?.readWrap && ambient.transaction === ambient.readWrap;
+    if ((options.transaction || ambient?.transaction) && !inReadWrap) {
+      return undefined;
+    }
+    let identity: string | undefined;
+    try {
+      identity = this.host.rlsIdentity?.(request.tags, context);
+    } catch (e) {
+      this.reportError(e);
       return undefined;
     }
     const own = this.host.definitionCache(defName);
@@ -185,8 +203,9 @@ export default class ReadCache {
         return undefined;
       }
     }
+    const rls = identity === undefined ? "" : `|r:${identity}`;
     return {
-      shape: `${defName}:${operation}:${hash(`${described}|${vary}`)}`,
+      shape: `${defName}:${operation}:${hash(`${described}|${vary}${rls}`)}`,
       tags: [...new Set(request.tags)].sort(),
     };
   };

@@ -12,7 +12,8 @@ import type ReadCache from "../read-cache";
 import type { CachedRead } from "../read-cache";
 import { encode as encodeCached, decode as decodeCached } from "../read-cache/codec";
 import type { Association } from "@azerothian/utilize/types/index";
-import { collectQuantifierTargets } from "@azerothian/utilize/gate";
+import { collectQuantifierTargets, resolveViaMarkers } from "@azerothian/utilize/gate";
+import { isRlsSqlFragment } from "@azerothian/utilize/types/definitions";
 import type { PortableWhere } from "@azerothian/utilize/gate";
 
 // ---------------------------------------------------------------------------
@@ -104,6 +105,14 @@ export function readTags(self: ReadCacheHost, defName: string, plan: IncludeMap[
     }
   };
   walkNative(defName, nativeOptions.include);
+  // An RLS policy filters in the database, out of sight of the options above,
+  // and its relationship hops read other tables: a read of `User` under a
+  // policy through `memberships` changes when a membership does.
+  for (const model of [...tags]) {
+    for (const reached of rlsPolicyReach(self, model)) {
+      tags.add(reached);
+    }
+  }
   // Walk the scope where for relationship quantifier targets: a write to a
   // model reached by a quantifier must invalidate reads filtered through it.
   if (scopeWhere) {
@@ -122,6 +131,38 @@ export function readTags(self: ReadCacheHost, defName: string, plan: IncludeMap[
     }
   }
   return [...tags];
+}
+
+/**
+ * The models an RLS-enabled model's policies read. A raw `sql` policy can't be
+ * inspected, so it reaches every model on the same adapter.
+ */
+function rlsPolicyReach(self: ReadCacheHost, defName: string): string[] {
+  const def = self.defs[defName];
+  if (!def?.options?.rls?.enabled || !self.getModelAdapter(defName).isRlsEnabled?.(defName)) {
+    return [];
+  }
+  const adapter = self.getModelAdapter(defName);
+  const reached = new Set<string>();
+  const associations = (model: string) => (self.defs[model] ? self.getAssociations(model) : {});
+  for (const policy of Object.values(def.options.rls.policies || {})) {
+    for (const expr of [policy.using, policy.withCheck]) {
+      if (!expr) {
+        continue;
+      }
+      if (isRlsSqlFragment(expr)) {
+        return Object.keys(self.defs).filter((model) => self.getModelAdapter(model) === adapter);
+      }
+      const resolved = resolveViaMarkers(expr, defName, (model, rel) => {
+        const assoc = associations(model)[rel];
+        return assoc ? { associationType: assoc.associationType, target: assoc.target } : undefined;
+      });
+      for (const target of collectQuantifierTargets(resolved || {}, defName, associations)) {
+        reached.add(target);
+      }
+    }
+  }
+  return [...reached];
 }
 
 // ---------------------------------------------------------------------------
