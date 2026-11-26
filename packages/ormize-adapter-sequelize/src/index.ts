@@ -89,6 +89,11 @@ import { compileRelationshipFilters } from "./relationship-filters";
 import { parseQuantifier, LOGICAL_OPERATORS } from "@azerothian/utilize/gate";
 import type { PortableWhere } from "@azerothian/utilize/gate";
 import type { Association as UtilAssociation } from "@azerothian/utilize/types/index";
+import {
+  buildCompilerHost, syncRowSecurity as syncRowSecurityImpl,
+  generateRlsSql, extractRlsModels,
+} from "./rls/sync-row-security";
+import type { RlsSyncOptions } from "./rls/sync-row-security";
 
 // Re-export types that were declared in this file and are part of the public surface.
 export type { SequelizeAdapterOptions, SequelizeConnection, AuthoredAttributes } from "./adapter-types";
@@ -217,6 +222,44 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       await this.getORM().query(this.startup.create);
     }
   };
+
+  /**
+   * Reconcile RLS policies against the database (RFC §6.4). Called by
+   * `Ormize.sync()` right after this adapter's own `sync()`. Only runs on
+   * Postgres; on other dialects it is a no-op.
+   *
+   * @param definitions - all model definitions registered against this adapter
+   * @param options - `{ manageRoles }` from `new Ormize({ rls: { manageRoles } })`
+   * @returns the SQL statements that were executed (for test assertions)
+   */
+  syncRowSecurity = async (
+    definitions: { [name: string]: Definition },
+    options?: RlsSyncOptions,
+  ): Promise<string[]> => {
+    if (this.sequelize.getDialect() !== "postgres") {
+      return [];
+    }
+    const host = buildCompilerHost(this.sequelize, definitions);
+    const models = extractRlsModels(host);
+    if (models.length === 0 && !Object.values(definitions).some((d) => d.options?.rls)) {
+      return [];
+    }
+    return syncRowSecurityImpl(host, models, options);
+  };
+
+  /**
+   * Generate idempotent DDL for all RLS policies from definitions alone, no
+   * DB connection. Used by `gqlize rls:sql`.
+   */
+  generateRlsSql = (
+    definitions: { [name: string]: Definition },
+    options?: RlsSyncOptions,
+  ): string => {
+    const host = buildCompilerHost(this.sequelize, definitions);
+    const models = extractRlsModels(host);
+    return generateRlsSql(host, models, options);
+  };
+
   getORM = () => {
     return this.sequelize;
   };
