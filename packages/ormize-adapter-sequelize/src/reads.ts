@@ -128,7 +128,16 @@ export async function resolveSingleRelationshipImpl(
   source: SequelizeRow,
   request: AdapterRelationshipRequest,
 ): Promise<SequelizeRow> {
-  const options = request.options || {};
+  let options = request.options || {};
+  // RFC §5.4: `deleted` argument on singular relations — lift the adapter's
+  // implicit `deletedAt IS NULL` when the caller asks for deleted rows.
+  const deleted = (request.args as { deleted?: DeletedFilter } | undefined)?.deleted;
+  if (deleted) {
+    const overlay = deletedOverlay(host, relationship.target, deleted, options.where);
+    if (overlay) {
+      options = { ...options, paranoid: false, ...(overlay.where !== undefined ? { where: overlay.where } : {}) };
+    }
+  }
   // Both the eager-loaded value and the generated accessor are reached off the
   // instance by name — see {@link rowFields}.
   const fields = rowFields(source);
@@ -138,6 +147,12 @@ export async function resolveSingleRelationshipImpl(
   // null after a wasted round trip, once per parent row. Absent means absent;
   // `null` is an answer.
   if (fields[relationship.name] !== undefined) {
+    // For eager-loaded relations with a deleted overlay, we might need to
+    // re-query to honor the deleted filter.
+    if (deleted && deleted !== "EXCLUDE" && fields[relationship.name] === null) {
+      // The eager load excluded deleted rows; re-query with paranoid:false.
+      return rowFields(host.asInstance(relationship.source, source))[relationship.accessors.get](options);
+    }
     return fields[relationship.name];
   }
   return rowFields(host.asInstance(relationship.source, source))[relationship.accessors.get](options);
