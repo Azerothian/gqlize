@@ -16,6 +16,7 @@ import type {
   RequestContext, Selection,
 } from "@azerothian/utilize/types/index";
 import Events from "./events";
+import { markScopeBypass } from "./scope";
 import { ThroughInputError } from "./through-input-error";
 import type {
   InstanceRow, MutationFilter, MutationHost, MutationInput, MutationInputTree,
@@ -99,7 +100,19 @@ const applyCreate = async(s: MutationScope, values: MutationInput[]) => {
     // collection types rather than reusing `singular`: an unrecognised type
     // falls through to `set`, which is what it did before.
     const collection = s.association.associationType === "hasMany" || s.association.associationType === "belongsToMany";
-    await s.row[collection ? s.association.accessors.add : s.association.accessors.set](result, s.defaultOptions);
+    // The linking call (add/set) rewrites the target's foreign key to point
+    // at the source. The row was just created by this mutation and may not
+    // yet satisfy a quantifier scope (the scope requires the link that this
+    // call is about to establish). The scope hooks would reject the update
+    // because the row's current state doesn't satisfy the quantifier (the
+    // link this update is establishing doesn't exist yet). Marking the
+    // options as a system query AND scope-seen bypasses both layers of
+    // scope enforcement. The post-write assertRowsInScope at the end of
+    // mutationEntry still verifies the final state after all nested writes,
+    // so a violation is caught and rolled back; this bypass only prevents
+    // the chicken-and-egg rejection on the row this mutation just created.
+    const linkOptions = markScopeBypass({ ...s.defaultOptions });
+    await s.row[collection ? s.association.accessors.add : s.association.accessors.set](result, linkOptions);
   });
 };
 
@@ -528,6 +541,7 @@ export async function applyRelationshipMutations(
         mergeScopeWhere(translateFilter(filter as AdapterWhere, targetGlobalKeys, targetIdTargets), scopeWhere),
         whereOperatorsFor(targetDef),
         targetOptions,
+        targetName,
       ),
       asList,
     };

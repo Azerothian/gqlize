@@ -86,7 +86,7 @@ async function targetValues(
   const targetAdapter = self.getModelAdapter(target);
   const opts = await self.optionsForAdapter(association.source, target, context) as AdapterQueryOptions | undefined;
   const native = where && Object.keys(where).length > 0
-    ? await targetAdapter.processFilterArgument(where, whereOperatorsFor(self.getDefinition(target)), opts || {})
+    ? await targetAdapter.processFilterArgument(where, whereOperatorsFor(self.getDefinition(target)), opts || {}, target)
     : undefined;
   // The target's read scope, applied here as well as by `scopeIncludePlan`:
   // a nested connection's own `include` reaches this pass unscoped, and a row

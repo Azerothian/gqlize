@@ -754,25 +754,44 @@ export const ALL_QUANTIFIERS: ReadonlySet<string> = new Set([
  * Returns the quantifier name and inner filter, or `undefined` if the value
  * is not a quantifier.
  */
+/**
+ * Reserved key the engine embeds in a quantifier node to carry the read scope
+ * of a registered join model for a `belongsToMany` association. Clients can
+ * never send it (`assertFilterAllowed` / `isFieldExposed` refuse relationship
+ * keys), and the adapter reads it in the subquery compiler to filter the join
+ * table. Placed alongside the quantifier key (e.g.
+ * `{some: {...inner}, __throughScope: {...joinScopeWhere}}`).
+ */
+export const THROUGH_SCOPE_KEY = "__throughScope";
+
 export function parseQuantifier(
   value: unknown,
-): { quantifier: string; inner: PortableWhere } | undefined {
+): { quantifier: string; inner: PortableWhere; throughScope?: PortableWhere } | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
   const keys = Object.keys(value);
-  if (keys.length !== 1) {
+  // Allow one quantifier key, optionally accompanied by `__throughScope`.
+  if (keys.length < 1 || keys.length > 2) {
     return undefined;
   }
-  const key = keys[0];
-  if (!ALL_QUANTIFIERS.has(key)) {
+  const quantifierKeys = keys.filter((k) => ALL_QUANTIFIERS.has(k));
+  if (quantifierKeys.length !== 1) {
     return undefined;
   }
+  const otherKeys = keys.filter((k) => !ALL_QUANTIFIERS.has(k));
+  if (otherKeys.length > 0 && otherKeys[0] !== THROUGH_SCOPE_KEY) {
+    return undefined;
+  }
+  const key = quantifierKeys[0];
   const inner = (value as { [k: string]: unknown })[key];
   // The inner filter must be an object (possibly empty) — a bare `true` or
   // string is not a filter.
   if (inner !== null && inner !== undefined && typeof inner === "object" && !Array.isArray(inner)) {
-    return { quantifier: key, inner: inner as PortableWhere };
+    const throughScope = (value as { [k: string]: unknown })[THROUGH_SCOPE_KEY];
+    const ts = (throughScope && typeof throughScope === "object" && !Array.isArray(throughScope))
+      ? throughScope as PortableWhere : undefined;
+    return { quantifier: key, inner: inner as PortableWhere, throughScope: ts };
   }
   return undefined;
 }
@@ -903,53 +922,6 @@ function resolveViaPath(
  * `associations` resolves a (model, relationshipName) pair to the target model
  * and its own associations. Returns the set of all target models found.
  */
-// ---------------------------------------------------------------------------
-// Scope stamps for quantifier compilation
-// ---------------------------------------------------------------------------
-
-/**
- * Symbols used to stamp a scope's portable where with the model name and
- * through-scope callback. The engine stamps them; the adapter reads them in
- * `processFilterArgument` to compile quantifiers.
- */
-export const SCOPE_MODEL_NAME = Symbol.for("gqlize.scopeModelName");
-export const SCOPE_THROUGH_CB = Symbol.for("gqlize.scopeThroughCb");
-/**
- * Symbol carrying the engine-level association lookup on a stamped scope where.
- * The engine's `getAssociations` has `throughModel` set correctly; the adapter's
- * does not. The relationship-filter compiler reads this to decide whether the
- * join model's read scope should be applied inside the subquery.
- */
-export const SCOPE_ASSOCIATIONS = Symbol.for("gqlize.scopeAssociations");
-
-/** Read the model-name stamp from a where clause. */
-export function getScopeModelName(where: unknown): string | undefined {
-  if (!where || typeof where !== "object") {
-    return undefined;
-  }
-  return (where as { [SCOPE_MODEL_NAME]?: string })[SCOPE_MODEL_NAME];
-}
-
-/** Read the through-scope callback stamp from a where clause. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the callback type is owned by the engine/adapter, not by this module
-export function getScopeThroughCb(where: unknown): ((joinModel: string) => Promise<any>) | undefined {
-  if (!where || typeof where !== "object") {
-    return undefined;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
-  return (where as { [SCOPE_THROUGH_CB]?: (joinModel: string) => Promise<any> })[SCOPE_THROUGH_CB];
-}
-
-/** Read the engine-level association lookup from a stamped where clause. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the return type mirrors OrmAdapter.getAssociations
-export function getScopeAssociations(where: unknown): ((modelName: string) => { [relName: string]: any }) | undefined {
-  if (!where || typeof where !== "object") {
-    return undefined;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
-  return (where as { [SCOPE_ASSOCIATIONS]?: (modelName: string) => { [relName: string]: any } })[SCOPE_ASSOCIATIONS];
-}
-
 export function collectQuantifierTargets(
   where: PortableWhere | undefined,
   model: string,

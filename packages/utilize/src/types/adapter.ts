@@ -171,8 +171,18 @@ export interface OrmAdapter {
    */
   restoreRows?(defName: string, snapshot: unknown[], options: AdapterQueryOptions): AdapterRow[];
   count(defName: string, options: AdapterQueryOptions): Promise<number>;
-  /** `where` may be absent — an operation with no filter — which every adapter reads as "match everything". */
-  processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): AdapterWhere | Promise<AdapterWhere>;
+  /**
+   * `where` may be absent — an operation with no filter — which every adapter
+   * reads as "match everything".
+   *
+   * `defName` is optional: when present and the where contains a relationship
+   * quantifier on one of that model's associations, adapters that support them
+   * compile the quantifier to their native form. Adapters that cannot express
+   * quantifiers (Valkey, MikroORM) throw `ScopeConfigurationError` when they
+   * see one on an association. The parameter replaced the earlier symbol-stamp
+   * mechanism which was fragile across where-clause clones and merges.
+   */
+  processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions, defName?: string): AdapterWhere | Promise<AdapterWhere>;
   /**
    * Optional: merge a single equality (or, for array values, membership) filter
    * into an already-processed `where`, returning the combined adapter-native
@@ -208,7 +218,6 @@ export interface OrmAdapter {
     modelName: string,
     where: { [key: string]: unknown },
     options: AdapterQueryOptions,
-    scopeForThrough?: (joinModel: string) => Promise<AdapterWhere | undefined>,
   ): Promise<AdapterWhere>;
   /**
    * Optional: install an extra instance method on an already-defined model. Used

@@ -681,7 +681,7 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   }
 
   // ---- query ----
-  processFilterArgument = (where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions) =>
+  processFilterArgument = (where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions, _defName?: string) =>
     processFilterArgument(where, whereOperators, options);
 
   compileRelationshipFilter = (): never => {

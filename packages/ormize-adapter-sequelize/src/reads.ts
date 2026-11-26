@@ -193,7 +193,7 @@ export async function resolveManyRelationshipImpl(
   const fields = rowFields(source);
   if (countOnly && !(fields[relationship.name] !== undefined && fields[relationship.name] !== null)) {
     // Only `total` requested: run a count instead of fetching rows.
-    const where = await host.processFilterArgument(args.where || {}, whereOperators, options);
+    const where = await host.processFilterArgument(args.where || {}, whereOperators, options, relationship.target);
     const total = await host.countRelationship(relationship, source, where, options, args.deleted);
     return { total, models: [] };
   }
@@ -227,7 +227,7 @@ export async function resolveManyRelationshipImpl(
     let total = models.length;
     if (args && (args.first != null || args.last != null)) {
       try {
-        const where = await host.processFilterArgument(args.where || {}, whereOperators, options);
+        const where = await host.processFilterArgument(args.where || {}, whereOperators, options, relationship.target);
         total = await host.countRelationship(relationship, source, where, options, args.deleted);
       } catch (e) {
         // Fall back to the already-loaded page length, but surface the error —

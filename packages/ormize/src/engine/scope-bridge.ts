@@ -7,7 +7,7 @@ import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
 import {
   resolveViaMarkers, collectQuantifierTargets, parseQuantifier, LOGICAL_OPERATORS,
-  ScopeConfigurationError, SCOPE_MODEL_NAME, SCOPE_THROUGH_CB, SCOPE_ASSOCIATIONS,
+  ScopeConfigurationError, THROUGH_SCOPE_KEY,
 } from "@azerothian/utilize/gate";
 import { applyScopeWhere, scopeFor, scopeMiss, markSystemQuery } from "../scope";
 import type { ScopeMissBehaviour } from "../scope";
@@ -106,6 +106,7 @@ export async function reassertRowScope(
   adapter: OrmAdapter, defName: string, where: PortableWhere,
   whereOperators: ReturnType<typeof whereOperatorsFor>, options: AdapterQueryOptions,
   targets: (AdapterQueryOptions | undefined)[],
+  context?: RequestContext,
 ) {
   if (!adapter.andFilterStatements) {
     throw new Error(
@@ -114,7 +115,8 @@ export async function reassertRowScope(
       "that could have rewritten the filter. Implement andFilterStatements, or drop the hook.",
     );
   }
-  const native = await adapter.processFilterArgument(where, whereOperators, options);
+  const embedded = context ? await embedThroughScopes(self, defName, where, context) : where;
+  const native = await adapter.processFilterArgument(embedded, whereOperators, options, defName);
   for (const target of targets) {
     if (target) {
       // In place on purpose. These are the adapter's own options bags, built
@@ -145,7 +147,10 @@ export async function scopeNativeWhere(
     return where;
   }
   const adapter = self.getModelAdapter(defName);
-  const native = await compileScopeWhere(self, adapter, defName, resolved.where, context, options || {});
+  const embedded = await embedThroughScopes(self, defName, resolved.where, context);
+  const native = await adapter.processFilterArgument(
+    embedded, whereOperatorsFor(self.getDefinition(defName)), options || {}, defName,
+  );
   if (!where) {
     return native;
   }
@@ -159,77 +164,6 @@ export async function scopeNativeWhere(
 }
 
 /**
- * Compile a scope's portable where to adapter-native form, handling
- * relationship quantifiers when the adapter supports them.
- *
- * When quantifiers are present and the adapter has `compileRelationshipFilter`,
- * they are compiled to the adapter's native representation (e.g. correlated
- * EXISTS subqueries for Sequelize). When quantifiers are present and the adapter
- * does not support them, `ScopeConfigurationError` is thrown.
- */
-async function compileScopeWhere(
-  self: ScopeHost,
-  adapter: OrmAdapter, defName: string,
-  scopeWhere: PortableWhere, context: RequestContext,
-  options: AdapterQueryOptions,
-): Promise<AdapterWhere> {
-  const hasQuantifiers = scopeWhereHasQuantifiers(scopeWhere, defName, self);
-  if (!hasQuantifiers) {
-    return adapter.processFilterArgument(
-      scopeWhere, whereOperatorsFor(self.getDefinition(defName)), options,
-    );
-  }
-  if (!adapter.compileRelationshipFilter) {
-    throw new ScopeConfigurationError(
-      `Adapter '${adapter.adapterName}' does not support relationship quantifiers, ` +
-      `but the scope for '${defName}' contains one. Use an adapter that supports them ` +
-      "(e.g. the Sequelize adapter), or remove the quantifier from the scope.",
-    );
-  }
-  // Build the scopeForThrough callback: returns the read scope for a
-  // registered join model, in the adapter's native form, so the subquery
-  // filters by it.
-  const scopeForThrough = async (joinModel: string): Promise<AdapterWhere | undefined> => {
-    const resolved = await resolveRowScope(self, joinModel, "read", context);
-    if (resolved === false || !resolved?.where) {
-      return undefined;
-    }
-    return adapter.processFilterArgument(
-      resolved.where, whereOperatorsFor(self.getDefinition(joinModel)), options,
-    );
-  };
-  return adapter.compileRelationshipFilter(defName, scopeWhere, options, scopeForThrough);
-}
-
-/**
- * Whether a portable where contains any relationship quantifier keys.
- */
-function scopeWhereHasQuantifiers(where: PortableWhere | undefined, defName: string, self: ScopeHost): boolean {
-  if (!where || typeof where !== "object") {
-    return false;
-  }
-  const associations = self.defs[defName] ? self.host.getAssociations(defName) : {};
-  for (const key of Object.keys(where)) {
-    const lower = key.toLowerCase();
-    if (LOGICAL_OPERATORS.has(lower)) {
-      const branch = where[key];
-      if (Array.isArray(branch)) {
-        if (branch.some((entry) => scopeWhereHasQuantifiers(entry as PortableWhere, defName, self))) {
-          return true;
-        }
-      } else if (scopeWhereHasQuantifiers(branch as PortableWhere, defName, self)) {
-        return true;
-      }
-      continue;
-    }
-    if (parseQuantifier(where[key]) && associations[key]) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
  * The portable filter a root write runs under: the caller's, ANDed with the
  * model's **read** scope as well as the operation's own. `false` when either
  * half denies outright.
@@ -239,10 +173,6 @@ function scopeWhereHasQuantifiers(where: PortableWhere | undefined, defName: str
  * (`writable`) have both required the read half since they were written;
  * without this the root verbs would be the one path left where naming a row
  * you are not allowed to *see* is enough to write it.
- *
- * When the scope contains relationship quantifiers, they are compiled to the
- * adapter's native form here so downstream write functions do not need to
- * know about them.
  */
 export async function scopedWriteWhere(
   self: ScopeHost,
@@ -257,19 +187,21 @@ export async function scopedWriteWhere(
   if (read === false) {
     return false;
   }
-  // Stamp quantifier info on each scope half so it propagates to the merge.
-  own = compileScopeWhereIfNeeded(self, defName, context, own);
-  read = compileScopeWhereIfNeeded(self, defName, context, read);
-  const merged = applyScopeWhere(applyScopeWhere(userWhere, read), own);
-  // Propagate stamps from scope wheres to the merged result.
-  if (merged) {
-    if (own?.where && (own.where as { [SCOPE_MODEL_NAME]?: string })[SCOPE_MODEL_NAME]) {
-      stampQuantifierInfo(merged, own);
-    } else if (read?.where && (read.where as { [SCOPE_MODEL_NAME]?: string })[SCOPE_MODEL_NAME]) {
-      stampQuantifierInfo(merged, read);
+  // Embed through-scopes so quantifiers on btm relationships carry the join
+  // model's read scope when the merged where reaches processFilterArgument.
+  if (own?.where) {
+    const embedded = await embedThroughScopes(self, defName, own.where, context);
+    if (embedded !== own.where) {
+      own = { ...own, where: embedded };
     }
   }
-  return merged;
+  if (read?.where) {
+    const embedded = await embedThroughScopes(self, defName, read.where, context);
+    if (embedded !== read.where) {
+      read = { ...read, where: embedded };
+    }
+  }
+  return applyScopeWhere(applyScopeWhere(userWhere, read), own);
 }
 
 /**
@@ -334,7 +266,7 @@ export async function assertRowsInScope(
 }
 
 /**
- * Hand a request context the resolved scope, for the surfaces §12 names.
+ * Hand a request context the resolved scope, for the surfaces S12 names.
  *
  * A `scopeAware` method has claimed it will apply the filter itself, and this
  * is where it gets one. Backed by the same per-request memo every other call
@@ -361,96 +293,98 @@ export function withScopeFor<T>(self: ScopeHost, context: T): T {
   return context;
 }
 
-/**
- * If a resolved scope's `where` contains relationship quantifiers, compile them
- * to the adapter's native form and return the updated scope. If no quantifiers
- * are present, returns the scope unchanged.
- *
- * Call this after `resolveRowScope` and before merging the scope into the
- * query's portable where, so the adapter's `processFilterArgument` never sees
- * quantifier keys.
- */
-export function compileScopeWhereIfNeeded(
-  self: ScopeHost, defName: string, context: RequestContext,
-  resolved: Exclude<ResolvedScope, false>,
-): Exclude<ResolvedScope, false>;
-export function compileScopeWhereIfNeeded(
-  self: ScopeHost, defName: string, context: RequestContext,
-  resolved: ResolvedScope,
-): ResolvedScope;
-export function compileScopeWhereIfNeeded(
-  self: ScopeHost, defName: string, context: RequestContext,
-  resolved: ResolvedScope,
-): ResolvedScope {
-  if (resolved === undefined || resolved === false) {
-    return resolved;
-  }
-  if (!resolved.where) {
-    return resolved;
-  }
-  if (!scopeWhereHasQuantifiers(resolved.where, defName, self)) {
-    return resolved;
-  }
-  // Stamp the model name and through-scope callback onto the where, so the
-  // adapter can find them in processFilterArgument.
-  const where = resolved.where;
-  Object.defineProperty(where, SCOPE_MODEL_NAME, {
-    value: defName, enumerable: false, writable: false, configurable: true,
-  });
-  const scopeForThrough = async (joinModel: string): Promise<AdapterWhere | undefined> => {
-    const inner = await resolveRowScope(self, joinModel, "read", context);
-    if (inner === false || !inner?.where) {
-      return undefined;
-    }
-    const adapter = self.getModelAdapter(joinModel);
-    return adapter.processFilterArgument(
-      inner.where, whereOperatorsFor(self.getDefinition(joinModel)), {},
-    );
-  };
-  Object.defineProperty(where, SCOPE_THROUGH_CB, {
-    value: scopeForThrough, enumerable: false, writable: false, configurable: true,
-  });
-  // Stamp the engine-level association lookup so the adapter can read
-  // `throughModel` correctly.
-  Object.defineProperty(where, SCOPE_ASSOCIATIONS, {
-    value: (model: string) => self.host.getAssociations(model),
-    enumerable: false, writable: false, configurable: true,
-  });
-  return resolved;
-}
+// ---------------------------------------------------------------------------
+// Through-scope embedding
+// ---------------------------------------------------------------------------
 
 /**
- * Copy the quantifier stamps from a scope where onto a target (the merged
- * where that will reach `processFilterArgument`).
+ * Walk a scope's portable where and, for each `belongsToMany` quantifier
+ * whose association has a registered `throughModel`, resolve the join model's
+ * read scope and embed it under the `__throughScope` key alongside the
+ * quantifier key. The adapter reads it in the subquery compiler.
  *
- * `mergeScopeWhere` wraps in `{and: [user, scope]}` which is a fresh object
- * that doesn't carry the symbols. This propagates them.
+ * Through-scopes that themselves contain quantifiers are embedded recursively
+ * (they will be compiled by the adapter's relationship-filter compiler).
+ *
+ * This runs in the engine, where scope resolution and the association graph
+ * are available, so the adapter never needs either.
  */
-export function stampQuantifierInfo(
-  target: PortableWhere, source: ResolvedScope,
-): void {
-  if (source === undefined || source === false || !source.where) {
-    return;
+export async function embedThroughScopes(
+  self: ScopeHost,
+  defName: string,
+  where: PortableWhere | undefined,
+  context: RequestContext,
+): Promise<PortableWhere | undefined> {
+  if (!where || typeof where !== "object") {
+    return where;
   }
-  const modelName = (source.where as { [SCOPE_MODEL_NAME]?: string })[SCOPE_MODEL_NAME];
-  if (!modelName) {
-    return;
+  const associations = self.defs[defName] ? self.host.getAssociations(defName) : {};
+  const result: PortableWhere = {};
+  let changed = false;
+  for (const key of Object.keys(where)) {
+    const lower = key.toLowerCase();
+    if (LOGICAL_OPERATORS.has(lower)) {
+      const branch = where[key];
+      if (Array.isArray(branch)) {
+        const mapped = await Promise.all(
+          branch.map((b) => embedThroughScopes(self, defName, b as PortableWhere, context)),
+        );
+        if (mapped.some((m, i) => m !== branch[i])) {
+          changed = true;
+        }
+        result[lower] = mapped;
+      } else {
+        const mapped = await embedThroughScopes(self, defName, branch as PortableWhere, context);
+        if (mapped !== branch) {
+          changed = true;
+        }
+        result[lower] = mapped;
+      }
+      continue;
+    }
+    const quantifier = parseQuantifier(where[key]);
+    const association = associations[key];
+    if (quantifier && association) {
+      // Recurse into the inner filter for nested quantifiers on the target model.
+      const innerEmbedded = await embedThroughScopes(self, association.target, quantifier.inner, context);
+      if (association.associationType === "belongsToMany" && association.throughModel && association.through) {
+        // Resolve the join model's read scope.
+        const joinModel = association.through;
+        const throughResolved = await resolveRowScope(self, joinModel, "read", context);
+        let throughWhere: PortableWhere | undefined;
+        if (throughResolved === false) {
+          // A denying through-scope means no link qualifies. Embed an
+          // impossible filter so the quantifier matches nothing.
+          throughWhere = { __deny: { eq: true } };
+        } else if (throughResolved && throughResolved.where) {
+          // The through-scope may itself contain quantifiers; embed their
+          // through-scopes recursively.
+          throughWhere = await embedThroughScopes(self, joinModel, throughResolved.where, context);
+        }
+        const quantifierValue: PortableWhere = { [quantifier.quantifier]: innerEmbedded || {} };
+        if (throughWhere) {
+          quantifierValue[THROUGH_SCOPE_KEY] = throughWhere;
+        }
+        // Carry forward any existing __throughScope from an outer embedding.
+        if (quantifier.throughScope && !throughWhere) {
+          quantifierValue[THROUGH_SCOPE_KEY] = quantifier.throughScope;
+        }
+        result[key] = quantifierValue;
+        changed = true;
+      } else if (innerEmbedded !== quantifier.inner) {
+        result[key] = { [quantifier.quantifier]: innerEmbedded || {} };
+        if (quantifier.throughScope) {
+          (result[key] as PortableWhere)[THROUGH_SCOPE_KEY] = quantifier.throughScope;
+        }
+        changed = true;
+      } else {
+        result[key] = where[key];
+      }
+      continue;
+    }
+    result[key] = where[key];
   }
-  Object.defineProperty(target, SCOPE_MODEL_NAME, {
-    value: modelName, enumerable: false, writable: false, configurable: true,
-  });
-  const throughCb = (source.where as { [SCOPE_THROUGH_CB]?: unknown })[SCOPE_THROUGH_CB];
-  if (throughCb) {
-    Object.defineProperty(target, SCOPE_THROUGH_CB, {
-      value: throughCb, enumerable: false, writable: false, configurable: true,
-    });
-  }
-  const assocsFn = (source.where as { [SCOPE_ASSOCIATIONS]?: unknown })[SCOPE_ASSOCIATIONS];
-  if (assocsFn) {
-    Object.defineProperty(target, SCOPE_ASSOCIATIONS, {
-      value: assocsFn, enumerable: false, writable: false, configurable: true,
-    });
-  }
+  return changed ? result : where;
 }
 
 // Re-export the symbols the class needs without reaching into scope.ts itself.

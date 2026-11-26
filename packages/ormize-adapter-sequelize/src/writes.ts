@@ -24,6 +24,7 @@ export interface WriteHost extends QueryOptionsHost {
     where: AdapterWhere | undefined,
     whereOperators: WhereOperators | undefined,
     options: AdapterQueryOptions,
+    defName?: string,
   ): Promise<AdapterWhere>;
 }
 
@@ -46,7 +47,7 @@ export function getUpdateFunctionImpl(
   const Model = sequelize.models[defName];
   return async (where, processInput, options) => {
     const items = await Model.findAll({
-      where: await host.processFilterArgument(where, whereOperators, options),
+      where: await host.processFilterArgument(where, whereOperators, options, defName),
       ...options,
     });
     return Promise.all(
@@ -92,7 +93,7 @@ function rowVerbFunction(
     before: (row: AdapterRow) => Promise<AdapterRow> | AdapterRow,
     after: (row: AdapterRow) => Promise<AdapterRow> | AdapterRow,
   ): Promise<AdapterRow[]> => {
-    const native = await host.processFilterArgument(where, whereOperators, options);
+    const native = await host.processFilterArgument(where, whereOperators, options, defName);
     const items = await Model.findAll(buildFind(native, options) as object);
     const results: AdapterRow[] = [];
     for (const item of items) {

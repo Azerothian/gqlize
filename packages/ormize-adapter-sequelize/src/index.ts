@@ -86,8 +86,9 @@ export type * from "./types/query";
 import { replaceWhereOperators, normalizeWhereForDialect } from "./utils/where-ops";
 import { fixNestedThroughJoin, keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
 import { compileRelationshipFilters } from "./relationship-filters";
+import { parseQuantifier, LOGICAL_OPERATORS } from "@azerothian/utilize/gate";
 import type { PortableWhere } from "@azerothian/utilize/gate";
-import { getScopeModelName, getScopeThroughCb, getScopeAssociations } from "@azerothian/utilize/gate";
+import type { Association as UtilAssociation } from "@azerothian/utilize/types/index";
 
 // Re-export types that were declared in this file and are part of the public surface.
 export type { SequelizeAdapterOptions, SequelizeConnection, AuthoredAttributes } from "./adapter-types";
@@ -530,30 +531,27 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       this, defName, includeStatements, order, options, parentRelsForOrder, runHook,
     );
   }
-  async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): Promise<AdapterWhere> {
-    // Check for quantifier stamps from the scope-bridge. When the scope
-    // contains relationship quantifiers, the bridge stamps the model name
-    // onto the where so we can compile them here.
-    const modelName = getScopeModelName(where);
-    if (modelName) {
-      const throughCb = getScopeThroughCb(where);
-      // Use engine-level associations when available (they have throughModel).
-      const assocsFn = getScopeAssociations(where);
-      const host = assocsFn
-        ? { sequelize: this.sequelize, getAssociations: assocsFn, processFilterArgument: this.processFilterArgument.bind(this) }
-        : this;
-      const compiled = await compileRelationshipFilters(
-        host, modelName, where as PortableWhere, options, throughCb,
-      );
-      if (whereOperators) {
-        return replaceDefWhereOperators(compiled, whereOperators, options);
-      }
-      return compiled;
-    }
+  async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions, defName?: string): Promise<AdapterWhere> {
     // Dialect-aware normalisation: rewrites iLike → like on SQLite (where LIKE
     // is already case-insensitive) and rejects postgres-only operators on
-    // non-postgres dialects with a clear message.
+    // non-postgres dialects with a clear message. Applied to every where,
+    // including those with quantifiers.
     const normalized = normalizeWhereForDialect(where || {}, this.sequelize.getDialect());
+    // When `defName` is given, check for relationship quantifiers in the where.
+    // The engine passes it from every call site so the adapter can compile
+    // quantifiers without symbol stamps on the where object.
+    if (defName) {
+      const associations = this.getAssociations(defName);
+      if (hasQuantifierOnAssociation(normalized, associations)) {
+        const compiled = await compileRelationshipFilters(
+          this, defName, normalized, options,
+        );
+        if (whereOperators) {
+          return replaceDefWhereOperators(compiled, whereOperators, options);
+        }
+        return compiled;
+      }
+    }
     const w = replaceWhereOperators(normalized);
     if (whereOperators) {
       return replaceDefWhereOperators(w, whereOperators, options);
@@ -570,9 +568,8 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    */
   async compileRelationshipFilter(
     modelName: string, where: PortableWhere, options: AdapterQueryOptions,
-    scopeForThrough?: (joinModel: string) => Promise<AdapterWhere | undefined>,
   ): Promise<AdapterWhere> {
-    return compileRelationshipFilters(this, modelName, where, options, scopeForThrough);
+    return compileRelationshipFilters(this, modelName, where, options);
   }
   getAllArgsToReplaceId() {
     return ["where", "include"];
@@ -737,6 +734,38 @@ export function mergeFilterStatement(
   originalWhere?: AdapterWhere
 ): AdapterWhere {
   return mergeFilterStatementImpl(fieldName, value, match, originalWhere);
+}
+
+/**
+ * Walk a portable where and return true if any key is a relationship quantifier
+ * on one of the given associations. Used by `processFilterArgument` to decide
+ * whether to invoke the relationship-filter compiler.
+ */
+function hasQuantifierOnAssociation(
+  where: AdapterWhere | undefined,
+  associations: { [relName: string]: UtilAssociation },
+): boolean {
+  if (!where || typeof where !== "object") {
+    return false;
+  }
+  for (const key of Object.keys(where)) {
+    const lower = key.toLowerCase();
+    if (LOGICAL_OPERATORS.has(lower)) {
+      const branch = where[key] as AdapterWhere | AdapterWhere[];
+      if (Array.isArray(branch)) {
+        if (branch.some((b) => hasQuantifierOnAssociation(b, associations))) {
+          return true;
+        }
+      } else if (hasQuantifierOnAssociation(branch, associations)) {
+        return true;
+      }
+      continue;
+    }
+    if (parseQuantifier(where[key]) && associations[key]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Typed-models API (definition typesystem). See ./types/orm.

@@ -531,7 +531,7 @@ implements GqlizeAdapter {
    * happens in `findAll`/`count`, where the model is known.
    */
   processFilterArgument = (
-    where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, _options: AdapterQueryOptions,
+    where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, _options: AdapterQueryOptions, _defName?: string,
   ): AdapterWhere => translateWhere(undefined, where, whereOperators) || {};
 
   compileRelationshipFilter = (): never => {

@@ -74,7 +74,7 @@ async function loadJoinRows(
     ? selection.translateFilter(where, host.getGlobalKeys(joinName), host.getGlobalKeyTargets(joinName))
     : where;
   let native = translated
-    ? await joinAdapter.processFilterArgument(translated, whereOperatorsFor(self.getDefinition(joinName)), opts || {})
+    ? await joinAdapter.processFilterArgument(translated, whereOperatorsFor(self.getDefinition(joinName)), opts || {}, joinName)
     : undefined;
   const merge = filterMerger(host, joinName);
   if (filter.sourceValues !== undefined) {
@@ -244,7 +244,7 @@ export async function linkedSourceKeys(
     const targetAdapter = self.getModelAdapter(target);
     const opts = await self.optionsForAdapter(association.source, target, context) as AdapterQueryOptions | undefined;
     const hooked = await runHook(self, target, "beforeFind", {
-      where: await targetAdapter.processFilterArgument(descriptor.where, whereOperatorsFor(self.getDefinition(target)), opts || {}),
+      where: await targetAdapter.processFilterArgument(descriptor.where, whereOperatorsFor(self.getDefinition(target)), opts || {}, target),
     });
     const rows = await targetAdapter.findAll(target, {
       where: hooked?.where,

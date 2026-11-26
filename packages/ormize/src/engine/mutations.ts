@@ -22,7 +22,7 @@ import type {
 
 import type { HookHost } from "./hooks";
 import type { ScopeHost } from "./scope-bridge";
-import { resolveRowScope, scopedWriteWhere, assertRowsInScope, scopeMiss as scopeMissFn } from "./scope-bridge";
+import { resolveRowScope, scopedWriteWhere, assertRowsInScope, scopeMiss as scopeMissFn, embedThroughScopes } from "./scope-bridge";
 import type { ReadCacheHost } from "./read-cache-bridge";
 import { writeFootprint } from "./read-cache-bridge";
 import { createResolveContext } from "./resolution";
@@ -436,7 +436,8 @@ export async function processSelect(
       scopeMissFn(defName, "update", self.onScopeMiss);
       return [];
     }
-    const where = await adapter.processFilterArgument(scoped, whereOperatorsFor(definition), options);
+    const embedded = await embedThroughScopes(self, defName, scoped, context);
+    const where = await adapter.processFilterArgument(embedded, whereOperatorsFor(definition), options, defName);
     const results = await adapter.findAll(defName, Object.assign({where, limit: args.limit}, options));
     await waterfall(results, async(r: AdapterRow) => {
       await processRelationshipMutation(self, defName, r, args.input, context, selection);
