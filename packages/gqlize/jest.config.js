@@ -57,6 +57,7 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/read-cache.test.ts',
   '<rootDir>/__tests__/read-cache-equivalence.test.ts',
   '<rootDir>/__tests__/scope-quantifiers.test.ts',
+  '<rootDir>/__tests__/rls-parity.test.ts',
   '<rootDir>/__tests__/global-filters.test.ts',
   '<rootDir>/__tests__/global-filters-paths.test.ts',
 ];
@@ -107,6 +108,7 @@ const ROUNDTRIP_SUITES = [
   '<rootDir>/__tests__/read-cache.test.ts',
   '<rootDir>/__tests__/read-cache-equivalence.test.ts',
   '<rootDir>/__tests__/scope-quantifiers.test.ts',
+  '<rootDir>/__tests__/rls-parity.test.ts',
   '<rootDir>/__tests__/global-filters.test.ts',
   '<rootDir>/__tests__/global-filters-paths.test.ts',
 ];
