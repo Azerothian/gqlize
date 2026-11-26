@@ -15,17 +15,36 @@
 > global filter an adapter can't express fails at its first query, not at `initialise` (§10 Q6).
 >
 > Phase 3a (declaration, compilation, reconciliation) is implemented.
-> Phase 3b (per-request runtime enforcement) is implemented. Deviations:
-> - `beginTransaction(context?)` is the only runtime entry point; there is no
->   separate "read-wrap" transaction yet — reads on RLS models currently run
->   without a transaction unless the caller provides one through `orm.transaction`.
->   The scope is still skipped for database-enforced models, and the parity test
->   proves enforcement via SET LOCAL ROLE.
-> - `orm.asSystem`, `runWithContext` nested-context check, and the soft-delete
->   flag are declared in the types but not yet wired into the engine — they will
->   land in a follow-up once the read-wrap transaction is in place.
-> - Read-cache key augmentation for RLS identity is not yet implemented; cache
->   is bypassed inside `orm.transaction` as before.
+> Phase 3b (per-request runtime enforcement) is partially implemented:
+>
+> **Implemented:**
+> - Adapter config (`rls` on `SequelizeAdapterOptions`): `settings(ctx)`, `role(ctx)`,
+>   `bypassRole`, `enforce`, `softDeleteFlag`. Validated at construction time.
+> - `beginTransaction(context?)`: applies `set_config` + `SET LOCAL ROLE` per request.
+> - `isDatabaseEnforced` / `isRlsEnabled` / `resolveRlsRole` / `resolveRlsSettings` on the adapter.
+> - **Fail-closed database enforcement**: `isDatabaseEnforced` requires an active transaction;
+>   without one the engine keeps the scope (enforcement is "both", never "neither").
+> - **Read wrapping** (§6.5): `resolveFindAll`, `resolveManyRelationship`,
+>   `resolveSingleRelationship` wrap the read in a transaction when any model in the query
+>   is RLS-enabled and no transaction exists. Reuses a caller's `orm.transaction`.
+> - **No identity → deny** (§6.5): `role(ctx)` returning `undefined` refuses the read/write
+>   through `scopeMiss` (honours `onScopeMiss`); no query runs under the connection role.
+> - **Scope skip for database-enforced models** (§6.6): scope predicate, scope hooks,
+>   post-write re-check, scope audit all skipped when inside a transaction on a
+>   database-enforced model. Scope `set` on create/update still applied.
+> - **Error mapping** (§6.5): Postgres 42501 → `ScopeEscapeError`; on soft-delete/restore
+>   → configuration error (§6.8).
+> - **Build-time checks** (§6.7): RLS model on adapter without `rls` config → error;
+>   `onScopeMiss: "throw"` without `bypassRole` → warning.
+>
+> **Deferred:**
+> - Read-cache key augmentation for RLS identity.
+> - Nested-context switch detection inside an open RLS transaction.
+> - Direct-model surfaces (class/instance methods) inside the RLS transaction;
+>   `unscoped` under `bypassRole`; `orm.asSystem`.
+> - `onScopeMiss: "throw"` re-check under `bypassRole`.
+> - Soft-delete flag wiring (`app.include_deleted` set per transaction).
+> - Full parity test (§7 group-manager model through the gqlize schema).
 
 ## Contents
 

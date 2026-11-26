@@ -1900,10 +1900,18 @@ rule, and the engine does NOT inject the scope's `where`/`native` for RLS-enable
 Scope `set` on create/update is still applied. `enforce: "both"` keeps both the engine scope
 and the database policy, for deployments that want the layered defence.
 
+**Reads.** The engine automatically wraps a read in a transaction when its root model (or any
+model in its include plan) is RLS-enabled on the adapter. Inside a caller's `orm.transaction`,
+the existing transaction is reused. Non-RLS reads are unchanged.
+
 **No identity.** `role(ctx)` returning `undefined` means no authenticated user. The engine
-does not apply `SET LOCAL ROLE`, and RLS-aware code must handle this — the row will be
-visible under the connection's own role unless the deployment returns an explicit
-`app_anonymous` role.
+refuses the operation as a scope deny (honouring `onScopeMiss`), and never runs under the
+connection's own role. Deployments that serve anonymous reads return an explicit
+`app_anonymous` role and give it the policies it should have.
+
+**Fail closed.** Database enforcement (skipping the engine scope) only takes effect when the
+operation is running inside a transaction with settings applied. Without a transaction, the
+engine keeps applying the scope — enforcement is "both", never "neither".
 
 **Errors.** A `WITH CHECK` violation (Postgres `42501`) surfaces as `ScopeEscapeError`.
 A `42501` on a soft-delete or restore is reported as a configuration error pointing at
