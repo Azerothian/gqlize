@@ -150,6 +150,19 @@ export interface OrmAdapter {
   reset(options?: AdapterQueryOptions): Promise<void>;
   initialise(options?: InitialiseOptions): Promise<void>;
   sync(options?: AdapterQueryOptions): Promise<void>;
+  /**
+   * Optional: reconcile Postgres row-level security policies after `sync()`.
+   * Called by `Ormize.sync()` right after the adapter's own `sync()`.
+   * Non-Postgres adapters omit this.
+   *
+   * @param definitions - all model definitions registered against this adapter
+   * @param options - `{ manageRoles }` from the ormize instance's RLS config
+   * @returns the SQL statements that were executed
+   */
+  syncRowSecurity?(
+    definitions: { [name: string]: Definition },
+    options?: { manageRoles?: boolean },
+  ): Promise<string[]>;
   hasInlineCountFeature(): boolean;
   findAll(defName: string, options: AdapterQueryOptions): Promise<AdapterRow[]>;
   /** Row count carried alongside the rows by backends that support it (`hasInlineCountFeature`). */
