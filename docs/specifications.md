@@ -1397,7 +1397,11 @@ contract groups into:
   adapter's own `sync()`. One transaction with `pg_advisory_xact_lock` for serialisation. Creates,
   alters, or drop+creates policies based on a SHA-256 hash of the generated SQL, stored in a
   `COMMENT ON POLICY`. Stale managed policies are removed. Tables are marked as gqlize-managed
-  via a no-op marker policy. Non-Postgres adapters omit this method.
+  by a `<table>__gqlize_rls_marker` policy that is `AS RESTRICTIVE … USING (TRUE)`, so it filters
+  nothing. It must stay restrictive: permissive policies are ORed, and a permissive `TRUE` would
+  open the table to every role. Sync replaces a permissive marker if it finds one. When no
+  definition declares `rls`, sync still runs if any marker exists, so dropping `rls` from the last
+  model disables what gqlize enabled. Non-Postgres adapters omit this method.
 
 ### Sequelize adapter highlights
 

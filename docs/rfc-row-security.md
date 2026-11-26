@@ -428,8 +428,11 @@ another adapter's tables (§6.2), so no cross-adapter ordering is needed.
 5. **Stale policies.** A policy on an RLS-managed table whose comment starts with `gqlize:managed:`
    but which is no longer declared is dropped. Policies without the marker (hand-written, or the
    hosting provider's) are never touched.
-6. **Disabled models.** Tables gqlize enabled carry `COMMENT ON TABLE … 'gqlize:rls'` alongside
-   their own comment handling. If such a table's model no longer has `rls.enabled`, its managed
+6. **Disabled models.** Tables gqlize enabled carry a marker policy,
+   `<table>__gqlize_rls_marker`, created `AS RESTRICTIVE FOR ALL TO PUBLIC USING (TRUE)` and
+   commented `gqlize:rls`. (Implemented this way rather than as a table comment, which the
+   application may own. It must be restrictive: a permissive `TRUE` is ORed with the real policies
+   and opens the table to every role.) If such a table's model no longer has `rls.enabled`, its managed
    policies are dropped and `NO FORCE` / `DISABLE ROW LEVEL SECURITY` run. A table without the
    marker is never disabled.
 
