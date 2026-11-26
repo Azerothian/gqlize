@@ -31,7 +31,7 @@ import {
   warnDefinitionInstanceHooks, createHook, installInstanceHooks,
   runHook, applyEagerAfterFind,
   // scope-bridge
-  resolveRowScope, scopeNativeWhere,
+  resolveRowScope, scopeNativeWhere, resolveModelGlobalFilters,
   assertRowsInScope, scopeMiss,
   // relationships
   validateCrossAdapterKeys, buildCrossAdapterAssociation,
@@ -562,6 +562,7 @@ export default class Ormize<
     processRelationshipMutation: (defName, source, input, context, selection) => this.processRelationshipMutation(defName, source, input, context, selection),
     resolveScope: (defName, operation, context) => resolveRowScope(this.engine, defName, operation, context),
     scopeMiss: (defName, operation) => scopeMiss(defName, operation, this.onScopeMiss),
+    globalFilters: (defName, operation) => resolveModelGlobalFilters(this.engine, defName, operation),
     scopedWhere: (defName, operation, context, where, options) => scopeNativeWhere(this.engine, defName, operation, context, where, options),
     assertRowsInScope: (defName, operation, context, rows, options) => assertRowsInScope(this.engine, defName, operation, context, rows, options),
   };

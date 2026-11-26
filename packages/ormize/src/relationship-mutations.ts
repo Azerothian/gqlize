@@ -575,6 +575,14 @@ export async function applyRelationshipMutations(
           continue;
         }
         scopeWhere = mergeScopeWhere(readScope ? readScope.where : undefined, opScope ? opScope.where : undefined);
+        // The target's global filters (RFC §5.2), on the same terms: the read
+        // half because reaching a row is a read, plus the verb's own operation.
+        // Without them a nested verb could write to a row every read hides.
+        const filters = mergeScopeWhere(
+          host.globalFilters(targetName, "read"),
+          operation === "read" ? undefined : host.globalFilters(targetName, operation),
+        );
+        scopeWhere = mergeScopeWhere(filters, scopeWhere);
       }
       await verb.apply(scope, value);
     }

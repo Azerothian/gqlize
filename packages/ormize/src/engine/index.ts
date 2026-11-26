@@ -11,7 +11,7 @@ export { warnDefinitionInstanceHooks, createHook, createInstanceHook,
 export type { HookHost } from "./hooks";
 
 export { resolveRowScope, reassertRowScope, scopeNativeWhere, scopedWriteWhere,
-  assertRowsInScope, withScopeFor, scopeMiss, ScopeDeniedError, ScopeEscapeError } from "./scope-bridge";
+  assertRowsInScope, resolveModelGlobalFilters, withScopeFor, scopeMiss, ScopeDeniedError, ScopeEscapeError } from "./scope-bridge";
 export type { ScopeHost } from "./scope-bridge";
 
 export { tagRelation, writeFootprint, readTags, cachedCount, cachedFindAll } from "./read-cache-bridge";
