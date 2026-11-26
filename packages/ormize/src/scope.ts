@@ -99,7 +99,12 @@ export function markSystemQuery<T>(options: T): T {
  * `assertRowsInScope` at the end of `mutationEntry` verifies the final
  * state; this bypass only prevents the chicken-and-egg rejection.
  */
-const SCOPE_BYPASS = Symbol.for("ormize.scopeBypass");
+// A module-local `Symbol`, not `Symbol.for`: the global registry would let any
+// code in the process mint the same key and switch enforcement off, which is
+// the forgery {@link SYSTEM_QUERY} is a plain `Symbol` to rule out. Enumerable
+// symbol keys survive an object spread, so this one still rides through the
+// accessor's internal copies.
+const SCOPE_BYPASS = Symbol("ormize.scopeBypass");
 
 /** Mark an options bag so scope hooks stand aside. Survives Sequelize spreads. */
 export function markScopeBypass<T>(options: T): T {

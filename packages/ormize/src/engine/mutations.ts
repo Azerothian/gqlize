@@ -22,6 +22,7 @@ import type {
 
 import type { HookHost } from "./hooks";
 import type { ScopeHost } from "./scope-bridge";
+import { claimCreateDeferral } from "./create-deferral";
 import { resolveRowScope, scopedWriteWhere, assertRowsInScope, scopeMiss as scopeMissFn, embedThroughScopes } from "./scope-bridge";
 import type { ReadCacheHost } from "./read-cache-bridge";
 import { writeFootprint } from "./read-cache-bridge";
@@ -310,6 +311,8 @@ export async function processCreate(
   defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply },
   context: RequestContext, selection?: Selection,
 ): Promise<AdapterRow[]> {
+  // Taken before anything nested runs; see `./create-deferral`.
+  const deferral = claimCreateDeferral();
   return mutationEntry(self, defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
     const processCreateFn = adapter.getCreateFunction(defName);
     if (await resolveRowScope(self, defName, "create", context) === false) {
@@ -337,7 +340,16 @@ export async function processCreate(
         // but `definition.before`, `override.input` and the nested `add`/`set`
         // verbs all run after it — the last of those re-points a foreign key
         // nobody named. Cheaper to look than to reason about the ordering.
-        await assertRowsInScope(self, defName, "create", context, [result], createResolveContext(context, selection, source));
+        // A nested create under a parent can only satisfy a scope that follows
+        // its link once the parent's accessor has made that link, so the
+        // caller that is about to link it runs this check afterwards.
+        const row = result;
+        const check = () => assertRowsInScope(self, defName, "create", context, [row], createResolveContext(context, selection, source));
+        if (deferral) {
+          deferral.checks.push(check);
+        } else {
+          await check();
+        }
         return [result];
       }
     }

@@ -17,6 +17,7 @@ import type {
 } from "@azerothian/utilize/types/index";
 import Events from "./events";
 import { markScopeBypass } from "./scope";
+import { deferCreateCheck } from "./engine/create-deferral";
 import { ThroughInputError } from "./through-input-error";
 import type {
   InstanceRow, MutationFilter, MutationHost, MutationInput, MutationInputTree,
@@ -95,7 +96,10 @@ const applyCreate = async(s: MutationScope, values: MutationInput[]) => {
         type: Events.MUTATION_CREATE,
       });
     }
-    const [result] = await s.host.processCreate(s.targetName, s.source, {input: arg}, s.targetContext, s.selection);
+    // The child's create re-check is held back until the link below exists;
+    // see `./engine/create-deferral`. It is run, not dropped.
+    const { result: [result], checks } = await deferCreateCheck(
+      () => s.host.processCreate(s.targetName, s.source, {input: arg}, s.targetContext, s.selection));
     // `associationType` is an open string, so this stays a test for the two
     // collection types rather than reusing `singular`: an unrecognised type
     // falls through to `set`, which is what it did before.
@@ -113,6 +117,9 @@ const applyCreate = async(s: MutationScope, values: MutationInput[]) => {
     // the chicken-and-egg rejection on the row this mutation just created.
     const linkOptions = markScopeBypass({ ...s.defaultOptions });
     await s.row[collection ? s.association.accessors.add : s.association.accessors.set](result, linkOptions);
+    for (const check of checks) {
+      await check();
+    }
   });
 };
 
