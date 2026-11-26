@@ -191,16 +191,28 @@ describePostgres("SequelizeAdapter RLS runtime", () => {
     });
   });
 
-  describe("no identity → error", () => {
-    it("role returning undefined does not apply SET LOCAL ROLE", async () => {
+  describe("no identity → deny", () => {
+    it("resolveRlsRole returns undefined when context has no role", () => {
+      // The engine calls resolveRlsRole BEFORE opening a transaction.
+      // When it returns undefined, the engine refuses the operation (scope deny)
+      // and never opens a transaction or runs a query under the connection role.
+      const ctx = { user: { id: "some-id" } }; // no role key
+      expect(adapter.resolveRlsRole(ctx)).toBeUndefined();
+    });
+
+    it("beginTransaction with no role does NOT apply SET LOCAL ROLE", async () => {
+      // Even if beginTransaction is called directly (by-passing the engine check),
+      // the connection stays under the superuser role. The engine should NEVER
+      // reach this path for an RLS model — resolveRlsRole → undefined → deny.
       const ctx = { user: { id: "some-id" } }; // no role
       const tx = await adapter.beginTransaction(ctx);
       try {
-        // Role should still be the connection owner since role(ctx) returned undefined
         const [rows] = await adapter.sequelize.query(
           `SELECT current_user`,
           { transaction: tx.handle as import("sequelize").Transaction },
         );
+        // This proves the connection role is the superuser — which is exactly
+        // why the engine must refuse BEFORE getting here.
         expect((rows as Array<{ current_user: string }>)[0].current_user).toBe("postgres");
       } finally {
         await tx.rollback();
