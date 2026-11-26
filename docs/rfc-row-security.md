@@ -14,7 +14,8 @@
 > single-valued relationships and `node(id:)`, which was the user-visible goal of §5.4); and a
 > global filter an adapter can't express fails at its first query, not at `initialise` (§10 Q6).
 >
-> Phase 3 remains proposed.
+> Phase 3a (declaration, compilation, reconciliation) is implemented. Phase 3b
+> (per-request runtime enforcement) remains proposed.
 
 ## Contents
 

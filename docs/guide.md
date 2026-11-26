@@ -1793,6 +1793,84 @@ await orm.withoutFilters(["active"], async () => {
 `withoutFilters` uses `AsyncLocalStorage`. Nested calls union their names. The bypass is part of
 the read-cache key, so a cached read with the filter is never served to a read without it.
 
+### Postgres row-level security (Phase 3a)
+
+Models can declare Postgres RLS policies that `sync()` applies to the database. This is the
+declaration, compilation, and reconciliation layer (Phase 3a of the row-security RFC). The
+per-request runtime enforcement (Phase 3b) is a follow-up within the same RFC.
+
+**Declaration.** Import from `@azerothian/ormize/rls`:
+
+```ts
+import { rls, sql } from "@azerothian/ormize/rls";
+
+const Task = {
+  name: "Task",
+  define: { /* ... */ },
+  options: {
+    rls: {
+      enabled: true,              // ENABLE ROW LEVEL SECURITY
+      force: true,                // FORCE (the default) — table owner is subject to policies too
+      policies: {
+        own: {
+          for: "all",
+          to: "app_member",
+          using: { ownerId: { eq: rls.setting("app.user_id", "uuid") } },
+        },
+        audit: {
+          for: "select",
+          to: "app_auditor",
+          using: sql`true`,
+        },
+      },
+    },
+  },
+};
+```
+
+`rls.setting(name, type)` produces `(SELECT nullif(current_setting('name', true), '')::type)`:
+the `nullif` is required (an unset custom setting reads back as `''`, not `NULL`, after any
+connection has set it once). The `(SELECT …)` wrapper makes Postgres evaluate it once per
+statement. Array types (e.g. `"uuid[]"`) use `string_to_array`. `sql` is a tagged template for
+raw SQL fragments.
+
+Non-Postgres adapters ignore `options.rls`. A definition can carry it and still run on SQLite in
+tests, where only the app-layer scope applies.
+
+**Generating policies from role rules.** `compileRlsPolicies(rules, options)` produces
+`{ [model]: policies }` from the same rules tree `createRoleBasedPermissions` reads:
+
+```ts
+import { compileRlsPolicies } from "@azerothian/utilize/permissions";
+
+const policies = compileRlsPolicies(rules, {
+  dbRole: (appRole) => `app_${appRole}`,
+  settings: { id: "app.user_id", tenantId: "app.tenant_id" },
+});
+// Merge into definitions: Task.options.rls.policies = policies.Task;
+```
+
+Insert `WITH CHECK` omits quantifier branches (Postgres checks it at row insert time, before
+nested relationship writes could create the qualifying rows). The `deletedAt` column is never
+emitted into a policy (soft delete stays a global filter applied by the engine).
+
+**Reconciliation.** `Ormize.sync()` calls `adapter.syncRowSecurity()` after the tables exist.
+One transaction with `pg_advisory_xact_lock`. Each policy is hashed; unchanged policies issue no
+DDL. Stale managed policies are dropped. `new Ormize({ rls: { manageRoles: true } })` creates
+`NOLOGIN` roles that don't already exist.
+
+**CLI.** `gqlize rls:sql` prints the same DDL as idempotent `DO` blocks, from definitions alone —
+no database connection. Use it to generate a migration file.
+
+**Soft delete rule.** No policy may filter on the `deletedAt` column. `compileRlsPolicies` never
+emits it, and `syncRowSecurity` warns when a hand-written filter-vocabulary policy mentions it
+(raw `sql` policies can't be inspected). See RFC §6.8 for why.
+
+**Operational notes.** Two roles: `sync()` needs the table owner (DDL), and the app should run
+requests as a different role. `force: true` keeps the policies applying to app traffic when one
+connection does both. Policy changes take `ACCESS EXCLUSIVE` on the table. Index what policy
+subqueries filter on.
+
 ---
 
 ## 9. Hooks

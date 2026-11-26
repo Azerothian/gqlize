@@ -404,6 +404,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `queries` | **Sequelize adapter only.** Raw create/drop DDL registered against the definition (`{ [name]: { create, drop } }`, each a string or a thunk). `initialise()` replays every `create`, and `reset()` replays the `drop`s then the `create`s. This is the adapter's only I/O in `initialise()`, which is why `initialise({ddl: false})` — the offline schema build — turns it off. |
 | `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
 | `options.filters` | Global filters (RFC §5). Each key is a filter name; its value declares a static `PortableWhere` and optionally which of `read` / `update` / `delete` it applies to (default all three). A global filter is the same for every caller (it must not reference the principal — anything caller-dependent belongs in `scope`). The engine AND-s applicable filters into every read and write chokepoint alongside the scope: root lists, `total`, `node(id:)`, eager and lazy relationship fields, through reads, the `required` filter path, and `update`/`delete`/`select` write paths. Server-side bypass: `orm.withoutFilters(["name"], fn)` via `AsyncLocalStorage`. See §7 for the `queryDeleted` gate on the built-in soft-delete filter. |
+| `options.rls` | Postgres row-level security (RFC §6). `enabled: true` runs `ENABLE ROW LEVEL SECURITY` on the table in `sync()`. `force: true` (the default) runs `FORCE ROW LEVEL SECURITY` so the table owner is also subject to policies. `policies` is a keyed map of policy declarations: each has `as` (`"permissive"` or `"restrictive"`), `for` (`"all"`, `"select"`, `"insert"`, `"update"`, `"delete"`), `to` (role name or array), `using` (a `PortableWhere` or `sql` tagged template), and `withCheck` (defaults to `using` for all/insert/update). Policy name in Postgres: `<tableName>_<key>`. Non-Postgres adapters ignore this. `rls.setting(name, type)` and the `sql` tag are imported from `@azerothian/ormize/rls`. See also `compileRlsPolicies` in `@azerothian/utilize/permissions` for generating policies from role-based scope rules. |
 
 ### Example (trimmed from `task.ts`)
 
@@ -1391,6 +1392,12 @@ contract groups into:
   say) omits them, and gqlize then generates neither the `deleted` argument nor `restore`. The
   same `softDeletes` also appears on the type-mapping host, which is where the `deleted` argument
   is decided.
+- **Row-level security (optional):** `syncRowSecurity(definitions, options?)` reconciles Postgres
+  RLS policies from model definitions after `sync()`. Called by `Ormize.sync()` right after the
+  adapter's own `sync()`. One transaction with `pg_advisory_xact_lock` for serialisation. Creates,
+  alters, or drop+creates policies based on a SHA-256 hash of the generated SQL, stored in a
+  `COMMENT ON POLICY`. Stale managed policies are removed. Tables are marked as gqlize-managed
+  via a no-op marker policy. Non-Postgres adapters omit this method.
 
 ### Sequelize adapter highlights
 
@@ -1542,6 +1549,9 @@ each with its own subpath export:
   importing `@azerothian/gqlize` resolves to through `module-sync`. Running the CLI from `cjs/`
   would give it a second copy of module state, such as the build registry `gqlize check` reads. SWC preserves the leading `#!/usr/bin/env node` verbatim, so
   no post-processing step is needed.
+- **`gqlize rls:sql`:** prints idempotent DDL (DO blocks checking catalogs) for all RLS policies
+  declared in model definitions, without opening a database connection. The output mirrors
+  `syncRowSecurity()`'s create/alter/drop+create logic and can be piped into a migration file.
 - **Publishing:** per-package `pnpm build` → `publish/` → `package:npm` / `package:yalc`.
 - **CI:** `.github/workflows/` — `ci.yml` (Install → Typecheck → Lint → Build → Test → **Schema
   drift**, the last being `pnpm --filter @azerothian/example-gqlize-basic schema:check`, which

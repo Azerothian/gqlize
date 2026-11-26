@@ -366,7 +366,7 @@ describePostgres("RLS enforcement under SET LOCAL ROLE", () => {
       const rows = await adapter.sequelize.query(
         `SELECT * FROM "Items"`,
         { ...(opts as Record<string, unknown>), type: QueryTypes.SELECT },
-      );
+      ) as unknown as Array<{ name: string }>;
       expect(rows.length).toBe(2);
       expect(rows.every((r) => r.name.startsWith("u1"))).toBe(true);
     });
@@ -378,7 +378,7 @@ describePostgres("RLS enforcement under SET LOCAL ROLE", () => {
       const rows = await adapter.sequelize.query(
         `SELECT * FROM "Items"`,
         { ...(opts as Record<string, unknown>), type: QueryTypes.SELECT },
-      );
+      ) as unknown as Array<{ name: string }>;
       expect(rows.length).toBe(1);
       expect(rows[0].name).toBe("u2-item");
     });
@@ -590,7 +590,7 @@ describePostgres("generateRlsSql (rls:sql output)", () => {
     const policies = await adapter.sequelize.query(
       `SELECT polname FROM pg_policy WHERE polrelid = '"Tasks"'::regclass`,
       { type: QueryTypes.SELECT },
-    );
+    ) as unknown as Array<{ polname: string }>;
     for (const p of policies) {
       await adapter.sequelize.query(`DROP POLICY "${p.polname}" ON "Tasks"`);
     }
@@ -614,7 +614,7 @@ describePostgres("generateRlsSql (rls:sql output)", () => {
        LEFT JOIN pg_description d ON d.objoid = p.oid
        WHERE p.polrelid = '"Tasks"'::regclass ORDER BY p.polname`,
       { type: QueryTypes.SELECT },
-    );
+    ) as unknown as Array<{ polname: string; description: string | null }>;
     const ownPolicy = policyList.find((p) => p.polname === "Tasks_own");
     expect(ownPolicy).toBeDefined();
     expect(ownPolicy!.description).toMatch(/^gqlize:managed:/);
