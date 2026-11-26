@@ -186,6 +186,61 @@ describe("gqlize - scope quantifiers on create (RFC §4.5)", () => {
   });
 });
 
+describe("gqlize - scope quantifiers: nested writes under the cross scope", () => {
+  // The note's rule covers every operation, create included, so a note may
+  // only ever exist under a doc the caller owns. That rule is only decidable
+  // once the link exists, which is the RFC §4.5 case on the child side.
+  const childScope: ScopePredicate = (defName, operation, _options, context) => {
+    const user = userOf(context);
+    if (defName === "Note") {
+      return { where: { doc: { is: { ownerId: { eq: user } } } } };
+    }
+    return operation === "create" ? undefined : { where: { notes: { some: { ownerId: { eq: user } } } } };
+  };
+
+  it("links a nested child whose scope depends on the link it is getting", async() => {
+    const { db, schema } = await build(childScope);
+    const result = await ask(schema, `mutation {
+      models { Doc(create: {name: "mine", ownerId: "u1", notes: {create: {body: "n", ownerId: "u1"}}}) { name } }
+    }`, "u1");
+    expect(result.errors).toBeUndefined();
+    const [note] = await db.models.Note.findAll();
+    expect(note.docId).not.toBeNull();
+  });
+
+  it("refuses a nested child that the link leaves outside its own scope, and rolls back", async() => {
+    // u1 creates a doc owned by u2. The linking call may skip the hooks, but
+    // the re-check after it must not, or this note would be written where its
+    // own create rule forbids.
+    const { db, schema } = await build(childScope);
+    const result = await ask(schema, `mutation {
+      models { Doc(create: {name: "planted", ownerId: "u2", notes: {create: {body: "n", ownerId: "u1"}}}) { name } }
+    }`, "u1");
+    expect(result.errors).toBeDefined();
+    expect(await db.models.Doc.count()).toEqual(0);
+    expect(await db.models.Note.count()).toEqual(0);
+  });
+
+  it("select reaches only related rows inside the target's quantifier scope", async() => {
+    const { db, schema } = await build(crossScope);
+    const mine = await db.models.Doc.create({ name: "mine", ownerId: "u1" });
+    await db.models.Note.create({ body: "mine", ownerId: "u1", docId: mine.id });
+    const theirs = await db.models.Doc.create({ name: "theirs", ownerId: "u2" });
+    await db.models.Note.create({ body: "theirs", ownerId: "u2", docId: theirs.id });
+    // Through select on Note, walk to its doc and rename it. u1 can only reach
+    // its own note, so only its own doc may change.
+    const result = await ask(schema, `mutation {
+      models { Note(select: [{ where: {}, input: { doc: { select: { where: {}, input: { notes: { create: [{ body: "added", ownerId: "u1" }] } } } } } }]) { body } }
+    }`, "u1");
+    expect(result.errors).toBeUndefined();
+    expect(result.data.models.Note.map((n: { body: string }) => n.body)).toEqual(["mine"]);
+    const theirNotes = await db.models.Note.count({ where: { docId: theirs.id } });
+    expect(theirNotes).toEqual(1);
+    const myNotes = await db.models.Note.count({ where: { docId: mine.id } });
+    expect(myNotes).toEqual(2);
+  });
+});
+
 describe("gqlize - every and NULL", () => {
   it("a related row with a NULL in the compared column fails `every`", async() => {
     // `some: {body: {eq: "ok"}}` does not count a NULL body as a match, so

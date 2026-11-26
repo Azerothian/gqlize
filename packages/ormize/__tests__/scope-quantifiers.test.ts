@@ -197,6 +197,16 @@ describe("ormize - scope quantifiers: hasMany", () => {
     expect(results.models.map((r: AnyRow) => r.name as string).sort()).toEqual(["Alice", "Charlie", "Nobody"]);
   });
 
+  it("an inner filter gets the same dialect normalisation as any other (iLike)", async () => {
+    // SQLite has no ILIKE; the adapter rewrites it to LIKE for every where it
+    // sees, and a quantifier's inner filter must not be the one place it doesn't.
+    const scope: ScopePredicate = () => ({ where: { memberships: { some: { role: { iLike: "MAN%" } } } } });
+    const db = await buildGroupManager({ scope });
+    await seedGroupManager(db);
+    const results = await db.resolveFindAll("User", null, {}, ctx("any"));
+    expect(results.models.map((r: AnyRow) => r.name as string).sort()).toEqual(["Alice", "Charlie"]);
+  });
+
   it("every with empty filter is vacuously true", async () => {
     const scope: ScopePredicate = () => ({ where: { memberships: { every: {} } } });
     const db = await buildGroupManager({ scope });
@@ -384,6 +394,38 @@ describe("ormize - scope quantifiers: belongsToMany", () => {
     // Only item1 has a visible link; item2's link is hidden by the through scope.
     expect(results.total).toBe(1);
     expect((results.models[0] as AnyRow).title).toBe("VisiblyTagged");
+  });
+
+  it("a join scope that denies outright means no link qualifies", async () => {
+    const scope: ScopePredicate = (defName) => {
+      if (defName === "Item") return { where: { tags: { some: {} } } };
+      if (defName === "ItemTag") return false;
+      return undefined;
+    };
+    const db = await buildBtmThrough({ scope });
+    const item = await db.models.Item.create({ title: "Tagged" });
+    const tag = await db.models.Tag.create({ label: "t" });
+    await db.models.ItemTag.create({ itemId: item.id, tagId: tag.id });
+    const results = await db.resolveFindAll("Item", null, {}, ctx("any"));
+    expect(results.total).toBe(0);
+  });
+
+  it("a join scope that itself uses a quantifier is compiled, not passed raw", async () => {
+    // A link is visible only when its tag is labelled "important".
+    const scope: ScopePredicate = (defName) => {
+      if (defName === "Item") return { where: { tags: { some: {} } } };
+      if (defName === "ItemTag") return { where: { tag: { is: { label: { eq: "important" } } } } };
+      return undefined;
+    };
+    const db = await buildBtmThrough({ scope });
+    const a = await db.models.Item.create({ title: "A" });
+    const b = await db.models.Item.create({ title: "B" });
+    const imp = await db.models.Tag.create({ label: "important" });
+    const triv = await db.models.Tag.create({ label: "trivial" });
+    await db.models.ItemTag.create({ itemId: a.id, tagId: imp.id });
+    await db.models.ItemTag.create({ itemId: b.id, tagId: triv.id });
+    const results = await db.resolveFindAll("Item", null, {}, ctx("any"));
+    expect(results.models.map((r: AnyRow) => r.title as string)).toEqual(["A"]);
   });
 
   it("every:{} on btm is vacuously true", async () => {
