@@ -90,7 +90,11 @@ export async function dialectConfig(overrides: DialectConfig = {}): Promise<Dial
   }
   holders[index] = tag;
   const slot = await slots[index];
-  await slot.pglite.exec("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;");
+  // `CREATE SCHEMA` alone leaves `public` usable only by its owner. A fresh
+  // Postgres database grants USAGE on it to PUBLIC, and the RLS suites run
+  // queries as a non-superuser role (`SET LOCAL ROLE`), which without the
+  // grant silently skips the schema and reports every table as missing.
+  await slot.pglite.exec("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT USAGE ON SCHEMA public TO PUBLIC;");
   const overrideDialectOptions = (overrides.dialectOptions || {}) as { [name: string]: unknown };
   return {
     dialect: "postgres",

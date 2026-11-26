@@ -306,6 +306,7 @@ describePostgres("SequelizeAdapter.syncRowSecurity", () => {
 
 describePostgres("RLS enforcement under SET LOCAL ROLE", () => {
   let adapter: SequelizeAdapter;
+  let itemDefs: { [name: string]: Definition };
 
   beforeAll(async () => {
     const config = await dialectConfig();
@@ -348,6 +349,7 @@ describePostgres("RLS enforcement under SET LOCAL ROLE", () => {
     await Item.create({ name: "u2-item", ownerId: "u2" });
     await Item.create({ name: "u1-item2", ownerId: "u1" });
 
+    itemDefs = defs;
     await adapter.syncRowSecurity(defs, { manageRoles: true });
 
     // Grant table privileges and role membership to allow SET LOCAL ROLE.
@@ -405,6 +407,37 @@ describePostgres("RLS enforcement under SET LOCAL ROLE", () => {
         );
       }),
     ).rejects.toThrow(/row-level security/);
+  });
+
+  it("the table marker opens nothing: a role with privileges but no policy sees no rows", async () => {
+    // gqlize marks the tables it enabled with a policy of its own. A
+    // permissive `USING (TRUE)` marker would OR with every other policy and
+    // hand every row to every role; it has to be restrictive.
+    const helper = await createRlsRoleHelper(adapter, ["Items"], ["app_unpoliced"]);
+    await helper.asRole("app_unpoliced", { "app.user_id": "u1" }, async (opts) => {
+      const rows = await adapter.sequelize.query(
+        `SELECT * FROM "Items"`,
+        { ...(opts as Record<string, unknown>), type: QueryTypes.SELECT },
+      ) as unknown[];
+      expect(rows).toHaveLength(0);
+    });
+    const [marker] = await adapter.sequelize.query<{ polpermissive: boolean }>(
+      `SELECT polpermissive FROM pg_policy WHERE polrelid = '"Items"'::regclass AND polname = 'Items__gqlize_rls_marker'`,
+      { type: QueryTypes.SELECT },
+    );
+    expect(marker.polpermissive).toBe(false);
+  });
+
+  it("sync replaces a permissive marker left by an earlier build", async () => {
+    await adapter.sequelize.query(`DROP POLICY "Items__gqlize_rls_marker" ON "Items"`);
+    await adapter.sequelize.query(`CREATE POLICY "Items__gqlize_rls_marker" ON "Items" AS PERMISSIVE FOR ALL TO PUBLIC USING (TRUE) WITH CHECK (TRUE)`);
+    await adapter.sequelize.query(`COMMENT ON POLICY "Items__gqlize_rls_marker" ON "Items" IS 'gqlize:rls'`);
+    await adapter.syncRowSecurity(itemDefs, { manageRoles: true });
+    const [marker] = await adapter.sequelize.query<{ polpermissive: boolean }>(
+      `SELECT polpermissive FROM pg_policy WHERE polrelid = '"Items"'::regclass AND polname = 'Items__gqlize_rls_marker'`,
+      { type: QueryTypes.SELECT },
+    );
+    expect(marker.polpermissive).toBe(false);
   });
 });
 
@@ -576,7 +609,8 @@ describePostgres("generateRlsSql (rls:sql output)", () => {
       },
     };
 
-    const sql = adapter.generateRlsSql(defs);
+    // The script creates the role too, as `sync()` does under manageRoles.
+    const sql = adapter.generateRlsSql(defs, { manageRoles: true });
     expect(sql).toContain("BEGIN;");
     expect(sql).toContain("COMMIT;");
     expect(sql).toContain("ENABLE ROW LEVEL SECURITY");
@@ -595,28 +629,28 @@ describePostgres("generateRlsSql (rls:sql output)", () => {
       await adapter.sequelize.query(`DROP POLICY "${p.polname}" ON "Tasks"`);
     }
 
-    // Apply the generated DDL. PGlite doesn't support multi-statement in query(),
-    // so we split on statement boundaries and run each one.
-    // The DDL uses DO blocks, which are single statements.
-    const statements = sql
-      .split(/;\s*\n/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && s !== "BEGIN" && s !== "COMMIT")
-      .map((s) => s.endsWith(";") ? s : s + ";");
+    // Apply the script whole, as a migration tool would. A parameterless query
+    // goes over the wire as one simple-protocol message, which accepts many
+    // statements; splitting on `;` would cut the DO blocks apart.
+    await adapter.sequelize.query(sql);
 
-    for (const stmt of statements) {
-      await adapter.sequelize.query(stmt);
-    }
-
-    // Verify the same catalog state as sync
     const policyList = await adapter.sequelize.query(
-      `SELECT p.polname, d.description FROM pg_policy p
+      `SELECT p.polname, p.polpermissive, d.description FROM pg_policy p
        LEFT JOIN pg_description d ON d.objoid = p.oid
        WHERE p.polrelid = '"Tasks"'::regclass ORDER BY p.polname`,
       { type: QueryTypes.SELECT },
-    ) as unknown as Array<{ polname: string; description: string | null }>;
+    ) as unknown as Array<{ polname: string; polpermissive: boolean; description: string | null }>;
     const ownPolicy = policyList.find((p) => p.polname === "Tasks_own");
     expect(ownPolicy).toBeDefined();
     expect(ownPolicy!.description).toMatch(/^gqlize:managed:/);
+    const marker = policyList.find((p) => p.polname === "Tasks__gqlize_rls_marker");
+    expect(marker?.polpermissive).toBe(false);
+
+    // Same state as sync would have produced: a sync now has nothing to do.
+    const executed = await adapter.syncRowSecurity(defs, { manageRoles: true });
+    expect(executed.filter((q) => /^(CREATE|ALTER|DROP|COMMENT)/.test(q))).toEqual([]);
+
+    // And running the script a second time is harmless.
+    await adapter.sequelize.query(sql);
   });
 });
