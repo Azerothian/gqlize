@@ -1555,6 +1555,10 @@ behaviour.
   (`create-related-fields.ts`), so a soft-deleted single-relation target reads as `null`, and
   `node(id:)` does not resolve a deleted row. `update` and `delete` likewise keep their implicit
   live-rows-only predicate — restore first, then write.
+- **Row security.** Relationship quantifiers (`some`/`none`/`every`/`is`/`isNot`) in
+  `PortableWhere`, model-level global filters (with soft delete re-expressed as one), and Postgres
+  row-level security (policies on the definition, reconciled by `sync()`, enforced per request with
+  `set_config` + `SET LOCAL ROLE`). Proposed in [`rfc-row-security.md`](rfc-row-security.md).
 - Middleware/caching options.
 - Additional adapters (Elasticsearch, HTTP GraphQL Relay).
 - Cross-adapter **writes**, and batching of cross-adapter reads by foreign key.
