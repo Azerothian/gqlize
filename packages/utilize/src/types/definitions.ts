@@ -276,6 +276,14 @@ export interface DefinitionOptions {
    * for this model, falling back to per-relation resolution. Defaults to enabled.
    */
   autoInclude?: boolean;
+  /**
+   * Global filters (RFC §5.1). Each key is a filter name; its value declares a
+   * static `PortableWhere` and optionally which operations it applies to (default
+   * all three: `read`, `update`, `delete`). A global filter is the same for every
+   * caller, so `where` must not reference the principal — anything caller-dependent
+   * belongs in `scope`.
+   */
+  filters?: { [name: string]: import("../gate").GlobalFilterDeclaration };
   instanceMethods?: {
     [name: string]: DefinitionMethod;
   }

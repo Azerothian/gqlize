@@ -571,6 +571,24 @@ export type PortableWhere = { [key: string]: unknown };
 /** Which operation a scope is being resolved for. */
 export type ScopeOperation = "read" | "create" | "update" | "delete";
 
+/** Operations a global filter may be applied to. `create` is never valid. */
+export type GlobalFilterOperation = "read" | "update" | "delete";
+
+/**
+ * A model-level global filter (RFC §5.1). The same for every caller — anything
+ * caller-dependent belongs in `scope`.
+ */
+export interface GlobalFilterDeclaration {
+  /** A `PortableWhere`, including Phase 1 quantifiers. Must not reference the principal. */
+  where: PortableWhere;
+  /**
+   * Which operations the filter applies to.  Defaults to all three (`read`,
+   * `update`, `delete`).  `create` has no existing rows to filter and is never
+   * listed — including it in the array is a validation error.
+   */
+  operations?: GlobalFilterOperation[];
+}
+
 /**
  * What a {@link ScopePredicate} may return.
  *
