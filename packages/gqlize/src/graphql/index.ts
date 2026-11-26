@@ -249,11 +249,11 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     }
   };
 
-  // RFC §5.4: `node(id:)` gains a `deleted` argument when any visible model
-  // soft-deletes and queryDeleted allows it. The node resolver decodes the
-  // type from the id, so the argument is schema-wide rather than per-model.
   // RFC §5.4: `node(id:)` gains a `deleted` argument when at least one visible
-  // model soft-deletes AND its queryDeleted is allowed.
+  // model soft-deletes and queryDeleted allows it. `node` decodes the type from
+  // the id, so the argument is schema-wide; the id fetcher re-checks
+  // queryDeleted for the decoded model and ignores the argument where it is
+  // denied.
   const anyDeletedVisible = carriesType && Object.keys(definitions).some((defName) =>
     instance.softDeletes(defName) && isQueryDeletedAllowed(options.permission, defName));
   const nodeFieldWithDeleted = anyDeletedVisible

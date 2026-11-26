@@ -37,32 +37,24 @@ export default function createNodeInterface(dbInstance: GQLManager, options?: Gq
   const nodeTypeMapper = new NodeTypeMapper();
   const fetcher = idFetcher(dbInstance, nodeTypeMapper, options);
   const nodeObjects = nodeDefinitions(
-    // graphql-relay's nodeDefinitions calls `idFetcher(id, context, info)`.
-    // We wrap it so the `deleted` field argument is extracted from the
-    // resolver args and forwarded (RFC §5.4).
-    (id, context, info) => {
-      // The node field's arguments are on info.fieldNodes[0]; extract `deleted`
-      // from the resolved argument values. graphql-relay resolves `id` for us
-      // but not any args we added. Walk variableValues + literal args.
-      let deleted: string | undefined;
-      const fieldNode = info.fieldNodes?.[0];
-      if (fieldNode?.arguments) {
-        const arg = fieldNode.arguments.find((a) => a.name.value === "deleted");
-        if (arg) {
-          if (arg.value.kind === "EnumValue") {
-            deleted = arg.value.value;
-          } else if (arg.value.kind === "Variable") {
-            deleted = (info.variableValues as unknown as Record<string, unknown> | undefined)?.[arg.value.name.value] as string | undefined;
-          }
-        }
-      }
-      return fetcher(String(id), context, info, deleted);
-    },
+    (id, context, info) => fetcher(String(id), context, info),
     typeResolver(nodeTypeMapper)
   );
+  // graphql-relay's `node` resolver hands the fetcher only `id`, so the
+  // `deleted` argument (RFC §5.4, added in `graphql/index.ts` when a model
+  // qualifies) is read here from the resolver's own coerced `args`. That covers
+  // a literal and a variable alike; reading the AST by hand did not, because
+  // graphql 17's `info.variableValues` is no longer a plain name → value map.
+  // `plural` (`nodes`) is untouched and has no `deleted`.
+  const nodeField: typeof nodeObjects.nodeField = {
+    ...nodeObjects.nodeField,
+    resolve: (_obj, args: { id: string; deleted?: string }, context, info) =>
+      fetcher(String(args.id), context, info, args.deleted),
+  };
 
   return {
     nodeTypeMapper,
     ...nodeObjects,
+    nodeField,
   };
 }
