@@ -1,6 +1,7 @@
 import { computedOrderableFields as computedOrderableFieldsFor } from "@azerothian/utilize/exposed-methods";
 import { clampPageSize, DEFAULT_PAGE_SIZE } from "@azerothian/utilize/utils/page-size";
 import { globalKeyTargets, globalKeysFromFields } from "@azerothian/utilize/utils/global-keys";
+import { ScopeConfigurationError } from "@azerothian/utilize/gate";
 import { relationshipAccessors } from "@azerothian/utilize/utils/relationship-accessors";
 import { throughModelName } from "@azerothian/utilize/utils/join-keys";
 import replaceIdDeep from "@azerothian/gqlize/utils/replace-id-deep";
@@ -532,6 +533,13 @@ implements GqlizeAdapter {
   processFilterArgument = (
     where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, _options: AdapterQueryOptions,
   ): AdapterWhere => translateWhere(undefined, where, whereOperators) || {};
+
+  compileRelationshipFilter = (): never => {
+    throw new ScopeConfigurationError(
+      "The MikroORM adapter does not yet support relationship quantifiers in scope filters. " +
+      "MikroORM's own relation filters (`{ rel: { $some: ... } }`) are a potential follow-up.",
+    );
+  };
 
   /**
    * Merge an equality (or, for a list, membership) filter into an existing

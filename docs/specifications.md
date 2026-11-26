@@ -1213,6 +1213,54 @@ read from the request context by a `principal` option defaulting to
 `context.user` / `context.principal` / `context.req.user`. A reader that finds nothing is a deny, as
 is a `group` leaf whose principal belongs to no groups.
 
+### Relationship quantifiers in scope
+
+A `PortableWhere` returned by `scope` (or emitted by the role-based sugar) may contain relationship
+quantifiers: a relationship name as key, with a quantifier object as value.
+
+| Relationship | Quantifiers | Meaning |
+| --- | --- | --- |
+| `hasMany`, `belongsToMany` | `some: Where` | At least one related row matches. |
+| | `none: Where` | No related row matches. |
+| | `every: Where` | Every related row matches (vacuously true when there are none). |
+| `belongsTo`, `hasOne` | `is: Where` | The related row exists and matches. |
+| | `isNot: Where` | The related row is absent or does not match. |
+
+Quantifiers nest, and the inner `Where` is the related model's vocabulary. An empty inner filter
+means "any related row": `{ tags: { some: {} } }` is "has at least one tag".
+
+**Adapter support.** The Sequelize adapter compiles quantifiers to correlated `EXISTS` / `NOT EXISTS`
+subqueries (identifiers quoted, values escaped). The Valkey and MikroORM adapters throw
+`ScopeConfigurationError`. A quantifier over a relationship whose target lives on a different adapter
+is also a `ScopeConfigurationError`.
+
+**Client-facing surfaces.** Quantifiers are **not** in the generated GraphQL `where` input, the nestize
+REST where, or the temporalize activity inputs. `assertFilterAllowed` in `guards.ts` rejects any
+quantifier key a client sends. Only scope results, global filters, and direct engine callers may use
+them.
+
+**Writes.** The post-write re-check runs after the mutation's nested relationship writes (at the end
+of `mutationEntry`, inside the same transaction), so creating a row together with a relationship that
+satisfies a quantifier scope succeeds, and one that doesn't is refused and rolled back.
+
+**Cache.** The read-cache tags include every model a quantifier reaches, so a write to the related
+model invalidates cached reads filtered through it.
+
+### `via` leaf and `not` combinator
+
+The role-based sugar adds two leaves:
+
+- `via: "a.b.c"` with a `match` filter: a dot-separated relationship path from the scoped model.
+  Every hop except the last becomes `some` (hasMany/belongsToMany) or `is` (belongsTo/hasOne),
+  and `match` is the innermost filter. A value beginning with `$principal.` is read from the principal;
+  a missing principal value is a deny.
+- `not: <leaf>`: inverts a scope leaf. A denying branch under `not` still denies (never widens a scope
+  through a missing value).
+
+The `via` leaf compiles to a `__via` marker in the portable where; the engine resolves it into proper
+quantifier nesting using the association graph. See `packages/utilize/src/permissions.ts` and
+`packages/ormize/src/engine/scope-bridge.ts`.
+
 Two rules keys feed more than one callback: `extensions` is accepted as a synonym for both
 `queryExtension` and `mutationExtension`, and `mutationCreateInput` / `mutationUpdateInput`
 fall back to `field` when unspecified, so a role that can read a field can also write it.

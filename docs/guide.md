@@ -1720,6 +1720,34 @@ it (`groupIds`); the long form `{own: {field: "ownerId", from: "userId"}}` spell
 `any` and `all` combine leaves. `read` / `write` split the operations, and an explicit `update`
 beats the `write` it falls under.
 
+**Relationship quantifiers.** A `scope` may contain relationship quantifiers: `{memberships: {some:
+{role: {eq: "manager"}}}}` means "at least one membership row matches". Available quantifiers:
+`some`/`none`/`every` for hasMany/belongsToMany, `is`/`isNot` for belongsTo/hasOne. They nest, and
+an empty inner filter means "any related row". The Sequelize adapter compiles them to `EXISTS` /
+`NOT EXISTS` subqueries; Valkey and MikroORM refuse them with `ScopeConfigurationError`.
+
+**`via` leaf.** A shorthand for relationship quantifier chains:
+
+```ts
+scope: {
+  User: {
+    via: "memberships.group.memberships",
+    match: { userId: "$principal.id", role: "manager" },
+  },
+}
+```
+
+Each hop in the dot-separated path becomes `some` (many-valued) or `is` (single-valued). `$principal.X`
+reads from the principal; a missing principal value denies.
+
+**`not` combinator.** Wraps a leaf in a portable `not`. A denying branch under `not` still denies --
+`not` can never widen a scope through a missing value.
+
+**Warning: the join model is a privilege boundary.** A rule that grants access through
+`Membership.role` is only as strong as the write scope on `Membership`. A manager who can update their
+own membership row, or create one in another group, can grant themselves anything. Scope `Membership`
+writes explicitly.
+
 Two things are deliberately unlike the rest of the rules tree. `defaultDeny` does **not** apply to
 `scope`, and `"none"` has to be written out, because an absent `scope` already means unscoped —
 without an explicit spelling, "this role sees everything" and "nobody has configured this yet" would

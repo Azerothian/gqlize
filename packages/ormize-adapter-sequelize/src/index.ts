@@ -85,6 +85,9 @@ import {
 export type * from "./types/query";
 import { replaceWhereOperators, normalizeWhereForDialect } from "./utils/where-ops";
 import { fixNestedThroughJoin, keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
+import { compileRelationshipFilters } from "./relationship-filters";
+import type { PortableWhere } from "@azerothian/utilize/gate";
+import { getScopeModelName, getScopeThroughCb } from "@azerothian/utilize/gate";
 
 // Re-export types that were declared in this file and are part of the public surface.
 export type { SequelizeAdapterOptions, SequelizeConnection, AuthoredAttributes } from "./adapter-types";
@@ -528,6 +531,22 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     );
   }
   async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): Promise<AdapterWhere> {
+    // Check for quantifier stamps from the scope-bridge. When the scope
+    // contains relationship quantifiers, the bridge stamps the model name
+    // onto the where so we can compile them here.
+    const modelName = getScopeModelName(where);
+    if (modelName) {
+      const throughCb = getScopeThroughCb(where);
+      // Compile quantifiers inside the full where (which is a mix of user
+      // where and scope where, merged by `mergeScopeWhere`).
+      const compiled = await compileRelationshipFilters(
+        this, modelName, where as PortableWhere, options, throughCb,
+      );
+      if (whereOperators) {
+        return replaceDefWhereOperators(compiled, whereOperators, options);
+      }
+      return compiled;
+    }
     // Dialect-aware normalisation: rewrites iLike → like on SQLite (where LIKE
     // is already case-insensitive) and rejects postgres-only operators on
     // non-postgres dialects with a clear message.
@@ -537,6 +556,20 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       return replaceDefWhereOperators(w, whereOperators, options);
     }
     return w;
+  }
+  /**
+   * Compile relationship quantifiers in a `PortableWhere` into correlated
+   * `EXISTS` / `NOT EXISTS` subqueries, then run the result through
+   * `processFilterArgument` for the remaining field-level operators.
+   *
+   * Called by the engine when a scope's `where` contains quantifier keys.
+   * The model name is needed to look up associations.
+   */
+  async compileRelationshipFilter(
+    modelName: string, where: PortableWhere, options: AdapterQueryOptions,
+    scopeForThrough?: (joinModel: string) => Promise<AdapterWhere | undefined>,
+  ): Promise<AdapterWhere> {
+    return compileRelationshipFilters(this, modelName, where, options, scopeForThrough);
   }
   getAllArgsToReplaceId() {
     return ["where", "include"];

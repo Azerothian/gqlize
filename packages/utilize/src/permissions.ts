@@ -215,12 +215,31 @@ const SCOPE_OPERATION_SET = new Set(SCOPE_OPERATION_KEYS);
 type ScopeSugarRef = string | { field: string; from?: string };
 
 /**
+ * A `via` leaf in the scope rules: a dot-separated relationship path from the
+ * scoped model, with a `match` filter at the innermost hop. Values beginning
+ * with `$principal.` are read from the principal at resolution time.
+ *
+ * Example: `{ via: "memberships.group.memberships", match: { userId: "$principal.id", role: "manager" } }`
+ *
+ * Compiled into a `__via` marker in the portable where; the engine resolves it
+ * into proper quantifier nesting against the association graph (single-valued
+ * hops become `is`, many-valued become `some`). This keeps `permissions.ts`
+ * free of association knowledge.
+ */
+type ScopeViaLeaf = {
+  via: string;
+  match: { [field: string]: unknown };
+};
+
+/**
  * One compiled scope condition.
  *
  * `own` matches a field against the principal's id; `group` matches a field
  * against a *list* on the principal; `tenant` is `own` with a different default
  * principal key, kept separate because it reads better in a rules tree and
  * because it is the case that most often wants `set` on a create.
+ * `via` follows a relationship path and applies a match filter at the end.
+ * `not` inverts a leaf — a denying branch under `not` still denies (never widens).
  */
 type ScopeSugarLeaf =
   | RuleDecision
@@ -228,8 +247,10 @@ type ScopeSugarLeaf =
   | { own: ScopeSugarRef }
   | { tenant: ScopeSugarRef }
   | { group: ScopeSugarRef }
+  | ScopeViaLeaf
   | { any: ScopeSugarLeaf[] }
-  | { all: ScopeSugarLeaf[] };
+  | { all: ScopeSugarLeaf[] }
+  | { not: ScopeSugarLeaf };
 
 /** A model's scope rules: one leaf for everything, or a leaf per operation. */
 type ScopeRuleNode =
@@ -375,7 +396,64 @@ function compileLeaf(leaf: ScopeSugarLeaf, principal: Principal | undefined, ope
     }
     return Object.keys(out).length > 0 ? out : undefined;
   }
+  if ("not" in leaf) {
+    const inner = compileLeaf(leaf.not, principal, operation);
+    // A denying branch under `not` still denies — `not` can never widen a
+    // scope through a missing principal value or an explicit deny.
+    if (inner === false) {
+      return false;
+    }
+    if (inner === undefined) {
+      // `not(undefined)` is `not(no opinion)` = no opinion. An unscoped leaf
+      // inverted is still unscoped — there is nothing to negate.
+      return undefined;
+    }
+    if (!inner.where) {
+      // `not` only makes sense over a filter, not a bare `set`. A `set`-only
+      // scope under `not` has nothing to invert.
+      return undefined;
+    }
+    return { where: { not: inner.where } };
+  }
+  if ("via" in leaf) {
+    return compileViaLeaf(leaf, principal, operation);
+  }
   return undefined;
+}
+
+/**
+ * Compile a `via` leaf into a `__via` marker in the portable where.
+ *
+ * Values beginning with `$principal.` are resolved from the principal here;
+ * a missing principal value is a deny (consistent with `own` and `group`).
+ * The engine later resolves the `__via` marker into proper quantifier nesting
+ * against the association graph.
+ */
+function compileViaLeaf(
+  leaf: ScopeViaLeaf, principal: Principal | undefined, _operation: ScopeOperation,
+): LeafResult {
+  const path = leaf.via.split(".");
+  if (path.length === 0 || path.some((p) => !p)) {
+    return undefined;
+  }
+  // Resolve $principal.X references in the match filter.
+  const resolvedMatch: { [field: string]: unknown } = {};
+  for (const [field, value] of Object.entries(leaf.match)) {
+    if (typeof value === "string" && value.startsWith("$principal.")) {
+      const principalKey = value.slice("$principal.".length);
+      const principalValue = principal?.[principalKey];
+      if (principalValue === undefined || principalValue === null) {
+        // Missing principal value = deny, consistent with `own` and `group`.
+        return false;
+      }
+      resolvedMatch[field] = { eq: principalValue };
+    } else {
+      // Literal value: wrap in `eq` for the portable filter.
+      resolvedMatch[field] = { eq: value };
+    }
+  }
+  // Emit the __via marker. The engine resolves it into quantifier nesting.
+  return { where: { __via: { path, match: resolvedMatch } } };
 }
 
 function leafForOperation(node: ScopeRuleNode, operation: ScopeOperation): ScopeSugarLeaf | undefined {

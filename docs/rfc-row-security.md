@@ -1,9 +1,10 @@
 # RFC: Row security — relationship filters, global filters and Postgres RLS
 
-> **Status:** Proposed. Nothing in this document is implemented. When a phase ships, its content
-> moves into [`specifications.md`](specifications.md) (reference) and [`guide.md`](guide.md)
-> (usage), and the phase is struck from here. Until then, the as-built behaviour is the one in
-> those two documents.
+> **Status:** Phase 1 (relationship filters) is implemented. Its as-built behaviour is documented
+> in [`specifications.md`](specifications.md) (§7, "Relationship quantifiers in scope" and
+> "`via` leaf and `not` combinator") and [`guide.md`](guide.md) (§8, "Relationship quantifiers",
+> "`via` leaf", "`not` combinator"). The design text for Phase 1 is preserved below for reference.
+> Phases 2 and 3 remain proposed.
 
 ## Contents
 

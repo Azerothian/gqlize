@@ -5,6 +5,7 @@ import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/
 import {relationshipAccessors} from "@azerothian/utilize/utils/relationship-accessors";
 import {reciprocalOtherKey, relationshipForeignKey, throughModelName, throughOtherKey} from "@azerothian/utilize/utils/join-keys";
 import {lowercase} from "@azerothian/utilize/utils/word";
+import { ScopeConfigurationError } from "@azerothian/utilize/gate";
 import type {
   AdapterListOptions, AdapterListRequest, AdapterQueryOptions, AdapterRelationshipRequest,
   AdapterRow, AdapterWhere, Association, Definition, HookMap, IdTranslation, InitialiseOptions, Model,
@@ -682,6 +683,13 @@ export default class ValkeyAdapter implements GqlizeAdapter {
   // ---- query ----
   processFilterArgument = (where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions) =>
     processFilterArgument(where, whereOperators, options);
+
+  compileRelationshipFilter = (): never => {
+    throw new ScopeConfigurationError(
+      "The Valkey adapter does not support relationship quantifiers in scope filters. " +
+      "Valkey has no join to express them with.",
+    );
+  };
 
   /** Merge an equality (or, for arrays, membership) filter into an existing `where`. */
   andFilterStatements = (a: AdapterWhere | undefined, b: AdapterWhere | undefined) => {

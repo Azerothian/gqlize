@@ -9,6 +9,7 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/scope-reads.test.ts',
   '<rootDir>/__tests__/scope-relationships.test.ts',
   '<rootDir>/__tests__/scope-enforcement.test.ts',
+  '<rootDir>/__tests__/scope-quantifiers.test.ts',
   '<rootDir>/__tests__/transaction.test.ts',
   '<rootDir>/__tests__/manager.test.ts',
   '<rootDir>/__tests__/config-purity.test.ts',

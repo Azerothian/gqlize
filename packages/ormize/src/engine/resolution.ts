@@ -22,7 +22,10 @@ import Events from "../events";
 import type { HookHost } from "./hooks";
 import { runHook, applyEagerAfterFind } from "./hooks";
 import type { ScopeHost } from "./scope-bridge";
-import { resolveRowScope, reassertRowScope, withScopeFor } from "./scope-bridge";
+import {
+  resolveRowScope, reassertRowScope, withScopeFor, compileScopeWhereIfNeeded,
+  stampQuantifierInfo,
+} from "./scope-bridge";
 import type { ReadCacheHost } from "./read-cache-bridge";
 import { cachedCount, cachedFindAll } from "./read-cache-bridge";
 
@@ -222,10 +225,11 @@ export async function resolveManyRelationship(self: ResolutionHost, defName: str
   // when the relationship was not eager-loaded: the accessor query and the
   // `total` count both derive from `args.where`, so merging here covers both.
   // The eager branch is covered upstream, in the include plan.
-  const rowScope = await resolveRowScope(self, defName, "read", context);
+  let rowScope = await resolveRowScope(self, defName, "read", context);
   if (rowScope === false) {
     return { total: 0, models: [] };
   }
+  rowScope = compileScopeWhereIfNeeded(self, defName, context, rowScope);
   const options = createResolveContext(context, selection, source);
   const adapter = self.getModelAdapter(defName);
   const definition = self.getDefinition(defName);
@@ -236,6 +240,7 @@ export async function resolveManyRelationship(self: ResolutionHost, defName: str
   let a = args;
   if (rowScope?.where) {
     a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, rowScope)};
+    stampQuantifierInfo(a.where as PortableWhere, rowScope);
   }
   // A nested connection's own `include` argument goes to the adapter's
   // per-parent query: normalised as at the root, and a through-mode relation in
@@ -305,10 +310,11 @@ export async function resolveSingleRelationship(self: ResolutionHost, defName: s
     const {models} = await resolveCrossAdapterRelationship(self, defName, association, source, {...args, first: 1}, context, single);
     return models[0] || null;
   }
-  const rowScope = await resolveRowScope(self, defName, "read", context);
+  let rowScope = await resolveRowScope(self, defName, "read", context);
   if (rowScope === false) {
     return null;
   }
+  rowScope = compileScopeWhereIfNeeded(self, defName, context, rowScope);
   const adapter = self.getModelAdapter(defName);
   const options = createResolveContext(context, selection, source);
   if (rowScope?.where) {
@@ -319,8 +325,10 @@ export async function resolveSingleRelationship(self: ResolutionHost, defName: s
     //
     // Written in place, and not a caller's object: `createResolveContext`
     // builds a fresh bag on every call.
+    const merged = applyScopeWhere(options.where as PortableWhere | undefined, rowScope) as PortableWhere;
+    stampQuantifierInfo(merged, rowScope);
     options.where = await adapter.processFilterArgument(
-      applyScopeWhere(options.where as PortableWhere | undefined, rowScope),
+      merged,
       whereOperatorsFor(self.getDefinition(defName)),
       options,
     );
@@ -383,7 +391,10 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   // place its model's scope can be applied.
   const scopedInclude = await scopeIncludePlan(
     a.include as IncludeMap[] | undefined,
-    (targetName) => resolveRowScope(self, targetName, "read", context),
+    async (targetName) => compileScopeWhereIfNeeded(
+      self, targetName, context,
+      await resolveRowScope(self, targetName, "read", context),
+    ),
     // "No rows", in the include's own vocabulary: the target's key `in []`.
     // Lets a `required` relation whose model is denied outright still filter
     // its parent rather than vanish from the plan.
@@ -409,7 +420,7 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   // `processListArgsToOptions` derives `countOptions` from these args — a
   // scope applied only to the fetch leaves `total` counting rows the caller
   // is not allowed to see.
-  const rowScope = await resolveRowScope(self, defName, "read", context);
+  let rowScope = await resolveRowScope(self, defName, "read", context);
   if (rowScope === false) {
     // Denied outright. There is no portable filter for "match nothing" (§9.4
     // of the design rejects `{in: []}` as one), and no reason to ask the
@@ -417,8 +428,12 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
     // already sees, which is what makes the two indistinguishable.
     return { total: 0, models: [] };
   }
+  // Stamp the scope where with quantifier info so the adapter can compile them.
+  rowScope = compileScopeWhereIfNeeded(self, defName, context, rowScope);
   if (rowScope?.where) {
     a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, rowScope)};
+    // Propagate quantifier stamps to the merged where so processFilterArgument finds them.
+    stampQuantifierInfo(a.where as PortableWhere, rowScope);
   }
   const offset = cursorOffset(args);
   const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, {

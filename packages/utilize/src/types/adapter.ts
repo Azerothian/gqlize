@@ -193,6 +193,24 @@ export interface OrmAdapter {
    */
   andFilterStatements?(a: AdapterWhere | undefined, b: AdapterWhere | undefined): AdapterWhere | undefined;
   /**
+   * Optional: compile relationship quantifiers (`some`, `none`, `every`, `is`,
+   * `isNot`) in a `PortableWhere` into the adapter's native form. Called by the
+   * engine when a scope contains quantifiers. Adapters that cannot express
+   * quantifiers (Valkey, MikroORM) throw `ScopeConfigurationError`.
+   *
+   * @param modelName - the model the where belongs to
+   * @param where - portable filter that may contain quantifier keys
+   * @param options - the query options
+   * @param scopeForThrough - optional: returns the read scope for a registered
+   *   join model, so it can be applied inside the subquery
+   */
+  compileRelationshipFilter?(
+    modelName: string,
+    where: { [key: string]: unknown },
+    options: AdapterQueryOptions,
+    scopeForThrough?: (joinModel: string) => Promise<AdapterWhere | undefined>,
+  ): Promise<AdapterWhere>;
+  /**
    * Optional: install an extra instance method on an already-defined model. Used
    * to attach cross-adapter relationship accessors to adapters whose "model" is a
    * plain descriptor rather than a class with a prototype.

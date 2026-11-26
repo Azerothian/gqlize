@@ -1,4 +1,4 @@
-import { isFieldExposed, LOGICAL_OPERATORS } from "./gate";
+import { isFieldExposed, LOGICAL_OPERATORS, parseQuantifier } from "./gate";
 import { FILTER_LIST_OPERATORS, FILTER_REGEX_OPERATORS, FILTER_VALUE_OPERATORS } from "./filter-operators";
 import type { Permission } from "./types/index";
 
@@ -100,6 +100,14 @@ export function assertFilterAllowed(
         assertFilterAllowed(permission, name, branch, fail, definition, options);
       }
       continue;
+    }
+    // Relationship quantifiers (some, none, every, is, isNot) are not allowed
+    // in client-supplied filters. They may only appear in scope results,
+    // global filters, and direct engine callers. Blocking them here prevents
+    // a client from filtering on a relationship, which would leak whether a
+    // related row exists.
+    if (parseQuantifier(clause[key])) {
+      fail("denied-field", `Relationship quantifier filters are not allowed in client-supplied where clauses (key '${key}')`);
     }
     // `definition` is optional so a caller without one keeps the permission
     // check alone; one that has it also refuses an `ignoreFields` column.
