@@ -6,7 +6,7 @@
 import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
 import {
-  resolveViaMarkers, collectQuantifierTargets, parseQuantifier, LOGICAL_OPERATORS,
+  resolveViaMarkers, excludeRowsFromQuantifiers, collectQuantifierTargets, parseQuantifier, LOGICAL_OPERATORS,
   ScopeConfigurationError, THROUGH_SCOPE_KEY, mergeScopeWhere,
 } from "@azerothian/utilize/gate";
 import { applyScopeWhere, scopeFor, scopeMiss, markSystemQuery } from "../scope";
@@ -161,6 +161,7 @@ export async function scopeNativeWhere(
   self: ScopeHost,
   defName: string, operation: ScopeOperation, context: RequestContext,
   where: AdapterWhere | undefined, options: AdapterQueryOptions | undefined,
+  excludeCreated?: { pk: string; ids: unknown[] },
 ): Promise<AdapterWhere | undefined | false> {
   const resolved = await resolveRowScope(self, defName, operation, context);
   if (resolved === false) {
@@ -169,11 +170,17 @@ export async function scopeNativeWhere(
   // Global filters (RFC §5), merged alongside scope in native vocabulary.
   const gf = resolveModelGlobalFilters(self, defName, operation);
   const scopeWhere = resolved?.where;
-  const combined = gf
+  let combined = gf
     ? (scopeWhere ? mergeScopeWhere(gf, scopeWhere) : gf)
     : scopeWhere;
   if (!combined) {
     return where;
+  }
+  if (excludeCreated) {
+    combined = excludeRowsFromQuantifiers(combined, defName, { model: defName, ...excludeCreated }, (model, rel) => {
+      const assoc = self.defs[model] ? self.host.getAssociations(model)[rel] : undefined;
+      return assoc ? { target: assoc.target } : undefined;
+    });
   }
   const adapter = self.getModelAdapter(defName);
   const embedded = await embedThroughScopes(self, defName, combined, context);
@@ -274,11 +281,17 @@ export async function assertRowsInScope(
   // reached nothing — and a principal allowed to add rows to a model it may
   // not read back is a legitimate arrangement that asking the read scope here
   // would quietly ban.
+  const adapter = self.getModelAdapter(defName);
+  const [pk] = adapter.getPrimaryKeyNameForModel(defName);
+  const ids = rows.map((r) => adapter.getValueFromInstance(r, pk));
   let where = operation === "create"
     ? undefined
     : await scopeNativeWhere(self, defName, "read", context, undefined, options);
   if (where !== false) {
-    where = await scopeNativeWhere(self, defName, operation, context, where, options);
+    // A created row is judged against the rows that existed before it, never
+    // against itself (see `excludeRowsFromQuantifiers`).
+    where = await scopeNativeWhere(self, defName, operation, context, where, options,
+      operation === "create" ? { pk, ids } : undefined);
   }
   if (where === false) {
     // Not reachable from today's call sites — every one of them refuses an
@@ -293,9 +306,6 @@ export async function assertRowsInScope(
     // mutation on every unscoped deployment in exchange for no answer.
     return;
   }
-  const adapter = self.getModelAdapter(defName);
-  const [pk] = adapter.getPrimaryKeyNameForModel(defName);
-  const ids = rows.map((r) => adapter.getValueFromInstance(r, pk));
   const found = await adapter.findAll(defName, markSystemQuery({
     ...(options?.transaction !== undefined ? {transaction: options.transaction} : {}),
     where: filterMerger(self.host, defName)(pk, ids, true, where),

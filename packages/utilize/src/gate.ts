@@ -909,6 +909,59 @@ export function resolveViaMarkers(
 }
 
 /**
+ * Keep rows a write just created out of every relationship quantifier that
+ * ranges over their own model, so the post-create re-check judges them against
+ * the rows that existed before them.
+ *
+ * Without this a created row can vouch for itself: a `Membership` write scope of
+ * "you manage this group" (`group.memberships.some({userId: me, role:
+ * "manager"})`) is satisfied by the very membership being created when it says
+ * `role: "manager"`. Postgres evaluates an insert's `WITH CHECK` before the row
+ * is visible, so this is also what keeps the engine and an RLS policy in
+ * agreement. Rows created by *other* writes of the same mutation (a nested
+ * create, linked after) still count, which RFC §4.5's ordering relies on.
+ *
+ * `some`/`is`/`none`/`isNot` add `pk notIn ids` to the inner filter; `every`
+ * has to narrow its range instead of its condition, so it ORs `pk in ids` in.
+ */
+export function excludeRowsFromQuantifiers(
+  where: PortableWhere,
+  model: string,
+  excluded: { model: string; pk: string; ids: unknown[] },
+  associationInfo: (defName: string, relName: string) => { target: string } | undefined,
+): PortableWhere {
+  const result: PortableWhere = {};
+  for (const key of Object.keys(where)) {
+    const lower = key.toLowerCase();
+    const value = where[key];
+    if (LOGICAL_OPERATORS.has(lower)) {
+      result[key] = Array.isArray(value)
+        ? value.map((entry) => excludeRowsFromQuantifiers(entry as PortableWhere, model, excluded, associationInfo))
+        : excludeRowsFromQuantifiers(value as PortableWhere, model, excluded, associationInfo);
+      continue;
+    }
+    const quantifier = parseQuantifier(value);
+    const assoc = quantifier ? associationInfo(model, key) : undefined;
+    if (!quantifier || !assoc) {
+      result[key] = value;
+      continue;
+    }
+    let inner = excludeRowsFromQuantifiers(quantifier.inner || {}, assoc.target, excluded, associationInfo);
+    if (assoc.target === excluded.model) {
+      const hasInner = Object.keys(inner).length > 0;
+      if (quantifier.quantifier === "every") {
+        inner = hasInner ? { or: [inner, { [excluded.pk]: { in: excluded.ids } }] } : inner;
+      } else {
+        const notSelf = { [excluded.pk]: { notIn: excluded.ids } };
+        inner = hasInner ? { and: [inner, notSelf] } : notSelf;
+      }
+    }
+    result[key] = { ...(value as object), [quantifier.quantifier]: inner };
+  }
+  return result;
+}
+
+/**
  * Build the nested quantifier chain for a single `via` path.
  */
 function resolveViaPath(

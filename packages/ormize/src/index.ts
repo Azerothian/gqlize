@@ -6,6 +6,7 @@ export { default as Events } from "./events";
 export * from "./types";
 export { MemoryCacheStore } from "./read-cache";
 export { ThroughInputError } from "./through-input-error";
+export { ScopeDeniedError, ScopeEscapeError } from "./scope";
 export type { default as ReadCache, MemoryCacheStoreOptions } from "./read-cache";
 export { CsvUploadError } from "./csv/errors";
 export type { CsvUploadErrorCode } from "./csv/errors";

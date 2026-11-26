@@ -397,7 +397,11 @@ function compileLeaf(leaf: ScopeSugarLeaf, principal: Principal | undefined, ope
     return Object.keys(out).length > 0 ? out : undefined;
   }
   if ("not" in leaf) {
-    const inner = compileLeaf(leaf.not, principal, operation);
+    // On a create, `own`/`tenant` compile to a `set` (force the value), which
+    // has nothing to negate. "Not your own" on a create still means the row
+    // must not carry your id, so negate the filter form a read would use.
+    // Dropping it instead silently widened every `not` on a create.
+    const inner = compileLeaf(leaf.not, principal, operation === "create" ? "read" : operation);
     // A denying branch under `not` still denies — `not` can never widen a
     // scope through a missing principal value or an explicit deny.
     if (inner === false) {
@@ -718,7 +722,7 @@ export interface CompileRlsPoliciesOptions {
  * no matching policy exists). `none`/`allow` emits `using: true` (see
  * everything).
  *
- * Insert `WITH CHECK` omits quantifier branches (§4.5).
+ * Insert `WITH CHECK` carries the full rule, quantifiers included.
  *
  * Never emits the model's deletedAt column (§6.8).
  */
@@ -753,7 +757,7 @@ export function compileRlsPolicies(
       // SELECT policy
       if (readLeaf !== undefined && readLeaf !== "deny") {
         const policyName = `${role}_read`;
-        const using = compileLeafToRlsWhere(readLeaf, options, false);
+        const using = compileLeafToRlsWhere(readLeaf, options);
         if (using !== undefined) {
           result[model][policyName] = {
             for: "select",
@@ -763,11 +767,14 @@ export function compileRlsPolicies(
         }
       }
 
-      // INSERT policy (WITH CHECK only, no USING; omit quantifier branches §4.5)
+      // INSERT policy (WITH CHECK only). The full rule, quantifiers included:
+      // a brand-new row has no related rows pointing at it yet, so a
+      // child-first quantifier simply doesn't match, and dropping it instead
+      // would widen any `all` (or `not`) it sits in.
       const insertLeaf = createLeaf ?? writeLeaf;
       if (insertLeaf !== undefined && insertLeaf !== "deny") {
         const policyName = `${role}_insert`;
-        const withCheck = compileLeafToRlsWhere(insertLeaf, options, true);
+        const withCheck = compileLeafToRlsWhere(insertLeaf, options);
         if (withCheck !== undefined) {
           result[model][policyName] = {
             for: "insert",
@@ -781,7 +788,7 @@ export function compileRlsPolicies(
       const updLeaf = updateLeaf ?? writeLeaf;
       if (updLeaf !== undefined && updLeaf !== "deny") {
         const policyName = `${role}_update`;
-        const using = compileLeafToRlsWhere(updLeaf, options, false);
+        const using = compileLeafToRlsWhere(updLeaf, options);
         if (using !== undefined) {
           result[model][policyName] = {
             for: "update",
@@ -795,7 +802,7 @@ export function compileRlsPolicies(
       const delLeaf = deleteLeaf ?? writeLeaf;
       if (delLeaf !== undefined && delLeaf !== "deny") {
         const policyName = `${role}_delete`;
-        const using = compileLeafToRlsWhere(delLeaf, options, false);
+        const using = compileLeafToRlsWhere(delLeaf, options);
         if (using !== undefined) {
           result[model][policyName] = {
             for: "delete",
@@ -812,16 +819,15 @@ export function compileRlsPolicies(
 /**
  * Compile a scope sugar leaf into a PortableWhere suitable for an RLS policy.
  * Setting references (`$principal.X`) become `rls.setting(…)` markers.
- * `skipQuantifiers` omits quantifier branches (for INSERT WITH CHECK, §4.5).
  */
 function compileLeafToRlsWhere(
   leaf: ScopeSugarLeaf,
   options: CompileRlsPoliciesOptions,
-  skipQuantifiers: boolean,
 ): PortableWhere | undefined {
   if (leaf === "none" || leaf === "allow") {
-    // Everything visible — Postgres: `USING (TRUE)`
-    return { __rawTrue: true };
+    // Everything visible: `USING (TRUE)`. A SQL fragment, which the policy
+    // compiler emits verbatim wherever it appears (alone or as a branch).
+    return { __sqlFragment: true, text: "TRUE" };
   }
   if (leaf === "deny") {
     return undefined;
@@ -843,14 +849,11 @@ function compileLeafToRlsWhere(
     return { [ref.field]: { in: makeSetting(ref.from, options, true) } };
   }
   if ("via" in leaf) {
-    if (skipQuantifiers) {
-      return undefined; // §4.5: INSERT WITH CHECK omits quantifier branches
-    }
     return compileViaToRlsWhere(leaf, options);
   }
   if ("any" in leaf) {
     const branches = leaf.any
-      .map((entry) => compileLeafToRlsWhere(entry, options, skipQuantifiers))
+      .map((entry) => compileLeafToRlsWhere(entry, options))
       .filter(Boolean) as PortableWhere[];
     if (branches.length === 0) {
       return undefined;
@@ -862,7 +865,7 @@ function compileLeafToRlsWhere(
   }
   if ("all" in leaf) {
     const branches = leaf.all
-      .map((entry) => compileLeafToRlsWhere(entry, options, skipQuantifiers))
+      .map((entry) => compileLeafToRlsWhere(entry, options))
       .filter(Boolean) as PortableWhere[];
     if (branches.length === 0) {
       return undefined;
@@ -873,7 +876,7 @@ function compileLeafToRlsWhere(
     return { and: branches };
   }
   if ("not" in leaf) {
-    const inner = compileLeafToRlsWhere(leaf.not, options, skipQuantifiers);
+    const inner = compileLeafToRlsWhere(leaf.not, options);
     if (!inner) {
       return undefined;
     }
@@ -884,9 +887,11 @@ function compileLeafToRlsWhere(
 }
 
 /**
- * Compile a `via` leaf into quantifier nesting with setting references.
- * The path hops become `some`/`is` quantifiers, and the match filter's
- * `$principal.X` values become `rls.setting(…)`.
+ * Compile a `via` leaf into the same `__via` marker the engine's sugar emits,
+ * with the match filter's `$principal.X` values as `rls.setting(…)` markers.
+ * Which quantifier each hop takes (`is` for belongsTo/hasOne, `some` for
+ * hasMany/belongsToMany) depends on the association graph, which only the
+ * adapter's policy compiler has, so it resolves the marker there.
  */
 function compileViaToRlsWhere(
   leaf: ScopeViaLeaf,
@@ -894,7 +899,6 @@ function compileViaToRlsWhere(
 ): PortableWhere {
   const path = leaf.via.split(".");
   const match: PortableWhere = {};
-
   for (const [field, value] of Object.entries(leaf.match)) {
     if (typeof value === "string" && value.startsWith("$principal.")) {
       const principalKey = value.slice("$principal.".length);
@@ -903,18 +907,7 @@ function compileViaToRlsWhere(
       match[field] = { eq: value };
     }
   }
-
-  // Build the nesting from inside out. The last hop wraps the match filter,
-  // each outer hop wraps the previous. All hops use `some` for many-valued
-  // relationships; the actual quantifier choice (`is` vs `some`) happens at
-  // compile time in the policy compiler, which knows the association type.
-  // For the RLS policy output we always use `some` and let the policy compiler
-  // decide.
-  let current: PortableWhere = match;
-  for (let i = path.length - 1; i >= 0; i--) {
-    current = { [path[i]]: { some: current } };
-  }
-  return current;
+  return { __via: { path, match } };
 }
 
 function makeSetting(
