@@ -15,36 +15,36 @@
 > global filter an adapter can't express fails at its first query, not at `initialise` (§10 Q6).
 >
 > Phase 3a (declaration, compilation, reconciliation) is implemented.
-> Phase 3b (per-request runtime enforcement) is partially implemented:
+> Phase 3b (per-request runtime enforcement) is partially implemented.
 >
 > **Implemented:**
 > - Adapter config (`rls` on `SequelizeAdapterOptions`): `settings(ctx)`, `role(ctx)`,
->   `bypassRole`, `enforce`, `softDeleteFlag`. Validated at construction time.
-> - `beginTransaction(context?)`: applies `set_config` + `SET LOCAL ROLE` per request.
-> - `isDatabaseEnforced` / `isRlsEnabled` / `resolveRlsRole` / `resolveRlsSettings` on the adapter.
-> - **Fail-closed database enforcement**: `isDatabaseEnforced` requires an active transaction;
->   without one the engine keeps the scope (enforcement is "both", never "neither").
-> - **Read wrapping** (§6.5): `resolveFindAll`, `resolveManyRelationship`,
->   `resolveSingleRelationship` wrap the read in a transaction when any model in the query
->   is RLS-enabled and no transaction exists. Reuses a caller's `orm.transaction`.
-> - **No identity → deny** (§6.5): `role(ctx)` returning `undefined` refuses the read/write
->   through `scopeMiss` (honours `onScopeMiss`); no query runs under the connection role.
-> - **Scope skip for database-enforced models** (§6.6): scope predicate, scope hooks,
->   post-write re-check, scope audit all skipped when inside a transaction on a
->   database-enforced model. Scope `set` on create/update still applied.
-> - **Error mapping** (§6.5): Postgres 42501 → `ScopeEscapeError`; on soft-delete/restore
->   → configuration error (§6.8).
-> - **Build-time checks** (§6.7): RLS model on adapter without `rls` config → error;
->   `onScopeMiss: "throw"` without `bypassRole` → warning.
+>   `bypassRole`, `enforce`. Names validated at construction.
+> - `beginTransaction(context?)` applies `set_config` (bound values) and `SET LOCAL ROLE`.
+> - **Database enforcement is tied to the transaction's identity.** The engine skips its scope
+>   for a model only when the operation runs on a transaction *that model's adapter* opened with
+>   a request's settings and role applied, and only for the same identity (role and settings) the
+>   transaction was opened with. Any other transaction, whether bare, opened by the caller, or
+>   from another adapter, and any principal switched mid-transaction, keeps the engine scope:
+>   enforcement is "both", never "neither".
+> - **Read wrapping** (§6.5) for root, many- and single-relationship reads of RLS models.
+> - **No identity → deny** (§6.5): no query runs under the connection's own role.
+> - Scope predicate (read/delete), scope hooks and post-write re-check skipped under the
+>   condition above; scope `set` on create/update still applied; global filters still applied.
+> - Error mapping: `42501` → `ScopeEscapeError`; on soft delete/restore → configuration error.
+> - Build-time checks (§6.7).
 >
-> **Deferred:**
-> - Read-cache key augmentation for RLS identity.
-> - Nested-context switch detection inside an open RLS transaction.
-> - Direct-model surfaces (class/instance methods) inside the RLS transaction;
->   `unscoped` under `bypassRole`; `orm.asSystem`.
-> - `onScopeMiss: "throw"` re-check under `bypassRole`.
-> - Soft-delete flag wiring (`app.include_deleted` set per transaction).
-> - Full parity test (§7 group-manager model through the gqlize schema).
+> **Deferred, and what that means in practice:**
+> - **Direct-model surfaces** (class/instance methods, raw SQL, `extend` fields) don't run inside
+>   an RLS transaction, so on an RLS model they still need `scopeAware` / `unscoped` (and raw SQL a
+>   `:scope…` parameter), exactly as without RLS. `unscoped` under `bypassRole` and `orm.asSystem`
+>   are not implemented.
+> - **`onScopeMiss: "throw"`** on an RLS model behaves as `"empty"` (warned at build).
+> - **`softDeleteFlag`** is refused at construction rather than accepted and ignored.
+> - **Read cache**: correctness is pinned by `ormize/__tests__/rls-engine.test.ts` (two principals,
+>   cache on); keying cached RLS reads on the identity, so they can be served from cache, is not done.
+> - **Parity test** for the §7 group-manager model through the gqlize schema, and execution of
+>   `compileRlsPolicies` output under a role switch, are not written.
 
 ## Contents
 

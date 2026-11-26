@@ -1885,7 +1885,6 @@ new SequelizeAdapter({
     role: (ctx) => `app_${ctx.user.role}`,
     bypassRole: "app_system",               // optional
     enforce: "database",                     // default; "both" keeps engine scope too
-    softDeleteFlag: "app.include_deleted",   // optional (§6.8)
   },
 }, connectionConfig);
 ```
@@ -1910,8 +1909,15 @@ connection's own role. Deployments that serve anonymous reads return an explicit
 `app_anonymous` role and give it the policies it should have.
 
 **Fail closed.** Database enforcement (skipping the engine scope) only takes effect when the
-operation is running inside a transaction with settings applied. Without a transaction, the
-engine keeps applying the scope — enforcement is "both", never "neither".
+operation runs on a transaction the model's own adapter opened with the request's settings and
+role applied, and for the same identity it was opened with. A transaction you open yourself, one
+opened without a request context, another adapter's, or one reused after the principal changed
+keeps the engine scope: enforcement is "both", never "neither".
+
+**Not yet.** Class methods, instance methods, raw-SQL methods and `extend` fields don't run inside
+an RLS transaction yet, so on an RLS model they still declare `scopeAware` / `unscoped` as they
+would without RLS. `orm.asSystem`, `onScopeMiss: "throw"` on RLS models and the soft-delete flag
+(`softDeleteFlag`, refused if set) are still to come; see the RFC status.
 
 **Errors.** A `WITH CHECK` violation (Postgres `42501`) surfaces as `ScopeEscapeError`.
 A `42501` on a soft-delete or restore is reported as a configuration error pointing at
