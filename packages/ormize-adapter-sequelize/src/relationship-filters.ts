@@ -138,7 +138,7 @@ async function compileOutermost(
   association: Association,
   quantifier: string,
   innerFilter: PortableWhere,
-  throughScope: PortableWhere | undefined,
+  throughScope: PortableWhere | false | undefined,
   qg: QG,
   sequelize: Sequelize,
   options: AdapterQueryOptions,
@@ -179,7 +179,7 @@ async function compileQuantifier(
   association: Association,
   quantifier: string,
   innerFilter: PortableWhere,
-  throughScope: PortableWhere | undefined,
+  throughScope: PortableWhere | false | undefined,
   parentRef: string,
   qg: QG,
   sequelize: Sequelize,
@@ -276,7 +276,7 @@ async function compileBtmQuantifier(
   association: Association,
   quantifier: string,
   innerFilter: PortableWhere,
-  throughScope: PortableWhere | undefined,
+  throughScope: PortableWhere | false | undefined,
   parentRef: string,
   qg: QG,
   sequelize: Sequelize,
@@ -336,7 +336,10 @@ async function compileBtmQuantifier(
   // The through-scope may itself contain quantifiers on the join model's
   // relationships, so it goes through the full compilation pipeline.
   let joinScopeClause = "";
-  if (throughScope && Object.keys(throughScope).length > 0) {
+  if (throughScope === false) {
+    // The join model's scope denies outright: no link qualifies.
+    joinScopeClause = " AND 1=0";
+  } else if (throughScope && Object.keys(throughScope).length > 0) {
     const normalizedThrough = normalizeWhereForDialect(throughScope, sequelize.getDialect());
     const joinAssociations = host.getAssociations(joinModelName);
     const hasNestedQuantifiers = Object.keys(normalizedThrough).some((k) => {

@@ -766,7 +766,7 @@ export const THROUGH_SCOPE_KEY = "__throughScope";
 
 export function parseQuantifier(
   value: unknown,
-): { quantifier: string; inner: PortableWhere; throughScope?: PortableWhere } | undefined {
+): { quantifier: string; inner: PortableWhere; throughScope?: PortableWhere | false } | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
@@ -789,8 +789,11 @@ export function parseQuantifier(
   // string is not a filter.
   if (inner !== null && inner !== undefined && typeof inner === "object" && !Array.isArray(inner)) {
     const throughScope = (value as { [k: string]: unknown })[THROUGH_SCOPE_KEY];
-    const ts = (throughScope && typeof throughScope === "object" && !Array.isArray(throughScope))
-      ? throughScope as PortableWhere : undefined;
+    // `false` is the join model's scope denying outright: no link qualifies.
+    const ts = throughScope === false
+      ? false
+      : (throughScope && typeof throughScope === "object" && !Array.isArray(throughScope))
+        ? throughScope as PortableWhere : undefined;
     return { quantifier: key, inner: inner as PortableWhere, throughScope: ts };
   }
   return undefined;

@@ -351,29 +351,30 @@ export async function embedThroughScopes(
         // Resolve the join model's read scope.
         const joinModel = association.through;
         const throughResolved = await resolveRowScope(self, joinModel, "read", context);
-        let throughWhere: PortableWhere | undefined;
+        let throughWhere: PortableWhere | false | undefined;
         if (throughResolved === false) {
-          // A denying through-scope means no link qualifies. Embed an
-          // impossible filter so the quantifier matches nothing.
-          throughWhere = { __deny: { eq: true } };
+          // A denying through-scope means no link qualifies. Carried as
+          // `false`, which the adapter writes as a contradiction; a made-up
+          // column here would turn "nothing qualifies" into a SQL error.
+          throughWhere = false;
         } else if (throughResolved && throughResolved.where) {
           // The through-scope may itself contain quantifiers; embed their
           // through-scopes recursively.
           throughWhere = await embedThroughScopes(self, joinModel, throughResolved.where, context);
         }
         const quantifierValue: PortableWhere = { [quantifier.quantifier]: innerEmbedded || {} };
-        if (throughWhere) {
+        if (throughWhere !== undefined) {
           quantifierValue[THROUGH_SCOPE_KEY] = throughWhere;
         }
         // Carry forward any existing __throughScope from an outer embedding.
-        if (quantifier.throughScope && !throughWhere) {
+        if (quantifier.throughScope !== undefined && throughWhere === undefined) {
           quantifierValue[THROUGH_SCOPE_KEY] = quantifier.throughScope;
         }
         result[key] = quantifierValue;
         changed = true;
       } else if (innerEmbedded !== quantifier.inner) {
         result[key] = { [quantifier.quantifier]: innerEmbedded || {} };
-        if (quantifier.throughScope) {
+        if (quantifier.throughScope !== undefined) {
           (result[key] as PortableWhere)[THROUGH_SCOPE_KEY] = quantifier.throughScope;
         }
         changed = true;
