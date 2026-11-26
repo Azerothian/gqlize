@@ -293,6 +293,18 @@ export interface OrmAdapter {
    * cache key includes the RLS identity.
    */
   isRlsEnabled?(defName: string): boolean;
+  /**
+   * Optional: resolve the database role for a request context. Returns the
+   * role name, or `undefined` when no identity is available. The engine calls
+   * this BEFORE opening a transaction; `undefined` → refuse as a scope deny
+   * (RFC §6.5 "No identity").
+   */
+  resolveRlsRole?(context: import("./primitives").RequestContext): string | undefined;
+  /**
+   * Optional: resolve the RLS settings for a request context. Returns the
+   * settings map. Used by the read-cache key augmentation (RFC §6.5).
+   */
+  resolveRlsSettings?(context: import("./primitives").RequestContext): { [name: string]: string | number | boolean | (string | number)[] } | undefined;
   /** Read: classify an adapter-native type into an abstract `DataTypeDescriptor`. */
   mapDataType(nativeType: NativeDataType): DataTypeDescriptor;
   /** Write: convert an abstract type token/descriptor back to an adapter-native type. */

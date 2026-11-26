@@ -196,9 +196,10 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       if (!request || !options) {
         return options;
       }
-      // RFC §6.6: scope hooks are skipped for database-enforced RLS models.
-      // The database policy replaces the engine's scope filter.
-      if (isDbEnforced(host, defName)) {
+      // RFC §6.6: scope hooks are skipped for database-enforced RLS models,
+      // but ONLY when inside a transaction (settings applied). Without a
+      // transaction, keep the scope (fail closed).
+      if (options?.transaction && isDbEnforced(host, defName)) {
         return options;
       }
       // In place, by contract, and deliberately not copy-on-write: this is a
@@ -250,8 +251,9 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       if (!request || !row) {
         return row;
       }
-      // RFC §6.6: skip for database-enforced RLS models.
-      if (isDbEnforced(host, defName)) {
+      // RFC §6.6: skip for database-enforced RLS models, but only inside
+      // a transaction (fail closed).
+      if (options?.transaction && isDbEnforced(host, defName)) {
         return row;
       }
       if (!await writable(host, defName, host.getModelAdapter(defName), row, operation, options, hookName === "beforeRestore")) {

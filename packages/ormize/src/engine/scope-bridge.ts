@@ -56,7 +56,7 @@ export interface ScopeHost {
  * (the `where` is stripped).
  */
 export async function resolveRowScope(self: ScopeHost, defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope> {
-  const dbEnforced = isDatabaseEnforced(self, defName);
+  const dbEnforced = isDatabaseEnforced(self, defName, !!context?.transaction);
   if (dbEnforced && (operation === "read" || operation === "delete")) {
     // The database policy handles these operations; the engine injects nothing.
     return undefined;
@@ -266,7 +266,7 @@ export async function assertRowsInScope(
   // RFC §6.6: on a database-enforced RLS model, WITH CHECK replaces the
   // post-write re-check. A violation surfaces as Postgres error 42501, which
   // the error mapper translates to ScopeEscapeError.
-  if (isDatabaseEnforced(self, defName)) {
+  if (isDatabaseEnforced(self, defName, !!options?.transaction)) {
     return;
   }
   // The pair the write ran under, asked again. An update reached an existing
@@ -474,11 +474,17 @@ export function applyGlobalFilters(
  * on an adapter with `rls` configured and `enforce: "database"`. The ONE helper
  * every enforcement site reads.
  *
- * Returns `false` for models on adapters without RLS, models without
- * `rls.enabled`, and models under `enforce: "both"` (which keeps the engine
- * scope alongside the database policy).
+ * **Fail-closed**: returns `false` (keeping the engine scope) unless the
+ * operation is running inside a transaction (`transactionActive`). Without a
+ * transaction the adapter has not applied `set_config` / `SET LOCAL ROLE`, so
+ * the query would run under the connection's own role with no settings — which
+ * bypasses RLS on a superuser, table-owner-without-FORCE, or BYPASSRLS role.
+ * Skipping the engine scope without a transaction is "neither", never "database".
  */
-export function isDatabaseEnforced(self: ScopeHost, defName: string): boolean {
+export function isDatabaseEnforced(self: ScopeHost, defName: string, transactionActive?: boolean): boolean {
+  if (!transactionActive) {
+    return false;
+  }
   const adapterName = self.defsAdapters[defName];
   const adapter = adapterName ? self.adapters[adapterName] : undefined;
   return adapter?.isDatabaseEnforced?.(defName) ?? false;

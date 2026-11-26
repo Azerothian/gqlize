@@ -25,8 +25,9 @@ import { runHook, applyEagerAfterFind } from "./hooks";
 import type { ScopeHost } from "./scope-bridge";
 import {
   resolveRowScope, reassertRowScope, withScopeFor, embedThroughScopes,
-  applyGlobalFilters,
+  applyGlobalFilters, isRlsEnabled,
 } from "./scope-bridge";
+import { scopeMiss as _scopeMiss } from "../scope";
 import type { ReadCacheHost } from "./read-cache-bridge";
 import { cachedCount, cachedFindAll } from "./read-cache-bridge";
 
@@ -38,6 +39,37 @@ export interface ResolutionHost extends HookHost, ScopeHost, ReadCacheHost {
   host: MutationHost;
   defsAdapters: { [name: string]: string };
   optionsForAdapter<T extends AdapterQueryOptions | undefined>(fromDefName: string, toDefName: string, options: T): Promise<T>;
+  /** Open (or join) a transaction for the adapter behind `defName`. */
+  withTransaction<T>(defName: string, context: RequestContext, fn: (ctx: RequestContext) => Promise<T>): Promise<T>;
+}
+
+// ---------------------------------------------------------------------------
+// RLS read-wrap helpers (RFC §6.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `defName` or any model in `include` is RLS-enabled on its adapter.
+ * Used to decide whether a read needs an engine-owned transaction.
+ */
+function anyModelRlsEnabled(self: ResolutionHost, defName: string, include: IncludeMap[] | undefined): boolean {
+  if (isRlsEnabled(self, defName)) {
+    return true;
+  }
+  if (!include) {
+    return false;
+  }
+  for (const level of include) {
+    for (const relName of Object.keys(level)) {
+      const descriptor = level[relName];
+      if (isRlsEnabled(self, descriptor.target)) {
+        return true;
+      }
+      if (descriptor.include && anyModelRlsEnabled(self, descriptor.target, descriptor.include)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +242,18 @@ async function resolveCrossAdapterRelationship(self: ResolutionHost, defName: st
   return resolveFindAll(self, defName, source, args, targetContext, selection, scope);
 }
 
-export async function resolveManyRelationship(self: ResolutionHost, defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) {
+export async function resolveManyRelationship(self: ResolutionHost, defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection): Promise<{total: number; models: AdapterRow[]}> {
+  // RFC §6.5: wrap in a transaction if the target model is RLS-enabled.
+  if (!context?.transaction && isRlsEnabled(self, defName)) {
+    const adapter = self.getModelAdapter(defName);
+    const role = adapter.resolveRlsRole?.(context);
+    if (role === undefined) {
+      _scopeMiss(defName, "read", self.onScopeMiss);
+      return { total: 0, models: [] };
+    }
+    return self.withTransaction(defName, context, (ctx) =>
+      resolveManyRelationship(self, defName, association, source, args, ctx, selection));
+  }
   assertThroughArgs(association, args, selection);
   if (isThroughRead(association)) {
     // Join rows first, then targets — on every adapter, cross-adapter included
@@ -304,7 +347,17 @@ export async function resolveManyRelationship(self: ResolutionHost, defName: str
   return result;
 }
 
-export async function resolveSingleRelationship(self: ResolutionHost, defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) {
+export async function resolveSingleRelationship(self: ResolutionHost, defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection): Promise<AdapterRow | null> {
+  // RFC §6.5: wrap in a transaction if the target model is RLS-enabled.
+  if (!context?.transaction && isRlsEnabled(self, defName)) {
+    const adapter = self.getModelAdapter(defName);
+    const role = adapter.resolveRlsRole?.(context);
+    if (role === undefined) {
+      return null;
+    }
+    return self.withTransaction(defName, context, (ctx) =>
+      resolveSingleRelationship(self, defName, association, source, args, ctx, selection));
+  }
   if (association.crossAdapter) {
     // `countOnly` is inferred from a connection's selection set; a singular
     // relation has no `edges`, so the inference misreads it. It always wants
@@ -375,7 +428,35 @@ export async function resolveClassMethod(self: ResolutionHost, defName: string, 
  * query on top of the caller's `where`. Used to scope a cross-adapter
  * relationship to its join key.
  */
-export async function resolveFindAll(self: ResolutionHost, defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection, scope?: {field: string, value: unknown}) {
+export async function resolveFindAll(self: ResolutionHost, defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection, scope?: {field: string, value: unknown}): Promise<{total: number; models: AdapterRow[]}> {
+  // RFC §6.5: wrap reads in an engine-owned transaction when the root model or
+  // any model in the include plan is RLS-enabled on its adapter. Without the
+  // transaction, Postgres has no settings and the connection role (often a
+  // superuser or the table owner) would see every row.
+  if (!context?.transaction) {
+    // Gather the include plan to check for RLS models in it.
+    let tempArgs = args;
+    if (selection?.include && !tempArgs.include) {
+      tempArgs = {...tempArgs, include: selection.include};
+    }
+    const rawInclude = tempArgs.include !== undefined
+      ? completeIncludePlan(toIncludeLevels(tempArgs.include), defName, (n) => self.getAssociations(n)) as IncludeMap[]
+      : undefined;
+    if (anyModelRlsEnabled(self, defName, rawInclude)) {
+      // No identity → deny (RFC §6.5 "No identity").
+      const adapter = self.getModelAdapter(defName);
+      const role = adapter.resolveRlsRole?.(context);
+      if (role === undefined) {
+        _scopeMiss(defName, "read", self.onScopeMiss);
+        return { total: 0, models: [] };
+      }
+      // Re-enter inside a transaction. The second call sees context.transaction
+      // and falls through.
+      return self.withTransaction(defName, context, (ctx) =>
+        resolveFindAll(self, defName, source, args, ctx, selection, scope));
+    }
+  }
+
   const definition = self.getDefinition(defName);
   const adapter = self.getModelAdapter(defName);
   const options = createResolveContext(context, selection, source);

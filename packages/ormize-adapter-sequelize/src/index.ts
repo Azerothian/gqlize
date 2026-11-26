@@ -424,6 +424,25 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       // the transaction is about to end anyway.
     }
   };
+  /**
+   * Resolve the database role for a request context. The engine calls this
+   * before opening a transaction; `undefined` → no identity → refuse.
+   */
+  resolveRlsRole = (context: import("@azerothian/utilize/types/primitives").RequestContext): string | undefined => {
+    return this.options.rls?.role(context);
+  };
+
+  /**
+   * Resolve the RLS settings for a request context. Used by the read-cache
+   * key augmentation.
+   */
+  resolveRlsSettings = (context: import("@azerothian/utilize/types/primitives").RequestContext): { [name: string]: string | number | boolean | (string | number)[] } | undefined => {
+    if (!this.options.rls) {
+      return undefined;
+    }
+    return this.options.rls.settings(context);
+  };
+
   // `OrmAdapter.addInstanceFunction` declares `fn` with this exact permissive
   // signature (an arbitrary user-authored function), so narrowing it here would
   // reject implementations the published contract still promises to accept.
