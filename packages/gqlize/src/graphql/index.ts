@@ -10,6 +10,8 @@ import createNodeInterface from "./utils/create-node-interface";
 
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import { PERMISSION_KEYS, isModelAllowed, isMutationAllowed, isQueryCsvAllowed, modelDeprecation, unknownPermissionKeys } from "@azerothian/utilize";
+import { isQueryDeletedAllowed } from "@azerothian/utilize/gate";
+import { GQLTDeletedFilter } from "@azerothian/graphql-types";
 import createModelType from "./create-model-type";
 import createListObject from "./create-list-object";
 import createClassMethods from "./create-class-methods";
@@ -247,10 +249,20 @@ export async function createSchemaObjects(instance: GQLManager, gqlizeOptions: G
     }
   };
 
+  // RFC §5.4: `node(id:)` gains a `deleted` argument when any visible model
+  // soft-deletes and queryDeleted allows it. The node resolver decodes the
+  // type from the id, so the argument is schema-wide rather than per-model.
+  // RFC §5.4: `node(id:)` gains a `deleted` argument when at least one visible
+  // model soft-deletes AND its queryDeleted is allowed.
+  const anyDeletedVisible = carriesType && Object.keys(definitions).some((defName) =>
+    instance.softDeletes(defName) && isQueryDeletedAllowed(options.permission, defName));
+  const nodeFieldWithDeleted = anyDeletedVisible
+    ? { ...nodeField, args: { ...nodeField.args, deleted: { type: GQLTDeletedFilter, description: "Whether soft-deleted rows are excluded (the default), included, or returned on their own" } } }
+    : nodeField;
   let queryRootFields: GqlFieldMap = carriesType ? {
     // The relay node field closes over a live id-fetcher that re-checks
     // permissions per request; it is always rebuilt, never serialized.
-    node: bindField(nodeField, {kind: "nodeField"}, bindingContext),
+    node: bindField(nodeFieldWithDeleted, {kind: "nodeField"}, bindingContext),
   } : {};
   let mutationRootFields: GqlFieldMap = {};
   addContainer(queryRootFields, "models", "QueryModels", queryLists);

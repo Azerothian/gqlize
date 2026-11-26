@@ -35,8 +35,29 @@ import type { GqlizeOptions } from "../../types";
 
 export default function createNodeInterface(dbInstance: GQLManager, options?: GqlizeOptions) {
   const nodeTypeMapper = new NodeTypeMapper();
+  const fetcher = idFetcher(dbInstance, nodeTypeMapper, options);
   const nodeObjects = nodeDefinitions(
-    idFetcher(dbInstance, nodeTypeMapper, options),
+    // graphql-relay's nodeDefinitions calls `idFetcher(id, context, info)`.
+    // We wrap it so the `deleted` field argument is extracted from the
+    // resolver args and forwarded (RFC §5.4).
+    (id, context, info) => {
+      // The node field's arguments are on info.fieldNodes[0]; extract `deleted`
+      // from the resolved argument values. graphql-relay resolves `id` for us
+      // but not any args we added. Walk variableValues + literal args.
+      let deleted: string | undefined;
+      const fieldNode = info.fieldNodes?.[0];
+      if (fieldNode?.arguments) {
+        const arg = fieldNode.arguments.find((a) => a.name.value === "deleted");
+        if (arg) {
+          if (arg.value.kind === "EnumValue") {
+            deleted = arg.value.value;
+          } else if (arg.value.kind === "Variable") {
+            deleted = (info.variableValues as unknown as Record<string, unknown> | undefined)?.[arg.value.name.value] as string | undefined;
+          }
+        }
+      }
+      return fetcher(String(id), context, info, deleted);
+    },
     typeResolver(nodeTypeMapper)
   );
 

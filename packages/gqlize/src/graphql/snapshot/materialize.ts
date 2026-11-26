@@ -384,8 +384,10 @@ export async function materializeSchema(
       if (field.binding) {
         // The relay node field is the one field whose *config* is rebuilt rather
         // than decoded — its type, args and resolver all come off the live triple.
+        // The snapshot's args (including `deleted` from RFC §5.4) are merged back
+        // so the round-trip preserves them.
         if (field.binding.kind === "nodeField") {
-          config = nodeField;
+          config = { ...nodeField, args: { ...nodeField.args, ...config.args } };
         }
         config = bindField(config, field.binding, ctx);
       }
