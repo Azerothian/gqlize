@@ -86,6 +86,35 @@ export function markSystemQuery<T>(options: T): T {
   return options;
 }
 
+/**
+ * Enumerable variant of {@link SYSTEM_QUERY} for operations that go through
+ * Sequelize accessors. The accessor spreads the options internally, which
+ * drops non-enumerable properties. This marker is enumerable so it survives
+ * the spread.
+ *
+ * Used only for the linking call inside `applyCreate`: the target row was
+ * just created by this mutation and the accessor's UPDATE sets the foreign
+ * key that makes the row satisfy the scope. The scope hooks would reject the
+ * UPDATE because the row doesn't satisfy the quantifier yet. The post-write
+ * `assertRowsInScope` at the end of `mutationEntry` verifies the final
+ * state; this bypass only prevents the chicken-and-egg rejection.
+ */
+const SCOPE_BYPASS = Symbol.for("ormize.scopeBypass");
+
+/** Mark an options bag so scope hooks stand aside. Survives Sequelize spreads. */
+export function markScopeBypass<T>(options: T): T {
+  if (options && typeof options === "object") {
+    (options as { [SCOPE_BYPASS]?: boolean })[SCOPE_BYPASS] = true;
+  }
+  return options;
+}
+
+/** Whether an options bag carries {@link SCOPE_BYPASS}. */
+export function isScopeBypass(options: unknown): boolean {
+  return Boolean(options) && typeof options === "object"
+    && (options as { [SCOPE_BYPASS]?: boolean })[SCOPE_BYPASS] === true;
+}
+
 /** Whether an options bag carries {@link SYSTEM_QUERY}. */
 export function isSystemQuery(options: unknown): boolean {
   return Boolean(options) && typeof options === "object"

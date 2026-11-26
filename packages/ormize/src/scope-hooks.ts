@@ -22,7 +22,7 @@ import type {
 } from "@azerothian/utilize/types/index";
 import { isScopeSeen, markScopeSeen, type ScopeOperation } from "@azerothian/utilize/gate";
 import { filterMerger, writable } from "./cross-adapter";
-import { ScopeDeniedError, isSystemQuery, resolvingScope } from "./scope";
+import { ScopeDeniedError, isSystemQuery, isScopeBypass, resolvingScope } from "./scope";
 import type { AdapterRoutingHost } from "./types/engine";
 
 /**
@@ -96,7 +96,7 @@ function requestOf(options: unknown): { context: RequestContext } | undefined {
  * memo); or there is no request at all.
  */
 function enforceFor(options: unknown): { context: RequestContext } | undefined {
-  if (resolvingScope() || isSystemQuery(options)) {
+  if (resolvingScope() || isSystemQuery(options) || isScopeBypass(options)) {
     return undefined;
   }
   return requestOf(options);
@@ -309,7 +309,7 @@ export function buildScopeInstanceHooks(
 ): {[hookName: string]: (...args: unknown[]) => unknown} {
   return {
     beforeQuery: (options: unknown) => {
-      if (isScopeSeen(options) || resolvingScope() || isSystemQuery(options)) {
+      if (isScopeSeen(options) || resolvingScope() || isSystemQuery(options) || isScopeBypass(options)) {
         return;
       }
       const bag = options as { model?: { name?: string } } | undefined;
