@@ -241,8 +241,16 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     const host = buildCompilerHost(this.sequelize, definitions);
     const models = extractRlsModels(host);
-    if (models.length === 0 && !Object.values(definitions).some((d) => d.options?.rls)) {
-      return [];
+    if (models.length === 0) {
+      // Nothing declares RLS. Skip the transaction only if nothing is left to
+      // undo either: removing `rls` from the last model must still disable
+      // what an earlier sync enabled, so look for gqlize's table marker first.
+      const [marked] = await this.sequelize.query(
+        "SELECT 1 FROM pg_policy WHERE polname LIKE '%\\_\\_gqlize\\_rls\\_marker' LIMIT 1",
+      );
+      if (marked.length === 0) {
+        return [];
+      }
     }
     return syncRowSecurityImpl(host, models, options);
   };

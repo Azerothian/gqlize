@@ -282,15 +282,23 @@ export async function syncRowSecurity(
         await run(`ALTER TABLE ${host.quoteTable(model.tableName)} FORCE ROW LEVEL SECURITY`, t);
       }
 
-      // Mark the table as gqlize-managed for RLS (§6.4 step 6).
-      // We use a dedicated marker policy that acts as a no-op (USING TRUE, FOR ALL, TO PUBLIC).
-      // This avoids clobbering table comments.
+      // Mark the table as gqlize-managed for RLS (§6.4 step 6) with a policy
+      // that filters nothing, so the table's own comment is left alone.
+      //
+      // It MUST be RESTRICTIVE. Postgres ORs permissive policies together, so a
+      // permissive `USING (TRUE)` would let every role see and write every row
+      // and switch RLS off for the whole table. Restrictive policies are ANDed,
+      // so `TRUE` is a no-op, and a table with no permissive policy still denies
+      // everything. A marker left permissive by an earlier build is replaced.
       const tableMarkerName = `${model.tableName}__gqlize_rls_marker`;
       const markerRows = await read(
-        `SELECT polname FROM pg_policy WHERE polrelid = ${regclass(model.tableName)} AND polname = ${host.escapeLiteral(tableMarkerName)}`, t,
-      );
-      if (markerRows.length === 0) {
-        await run(`CREATE POLICY ${host.quoteIdentifier(tableMarkerName)} ON ${host.quoteTable(model.tableName)} AS PERMISSIVE FOR ALL TO PUBLIC USING (TRUE) WITH CHECK (TRUE)`, t);
+        `SELECT polpermissive FROM pg_policy WHERE polrelid = ${regclass(model.tableName)} AND polname = ${host.escapeLiteral(tableMarkerName)}`, t,
+      ) as Array<{ polpermissive: boolean }>;
+      if (markerRows.length > 0 && markerRows[0].polpermissive) {
+        await run(`DROP POLICY ${host.quoteIdentifier(tableMarkerName)} ON ${host.quoteTable(model.tableName)}`, t);
+      }
+      if (markerRows.length === 0 || markerRows[0].polpermissive) {
+        await run(`CREATE POLICY ${host.quoteIdentifier(tableMarkerName)} ON ${host.quoteTable(model.tableName)} AS RESTRICTIVE FOR ALL TO PUBLIC USING (TRUE) WITH CHECK (TRUE)`, t);
         await run(`COMMENT ON POLICY ${host.quoteIdentifier(tableMarkerName)} ON ${host.quoteTable(model.tableName)} IS '${TABLE_MARKER}'`, t);
       }
     }
@@ -315,7 +323,7 @@ export async function syncRowSecurity(
       declaredNames.add(markerName);
 
       const existingPolicies = await read(
-        `SELECT p.polname, d.description FROM pg_policy p LEFT JOIN pg_description d ON d.objoid = p.oid WHERE p.polrelid = ${regclass(model.tableName)}`, t,
+        `SELECT p.polname, d.description FROM pg_policy p LEFT JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass WHERE p.polrelid = ${regclass(model.tableName)}`, t,
       );
 
       for (const existing of existingPolicies) {
@@ -357,7 +365,7 @@ export async function syncRowSecurity(
 
       // Drop all managed policies
       const existingPolicies = await read(
-        `SELECT p.polname, d.description FROM pg_policy p LEFT JOIN pg_description d ON d.objoid = p.oid WHERE p.polrelid = ${regclass(tn)}`, t,
+        `SELECT p.polname, d.description FROM pg_policy p LEFT JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass WHERE p.polrelid = ${regclass(tn)}`, t,
       );
 
       for (const existing of existingPolicies) {
@@ -389,7 +397,7 @@ async function reconcilePolicy(
 
   // Look up existing policy
   const [existing] = await sequelize.query(
-    `SELECT p.polname, p.polcmd, p.polpermissive, d.description FROM pg_policy p LEFT JOIN pg_description d ON d.objoid = p.oid WHERE p.polrelid = ${regclass(tableName)} AND p.polname = ${escapedName}`,
+    `SELECT p.polname, p.polcmd, p.polpermissive, d.description FROM pg_policy p LEFT JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass WHERE p.polrelid = ${regclass(tableName)} AND p.polname = ${escapedName}`,
     { transaction },
   ) as [Record<string, unknown>[], unknown];
 
@@ -604,8 +612,12 @@ export function generateRlsSql(
     // Table marker policy
     const markerName = `${model.tableName}__gqlize_rls_marker`;
     lines.push(`DO $$ BEGIN`);
+    // RESTRICTIVE, never PERMISSIVE: see the marker in `syncRowSecurity`.
+    lines.push(`  IF EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = ${regclass(model.tableName)} AND polname = ${host.escapeLiteral(markerName)} AND polpermissive) THEN`);
+    lines.push(`    DROP POLICY ${host.quoteIdentifier(markerName)} ON ${qt};`);
+    lines.push(`  END IF;`);
     lines.push(`  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = ${regclass(model.tableName)} AND polname = ${host.escapeLiteral(markerName)}) THEN`);
-    lines.push(`    CREATE POLICY ${host.quoteIdentifier(markerName)} ON ${qt} AS PERMISSIVE FOR ALL TO PUBLIC USING (TRUE) WITH CHECK (TRUE);`);
+    lines.push(`    CREATE POLICY ${host.quoteIdentifier(markerName)} ON ${qt} AS RESTRICTIVE FOR ALL TO PUBLIC USING (TRUE) WITH CHECK (TRUE);`);
     lines.push(`    COMMENT ON POLICY ${host.quoteIdentifier(markerName)} ON ${qt} IS '${TABLE_MARKER}';`);
     lines.push(`  END IF;`);
     lines.push(`END $$;`);
@@ -627,7 +639,7 @@ export function generateRlsSql(
     lines.push(`BEGIN`);
     lines.push(`  FOR _pol IN`);
     lines.push(`    SELECT p.polname, d.description FROM pg_policy p`);
-    lines.push(`    LEFT JOIN pg_description d ON d.objoid = p.oid`);
+    lines.push(`    LEFT JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass`);
     lines.push(`    WHERE p.polrelid = ${regclass(model.tableName)}`);
     lines.push(`  LOOP`);
     lines.push(`    IF _pol.description LIKE '${MANAGED_PREFIX}%'`);
@@ -658,7 +670,7 @@ function generatePolicyDdl(host: SyncHost, policy: CompiledPolicy, tableName: st
   lines.push(`  SELECT p.polcmd, p.polpermissive, d.description`);
   lines.push(`    INTO _existing`);
   lines.push(`    FROM pg_policy p`);
-  lines.push(`    LEFT JOIN pg_description d ON d.objoid = p.oid`);
+  lines.push(`    LEFT JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass`);
   lines.push(`    WHERE p.polrelid = ${regclass(tableName)} AND p.polname = ${escapedName};`);
   lines.push(`  IF NOT FOUND THEN`);
   lines.push(`    ${policy.sql};`);
