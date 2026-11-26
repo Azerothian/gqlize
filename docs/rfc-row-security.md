@@ -9,6 +9,10 @@
 > Phase 2 (global filters) is documented in [`specifications.md`](specifications.md) (§4 model
 > definition schema, §5 soft delete, §7 permissions) and [`guide.md`](guide.md) (§8 "Global
 > filters" section and the soft-delete section). The design text is preserved below.
+> Two deviations from §5: soft delete still runs on the adapter's own `paranoid` mechanism rather
+> than being re-expressed as a built-in global filter (the `deleted` argument now reaches
+> single-valued relationships and `node(id:)`, which was the user-visible goal of §5.4); and a
+> global filter an adapter can't express fails at its first query, not at `initialise` (§10 Q6).
 >
 > Phase 3 remains proposed.
 
