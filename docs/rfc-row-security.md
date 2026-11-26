@@ -33,12 +33,18 @@
 >   condition above; scope `set` on create/update still applied; global filters still applied.
 > - Error mapping: `42501` → `ScopeEscapeError`; on soft delete/restore → configuration error.
 > - Build-time checks (§6.7).
+> - **Class methods** (`resolveClassMethod`) on an RLS model run in the request's RLS transaction,
+>   handed over as `context.transaction`; no identity throws `ScopeDeniedError`. Raw-SQL class
+>   methods run their statement on it and need no `:scope…` parameter or declaration. A method
+>   declared `unscoped` runs under `bypassRole` when one is configured, else as the request.
+> - **`orm.asSystem(fn)`**: a system context (private symbol mark) that the engine leaves unscoped
+>   and an RLS adapter runs under `bypassRole`; refused up front when an RLS adapter has none.
 >
 > **Deferred, and what that means in practice:**
-> - **Direct-model surfaces** (class/instance methods, raw SQL, `extend` fields) don't run inside
->   an RLS transaction, so on an RLS model they still need `scopeAware` / `unscoped` (and raw SQL a
->   `:scope…` parameter), exactly as without RLS. `unscoped` under `bypassRole` and `orm.asSystem`
->   are not implemented.
+> - **Instance methods and `extend` fields** don't run inside an RLS transaction, so on an RLS model
+>   they still need `scopeAware` / `unscoped`, exactly as without RLS. Function class methods are
+>   handed the transaction (below) but still declare themselves, because the engine can't make them
+>   use it; only raw-SQL class methods are exempt.
 > - **`onScopeMiss: "throw"`** on an RLS model behaves as `"empty"` (warned at build).
 > - **`softDeleteFlag`** is refused at construction rather than accepted and ignored.
 > - **Read cache**: correctness is pinned by `ormize/__tests__/rls-engine.test.ts` (two principals,

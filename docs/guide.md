@@ -1930,10 +1930,37 @@ role applied, and for the same identity it was opened with. A transaction you op
 opened without a request context, another adapter's, or one reused after the principal changed
 keeps the engine scope: enforcement is "both", never "neither".
 
-**Not yet.** Class methods, instance methods, raw-SQL methods and `extend` fields don't run inside
-an RLS transaction yet, so on an RLS model they still declare `scopeAware` / `unscoped` as they
-would without RLS. `orm.asSystem`, `onScopeMiss: "throw"` on RLS models and the soft-delete flag
-(`softDeleteFlag`, refused if set) are still to come; see the RFC status.
+**Class methods.** `orm.resolveClassMethod` (which gqlize, nestize and temporalize all call) runs
+a class method on an RLS model inside a transaction opened with the request's settings and role,
+and hands it over as `context.transaction`; with no identity it throws `ScopeDeniedError`.
+- A **raw-SQL** class method runs its statement on that transaction, so the policy filters it. On an
+  RLS model it needs no `:scope…` parameter and no `scopeAware` / `unscoped` declaration.
+- A **function** class method must pass `context.transaction` to what it queries
+  (`this.findAll({ transaction: context.transaction })`). The engine can't make it, and a query that
+  ignores it runs as the connection's own role, so these still declare `scopeAware` / `unscoped`.
+- A method declared **`unscoped`** runs on a transaction under `bypassRole` when one is configured
+  (it still receives the request's context). Without `bypassRole` it runs as the request and the
+  policies apply: it sees less, not more.
+
+Called straight off the model (`db.models.Task.rawTitles(args, ctx)`), none of this happens.
+
+**System work.** `orm.asSystem(fn)` runs work with no request behind it (a migration, a cron job):
+
+```ts
+await orm.asSystem(async(system) => {
+  const { models } = await orm.resolveFindAll("Task", null, {}, system);
+});
+```
+
+The `system` context has no row scope in the engine, and an RLS adapter runs it under
+`bypassRole` with no settings. `asSystem` throws before running `fn` if an adapter with RLS models
+has no `bypassRole`. Global filters still apply (`withoutFilters` lifts them). The context is
+marked with a private symbol, so nothing a request sends can pass for it.
+
+**Not yet.** Instance methods and `extend` fields aren't wrapped in the RLS transaction, so on an
+RLS model they declare `scopeAware` / `unscoped` as they would without RLS. `onScopeMiss: "throw"`
+on RLS models and the soft-delete flag (`softDeleteFlag`, refused if set) are still to come; see the
+RFC status.
 
 **Errors.** A `WITH CHECK` violation (Postgres `42501`) surfaces as `ScopeEscapeError`, the same
 error the engine's post-write re-check throws (both `ScopeDeniedError` and `ScopeEscapeError` are

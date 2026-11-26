@@ -8,6 +8,7 @@ import {
   Model,
   QueryTypes,
   type Sequelize,
+  type Transaction,
 } from "sequelize";
 import logger from "@azerothian/utilize/utils/logger";
 import { scopeParametersIn, bindScopeParameters } from "@azerothian/utilize/gate";
@@ -269,6 +270,13 @@ export async function createSQLFunctionImpl(
     }
     if (modelName) {
       opts.model = sequelize.models[modelName];
+    }
+    // The request's transaction, when the engine handed one over: on an RLS
+    // model it is the one carrying the request's settings and role, so the
+    // statement answers to the policies like every other query of the request.
+    const transaction = (context as { transaction?: unknown } | undefined)?.transaction;
+    if (transaction !== undefined && transaction !== null) {
+      return sequelize.query(query, { ...opts, transaction: transaction as Transaction });
     }
     return sequelize.query(query, opts);
   };

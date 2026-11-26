@@ -5,6 +5,7 @@
 // identical (same members, same types, same `this`-binding contract) and
 // delegates to them.
 
+import { createSystemContext } from "@azerothian/utilize/system-context";
 import Cache from "./utils/cache";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {definitionHooks} from "@azerothian/utilize/utils/definition-hooks";
@@ -222,13 +223,9 @@ export default class Ormize<
       (all: ReturnType<typeof auditDefinitionScopeSurfaces>, defName) => {
         const adapterName = this.defsAdapters[defName];
         const adapter = adapterName ? this.adapters[adapterName] : undefined;
-        // Not exempted by RLS yet: direct-model surfaces (class/instance
-        // methods, raw SQL, extend fields) don't run inside an RLS
-        // transaction, so the database would see them with no identity. Until
-        // they do (RFC §6.5), they declare themselves like any scoped surface.
-        // `isDatabaseEnforced` with no transaction is always false.
-        const dbEnforced = adapter?.isDatabaseEnforced?.(defName) ?? false;
-        return all.concat(auditDefinitionScopeSurfaces(defName, this.defs[defName], dbEnforced));
+        // RLS exempts raw SQL only; see `auditDefinitionScopeSurfaces`.
+        const rls = adapter?.isRlsEnabled?.(defName) ?? false;
+        return all.concat(auditDefinitionScopeSurfaces(defName, this.defs[defName], rls));
       },
       [],
     );
@@ -945,6 +942,28 @@ export default class Ormize<
 
   getContext = (): RequestContext => {
     return _getContext();
+  }
+
+  /**
+   * Run work that has no request behind it (a migration, a cron job) as the
+   * system (RFC §6.5). `fn` receives a context to pass to engine calls: no row
+   * scope applies to it, and an RLS adapter runs it under its `rls.bypassRole`.
+   * Global filters still apply; lift them with `withoutFilters`.
+   *
+   * Fails before running `fn` when an adapter with RLS models has no
+   * `bypassRole`, rather than running system work under a request role or the
+   * connection's own.
+   */
+  asSystem = async <T>(fn: (context: RequestContext) => Promise<T>): Promise<T> => {
+    const context = createSystemContext();
+    for (const defName of Object.keys(this.defs)) {
+      const adapter = this.adapters[this.defsAdapters[defName]];
+      if (adapter?.isRlsEnabled?.(defName)) {
+        // Throws when the adapter has no bypass role to run system work under.
+        adapter.resolveRlsRole?.(context);
+      }
+    }
+    return _runWithContext(context, () => fn(context));
   }
 
   withTransaction = async <T>(defName: string, context: RequestContext, fn: (ctx: RequestContext) => Promise<T>): Promise<T> => {

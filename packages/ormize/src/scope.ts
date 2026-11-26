@@ -9,6 +9,7 @@
 // permission bag is also read by gqlize at schema build, where none of this
 // applies.
 
+import { isSystemContext } from "@azerothian/utilize/system-context";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   mergeScopeWhere, resolveScope,
@@ -262,6 +263,11 @@ export function scopeFor(
   context: RequestContext,
 ): Promise<ResolvedScope> {
   if (typeof permission?.scope !== "function") {
+    return Promise.resolve(undefined);
+  }
+  if (isSystemContext(context)) {
+    // `orm.asSystem`: no request, so no principal to scope by. Global filters
+    // (soft delete) still apply; they aren't a scope.
     return Promise.resolve(undefined);
   }
   if (resolvingScope()) {

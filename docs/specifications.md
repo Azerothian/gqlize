@@ -261,6 +261,7 @@ Consumer-facing (`packages/ormize/src/manager.ts`):
   cannot create it, so it must be declared in `define` by hand. See
   [guide §11](guide.md#11-multiple-data-sources).
 - `sync(options?)` / `reset(options?)` — delegate to adapters.
+- `asSystem(fn)` — runs `fn(systemContext)` for work with no request (RFC §6.5): no engine row scope, and RLS adapters use their `rls.bypassRole` with no settings. Throws before running `fn` if an adapter with RLS models has no `bypassRole`. Global filters still apply. The context is marked with a private symbol from `@azerothian/utilize/system-context`.
 - Hook registration: `addHook`, `addHookObject`, `unshiftHook`, `unshiftHookObject`, `createHook`.
 - Introspection: `getModel(s)`, `getDefinition(s)`, `hasDefinition`, `getFields`, `getAssociations`, `getGlobalKeys`.
 
@@ -268,7 +269,7 @@ Internal resolution methods invoked by generated resolvers:
 
 - `resolveFindAll` — list query resolver (cursor→offset, `adapter.processListArgsToOptions` → `adapter.findAll` + count, fires `before` with `Events.QUERY`). Backward pagination (`before`/`last`) computes offset as `max(0, cursor.index - pageSize)` and clamps the limit to `min(pageSize, cursor.index)`. `last` without a cursor counts first and offsets from the end.
 - `resolveSingleRelationship` / `resolveManyRelationship` — relationship resolvers. The same backward-pagination semantics apply to nested connections.
-- `resolveClassMethod` — invokes `Model[methodName](args, context)` with optional before/after.
+- `resolveClassMethod` — invokes `Model[methodName](args, context)` with optional before/after. On an RLS model (RFC §6.5) it first opens a transaction with the request's settings and role and passes it as `context.transaction` (raw-SQL methods run their statement on it); no identity throws `ScopeDeniedError`; a method declared `unscoped` runs under the adapter's `rls.bypassRole` when one is configured.
 - `processCreate` / `processUpdate` / `processDelete` — mutation executors; run `processInputs`, translate global IDs (`replaceIdDeep`), fire the matching `Events.MUTATION_*` hook, delegate to adapter functions, then `processRelationshipMutation`.
 - `processRelationshipMutation` — the nested-mutation engine (see §5).
 - `csvLimits(defName)` / `processCsv(defName, operation, request, context, selection?)` — CSV uploads:

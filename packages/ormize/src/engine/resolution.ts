@@ -3,10 +3,11 @@
 //
 // Free functions over explicit host interfaces (see `ResolutionHost`).
 
-import { whereOperatorsFor, expandOrderBy } from "@azerothian/utilize/exposed-methods";
+import { whereOperatorsFor, expandOrderBy, definitionMethods } from "@azerothian/utilize/exposed-methods";
+import { createSystemContext } from "@azerothian/utilize/system-context";
 import { clampPageSize } from "@azerothian/utilize/utils/page-size";
 import { completeIncludePlan, toIncludeLevels } from "@azerothian/utilize/utils/include-plan";
-import { mergeScopeWhere } from "@azerothian/utilize/gate";
+import { mergeScopeWhere, scopeDispositionOf } from "@azerothian/utilize/gate";
 import { applyScopeWhere } from "../scope";
 import { scopeIncludePlan } from "../scope";
 import { joinScope } from "../cross-adapter";
@@ -27,7 +28,7 @@ import {
   resolveRowScope, reassertRowScope, withScopeFor, embedThroughScopes,
   applyGlobalFilters, isRlsEnabled,
 } from "./scope-bridge";
-import { scopeMiss as _scopeMiss } from "../scope";
+import { scopeMiss as _scopeMiss, ScopeDeniedError, inheritScopeMemo } from "../scope";
 import type { ReadCacheHost } from "./read-cache-bridge";
 import { cachedCount, cachedFindAll } from "./read-cache-bridge";
 
@@ -404,9 +405,45 @@ export async function resolveSingleRelationship(self: ResolutionHost, defName: s
 // resolveClassMethod
 // ---------------------------------------------------------------------------
 
+/** Whether `defName`'s adapter can run system work (it has an `rls.bypassRole`). */
+function hasBypassRole(self: ResolutionHost, defName: string, system: RequestContext): boolean {
+  try {
+    return self.getModelAdapter(defName).resolveRlsRole?.(system) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveClassMethod(self: ResolutionHost, defName: string, methodName: string, args: unknown, context: RequestContext,
   before?: (args: unknown, context: RequestContext) => unknown,
-  after?: (result: unknown, context: RequestContext) => unknown) {
+  after?: (result: unknown, context: RequestContext) => unknown): Promise<unknown> {
+  // RFC §6.5: a class method on an RLS model runs inside a transaction opened
+  // with the request's settings and role, handed to it as `context.transaction`.
+  // A raw-SQL method runs its statement on it; a function method passes it to
+  // whatever it queries. Re-entered once inside the transaction.
+  if (!context?.transaction && isRlsEnabled(self, defName)) {
+    // A method declared `unscoped` says it means to see past the row rules, so
+    // it runs under the adapter's `bypassRole` when there is one, still handed
+    // the request's own context (an engine call it makes with that context
+    // keeps the engine scope: the transaction's identity isn't the request's).
+    // With no bypass role it runs as the request, and sees less, not more.
+    const declared = definitionMethods(self.getDefinition(defName), "classMethods")[methodName];
+    const system = createSystemContext();
+    if (scopeDispositionOf(declared) === "unscoped" && hasBypassRole(self, defName, system)) {
+      return self.withTransaction(defName, system, (systemCtx) => resolveClassMethod(
+        self, defName, methodName, args,
+        inheritScopeMemo(context, Object.assign({}, context, { transaction: systemCtx.transaction })),
+        before, after,
+      ));
+    }
+    if (self.getModelAdapter(defName).resolveRlsRole?.(context) === undefined) {
+      // No identity: refuse rather than run under the connection's own role.
+      // A method has no "empty" result shape to fall back on.
+      throw new ScopeDeniedError(defName, "read");
+    }
+    return self.withTransaction(defName, context, (ctx) =>
+      resolveClassMethod(self, defName, methodName, args, ctx, before, after));
+  }
   const Model = self.getModelAdapter(defName).getModel(defName);
   context = withScopeFor(self, context);
   if(before) {

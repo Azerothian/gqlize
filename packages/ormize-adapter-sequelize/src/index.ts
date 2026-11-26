@@ -3,6 +3,7 @@
 // model-creation, introspection, relationships, id-translation, reads, writes,
 // and query-options — keeping this file a thin routing layer.
 
+import { isSystemContext } from "@azerothian/utilize/system-context";
 import {
   ModelAttributes,
   ModelCtor,
@@ -371,6 +372,34 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * never interpolated — and role names are double-quoted identifiers.
    */
   /**
+   * The role a context runs under: the configured `role(ctx)`, or for
+   * `orm.asSystem` work the `bypassRole` (refused when none is configured,
+   * never the connection's own role).
+   */
+  private rlsRoleFor = (context: import("@azerothian/utilize/types/primitives").RequestContext): string | undefined => {
+    const cfg = this.options.rls;
+    if (!cfg) {
+      return undefined;
+    }
+    if (isSystemContext(context)) {
+      if (!cfg.bypassRole) {
+        throw new Error("orm.asSystem needs the adapter's rls.bypassRole: system work on an RLS adapter runs under it.");
+      }
+      return cfg.bypassRole;
+    }
+    return cfg.role(context);
+  };
+
+  /** The settings a context sets: none for system work, which has no principal. */
+  private rlsSettingsFor = (context: import("@azerothian/utilize/types/primitives").RequestContext): ReturnType<AdapterRlsConfig["settings"]> => {
+    const cfg = this.options.rls;
+    if (!cfg || isSystemContext(context)) {
+      return {};
+    }
+    return cfg.settings(context);
+  };
+
+  /**
    * Transactions this adapter opened with a request's settings applied and its
    * role switched. Only an operation running on one of these may leave row
    * filtering to the database (see {@link isDatabaseEnforced}); any other
@@ -385,11 +414,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (!cfg) {
       return undefined;
     }
-    const role = cfg.role(context);
+    const role = this.rlsRoleFor(context);
     if (role === undefined) {
       return undefined;
     }
-    const settings = cfg.settings(context);
+    const settings = this.rlsSettingsFor(context);
     return JSON.stringify([role, Object.keys(settings).sort().map((k) => [k, settings[k]])]);
   };
 
@@ -399,7 +428,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     context: import("@azerothian/utilize/types/primitives").RequestContext,
     rlsCfg: AdapterRlsConfig,
   ): Promise<boolean> => {
-    const settings = rlsCfg.settings(context);
+    const settings = this.rlsSettingsFor(context);
     // Validate setting names at runtime (matches the build-time pattern).
     for (const name of Object.keys(settings)) {
       if (!RLS_SETTING_NAME_PATTERN.test(name)) {
@@ -418,7 +447,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     }
     // Set the role. The role name is validated against the identifier pattern
     // and double-quoted so injection through it is impossible.
-    const role = rlsCfg.role(context);
+    const role = this.rlsRoleFor(context);
     if (role !== undefined) {
       if (!RLS_ROLE_PATTERN.test(role)) {
         throw new Error(
@@ -467,7 +496,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * before opening a transaction; `undefined` → no identity → refuse.
    */
   resolveRlsRole = (context: import("@azerothian/utilize/types/primitives").RequestContext): string | undefined => {
-    return this.options.rls?.role(context);
+    return this.rlsRoleFor(context);
   };
 
   /**
@@ -478,7 +507,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (!this.options.rls) {
       return undefined;
     }
-    return this.options.rls.settings(context);
+    return this.rlsSettingsFor(context);
   };
 
   // `OrmAdapter.addInstanceFunction` declares `fn` with this exact permissive

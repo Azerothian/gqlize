@@ -7,6 +7,7 @@ const base = baseProject('ormize');
 // run against both SQLite and Postgres (through PGlite).
 const POSTGRES_SUITES = [
   '<rootDir>/__tests__/rls-engine.test.ts',
+  '<rootDir>/__tests__/rls-surfaces.test.ts',
   '<rootDir>/__tests__/scope-reads.test.ts',
   '<rootDir>/__tests__/scope-relationships.test.ts',
   '<rootDir>/__tests__/scope-enforcement.test.ts',
