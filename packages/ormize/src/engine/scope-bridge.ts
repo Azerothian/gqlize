@@ -57,11 +57,14 @@ export interface ScopeHost {
  */
 export async function resolveRowScope(self: ScopeHost, defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope> {
   const dbEnforced = isDatabaseEnforced(self, defName, context?.transaction, context);
-  if (dbEnforced && (operation === "read" || operation === "delete")) {
-    // The database policy handles these operations; the engine injects nothing.
-    return undefined;
-  }
   const resolved = await scopeFor(self.permission, defName, operation, context);
+  if (dbEnforced && (operation === "read" || operation === "delete")) {
+    // The database policy does the filtering; the engine injects nothing. An
+    // outright deny is still honoured, so it reaches `onScopeMiss` exactly as
+    // it does without RLS (and a policy laxer than the predicate can't turn
+    // a "no rows at all" into rows).
+    return resolved === false ? false : undefined;
+  }
   if (resolved === undefined || resolved === false) {
     return resolved;
   }

@@ -25,7 +25,7 @@ const as = (user?: string): Ctx => (user ? { user } : {});
 
 const ownScope: ScopePredicate = (_defName, operation, _options, context) => {
   const user = (context as Ctx).user;
-  if (!user) {
+  if (!user || user === "banned") {
     return false;
   }
   return operation === "create" ? { set: { ownerId: user } } : { where: { ownerId: { eq: user } } };
@@ -33,15 +33,17 @@ const ownScope: ScopePredicate = (_defName, operation, _options, context) => {
 
 type ModelStatic = { findAll(options: object): Promise<unknown[]> };
 
-async function build(options: { bypass: boolean }) {
-  const db = new Database({ permission: { scope: ownScope }, rls: { manageRoles: true } });
+const statements: string[] = [];
+
+async function build(options: { bypass: boolean; onScopeMiss?: "empty" | "throw" }) {
+  const db = new Database({ permission: { scope: ownScope }, rls: { manageRoles: true }, onScopeMiss: options.onScopeMiss });
   const adapter = trackConnection(new SequelizeAdapter({
     rls: {
       settings: (ctx) => ({ "app.user_id": (ctx as Ctx).user ?? "" }),
       role: (ctx) => ((ctx as Ctx).user ? "app_member" : undefined),
       ...(options.bypass ? { bypassRole: "app_bypass" } : {}),
     },
-  }, await dialectConfig()), { suite: true });
+  }, await dialectConfig({ logging: (sql: string) => { statements.push(sql); } })), { suite: true });
   db.registerAdapter(adapter, "pg");
   await db.addDefinition({
     name: "Task",
@@ -55,6 +57,12 @@ async function build(options: { bypass: boolean }) {
       rls: {
         enabled: true,
         policies: { own: { for: "all", to: "app_member", using: { ownerId: { eq: rls.setting("app.user_id", "text") } } } },
+      },
+      instanceMethods: {
+        // Reads the table through the transaction the engine hands it.
+        visibleTitles: scopeAware(async function(this: { constructor: ModelStatic }, _args: unknown, context: Ctx) {
+          return this.constructor.findAll({ transaction: context.transaction });
+        }),
       },
       classMethods: {
         // No `:scope…` parameter and no declaration: under RLS the statement
@@ -141,8 +149,49 @@ describePostgres("ormize - class methods and asSystem under RLS", () => {
     expect(ran).toBe(false);
   });
 
+  it("an instance method runs in the request's RLS transaction", async() => {
+    const [row] = await db.models.Task.findAll({ where: { title: "u2-a" } });
+    const call = (user?: string) => db.resolveInstanceMethod("Task", row, "visibleTitles",
+      (row as unknown as { visibleTitles: (this: unknown, a: unknown, c: unknown) => unknown }).visibleTitles, {}, as(user));
+    expect(titles(await call("u2"))).toEqual(["u2-a"]);
+    await expect(call()).rejects.toThrow(ScopeDeniedError);
+  });
+
+  it("runRequest gives a request's engine calls one RLS transaction", async() => {
+    statements.length = 0;
+    const [tasks, again] = await db.runRequest(as("u1"), async() => [
+      await db.resolveFindAll("Task", null, {}, as("u1")),
+      await db.resolveFindAll("Task", null, {}, as("u1")),
+    ]);
+    expect(titles(tasks.models)).toEqual(["u1-a", "u1-b"]);
+    expect(titles(again.models)).toEqual(["u1-a", "u1-b"]);
+    expect(statements.filter((sql) => sql.includes('SET LOCAL ROLE "app_member"'))).toHaveLength(1);
+  });
+
   it("a request can't pass itself off as the system", async() => {
     const forged = JSON.parse(JSON.stringify({ ...as("u1"), system: true })) as Ctx;
     expect(titles((await db.resolveFindAll("Task", null, {}, forged)).models)).toEqual(["u1-a", "u1-b"]);
+  });
+});
+
+describePostgres("ormize - onScopeMiss under RLS", () => {
+  let db: Database;
+
+  beforeAll(async() => {
+    db = await build({ bypass: false, onScopeMiss: "throw" });
+  });
+
+  it("an outright deny throws, as without RLS, even though the policy does the filtering", async() => {
+    await expect(db.processDelete("Task", null, { title: { eq: "u1-a" } }, as("banned"))).rejects.toThrow(ScopeDeniedError);
+    expect(await db.models.Task.count()).toBe(3);
+  });
+
+  it("a row the policy hides is still just not there", async() => {
+    expect(await db.processDelete("Task", null, { title: { eq: "u2-a" } }, as("u1"))).toEqual([]);
+    expect(await db.models.Task.count()).toBe(3);
+  });
+
+  it("reads stay quiet on an outright deny", async() => {
+    expect((await db.resolveFindAll("Task", null, {}, as("banned"))).models).toEqual([]);
   });
 });

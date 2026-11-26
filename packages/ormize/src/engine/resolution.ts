@@ -3,6 +3,7 @@
 //
 // Free functions over explicit host interfaces (see `ResolutionHost`).
 
+import { store, getStore } from "../context";
 import { whereOperatorsFor, expandOrderBy, definitionMethods } from "@azerothian/utilize/exposed-methods";
 import { createSystemContext } from "@azerothian/utilize/system-context";
 import { clampPageSize } from "@azerothian/utilize/utils/page-size";
@@ -456,6 +457,34 @@ export async function resolveClassMethod(self: ResolutionHost, defName: string, 
   return result;
 }
 
+/**
+ * Run an instance method on `row`, under RLS the way {@link resolveClassMethod}
+ * runs a class method: inside the request's RLS transaction, handed over as
+ * `context.transaction` (or under `bypassRole` for an `unscoped` method), and
+ * refused with no identity. `implementation` is the function to run with the
+ * row as `this`: the row's own method, or the definition's for a plain row.
+ */
+export async function resolveInstanceMethod(self: ResolutionHost, defName: string, row: unknown, methodName: string,
+  implementation: (this: unknown, args: unknown, context: RequestContext) => unknown,
+  args: unknown, context: RequestContext): Promise<unknown> {
+  if (!context?.transaction && isRlsEnabled(self, defName)) {
+    const declared = definitionMethods(self.getDefinition(defName), "instanceMethods")[methodName];
+    const system = createSystemContext();
+    if (scopeDispositionOf(declared) === "unscoped" && hasBypassRole(self, defName, system)) {
+      return self.withTransaction(defName, system, (systemCtx) => resolveInstanceMethod(
+        self, defName, row, methodName, implementation, args,
+        inheritScopeMemo(context, Object.assign({}, context, { transaction: systemCtx.transaction })),
+      ));
+    }
+    if (self.getModelAdapter(defName).resolveRlsRole?.(context) === undefined) {
+      throw new ScopeDeniedError(defName, "read");
+    }
+    return self.withTransaction(defName, context, (ctx) =>
+      resolveInstanceMethod(self, defName, row, methodName, implementation, args, ctx));
+  }
+  return implementation.call(row, args, withScopeFor(self, context));
+}
+
 // ---------------------------------------------------------------------------
 // resolveFindAll — the main list resolver
 // ---------------------------------------------------------------------------
@@ -488,9 +517,13 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
         return { total: 0, models: [] };
       }
       // Re-enter inside a transaction. The second call sees context.transaction
-      // and falls through.
-      return self.withTransaction(defName, context, (ctx) =>
+      // and falls through. A transaction opened here, with no coordinator
+      // around it, holds this read and nothing else, so it is marked for the
+      // read cache (see `OrmizeStore.readWrap`).
+      const reenter = () => self.withTransaction(defName, context, (ctx) =>
         resolveFindAll(self, defName, source, args, ctx, selection, scope));
+      const current = getStore();
+      return current?.transaction ? reenter() : store.run({ ...(current || {}), readWrapPending: true }, reenter);
     }
   }
 

@@ -11,7 +11,9 @@ import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/
 import {definitionHooks} from "@azerothian/utilize/utils/definition-hooks";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {copyDefinition} from "@azerothian/utilize/utils/copy-on-write";
-import type { Permission, ScopeOperation } from "@azerothian/utilize/gate";
+import type { Permission, PortableWhere, ScopeOperation } from "@azerothian/utilize/gate";
+import { ScopeConfigurationError, collectQuantifierTargets } from "@azerothian/utilize/gate";
+import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import type { ScopeMissBehaviour } from "./scope";
 import { inheritScopeMemo } from "./scope";
 import { buildScopeHooks, buildScopeInstanceHooks } from "./scope-hooks";
@@ -39,6 +41,7 @@ import {
   processRelationship, generateJoinModels,
   // resolution
   resolveClassMethod as _resolveClassMethod,
+  resolveInstanceMethod as _resolveInstanceMethod,
   resolveManyRelationship as _resolveManyRelationship,
   resolveSingleRelationship as _resolveSingleRelationship,
   resolveFindAll as _resolveFindAll,
@@ -174,6 +177,18 @@ export default class Ormize<
         const global = this.globalHooks[hookName];
         return [own, global].some((h) => Array.isArray(h) ? h.length > 0 : Boolean(h));
       }),
+      rlsIdentity: (tags, context) => {
+        const identities = new Set<string>();
+        for (const defName of tags) {
+          const adapter = this.adapters[this.defsAdapters[defName]];
+          if (adapter?.isRlsEnabled?.(defName)) {
+            identities.add(JSON.stringify([
+              this.defsAdapters[defName], adapter.resolveRlsRole?.(context) ?? null, adapter.resolveRlsSettings?.(context) ?? null,
+            ]));
+          }
+        }
+        return identities.size ? [...identities].sort().join("|") : undefined;
+      },
     }) : undefined;
     // Built unconditionally: whether a scope is configured is asked at call
     // time, so a `setPermission` after `initialise()` reaches the models that
@@ -271,17 +286,17 @@ export default class Ormize<
    * - RLS-enabled model with no policies -> warning
    * - Model on an RLS adapter whose role rules give it a scope but isn't
    *   RLS-enabled -> warning
-   * - onScopeMiss: "throw" + RLS models + no bypassRole -> warning
+   *
+   * `onScopeMiss: "throw"` needs no check: under RLS the engine still asks the
+   * scope predicate and honours an outright deny, so it behaves as without RLS.
    */
   private validateRlsDeclarations() {
     const warn = console.warn; // eslint-disable-line no-console
-    let hasRlsModels = false;
     for (const defName of Object.keys(this.defs)) {
       const rls = this.defs[defName]?.options?.rls;
       if (!rls?.enabled) {
         continue;
       }
-      hasRlsModels = true;
       const adapterName = this.defsAdapters[defName];
       const adapter = adapterName ? this.adapters[adapterName] : undefined;
       // RFC §6.7: RLS-enabled model on an adapter with no rls config -> error.
@@ -299,29 +314,6 @@ export default class Ormize<
           `RLS: model '${defName}' has rls.enabled but no policies. ` +
           `All rows will be denied. This is legal but usually an oversight.`,
         );
-      }
-    }
-    // RFC §6.7: onScopeMiss: "throw" + RLS models + no bypassRole -> warning.
-    if (hasRlsModels && this.onScopeMiss === "throw") {
-      for (const adapterName of Object.keys(this.adapters)) {
-        const adapter = this.adapters[adapterName];
-        // Check if any RLS model is on this adapter without a bypassRole.
-        const hasRlsOnAdapter = Object.keys(this.defs).some(
-          (d) => this.defsAdapters[d] === adapterName && this.defs[d]?.options?.rls?.enabled,
-        );
-        if (hasRlsOnAdapter && adapter.isRlsEnabled) {
-          // Check if the adapter has a bypass role configured — only the
-          // sequelize adapter exposes this, so we check structurally.
-          const opts = (adapter as { options?: { rls?: { bypassRole?: string } } }).options;
-          if (!opts?.rls?.bypassRole) {
-            warn(
-              `RLS: onScopeMiss is "throw" and adapter '${adapterName}' has RLS models ` +
-              "but no bypassRole. Without a bypass role, a zero-row update/delete " +
-              "on an RLS model cannot distinguish 'hidden by policy' from 'no such " +
-              "row', so onScopeMiss will behave as 'empty' for those models.",
-            );
-          }
-        }
       }
     }
   }
@@ -761,8 +753,40 @@ export default class Ormize<
       installInstanceHooks(this.engine, adapterName, adapter);
       return adapter.initialise(options);
     }));
+    // RFC §10 Q6: a global filter its adapter can't express (a relationship
+    // filter on a backend without subqueries, or one reaching another
+    // adapter) fails here, at build, not on the first query that hits it.
+    // Compiling a filter opens no connection.
+    await this.checkGlobalFiltersExpressible();
     this._initialised = true;
     this.auditScopeSurfaces();
+  }
+
+  private checkGlobalFiltersExpressible = async() => {
+    const associations = (model: string) => (this.defs[model] ? this.getAssociations(model) : {});
+    for (const defName of Object.keys(this.defs)) {
+      const filters = this.defs[defName]?.options?.filters;
+      for (const [name, decl] of Object.entries(filters || {})) {
+        const where = (decl as { where: PortableWhere }).where;
+        for (const target of collectQuantifierTargets(where, defName, associations)) {
+          if (this.defsAdapters[target] !== this.defsAdapters[defName]) {
+            throw new ScopeConfigurationError(
+              `Global filter '${name}' on '${defName}' reaches '${target}', which lives on another adapter. ` +
+              "One query cannot reach another database.",
+            );
+          }
+        }
+        try {
+          await this.getModelAdapter(defName).processFilterArgument(
+            where, whereOperatorsFor(this.defs[defName]), {}, defName,
+          );
+        } catch (e) {
+          throw new ScopeConfigurationError(
+            `Global filter '${name}' on '${defName}' can't be expressed by its adapter: ${(e as Error).message}`,
+          );
+        }
+      }
+    }
   }
 
   /**
@@ -845,6 +869,31 @@ export default class Ormize<
     const Model = this.getModel(defName) as unknown as abstract new (...args: unknown[]) => unknown;
     const isType = value instanceof Model;
     return isType;
+  }
+
+  /**
+   * Run an instance method with `row` as `this`. On an RLS model it runs in
+   * the request's RLS transaction (`context.transaction`), like a class method.
+   */
+  resolveInstanceMethod = async(defName: string, row: unknown, methodName: string,
+    implementation: (this: unknown, args: unknown, context: RequestContext) => unknown,
+    args: unknown, context: RequestContext): Promise<unknown> => {
+    return _resolveInstanceMethod(this.engine, defName, row, methodName, implementation, args, context);
+  }
+
+  /**
+   * Run userland work for one request (an `extend` field's resolver). With RLS
+   * models registered it runs inside one coordinated transaction, so each RLS
+   * adapter it touches through the engine opens a single transaction with the
+   * request's settings and role. Otherwise `fn` just runs.
+   */
+  runRequest = async<T>(context: RequestContext, fn: () => Promise<T> | T): Promise<T> => {
+    const rls = Object.keys(this.defs).some((defName) =>
+      this.adapters[this.defsAdapters[defName]]?.isRlsEnabled?.(defName) === true);
+    if (!rls) {
+      return fn();
+    }
+    return _runWithContext(context, () => _transaction(this, async() => fn()));
   }
 
   resolveClassMethod = async(defName: string, methodName: string, args: unknown, context: RequestContext,

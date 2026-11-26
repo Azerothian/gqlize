@@ -24,7 +24,7 @@ export { validateRelationship, validateCrossAdapterKeys, buildCrossAdapterAssoci
 export type { RelationshipHost } from "./relationships";
 
 export { countableFrom, createResolveContext, cursorOffset, expandComputedOrder,
-  resolveClassMethod, resolveManyRelationship, resolveSingleRelationship,
+  resolveClassMethod, resolveInstanceMethod, resolveManyRelationship, resolveSingleRelationship,
   resolveFindAll } from "./resolution";
 export type { ResolutionHost } from "./resolution";
 
