@@ -403,6 +403,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `cache` | This model's part in the read cache (§3). `false` keeps every read of it out. `{ttl}` overrides the cache-wide TTL, and also opts in a model that has its own find/count hooks. |
 | `queries` | **Sequelize adapter only.** Raw create/drop DDL registered against the definition (`{ [name]: { create, drop } }`, each a string or a thunk). `initialise()` replays every `create`, and `reset()` replays the `drop`s then the `create`s. This is the adapter's only I/O in `initialise()`, which is why `initialise({ddl: false})` — the offline schema build — turns it off. |
 | `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
+| `options.filters` | Global filters (RFC §5). Each key is a filter name; its value declares a static `PortableWhere` and optionally which of `read` / `update` / `delete` it applies to (default all three). A global filter is the same for every caller (it must not reference the principal — anything caller-dependent belongs in `scope`). The engine AND-s applicable filters into every read and write chokepoint alongside the scope: root lists, `total`, `node(id:)`, eager and lazy relationship fields, through reads, the `required` filter path, and `update`/`delete`/`select` write paths. Server-side bypass: `orm.withoutFilters(["name"], fn)` via `AsyncLocalStorage`. See §7 for the `queryDeleted` gate on the built-in soft-delete filter. |
 
 ### Example (trimmed from `task.ts`)
 
@@ -611,7 +612,9 @@ query naming it fails GraphQL validation rather than at resolution.
 each fetch, join and count independently, so the value is carried onto the root options, every
 include entry, and both count paths (`countOptions` and the count-only bag) — otherwise `total`
 and `edges` answer from different row sets. Single-valued relationship fields
-(`belongsTo`/`hasOne`) and `node(id:)` are not covered (§13).
+(`belongsTo`/`hasOne`) and `node(id:)` also carry the `deleted` argument (RFC §5.4), gated by
+`permission.queryDeleted` on the target model (singular fields) or any visible soft-deleting model
+(`node`).
 
 ### Deprecation
 
@@ -1146,7 +1149,7 @@ than a decision, and it is consulted per request rather than per schema.
 | `queryCsv(defName, options)` | CSV export: the `csv` field on the model's root list connection and nestize's `GET /:resource/_csv`, *in addition to* `query` and the field gates. Only consulted for a model with CSV on (§5). |
 | `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
-| `queryDeleted(defName, options)` | The `deleted` argument on a soft-deleting model's list fields and include input — i.e. whether this caller may read soft-deleted rows at all. Row-level visibility is still `scope`'s: a caller allowed deleted rows sees only the deleted rows inside their scope. |
+| `queryDeleted(defName, options)` | The `deleted` argument on a soft-deleting model's list fields, include input, singular relationship fields (`belongsTo`/`hasOne`) and `node(id:)` — i.e. whether this caller may read soft-deleted rows at all. Row-level visibility is still `scope`'s: a caller allowed deleted rows sees only the deleted rows inside their scope. |
 | `relationship(defName, relName, targetName, options)` | Relationship fields. |
 | `queryClassMethods` / `mutationClassMethods` | Exposed class methods. |
 | `queryInstanceMethods` | Exposed instance-method query fields — and, with them, the `orderBy` enum values and `where` fields those methods contribute (sortability and filterability each leak a denied field's value). |
@@ -1598,15 +1601,9 @@ behaviour.
   `create`/`update`/`add`/`set`/`remove`/`delete`/`restore`/`select` keys are legitimately
   combinable in one mutation. A genuine fit would be a new "look this row up by exactly one of id
   or unique key" input — a feature, not a conversion.
-- **Soft delete on single-valued relationships and `node`.** `deleted` reaches list fields and
-  nested connections (§5); `belongsTo`/`hasOne` fields take only a `required` argument
-  (`create-related-fields.ts`), so a soft-deleted single-relation target reads as `null`, and
-  `node(id:)` does not resolve a deleted row. `update` and `delete` likewise keep their implicit
-  live-rows-only predicate — restore first, then write.
-- **Row security.** Relationship quantifiers (`some`/`none`/`every`/`is`/`isNot`) in
-  `PortableWhere`, model-level global filters (with soft delete re-expressed as one), and Postgres
-  row-level security (policies on the definition, reconciled by `sync()`, enforced per request with
-  `set_config` + `SET LOCAL ROLE`). Proposed in [`rfc-row-security.md`](rfc-row-security.md).
+- **Row-level security (Phase 3).** Postgres RLS policies on the definition, reconciled by
+  `sync()`, enforced per request with `set_config` + `SET LOCAL ROLE`. Proposed in
+  [`rfc-row-security.md`](rfc-row-security.md) §6.
 - Middleware/caching options.
 - Additional adapters (Elasticsearch, HTTP GraphQL Relay).
 - Cross-adapter **writes**, and batching of cross-adapter reads by foreign key.

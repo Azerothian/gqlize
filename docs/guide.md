@@ -927,9 +927,9 @@ query { models { Post(include: [{ comments: { deleted: INCLUDE, separate: true }
 `deletedAt` is an ordinary column once paranoid is on, so it can be selected, filtered in `where`,
 and named in `orderBy` like any other field.
 
-Two things soft delete does *not* reach: `node(id:)` never resolves a deleted row, and
-`belongsTo` / `hasOne` fields have no `deleted` argument — a deleted single-relation target reads
-as `null`. `update` and `delete` also skip deleted rows; restore first, then write.
+`belongsTo` / `hasOne` fields and `node(id:)` also accept the `deleted` argument, gated by
+`queryDeleted` on the target model (singular fields) or any visible soft-deleting model (`node`).
+`update` and `delete` skip deleted rows; restore first, then write.
 
 The argument is gated by the `queryDeleted` permission, and is absent from the schema entirely for
 a caller who is denied it — see [Permissions](#8-permissions).
@@ -1754,6 +1754,44 @@ without an explicit spelling, "this role sees everything" and "nobody has config
 be the same tree. And a `group` leaf denies when the principal belongs to no groups rather than
 compiling to `{in: []}`, which is a deny that reads like a bug; a principal the reader cannot find
 at all is likewise a deny.
+
+### Global filters (`options.filters`)
+
+A global filter is a static `PortableWhere` declared on a model's `options.filters`. It is the same
+for every caller — anything caller-dependent belongs in `scope`.
+
+```ts
+db.addDefinition({
+  name: "Task",
+  define: { title: { type: Sequelize.STRING }, archived: { type: Sequelize.BOOLEAN } },
+  options: {
+    filters: {
+      active: { where: { archived: { eq: false } } },
+      published: { where: { publishedAt: { ne: null } }, operations: ["read"] },
+    },
+  },
+});
+```
+
+Each filter names a `where` and optionally which operations it applies to (`read`, `update`,
+`delete`; default all three). `create` has no existing rows to filter and is never listed — the
+engine refuses it at `initialise`.
+
+The engine AND-s applicable filters into every read and write chokepoint alongside the scope: root
+lists, `total`, `node(id:)`, eager and lazy relationship fields of every arity, through reads, the
+`required` filter path, and `update`/`delete`/`select` write paths. Composition order:
+`clientWhere AND globalFilters AND scope`.
+
+**Bypass.** Lift named global filters server-side with `orm.withoutFilters`:
+
+```ts
+await orm.withoutFilters(["active"], async () => {
+  // reads here include archived rows; scope still applies
+});
+```
+
+`withoutFilters` uses `AsyncLocalStorage`. Nested calls union their names. The bypass is part of
+the read-cache key, so a cached read with the filter is never served to a read without it.
 
 ---
 

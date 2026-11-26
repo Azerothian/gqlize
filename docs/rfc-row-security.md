@@ -1,10 +1,16 @@
 # RFC: Row security — relationship filters, global filters and Postgres RLS
 
-> **Status:** Phase 1 (relationship filters) is implemented. Its as-built behaviour is documented
-> in [`specifications.md`](specifications.md) (§7, "Relationship quantifiers in scope" and
-> "`via` leaf and `not` combinator") and [`guide.md`](guide.md) (§8, "Relationship quantifiers",
-> "`via` leaf", "`not` combinator"). The design text for Phase 1 is preserved below for reference.
-> Phases 2 and 3 remain proposed.
+> **Status:** Phases 1 and 2 are implemented.
+>
+> Phase 1 (relationship filters) is documented in [`specifications.md`](specifications.md) (§7,
+> "Relationship quantifiers in scope" and "`via` leaf and `not` combinator") and
+> [`guide.md`](guide.md) (§8, "Relationship quantifiers", "`via` leaf", "`not` combinator").
+>
+> Phase 2 (global filters) is documented in [`specifications.md`](specifications.md) (§4 model
+> definition schema, §5 soft delete, §7 permissions) and [`guide.md`](guide.md) (§8 "Global
+> filters" section and the soft-delete section). The design text is preserved below.
+>
+> Phase 3 remains proposed.
 
 ## Contents
 
