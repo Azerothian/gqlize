@@ -57,6 +57,8 @@ import {
   // csv
   processCsv as _processCsv,
   processCsvImport as _processCsvImport,
+  // global filters
+  validateFilters, withoutFilters as _withoutFilters,
 } from "./engine";
 import type { CsvImportHost, CsvImportRequest, CsvImportResult, CsvOperation, CsvRequest } from "./engine";
 import { resolveCsvLimits, resolveCsvMaxFiles } from "./csv/limits";
@@ -225,6 +227,33 @@ export default class Ormize<
     const everyAdapterEnforces = names.length > 0
       && names.every((name) => this.adapters[name]?.enforcesRowScope === true);
     reportScopeSurfaces(auditExtendFields(target, extendFields), () => everyAdapterEnforces);
+  }
+
+  // -------------------------------------------------------------------------
+  // Global filters (RFC §5)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Validate every model's `options.filters` at `initialise` time.
+   * Throws `ScopeConfigurationError` for malformed declarations.
+   */
+  private validateGlobalFilters() {
+    for (const defName of Object.keys(this.defs)) {
+      const filters = this.defs[defName]?.options?.filters;
+      if (filters && typeof filters === "object") {
+        validateFilters(defName, filters);
+      }
+    }
+  }
+
+  /**
+   * Run `fn` with the named global filters lifted (RFC §5.3).
+   *
+   * Scope is never lifted. Nested calls union their names. The bypass is part
+   * of the read-cache key.
+   */
+  withoutFilters = <T>(names: string[], fn: () => T | Promise<T>): T | Promise<T> => {
+    return _withoutFilters(names, fn);
   }
 
   // -------------------------------------------------------------------------
@@ -642,6 +671,8 @@ export default class Ormize<
     }));
     await generateJoinModels(this.engine);
     validateCrossAdapterKeys(this.engine);
+    // Validate global filters (RFC §5.1) before the adapters initialise.
+    this.validateGlobalFilters();
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       installInstanceHooks(this.engine, adapterName, adapter);

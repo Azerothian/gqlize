@@ -6,6 +6,7 @@
 import { whereOperatorsFor, expandOrderBy } from "@azerothian/utilize/exposed-methods";
 import { clampPageSize } from "@azerothian/utilize/utils/page-size";
 import { completeIncludePlan, toIncludeLevels } from "@azerothian/utilize/utils/include-plan";
+import { mergeScopeWhere } from "@azerothian/utilize/gate";
 import { applyScopeWhere } from "../scope";
 import { scopeIncludePlan } from "../scope";
 import { joinScope } from "../cross-adapter";
@@ -24,6 +25,7 @@ import { runHook, applyEagerAfterFind } from "./hooks";
 import type { ScopeHost } from "./scope-bridge";
 import {
   resolveRowScope, reassertRowScope, withScopeFor, embedThroughScopes,
+  applyGlobalFilters,
 } from "./scope-bridge";
 import type { ReadCacheHost } from "./read-cache-bridge";
 import { cachedCount, cachedFindAll } from "./read-cache-bridge";
@@ -236,6 +238,8 @@ export async function resolveManyRelationship(self: ResolutionHost, defName: str
   // downstream needs the caller to see the rewrite — everything that consumes
   // it is handed `a` explicitly.
   let a = args;
+  // Global filters (RFC §5): merged before scope, same order as resolveFindAll.
+  a = {...a, where: applyGlobalFilters(a.where as PortableWhere | undefined, self, defName, "read")};
   if (rowScope?.where) {
     const embeddedWhere = await embedThroughScopes(self, defName, rowScope.where, context);
     const embeddedScope = embeddedWhere !== rowScope.where ? { ...rowScope, where: embeddedWhere } : rowScope;
@@ -315,7 +319,9 @@ export async function resolveSingleRelationship(self: ResolutionHost, defName: s
   }
   const adapter = self.getModelAdapter(defName);
   const options = createResolveContext(context, selection, source);
-  if (rowScope?.where) {
+  // Global filters (RFC §5) + scope, merged the same way as the many branch.
+  const gf = applyGlobalFilters(undefined, self, defName, "read");
+  if (gf || rowScope?.where) {
     // A singular relationship never reads `args.where` — the accessor is called
     // with the options bag alone — so the scope goes there, already translated
     // into the backend's vocabulary. The eager branch ignores the bag entirely
@@ -323,14 +329,19 @@ export async function resolveSingleRelationship(self: ResolutionHost, defName: s
     //
     // Written in place, and not a caller's object: `createResolveContext`
     // builds a fresh bag on every call.
-    const merged = applyScopeWhere(options.where as PortableWhere | undefined, rowScope) as PortableWhere;
-    const embedded = await embedThroughScopes(self, defName, merged, context);
-    options.where = await adapter.processFilterArgument(
-      embedded,
-      whereOperatorsFor(self.getDefinition(defName)),
-      options,
-      defName,
-    );
+    let merged: PortableWhere | undefined = gf;
+    if (rowScope?.where) {
+      merged = applyScopeWhere(merged, rowScope);
+    }
+    if (merged) {
+      const embedded = await embedThroughScopes(self, defName, merged, context);
+      options.where = await adapter.processFilterArgument(
+        embedded,
+        whereOperatorsFor(self.getDefinition(defName)),
+        options,
+        defName,
+      );
+    }
   }
   // afterFind for JOIN-eager single relations is fired by resolveFindAll's post-pass.
   return adapter.resolveSingleRelationship(defName, association, source, {args, selection, context, options});
@@ -392,13 +403,23 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
     a.include as IncludeMap[] | undefined,
     async (targetName) => {
       const resolved = await resolveRowScope(self, targetName, "read", context);
-      if (resolved === undefined || resolved === false || !resolved.where) {
+      // Global filters for the eager target, merged alongside its scope.
+      const gf = applyGlobalFilters(undefined, self, targetName, "read");
+      if (resolved === false) {
+        return resolved;
+      }
+      const scopeWhere = resolved?.where;
+      const combinedWhere = gf
+        ? (scopeWhere ? mergeScopeWhere(gf, scopeWhere) : gf)
+        : scopeWhere;
+      if (!combinedWhere) {
         return resolved;
       }
       // Embed through-scopes so quantifiers on btm relationships carry the
       // join model's read scope into the adapter's processFilterArgument.
-      const embedded = await embedThroughScopes(self, targetName, resolved.where, context);
-      return embedded !== resolved.where ? { ...resolved, where: embedded } : resolved;
+      const embedded = await embedThroughScopes(self, targetName, combinedWhere, context);
+      const combined = resolved ? { ...resolved, where: embedded } : { where: embedded };
+      return combined;
     },
     // "No rows", in the include's own vocabulary: the target's key `in []`.
     // Lets a `required` relation whose model is denied outright still filter
@@ -420,6 +441,9 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   }
   a = required;
   a = expandComputedOrder(self, defName, a, {context, info: selection?.raw});
+  // Global filters (RFC §5), merged while the filter is still in the caller's
+  // vocabulary. Order: clientWhere AND globalFilters AND scope.
+  a = {...a, where: applyGlobalFilters(a.where as PortableWhere | undefined, self, defName, "read")};
   // Row-level scope, merged while the filter is still in the caller's
   // vocabulary. That is also what gives the count the same filter, since
   // `processListArgsToOptions` derives `countOptions` from these args — a

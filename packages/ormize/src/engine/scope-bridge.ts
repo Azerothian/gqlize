@@ -7,12 +7,13 @@ import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
 import {
   resolveViaMarkers, collectQuantifierTargets, parseQuantifier, LOGICAL_OPERATORS,
-  ScopeConfigurationError, THROUGH_SCOPE_KEY,
+  ScopeConfigurationError, THROUGH_SCOPE_KEY, mergeScopeWhere,
 } from "@azerothian/utilize/gate";
 import { applyScopeWhere, scopeFor, scopeMiss, markSystemQuery } from "../scope";
 import type { ScopeMissBehaviour } from "../scope";
 import { ScopeDeniedError, ScopeEscapeError } from "../scope";
 import { filterMerger } from "../cross-adapter";
+import { resolveGlobalFilters } from "./global-filters";
 import type { OrmAdapter, AdapterQueryOptions, AdapterWhere, RequestContext } from "@azerothian/utilize/types/index";
 import type { Definition } from "../types";
 import type { MutationHost } from "../types/engine";
@@ -115,7 +116,11 @@ export async function reassertRowScope(
       "that could have rewritten the filter. Implement andFilterStatements, or drop the hook.",
     );
   }
-  const embedded = context ? await embedThroughScopes(self, defName, where, context) : where;
+  // Also reassert global filters: a `before` hook may have rewritten the
+  // filter, dropping them too.
+  const gf = resolveModelGlobalFilters(self, defName, "read");
+  const combined = gf ? mergeScopeWhere(where, gf) : where;
+  const embedded = context ? await embedThroughScopes(self, defName, combined, context) : combined;
   const native = await adapter.processFilterArgument(embedded, whereOperators, options, defName);
   for (const target of targets) {
     if (target) {
@@ -143,11 +148,17 @@ export async function scopeNativeWhere(
   if (resolved === false) {
     return false;
   }
-  if (!resolved?.where) {
+  // Global filters (RFC §5), merged alongside scope in native vocabulary.
+  const gf = resolveModelGlobalFilters(self, defName, operation);
+  const scopeWhere = resolved?.where;
+  const combined = gf
+    ? (scopeWhere ? mergeScopeWhere(gf, scopeWhere) : gf)
+    : scopeWhere;
+  if (!combined) {
     return where;
   }
   const adapter = self.getModelAdapter(defName);
-  const embedded = await embedThroughScopes(self, defName, resolved.where, context);
+  const embedded = await embedThroughScopes(self, defName, combined, context);
   const native = await adapter.processFilterArgument(
     embedded, whereOperatorsFor(self.getDefinition(defName)), options || {}, defName,
   );
@@ -201,7 +212,13 @@ export async function scopedWriteWhere(
       read = { ...read, where: embedded };
     }
   }
-  return applyScopeWhere(applyScopeWhere(userWhere, read), own);
+  // Composition order: clientWhere AND globalFilters AND scope.
+  let merged = userWhere;
+  const gf = resolveModelGlobalFilters(self, defName, operation);
+  if (gf) {
+    merged = mergeScopeWhere(merged, gf);
+  }
+  return applyScopeWhere(applyScopeWhere(merged, read), own);
 }
 
 /**
@@ -386,6 +403,42 @@ export async function embedThroughScopes(
     result[key] = where[key];
   }
   return changed ? result : where;
+}
+
+// ---------------------------------------------------------------------------
+// Global filter merging
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the global filters for one model and operation. `undefined` when no
+ * filter applies (the common case for models without `options.filters`).
+ *
+ * This is a pure function over the definition and the current
+ * `AsyncLocalStorage` bypass, so it needs no `context` and no memo.
+ */
+export function resolveModelGlobalFilters(self: ScopeHost, defName: string, operation: ScopeOperation): PortableWhere | undefined {
+  const def = self.defs[defName];
+  return resolveGlobalFilters(def, operation);
+}
+
+/**
+ * Merge global filters into a portable where clause.  Called at every read and
+ * write chokepoint between the client where and the scope merge.
+ *
+ * Order: `clientWhere AND globalFilters AND scope` (the AND is commutative,
+ * but the order is fixed for a stable read-cache fingerprint).
+ */
+export function applyGlobalFilters(
+  where: PortableWhere | undefined,
+  self: ScopeHost,
+  defName: string,
+  operation: ScopeOperation,
+): PortableWhere | undefined {
+  const gf = resolveModelGlobalFilters(self, defName, operation);
+  if (!gf) {
+    return where;
+  }
+  return mergeScopeWhere(where, gf);
 }
 
 // Re-export the symbols the class needs without reaching into scope.ts itself.
