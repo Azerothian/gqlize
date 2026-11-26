@@ -1850,9 +1850,25 @@ const policies = compileRlsPolicies(rules, {
 // Merge into definitions: Task.options.rls.policies = policies.Task;
 ```
 
-Insert `WITH CHECK` omits quantifier branches (Postgres checks it at row insert time, before
-nested relationship writes could create the qualifying rows). The `deletedAt` column is never
-emitted into a policy (soft delete stays a global filter applied by the engine).
+Insert `WITH CHECK` carries the full rule, relationship hops included. A brand-new row has no
+related rows pointing at it yet, so a hop through its children doesn't match, and creating a row
+that is visible only through a child the same mutation creates (a user together with their
+membership) is refused under RLS, where the engine on SQLite allows it. The `deletedAt` column is
+never emitted into a policy (soft delete stays a global filter applied by the engine).
+
+**Policies that follow relationships into RLS tables.** A policy's subquery is itself subject to
+the RLS of every table it reads. A rule that reads its own table (a `Membership` visible to the
+members of its group) or a pair of tables whose rules read each other (`Group` via `memberships`,
+`Membership` via `group`) is then infinite recursion, which Postgres refuses. So when a policy
+follows a relationship into a table with RLS, `sync()` runs that hop in a generated function
+(`gqlize_rls_<hash>`, `SECURITY DEFINER`, `search_path` pinned with `pg_temp` last, `EXECUTE`
+granted only to the roles of the policies that call it) and the policy asks whether the row's key
+is in the set it returns. Inside the hop the related tables' own policies don't apply, which is
+also how the engine's quantifiers behave, so both sides answer the same question. The function's
+owner must bypass RLS: set the adapter's `rls.bypassRole` to a role with `BYPASSRLS` (the role
+running `sync()` must be a member of it), or `sync()` runs as a superuser. Otherwise `sync()` (and
+the `rls:sql` script) refuses with an error rather than installing policies that would quietly
+match nothing. Unused hop functions are dropped.
 
 **Reconciliation.** `Ormize.sync()` calls `adapter.syncRowSecurity()` after the tables exist.
 One transaction with `pg_advisory_xact_lock`. Each policy is hashed; unchanged policies issue no
@@ -1919,7 +1935,9 @@ an RLS transaction yet, so on an RLS model they still declare `scopeAware` / `un
 would without RLS. `orm.asSystem`, `onScopeMiss: "throw"` on RLS models and the soft-delete flag
 (`softDeleteFlag`, refused if set) are still to come; see the RFC status.
 
-**Errors.** A `WITH CHECK` violation (Postgres `42501`) surfaces as `ScopeEscapeError`.
+**Errors.** A `WITH CHECK` violation (Postgres `42501`) surfaces as `ScopeEscapeError`, the same
+error the engine's post-write re-check throws (both `ScopeDeniedError` and `ScopeEscapeError` are
+exported from `@azerothian/ormize`).
 A `42501` on a soft-delete or restore is reported as a configuration error pointing at
 RFC §6.8.
 

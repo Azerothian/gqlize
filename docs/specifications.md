@@ -404,7 +404,7 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `queries` | **Sequelize adapter only.** Raw create/drop DDL registered against the definition (`{ [name]: { create, drop } }`, each a string or a thunk). `initialise()` replays every `create`, and `reset()` replays the `drop`s then the `create`s. This is the adapter's only I/O in `initialise()`, which is why `initialise({ddl: false})` — the offline schema build — turns it off. |
 | `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
 | `options.filters` | Global filters (RFC §5). Each key is a filter name; its value declares a static `PortableWhere` and optionally which of `read` / `update` / `delete` it applies to (default all three). A global filter is the same for every caller (it must not reference the principal — anything caller-dependent belongs in `scope`). The engine AND-s applicable filters into every read and write chokepoint alongside the scope: root lists, `total`, `node(id:)`, eager and lazy relationship fields, through reads, the `required` filter path, and `update`/`delete`/`select` write paths. Server-side bypass: `orm.withoutFilters(["name"], fn)` via `AsyncLocalStorage`. See §7 for the `queryDeleted` gate on the built-in soft-delete filter. |
-| `options.rls` | Postgres row-level security (RFC §6). `enabled: true` runs `ENABLE ROW LEVEL SECURITY` on the table in `sync()`. `force: true` (the default) runs `FORCE ROW LEVEL SECURITY` so the table owner is also subject to policies. `policies` is a keyed map of policy declarations: each has `as` (`"permissive"` or `"restrictive"`), `for` (`"all"`, `"select"`, `"insert"`, `"update"`, `"delete"`), `to` (role name or array), `using` (a `PortableWhere` or `sql` tagged template), and `withCheck` (defaults to `using` for all/insert/update). Policy name in Postgres: `<tableName>_<key>`. Non-Postgres adapters ignore this. `rls.setting(name, type)` and the `sql` tag are imported from `@azerothian/ormize/rls`. See also `compileRlsPolicies` in `@azerothian/utilize/permissions` for generating policies from role-based scope rules. |
+| `options.rls` | Postgres row-level security (RFC §6). `enabled: true` runs `ENABLE ROW LEVEL SECURITY` on the table in `sync()`. `force: true` (the default) runs `FORCE ROW LEVEL SECURITY` so the table owner is also subject to policies. `policies` is a keyed map of policy declarations: each has `as` (`"permissive"` or `"restrictive"`), `for` (`"all"`, `"select"`, `"insert"`, `"update"`, `"delete"`), `to` (role name or array), `using` (a `PortableWhere` or `sql` tagged template), and `withCheck` (defaults to `using` for all/insert/update). Policy name in Postgres: `<tableName>_<key>`. Non-Postgres adapters ignore this. `rls.setting(name, type)` and the `sql` tag are imported from `@azerothian/ormize/rls`. See also `compileRlsPolicies` in `@azerothian/utilize/permissions` for generating policies from role-based scope rules. A policy may use relationship quantifiers and `via`; a hop into a table that itself has RLS compiles to a generated `SECURITY DEFINER` function (`gqlize_rls_<hash>`, owned by the adapter's `rls.bypassRole` or the syncing role, which must bypass RLS; `sync()` refuses otherwise), so self-referencing and mutually referencing policies don't recurse. |
 
 ### Example (trimmed from `task.ts`)
 
@@ -1245,7 +1245,12 @@ them.
 
 **Writes.** The post-write re-check runs after the mutation's nested relationship writes (at the end
 of `mutationEntry`, inside the same transaction), so creating a row together with a relationship that
-satisfies a quantifier scope succeeds, and one that doesn't is refused and rolled back.
+satisfies a quantifier scope succeeds, and one that doesn't is refused and rolled back. A created row
+never counts as evidence for itself: in a create's re-check, every quantifier that ranges over the
+created row's own model leaves out the rows that create wrote (`excludeRowsFromQuantifiers` in
+`utilize/src/gate.ts`). Otherwise a `Membership` whose write scope is "you manage this group" would be
+satisfied by the membership being created when it says `role: "manager"`. Postgres evaluates an
+insert's `WITH CHECK` before the row is visible, so this is also what an RLS policy answers.
 
 **Cache.** The read-cache tags include every model a quantifier reaches, so a write to the related
 model invalidates cached reads filtered through it.
@@ -1259,7 +1264,9 @@ The role-based sugar adds two leaves:
   and `match` is the innermost filter. A value beginning with `$principal.` is read from the principal;
   a missing principal value is a deny.
 - `not: <leaf>`: inverts a scope leaf. A denying branch under `not` still denies (never widens a scope
-  through a missing value).
+  through a missing value). On a create, the inverted leaf is the filter a read would use: `own` and
+  `tenant` compile to a `set` on a create, which has nothing to negate, so `{ not: { own: "userId" } }`
+  on a create is "the row's `userId` is not yours", checked by the post-write re-check.
 
 The `via` leaf compiles to a `__via` marker in the portable where; the engine resolves it into proper
 quantifier nesting using the association graph. See `packages/utilize/src/permissions.ts` and

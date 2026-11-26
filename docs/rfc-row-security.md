@@ -43,8 +43,17 @@
 > - **`softDeleteFlag`** is refused at construction rather than accepted and ignored.
 > - **Read cache**: correctness is pinned by `ormize/__tests__/rls-engine.test.ts` (two principals,
 >   cache on); keying cached RLS reads on the identity, so they can be served from cache, is not done.
-> - **Parity test** for the §7 group-manager model through the gqlize schema, and execution of
->   `compileRlsPolicies` output under a role switch, are not written.
+> - **Insert divergence** (§4.5): a row visible only through a child the same mutation creates is
+>   refused under RLS and allowed by the engine.
+>
+> **Parity** for the §7 group-manager rules runs in `gqlize/__tests__/rls-parity.test.ts`: the same
+> assertions on SQLite (engine scope) and on Postgres (generated policies only, no scope clause in
+> the SQL, role switch proven by a superuser read that sees every row). Writing it found and fixed:
+> `via` hops compiled with hasMany columns on belongsTo, unqualified policy columns binding to the
+> subquery's table, an `allow` rule emitting a column named `__rawTrue`, insert `WITH CHECK`
+> dropping quantifier branches out of `all`, policy recursion (now hop functions, §7), `not` dropped
+> on creates, a created row vouching for itself (§4.5), and, in Phase 1, an `and`/`or` at the top of
+> a quantifier's inner filter being dropped by the Sequelize compiler (the scope silently widened).
 
 ## Contents
 
@@ -229,11 +238,19 @@ Read filtering is unchanged in shape. Writes need two rules:
 
   An RLS model (§6.6) has no such ordering to move: Postgres checks `WITH CHECK` when each row is
   inserted and can't defer it, so an insert policy that requires the membership fails before the
-  nested write could create it. `compileRlsPolicies` therefore leaves quantifier branches out of the
-  **insert** `WITH CHECK` it emits. The relationship's own insert is checked by the join model's
-  policy instead: a manager can create a `Membership` only in a group they manage. The result is the
-  same rule enforced at the join, and the parent row is unreachable until a membership links it.
-  `update` keeps the full rule, because the related rows already exist by then.
+  nested write could create it. *As implemented*, `compileRlsPolicies` keeps the full rule in the
+  insert `WITH CHECK`. An earlier draft left quantifier branches out, which widens any `all` or
+  `not` a branch sits in: the §7 `Membership` write rule lost its "you manage this group" half and
+  let any member add anyone to any group. A brand-new row has no children yet, so the full rule
+  costs nothing a dropped branch would have allowed safely. The consequence is a known divergence:
+  creating a row visible only through a child the same mutation creates is refused under RLS, and
+  allowed by the engine. Insert with `RETURNING` also requires the new row to pass the `SELECT`
+  policy, which no deferral could get around.
+
+  A created row never vouches for itself. The engine's re-check leaves the rows a create wrote out of
+  every quantifier over their own model; Postgres evaluates `WITH CHECK` before the row is visible,
+  so both answer alike (found by the §7 parity test: a member could insert `role: "manager"` into a
+  group and pass the "you manage this group" check with that very row).
 - **The join model is a privilege boundary.** A rule that grants access through `Membership.role`
   is only as strong as the write scope on `Membership`. A manager who can update their own
   membership row, or create one in another group, can grant themselves anything. The guide section
@@ -422,7 +439,12 @@ const policies = compileRlsPolicies(rules, {
   `none` emits `using: true`. `"deny"` emits no policy, which in RLS is a deny.
 
 Both outputs come from the same rules tree, so the app-level filter and the database policy say the
-same thing. A test asserts it for the fixtures in §7.
+same thing. A test asserts it for the fixtures in §7 (`gqlize/__tests__/rls-parity.test.ts`).
+
+*As implemented:* a `via` leaf is emitted as the same `__via` marker the engine's sugar uses and
+resolved by the adapter's policy compiler, which knows each hop's association type (`is` for
+belongsTo/hasOne, `some` otherwise). A policy that follows a relationship into a table with RLS of
+its own runs that hop in a generated function; see §7.
 
 ### 6.4 Applying policies in `sync()`
 
@@ -802,9 +824,33 @@ USING (
 ```
 
 The policy on `User` reads `Membership`, which has its own RLS. Postgres applies `Membership`'s
-policies inside that subquery too, so the `Membership` read policy must let a member see the
-memberships of their own groups, which it does. If the read policy on a join table is stricter than
-the rules that depend on it, the dependent rule quietly returns less. The test in §8 covers it.
+policies inside that subquery too. *As implemented, the SQL above is not what ships, because it
+cannot run:* `Membership`'s own read policy reads `Membership` (`group.memberships`), and `Group`'s
+and `Membership`'s policies read each other, which Postgres refuses as infinite recursion (42P17)
+on the first query. And where a chain does terminate, a dependent rule quietly returns less than
+the engine's, whose quantifiers never apply the related model's scope.
+
+So a hop that reaches a table with RLS runs in a generated function:
+
+```sql
+CREATE FUNCTION "public"."gqlize_rls_<hash>"() RETURNS SETOF INTEGER
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, "public", pg_temp
+AS $gqlize_rls$ SELECT "_rls0"."userId" FROM "pm_memberships" AS "_rls0" WHERE "_rls0"."userId" IS NOT NULL
+  AND EXISTS (SELECT 1 FROM "pm_groups" AS "_rls1" WHERE "_rls1"."id" = "_rls0"."groupId" AND EXISTS (…)) $gqlize_rls$;
+
+-- the policy:
+USING ("pm_users"."id" = (SELECT nullif(current_setting('app.user_id', true), '')::integer)
+   OR COALESCE("pm_users"."id" IN (SELECT * FROM "public"."gqlize_rls_<hash>"()), FALSE))
+```
+
+The function returns the key values the hop matches; everything caller-specific still comes from
+the request's settings, which a definer function reads like the policy would. It is owned by the
+adapter's `rls.bypassRole` (or the syncing role) and `sync()` refuses an owner without `BYPASSRLS`
+or superuser, since under `FORCE` it would otherwise see nothing. `EXECUTE` goes only to the roles of
+the policies calling it; `pg_temp` is last on its `search_path` so a caller's temporary table can't
+stand in for a table it reads. It is uncorrelated, so Postgres evaluates it once per statement. Top
+level columns are qualified with the table name: unqualified, `"id"` inside a subquery binds to the
+nearest table with an `id`.
 
 ---
 
