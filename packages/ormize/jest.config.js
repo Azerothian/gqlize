@@ -8,6 +8,8 @@ const base = baseProject('ormize');
 const POSTGRES_SUITES = [
   '<rootDir>/__tests__/rls-engine.test.ts',
   '<rootDir>/__tests__/rls-surfaces.test.ts',
+  '<rootDir>/__tests__/rls-soft-delete.test.ts',
+  '<rootDir>/__tests__/rls-cache.test.ts',
   '<rootDir>/__tests__/scope-reads.test.ts',
   '<rootDir>/__tests__/scope-relationships.test.ts',
   '<rootDir>/__tests__/scope-enforcement.test.ts',

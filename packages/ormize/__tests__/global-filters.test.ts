@@ -191,4 +191,36 @@ describe("ormize — global filter validation", () => {
       filters: { bad: { where: {} } },
     })).rejects.toThrow(ScopeConfigurationError);
   });
+
+  // Both used to surface only on the first query that hit the filter.
+  async function withOwner(filter: Record<string, unknown>, ownerAdapter: "same" | "other") {
+    const db = new Database();
+    db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "main");
+    if (ownerAdapter === "other") {
+      db.registerAdapter(trackConnection(new SequelizeAdapter({}, await dialectConfig())), "other");
+    }
+    await db.addDefinition({
+      name: "Owner",
+      define: { name: { type: Sequelize.STRING } },
+      options: { timestamps: false, tableName: "gf_owners" },
+    }, ownerAdapter === "other" ? "other" : "main");
+    await db.addDefinition({
+      name: "Task",
+      define: { name: { type: Sequelize.STRING }, ownerId: { type: Sequelize.INTEGER } },
+      options: { timestamps: false, tableName: "gf_tasks", filters: { bad: { where: filter } } },
+      relationships: [{ type: "belongsTo", model: "Owner", name: "owner", options: { foreignKey: "ownerId" } }],
+    }, "main");
+    await db.initialise();
+    return db;
+  }
+
+  it("rejects at initialise a filter that reaches another adapter", async () => {
+    await expect(withOwner({ owner: { is: { name: { eq: "x" } } } }, "other")).rejects.toThrow(/another adapter/);
+  });
+
+  it("rejects at initialise a filter its adapter can't compile", async () => {
+    // `some` on a single-valued relationship.
+    await expect(withOwner({ owner: { some: { name: { eq: "x" } } } }, "same")).rejects.toThrow(ScopeConfigurationError);
+    await expect(withOwner({ owner: { is: { name: { eq: "x" } } } }, "same")).resolves.toBeDefined();
+  });
 });

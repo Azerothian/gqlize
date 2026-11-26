@@ -61,6 +61,8 @@ export interface SyncHost extends PolicyCompilerHost {
   schema: string;
   /** Who owns hop functions: the adapter's `rls.bypassRole`, else the connection's role. */
   functionOwner?: string;
+  /** The adapter's `rls.softDeleteFlag`: policies mentioning `deletedAt` are then intended. */
+  softDeleteFlag?: string;
   /** Every hop function compiled so far, by unquoted name. */
   hopFunctions: Map<string, HopFunction>;
 }
@@ -75,6 +77,7 @@ export interface CompilerHostOptions {
   /** Default `sequelize.options.schema`, else `public`. */
   schema?: string;
   functionOwner?: string;
+  softDeleteFlag?: string;
 }
 
 const HOP_PREFIX = "gqlize_rls_";
@@ -129,6 +132,7 @@ export function buildCompilerHost(
     sequelize,
     schema,
     functionOwner: options.functionOwner,
+    softDeleteFlag: options.softDeleteFlag,
     hopFunctions,
     hops,
     getDefinitions: () => definitions as { [name: string]: Definition & { name: string } },
@@ -466,7 +470,9 @@ export async function syncRowSecurity(
       const compiled = compiledByModel.get(model) as CompiledPolicy[];
 
       // Warn if a paranoid model has a policy mentioning its deletedAt column
-      warnDeletedAtPolicy(model, compiled, host);
+      if (!host.softDeleteFlag) {
+        warnDeletedAtPolicy(model, compiled, host);
+      }
 
       for (const policy of compiled) {
         await reconcilePolicy(host, policy, model.tableName, t, run);

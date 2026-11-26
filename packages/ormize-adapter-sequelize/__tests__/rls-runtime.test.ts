@@ -259,17 +259,12 @@ describePostgres("SequelizeAdapter RLS runtime", () => {
       ).toThrow(/invalid/i);
     });
 
-    it("refuses softDeleteFlag until it is wired, rather than silently ignoring it", () => {
-      expect(
-        () =>
-          new SequelizeAdapter({
-            rls: {
-              settings: () => ({}),
-              role: () => undefined,
-              softDeleteFlag: "app.include_deleted",
-            },
-          }, { dialect: "postgres", logging: false }),
-      ).toThrow(/not supported yet/);
+    it("validates the softDeleteFlag setting name", () => {
+      const build = (softDeleteFlag: string) => () => new SequelizeAdapter({
+        rls: { settings: () => ({}), role: () => undefined, softDeleteFlag },
+      }, { dialect: "postgres", logging: false });
+      expect(build("app.include_deleted")).not.toThrow();
+      expect(build("app.x'; DROP TABLE t; --")).toThrow(/invalid setting name/);
     });
   });
 

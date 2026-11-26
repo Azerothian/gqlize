@@ -86,10 +86,12 @@ export type AdapterRlsConfig = {
    */
   enforce?: "database" | "both";
   /**
-   * A Postgres setting name the engine sets to `'on'` for the transaction of
-   * every soft delete, restore, hard delete, and reads whose `deleted` arg is
-   * INCLUDE/ONLY. `'off'` otherwise. Enables policies that mention
-   * `deletedAt` (RFC §6.8).
+   * A Postgres setting name the adapter sets to `'on'`, for the rest of the
+   * request's RLS transaction, before the first soft delete, restore or hard
+   * delete of a paranoid model and the first read of deleted rows (`deleted:
+   * INCLUDE/ONLY`). Left unset otherwise. Lets a SELECT policy hide deleted
+   * rows as `("deletedAt" IS NULL OR current_setting('<flag>', true) = 'on')`
+   * without breaking those operations (RFC §6.8).
    */
   softDeleteFlag?: string;
 };

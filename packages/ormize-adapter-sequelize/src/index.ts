@@ -3,6 +3,7 @@
 // model-creation, introspection, relationships, id-translation, reads, writes,
 // and query-options — keeping this file a thin routing layer.
 
+import { installSoftDeleteFlag } from "./rls/soft-delete-flag";
 import { isSystemContext } from "@azerothian/utilize/system-context";
 import {
   ModelAttributes,
@@ -171,13 +172,10 @@ function validateRlsConfig(rls: AdapterRlsConfig): void {
       `SequelizeAdapter rls.enforce must be "database" or "both", got '${String(rls.enforce)}'.`,
     );
   }
-  if (rls.softDeleteFlag !== undefined) {
-    // Declared by the RFC (§6.8) but not wired yet: nothing sets the flag on a
-    // transaction. Accepting it would let a deployment believe its flag-gated
-    // SELECT policy works when every soft delete under it fails. Refuse it.
+  if (rls.softDeleteFlag !== undefined && !RLS_SETTING_NAME_PATTERN.test(rls.softDeleteFlag)) {
     throw new Error(
-      "SequelizeAdapter rls.softDeleteFlag is not supported yet (RFC row-security §6.8). " +
-      "Keep soft delete out of RLS policies; gqlize applies it as a global filter.",
+      `SequelizeAdapter rls.softDeleteFlag: invalid setting name '${rls.softDeleteFlag}'. ` +
+      "Names must match [a-z_][a-z0-9_.]*.",
     );
   }
 }
@@ -233,6 +231,10 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     // Validate the RLS runtime config (RFC §6.5) at construction time.
     if (this.options.rls) {
       validateRlsConfig(this.options.rls);
+      if (this.options.rls.softDeleteFlag) {
+        installSoftDeleteFlag(this.sequelize, this.options.rls.softDeleteFlag,
+          (transaction) => !!transaction && typeof transaction === "object" && this.rlsTransactions.has(transaction));
+      }
     }
   }
   /**
@@ -283,6 +285,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     const host = buildCompilerHost(this.sequelize, definitions, {
       schema: (this.sequelize as unknown as { options: { schema?: string } }).options.schema ?? schema,
       functionOwner: this.options.rls?.bypassRole,
+      softDeleteFlag: this.options.rls?.softDeleteFlag,
     });
     const models = extractRlsModels(host);
     if (models.length === 0) {

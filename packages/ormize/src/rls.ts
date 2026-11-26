@@ -66,7 +66,12 @@ function setting(name: string, type: string): RlsSetting {
  * dynamic must go through `rls.setting()`.
  */
 export function sql(strings: TemplateStringsArray, ...values: never[]): RlsSqlFragment {
-  void values;
+  // Refused, not dropped: joining the strings alone silently deleted every
+  // interpolated piece of the expression (a cast or a JavaScript caller gets
+  // past the `never[]`).
+  if (values.length > 0) {
+    throw new Error("rls sql`…` takes no interpolated values: write the SQL out, and use rls.setting() for per-request values.");
+  }
   return { __sqlFragment: true, text: strings.join("") };
 }
 
