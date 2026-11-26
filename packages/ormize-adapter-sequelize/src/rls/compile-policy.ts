@@ -6,7 +6,7 @@
 // Unsupported operators or cross-adapter quantifiers throw ScopeConfigurationError.
 
 import type { PortableWhere } from "@azerothian/utilize/gate";
-import { ScopeConfigurationError, LOGICAL_OPERATORS, parseQuantifier, MANY_QUANTIFIERS, SINGLE_QUANTIFIERS } from "@azerothian/utilize/gate";
+import { ScopeConfigurationError, LOGICAL_OPERATORS, parseQuantifier, MANY_QUANTIFIERS, SINGLE_QUANTIFIERS, resolveViaMarkers } from "@azerothian/utilize/gate";
 import { isRlsSetting, isRlsSqlFragment } from "@azerothian/utilize/types/definitions";
 import type { RlsSetting, RlsSqlFragment } from "@azerothian/utilize/types/definitions";
 import type { Association } from "@azerothian/utilize/types/index";
@@ -26,12 +26,81 @@ export interface PolicyCompilerHost {
   getTableName(modelName: string): string | { schema?: string; tableName: string };
   /** Get primary key attribute name. */
   getPrimaryKeyAttribute(modelName: string): string | undefined;
+  /**
+   * Relationship hops into RLS tables. Without it, every hop is a plain
+   * correlated `EXISTS`, which only works while no table it reaches has RLS.
+   */
+  hops?: HopFunctionRegistry;
 }
 
-/** Thread-safe alias counter, scoped per top-level compilation. */
+/**
+ * Where the compiler puts a relationship hop that reaches a table with RLS.
+ *
+ * A policy's subquery is itself subject to the policies of every table it
+ * reads. A rule that walks back into its own table (`Membership` visible to
+ * the members of its group) or into a table whose policy walks back (`Group`
+ * via `memberships`, `Membership` via `group`) is then infinite recursion,
+ * which Postgres refuses outright (42P17); and a hop that does terminate
+ * quietly answers less than the engine's scope does, because the engine never
+ * applies the related model's scope inside a quantifier. So such a hop runs in
+ * a generated `SECURITY DEFINER` function, owned by a role that bypasses RLS,
+ * returning the key values the hop matches. The policy keeps everything
+ * caller-specific: the function reads the request's settings like the policy
+ * would.
+ */
+export interface HopFunctionRegistry {
+  /** Whether `modelName`'s table has RLS enabled. */
+  isRlsModel(modelName: string): boolean;
+  /** The SQL type of a column, for the function's `RETURNS SETOF`. */
+  columnType(modelName: string, attribute: string): string;
+  /** Register a hop body; returns the schema-qualified, quoted function name. */
+  define(body: string, returnType: string): string;
+}
+
+/** Alias counter, scoped per top-level compilation. */
 class AliasCounter {
   private n = 0;
+  /** Inside a hop function's body: already running as its owner. */
+  inFunction = false;
   next(): string { return `_rls${this.n++}`; }
+}
+
+/**
+ * Whether a hop, or any hop nested in its inner filter, reads a table with
+ * RLS enabled.
+ */
+function reachesRls(host: PolicyCompilerHost, association: Association, inner: PortableWhere): boolean {
+  const hops = host.hops;
+  if (!hops) {
+    return false;
+  }
+  if (hops.isRlsModel(association.target) || (association.through && hops.isRlsModel(association.through))) {
+    return true;
+  }
+  const walk = (model: string, where: PortableWhere): boolean => Object.keys(where).some((key) => {
+    const value = where[key];
+    if (LOGICAL_OPERATORS.has(key.toLowerCase())) {
+      const branches = Array.isArray(value) ? value : [value];
+      return branches.some((b) => b && typeof b === "object" && walk(model, b as PortableWhere));
+    }
+    const q = parseQuantifier(value);
+    const assoc = q ? host.getAssociations(model)[key] : undefined;
+    return !!(q && assoc && reachesRls(host, assoc, q.inner || {}));
+  });
+  return walk(association.target, inner);
+}
+
+/**
+ * The policy side of a hop function: does the parent's key appear in the set
+ * the function returns? `COALESCE(…, FALSE)` gives `IN` the answer `EXISTS`
+ * would for a NULL parent key, and the body drops NULL keys, so a negated hop
+ * (`none`/`isNot`/`every`) is never NULL either. Uncorrelated, so Postgres
+ * runs it once per statement as a hashed subplan.
+ */
+function hopFunctionCall(host: PolicyCompilerHost, body: string, returnType: string, parentColRef: string, negate: boolean): string {
+  const fn = (host.hops as HopFunctionRegistry).define(body, returnType);
+  const member = `COALESCE(${parentColRef} IN (SELECT * FROM ${fn}()), FALSE)`;
+  return negate ? `NOT ${member}` : member;
 }
 
 /**
@@ -49,10 +118,19 @@ export function compilePolicyExpression(
     return expr.text;
   }
   const ctx = new AliasCounter();
-  // In an RLS policy, columns are referenced without a table prefix — the
-  // USING / WITH CHECK clause is implicitly in the context of the table.
-  // We pass an empty string as tableRef so top-level columns have no prefix.
-  return compileWhere(host, modelName, expr, "", ctx);
+  // `via` sugar arrives as a `__via` marker (from `compileRlsPolicies`); each
+  // hop's quantifier depends on the association type, known only here.
+  const resolved = resolveViaMarkers(expr, modelName, (model, rel) => {
+    const assoc = host.getAssociations(model)[rel];
+    return assoc ? { associationType: assoc.associationType, target: assoc.target } : undefined;
+  }) || {};
+  // Top-level columns are qualified with the table's own name. Unqualified,
+  // a column inside a correlated subquery binds to the *nearest* table that
+  // has it: `"_q0"."userId" = "id"` compared the membership row with itself
+  // instead of with the policy's row.
+  const table = host.getTableName(modelName);
+  const tableRef = host.quoteIdentifier(typeof table === "string" ? table : table.tableName);
+  return compileWhere(host, modelName, resolved, tableRef, ctx);
 }
 
 /**
@@ -84,6 +162,10 @@ function compileWhere(
   tableRef: string,
   ctx: AliasCounter,
 ): string {
+  // A SQL fragment standing for a whole branch (`TRUE` for an `allow` rule).
+  if (isRlsSqlFragment(where)) {
+    return where.text;
+  }
   const parts: string[] = [];
   const associations = host.getAssociations(modelName);
 
@@ -222,14 +304,16 @@ function compileQuantifier(
   const targetTable = host.quoteTable(host.getTableName(association.target));
   const alias = host.quoteIdentifier(ctx.next());
 
+  // Association keys are attribute names; the SQL needs column names.
+  const col = (model: string, attr: string) => host.quoteIdentifier(host.getColumnName(model, attr));
   let parentCol: string;
   let targetCol: string;
   if (isBelongsTo) {
-    parentCol = host.quoteIdentifier(association.foreignKey);
-    targetCol = host.quoteIdentifier(association.targetKey);
+    parentCol = col(association.source, association.foreignKey);
+    targetCol = col(association.target, association.targetKey);
   } else {
-    parentCol = host.quoteIdentifier(association.sourceKey);
-    targetCol = host.quoteIdentifier(association.foreignKey);
+    parentCol = col(association.source, association.sourceKey);
+    targetCol = col(association.target, association.foreignKey);
   }
 
   const isEmpty = Object.keys(innerFilter).length === 0;
@@ -239,13 +323,25 @@ function compileQuantifier(
     return "TRUE";
   }
 
+  const asFunction = !ctx.inFunction && reachesRls(host, association, innerFilter);
+  const wasInFunction = ctx.inFunction;
+  ctx.inFunction = wasInFunction || asFunction;
   const innerSql = isEmpty
     ? undefined
     : compileWhere(host, association.target, innerFilter, alias, ctx);
+  ctx.inFunction = wasInFunction;
 
   const negate = quantifier === "none" || quantifier === "isNot" || isEvery;
 
   const parentColRef = parentRef ? `${parentRef}.${parentCol}` : parentCol;
+  if (asFunction) {
+    let body = `SELECT ${alias}.${targetCol} FROM ${targetTable} AS ${alias} WHERE ${alias}.${targetCol} IS NOT NULL`;
+    if (innerSql) {
+      body += isEvery ? ` AND NOT COALESCE((${innerSql}), FALSE)` : ` AND ${innerSql}`;
+    }
+    const keyAttr = isBelongsTo ? association.targetKey : association.foreignKey;
+    return hopFunctionCall(host, body, host.hops!.columnType(association.target, keyAttr), parentColRef, negate);
+  }
   let subquery = `SELECT 1 FROM ${targetTable} AS ${alias} WHERE ${alias}.${targetCol} = ${parentColRef}`;
   if (innerSql) {
     if (isEvery) {
@@ -273,10 +369,11 @@ function compileBtmQuantifier(
   const targetTable = host.quoteTable(host.getTableName(association.target));
   const targetAlias = host.quoteIdentifier(ctx.next());
 
-  const sourceKey = host.quoteIdentifier(association.sourceKey);
-  const foreignKey = host.quoteIdentifier(association.foreignKey);
-  const otherKey = host.quoteIdentifier(association.otherKey as string);
-  const targetKey = host.quoteIdentifier(association.targetKey);
+  const col = (model: string, attr: string) => host.quoteIdentifier(host.getColumnName(model, attr));
+  const sourceKey = col(association.source, association.sourceKey);
+  const foreignKey = col(joinModelName, association.foreignKey);
+  const otherKey = col(joinModelName, association.otherKey as string);
+  const targetKey = col(association.target, association.targetKey);
 
   const isEmpty = Object.keys(innerFilter).length === 0;
   const isEvery = quantifier === "every";
@@ -285,9 +382,13 @@ function compileBtmQuantifier(
     return "TRUE";
   }
 
+  const asFunction = !ctx.inFunction && reachesRls(host, association, innerFilter);
+  const wasInFunction = ctx.inFunction;
+  ctx.inFunction = wasInFunction || asFunction;
   const innerSql = isEmpty
     ? undefined
     : compileWhere(host, association.target, innerFilter, targetAlias, ctx);
+  ctx.inFunction = wasInFunction;
 
   let targetExists: string;
   if (innerSql) {
@@ -303,6 +404,10 @@ function compileBtmQuantifier(
   const negate = quantifier === "none" || isEvery;
 
   const parentColRef = parentRef ? `${parentRef}.${sourceKey}` : sourceKey;
+  if (asFunction) {
+    const body = `SELECT ${joinAlias}.${foreignKey} FROM ${joinTable} AS ${joinAlias} WHERE ${joinAlias}.${foreignKey} IS NOT NULL AND ${targetExists}`;
+    return hopFunctionCall(host, body, host.hops!.columnType(joinModelName, association.foreignKey), parentColRef, negate);
+  }
   let subquery = `SELECT 1 FROM ${joinTable} AS ${joinAlias} WHERE ${joinAlias}.${foreignKey} = ${parentColRef}`;
   subquery += ` AND ${targetExists}`;
 

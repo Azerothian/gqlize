@@ -278,7 +278,11 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     if (this.sequelize.getDialect() !== "postgres") {
       return [];
     }
-    const host = buildCompilerHost(this.sequelize, definitions);
+    const [[{ schema }]] = await this.sequelize.query("SELECT current_schema() AS schema") as [[{ schema: string }], unknown];
+    const host = buildCompilerHost(this.sequelize, definitions, {
+      schema: (this.sequelize as unknown as { options: { schema?: string } }).options.schema ?? schema,
+      functionOwner: this.options.rls?.bypassRole,
+    });
     const models = extractRlsModels(host);
     if (models.length === 0) {
       // Nothing declares RLS. Skip the transaction only if nothing is left to
@@ -302,7 +306,7 @@ export default class SequelizeAdapter implements GqlizeAdapter {
     definitions: { [name: string]: Definition },
     options?: RlsSyncOptions,
   ): string => {
-    const host = buildCompilerHost(this.sequelize, definitions);
+    const host = buildCompilerHost(this.sequelize, definitions, { functionOwner: this.options.rls?.bypassRole });
     const models = extractRlsModels(host);
     return generateRlsSql(host, models, options);
   };
