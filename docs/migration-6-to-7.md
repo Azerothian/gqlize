@@ -1000,6 +1000,15 @@ Not required for migration, but this is what the split bought:
   `override` type is an error where it was written instead of an error on *every* query at request
   time. `options.validate: false` opts out. See
   [guide: Build-time validation](guide.md#build-time-validation-optionsvalidate).
+- **Row security** — `permission.scope` rules can follow relationships (`some` / `none` / `every`
+  / `is` / `isNot`, the `via` shorthand and `not`), so "a group manager sees and edits the users in
+  their groups" is one rule. Definitions take global `options.filters` (soft delete, tenancy) that
+  apply to every read. On Postgres, `options.rls` turns the same rules into row-level security
+  policies that `sync()` creates and keeps in step, and each request runs under its own database
+  role and settings. A created or updated row must still satisfy the caller's rule. See
+  [guide: Row-level scope](guide.md#row-level-scope-permissionscope),
+  [Global filters](guide.md#global-filters-optionsfilters) and
+  [Postgres row-level security](guide.md#postgres-row-level-security-phase-3a).
 
 ## 6. Checklist
 
