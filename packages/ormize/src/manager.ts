@@ -5,12 +5,15 @@
 // identical (same members, same types, same `this`-binding contract) and
 // delegates to them.
 
+import { createSystemContext } from "@azerothian/utilize/system-context";
 import Cache from "./utils/cache";
 import {globalKeyTargets, globalKeysFromFields} from "@azerothian/utilize/utils/global-keys";
 import {definitionHooks} from "@azerothian/utilize/utils/definition-hooks";
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import {copyDefinition} from "@azerothian/utilize/utils/copy-on-write";
-import type { Permission, ScopeOperation } from "@azerothian/utilize/gate";
+import type { Permission, PortableWhere, ScopeOperation } from "@azerothian/utilize/gate";
+import { ScopeConfigurationError, collectQuantifierTargets } from "@azerothian/utilize/gate";
+import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import type { ScopeMissBehaviour } from "./scope";
 import { inheritScopeMemo } from "./scope";
 import { buildScopeHooks, buildScopeInstanceHooks } from "./scope-hooks";
@@ -31,13 +34,14 @@ import {
   warnDefinitionInstanceHooks, createHook, installInstanceHooks,
   runHook, applyEagerAfterFind,
   // scope-bridge
-  resolveRowScope, scopeNativeWhere,
+  resolveRowScope, scopeNativeWhere, resolveModelGlobalFilters,
   assertRowsInScope, scopeMiss,
   // relationships
   validateCrossAdapterKeys, buildCrossAdapterAssociation,
   processRelationship, generateJoinModels,
   // resolution
   resolveClassMethod as _resolveClassMethod,
+  resolveInstanceMethod as _resolveInstanceMethod,
   resolveManyRelationship as _resolveManyRelationship,
   resolveSingleRelationship as _resolveSingleRelationship,
   resolveFindAll as _resolveFindAll,
@@ -57,6 +61,8 @@ import {
   // csv
   processCsv as _processCsv,
   processCsvImport as _processCsvImport,
+  // global filters
+  validateFilters, withoutFilters as _withoutFilters,
 } from "./engine";
 import type { CsvImportHost, CsvImportRequest, CsvImportResult, CsvOperation, CsvRequest } from "./engine";
 import { resolveCsvLimits, resolveCsvMaxFiles } from "./csv/limits";
@@ -113,6 +119,8 @@ export default class Ormize<
   private writableForeignKeys: boolean;
   /** `GqlizeOptions.csv`, folded with each definition's own by `csvLimits`. */
   private csv: boolean | CsvOptions | undefined;
+  /** `GqlizeOptions.rls`, forwarded to `adapter.syncRowSecurity`. */
+  private rlsOptions: { manageRoles?: boolean } | undefined;
   /**
    * The row-level scope, re-imposed on the adapter's own model hooks (§13).
    *
@@ -161,6 +169,7 @@ export default class Ormize<
     this.onScopeMiss = options.onScopeMiss || "empty";
     this.writableForeignKeys = options.writableForeignKeys === true;
     this.csv = options.csv;
+    this.rlsOptions = options.rls;
     this.readCache = options.cache ? new ReadCache(options.cache, {
       definitionCache: (defName) => this.defs[defName]?.cache,
       hasOpaqueHooks: (defName, operation) => OPAQUE_READ_HOOKS[operation].some((hookName) => {
@@ -168,13 +177,35 @@ export default class Ormize<
         const global = this.globalHooks[hookName];
         return [own, global].some((h) => Array.isArray(h) ? h.length > 0 : Boolean(h));
       }),
+      rlsIdentity: (tags, context) => {
+        const identities = new Set<string>();
+        for (const defName of tags) {
+          const adapter = this.adapters[this.defsAdapters[defName]];
+          if (adapter?.isRlsEnabled?.(defName)) {
+            identities.add(JSON.stringify([
+              this.defsAdapters[defName], adapter.resolveRlsRole?.(context) ?? null, adapter.resolveRlsSettings?.(context) ?? null,
+            ]));
+          }
+        }
+        return identities.size ? [...identities].sort().join("|") : undefined;
+      },
     }) : undefined;
     // Built unconditionally: whether a scope is configured is asked at call
     // time, so a `setPermission` after `initialise()` reaches the models that
     // already exist. Field initialisers have all run by here, so `this.host`
     // is the same object the cross-adapter and mutation modules were handed.
     this.scopeHooks = buildScopeHooks(this.host);
-    this.scopeInstanceHooks = buildScopeInstanceHooks((name) => Boolean(this.defs[name]));
+    this.scopeInstanceHooks = buildScopeInstanceHooks(
+      (name) => Boolean(this.defs[name]),
+      // RFC §6.6: database-enforced models are exempt from the beforeQuery
+      // guard, but only for a statement running on a transaction the adapter
+      // opened with an identity applied.
+      (name, transaction) => {
+        const adapterName = this.defsAdapters[name];
+        const adapter = adapterName ? this.adapters[adapterName] : undefined;
+        return adapter?.isDatabaseEnforced?.(name, transaction) ?? false;
+      },
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -204,8 +235,13 @@ export default class Ormize<
       return;
     }
     const findings = Object.keys(this.defs).reduce(
-      (all: ReturnType<typeof auditDefinitionScopeSurfaces>, defName) =>
-        all.concat(auditDefinitionScopeSurfaces(defName, this.defs[defName])),
+      (all: ReturnType<typeof auditDefinitionScopeSurfaces>, defName) => {
+        const adapterName = this.defsAdapters[defName];
+        const adapter = adapterName ? this.adapters[adapterName] : undefined;
+        // RLS exempts raw SQL only; see `auditDefinitionScopeSurfaces`.
+        const rls = adapter?.isRlsEnabled?.(defName) ?? false;
+        return all.concat(auditDefinitionScopeSurfaces(defName, this.defs[defName], rls));
+      },
       [],
     );
     reportScopeSurfaces(
@@ -225,6 +261,71 @@ export default class Ormize<
     const everyAdapterEnforces = names.length > 0
       && names.every((name) => this.adapters[name]?.enforcesRowScope === true);
     reportScopeSurfaces(auditExtendFields(target, extendFields), () => everyAdapterEnforces);
+  }
+
+  // -------------------------------------------------------------------------
+  // Global filters (RFC §5)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Validate every model's `options.filters` at `initialise` time.
+   * Throws `ScopeConfigurationError` for malformed declarations.
+   */
+  private validateGlobalFilters() {
+    for (const defName of Object.keys(this.defs)) {
+      const filters = this.defs[defName]?.options?.filters;
+      if (filters && typeof filters === "object") {
+        validateFilters(defName, filters);
+      }
+    }
+  }
+
+  /**
+   * Build-time checks for RLS declarations (RFC §6.7).
+   * - RLS-enabled model on an adapter with no rls.settings -> error
+   * - RLS-enabled model with no policies -> warning
+   * - Model on an RLS adapter whose role rules give it a scope but isn't
+   *   RLS-enabled -> warning
+   *
+   * `onScopeMiss: "throw"` needs no check: under RLS the engine still asks the
+   * scope predicate and honours an outright deny, so it behaves as without RLS.
+   */
+  private validateRlsDeclarations() {
+    const warn = console.warn; // eslint-disable-line no-console
+    for (const defName of Object.keys(this.defs)) {
+      const rls = this.defs[defName]?.options?.rls;
+      if (!rls?.enabled) {
+        continue;
+      }
+      const adapterName = this.defsAdapters[defName];
+      const adapter = adapterName ? this.adapters[adapterName] : undefined;
+      // RFC §6.7: RLS-enabled model on an adapter with no rls config -> error.
+      if (adapter && !adapter.isRlsEnabled?.(defName)) {
+        // The model declares rls.enabled but the adapter has no rls config.
+        throw new Error(
+          `RLS: model '${defName}' has rls.enabled but its adapter '${adapterName}' ` +
+          "has no rls configuration. Configure rls on the adapter, or remove " +
+          "rls.enabled from the model.",
+        );
+      }
+      const policies = rls.policies || {};
+      if (Object.keys(policies).length === 0) {
+        warn(
+          `RLS: model '${defName}' has rls.enabled but no policies. ` +
+          `All rows will be denied. This is legal but usually an oversight.`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Run `fn` with the named global filters lifted (RFC §5.3).
+   *
+   * Scope is never lifted. Nested calls union their names. The bypass is part
+   * of the read-cache key.
+   */
+  withoutFilters = <T>(names: string[], fn: () => T | Promise<T>): T | Promise<T> => {
+    return _withoutFilters(names, fn);
   }
 
   // -------------------------------------------------------------------------
@@ -533,6 +634,7 @@ export default class Ormize<
     processRelationshipMutation: (defName, source, input, context, selection) => this.processRelationshipMutation(defName, source, input, context, selection),
     resolveScope: (defName, operation, context) => resolveRowScope(this.engine, defName, operation, context),
     scopeMiss: (defName, operation) => scopeMiss(defName, operation, this.onScopeMiss),
+    globalFilters: (defName, operation) => resolveModelGlobalFilters(this.engine, defName, operation),
     scopedWhere: (defName, operation, context, where, options) => scopeNativeWhere(this.engine, defName, operation, context, where, options),
     assertRowsInScope: (defName, operation, context, rows, options) => assertRowsInScope(this.engine, defName, operation, context, rows, options),
   };
@@ -642,13 +744,49 @@ export default class Ormize<
     }));
     await generateJoinModels(this.engine);
     validateCrossAdapterKeys(this.engine);
+    // Validate global filters (RFC §5.1) before the adapters initialise.
+    this.validateGlobalFilters();
+    // Validate RLS declarations (RFC §6.7) at build time.
+    this.validateRlsDeclarations();
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       installInstanceHooks(this.engine, adapterName, adapter);
       return adapter.initialise(options);
     }));
+    // RFC §10 Q6: a global filter its adapter can't express (a relationship
+    // filter on a backend without subqueries, or one reaching another
+    // adapter) fails here, at build, not on the first query that hits it.
+    // Compiling a filter opens no connection.
+    await this.checkGlobalFiltersExpressible();
     this._initialised = true;
     this.auditScopeSurfaces();
+  }
+
+  private checkGlobalFiltersExpressible = async() => {
+    const associations = (model: string) => (this.defs[model] ? this.getAssociations(model) : {});
+    for (const defName of Object.keys(this.defs)) {
+      const filters = this.defs[defName]?.options?.filters;
+      for (const [name, decl] of Object.entries(filters || {})) {
+        const where = (decl as { where: PortableWhere }).where;
+        for (const target of collectQuantifierTargets(where, defName, associations)) {
+          if (this.defsAdapters[target] !== this.defsAdapters[defName]) {
+            throw new ScopeConfigurationError(
+              `Global filter '${name}' on '${defName}' reaches '${target}', which lives on another adapter. ` +
+              "One query cannot reach another database.",
+            );
+          }
+        }
+        try {
+          await this.getModelAdapter(defName).processFilterArgument(
+            where, whereOperatorsFor(this.defs[defName]), {}, defName,
+          );
+        } catch (e) {
+          throw new ScopeConfigurationError(
+            `Global filter '${name}' on '${defName}' can't be expressed by its adapter: ${(e as Error).message}`,
+          );
+        }
+      }
+    }
   }
 
   /**
@@ -678,12 +816,37 @@ export default class Ormize<
       const adapter = this.adapters[adapterName];
       return adapter.reset(options);
     }));
+    // After reset() (drop+recreate), reapply RLS policies.
+    await this.syncAdapterRowSecurity();
   }
   sync = async(options?: AdapterQueryOptions) => {
     await Promise.all(Object.keys(this.adapters).map((adapterName) => {
       const adapter = this.adapters[adapterName];
       return adapter.sync(options);
     }));
+    // After tables exist, reconcile RLS policies (RFC §6.4).
+    await this.syncAdapterRowSecurity();
+  }
+
+  /**
+   * Call `adapter.syncRowSecurity()` on every adapter that implements it,
+   * passing only that adapter's definitions. RFC §6.4.
+   */
+  private syncAdapterRowSecurity = async () => {
+    for (const adapterName of Object.keys(this.adapters)) {
+      const adapter = this.adapters[adapterName];
+      if (!adapter.syncRowSecurity) {
+        continue;
+      }
+      // Collect definitions registered against this adapter.
+      const adapterDefs: { [name: string]: import("./types").Definition } = {};
+      for (const defName of Object.keys(this.defs)) {
+        if (this.defsAdapters[defName] === adapterName) {
+          adapterDefs[defName] = this.defs[defName];
+        }
+      }
+      await adapter.syncRowSecurity(adapterDefs, this.rlsOptions);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -706,6 +869,31 @@ export default class Ormize<
     const Model = this.getModel(defName) as unknown as abstract new (...args: unknown[]) => unknown;
     const isType = value instanceof Model;
     return isType;
+  }
+
+  /**
+   * Run an instance method with `row` as `this`. On an RLS model it runs in
+   * the request's RLS transaction (`context.transaction`), like a class method.
+   */
+  resolveInstanceMethod = async(defName: string, row: unknown, methodName: string,
+    implementation: (this: unknown, args: unknown, context: RequestContext) => unknown,
+    args: unknown, context: RequestContext): Promise<unknown> => {
+    return _resolveInstanceMethod(this.engine, defName, row, methodName, implementation, args, context);
+  }
+
+  /**
+   * Run userland work for one request (an `extend` field's resolver). With RLS
+   * models registered it runs inside one coordinated transaction, so each RLS
+   * adapter it touches through the engine opens a single transaction with the
+   * request's settings and role. Otherwise `fn` just runs.
+   */
+  runRequest = async<T>(context: RequestContext, fn: () => Promise<T> | T): Promise<T> => {
+    const rls = Object.keys(this.defs).some((defName) =>
+      this.adapters[this.defsAdapters[defName]]?.isRlsEnabled?.(defName) === true);
+    if (!rls) {
+      return fn();
+    }
+    return _runWithContext(context, () => _transaction(this, async() => fn()));
   }
 
   resolveClassMethod = async(defName: string, methodName: string, args: unknown, context: RequestContext,
@@ -803,6 +991,28 @@ export default class Ormize<
 
   getContext = (): RequestContext => {
     return _getContext();
+  }
+
+  /**
+   * Run work that has no request behind it (a migration, a cron job) as the
+   * system (RFC §6.5). `fn` receives a context to pass to engine calls: no row
+   * scope applies to it, and an RLS adapter runs it under its `rls.bypassRole`.
+   * Global filters still apply; lift them with `withoutFilters`.
+   *
+   * Fails before running `fn` when an adapter with RLS models has no
+   * `bypassRole`, rather than running system work under a request role or the
+   * connection's own.
+   */
+  asSystem = async <T>(fn: (context: RequestContext) => Promise<T>): Promise<T> => {
+    const context = createSystemContext();
+    for (const defName of Object.keys(this.defs)) {
+      const adapter = this.adapters[this.defsAdapters[defName]];
+      if (adapter?.isRlsEnabled?.(defName)) {
+        // Throws when the adapter has no bypass role to run system work under.
+        adapter.resolveRlsRole?.(context);
+      }
+    }
+    return _runWithContext(context, () => fn(context));
   }
 
   withTransaction = async <T>(defName: string, context: RequestContext, fn: (ctx: RequestContext) => Promise<T>): Promise<T> => {

@@ -927,9 +927,9 @@ query { models { Post(include: [{ comments: { deleted: INCLUDE, separate: true }
 `deletedAt` is an ordinary column once paranoid is on, so it can be selected, filtered in `where`,
 and named in `orderBy` like any other field.
 
-Two things soft delete does *not* reach: `node(id:)` never resolves a deleted row, and
-`belongsTo` / `hasOne` fields have no `deleted` argument — a deleted single-relation target reads
-as `null`. `update` and `delete` also skip deleted rows; restore first, then write.
+`belongsTo` / `hasOne` fields and `node(id:)` also accept the `deleted` argument, gated by
+`queryDeleted` on the target model (singular fields) or any visible soft-deleting model (`node`).
+`update` and `delete` skip deleted rows; restore first, then write.
 
 The argument is gated by the `queryDeleted` permission, and is absent from the schema entirely for
 a caller who is denied it — see [Permissions](#8-permissions).
@@ -1720,12 +1720,292 @@ it (`groupIds`); the long form `{own: {field: "ownerId", from: "userId"}}` spell
 `any` and `all` combine leaves. `read` / `write` split the operations, and an explicit `update`
 beats the `write` it falls under.
 
+**Relationship quantifiers.** A `scope` may contain relationship quantifiers: `{memberships: {some:
+{role: {eq: "manager"}}}}` means "at least one membership row matches". Available quantifiers:
+`some`/`none`/`every` for hasMany/belongsToMany, `is`/`isNot` for belongsTo/hasOne. They nest, and
+an empty inner filter means "any related row". The Sequelize adapter compiles them to `EXISTS` /
+`NOT EXISTS` subqueries; Valkey and MikroORM refuse them with `ScopeConfigurationError`.
+
+**`via` leaf.** A shorthand for relationship quantifier chains:
+
+```ts
+scope: {
+  User: {
+    via: "memberships.group.memberships",
+    match: { userId: "$principal.id", role: "manager" },
+  },
+}
+```
+
+Each hop in the dot-separated path becomes `some` (many-valued) or `is` (single-valued). `$principal.X`
+reads from the principal; a missing principal value denies.
+
+**`not` combinator.** Wraps a leaf in a portable `not`. A denying branch under `not` still denies --
+`not` can never widen a scope through a missing value.
+
+**Warning: the join model is a privilege boundary.** A rule that grants access through
+`Membership.role` is only as strong as the write scope on `Membership`. A manager who can update their
+own membership row, or create one in another group, can grant themselves anything. Scope `Membership`
+writes explicitly.
+
 Two things are deliberately unlike the rest of the rules tree. `defaultDeny` does **not** apply to
 `scope`, and `"none"` has to be written out, because an absent `scope` already means unscoped —
 without an explicit spelling, "this role sees everything" and "nobody has configured this yet" would
 be the same tree. And a `group` leaf denies when the principal belongs to no groups rather than
 compiling to `{in: []}`, which is a deny that reads like a bug; a principal the reader cannot find
 at all is likewise a deny.
+
+### Global filters (`options.filters`)
+
+A global filter is a static `PortableWhere` declared on a model's `options.filters`. It is the same
+for every caller — anything caller-dependent belongs in `scope`.
+
+```ts
+db.addDefinition({
+  name: "Task",
+  define: { title: { type: Sequelize.STRING }, archived: { type: Sequelize.BOOLEAN } },
+  options: {
+    filters: {
+      active: { where: { archived: { eq: false } } },
+      published: { where: { publishedAt: { ne: null } }, operations: ["read"] },
+    },
+  },
+});
+```
+
+Each filter names a `where` and optionally which operations it applies to (`read`, `update`,
+`delete`; default all three). `create` has no existing rows to filter and is never listed — the
+engine refuses it at `initialise`.
+
+The engine AND-s applicable filters into every read and write chokepoint alongside the scope: root
+lists, `total`, `node(id:)`, eager and lazy relationship fields of every arity, through reads, the
+`required` filter path, and `update`/`delete`/`select` write paths. Composition order:
+`clientWhere AND globalFilters AND scope`.
+
+**Bypass.** Lift named global filters server-side with `orm.withoutFilters`:
+
+```ts
+await orm.withoutFilters(["active"], async () => {
+  // reads here include archived rows; scope still applies
+});
+```
+
+`withoutFilters` uses `AsyncLocalStorage`. Nested calls union their names. The bypass is part of
+the read-cache key, so a cached read with the filter is never served to a read without it.
+
+### Postgres row-level security (Phase 3a)
+
+Models can declare Postgres RLS policies that `sync()` applies to the database. This is the
+declaration, compilation, and reconciliation layer (Phase 3a of the row-security RFC). The
+per-request runtime enforcement (Phase 3b) is a follow-up within the same RFC.
+
+**Declaration.** Import from `@azerothian/ormize/rls`:
+
+```ts
+import { rls, sql } from "@azerothian/ormize/rls";
+
+const Task = {
+  name: "Task",
+  define: { /* ... */ },
+  options: {
+    rls: {
+      enabled: true,              // ENABLE ROW LEVEL SECURITY
+      force: true,                // FORCE (the default) — table owner is subject to policies too
+      policies: {
+        own: {
+          for: "all",
+          to: "app_member",
+          using: { ownerId: { eq: rls.setting("app.user_id", "uuid") } },
+        },
+        audit: {
+          for: "select",
+          to: "app_auditor",
+          using: sql`true`,
+        },
+      },
+    },
+  },
+};
+```
+
+`rls.setting(name, type)` produces `(SELECT nullif(current_setting('name', true), '')::type)`:
+the `nullif` is required (an unset custom setting reads back as `''`, not `NULL`, after any
+connection has set it once). The `(SELECT …)` wrapper makes Postgres evaluate it once per
+statement. Array types (e.g. `"uuid[]"`) use `string_to_array`. `sql` is a tagged template for
+raw SQL fragments.
+
+Non-Postgres adapters ignore `options.rls`. A definition can carry it and still run on SQLite in
+tests, where only the app-layer scope applies.
+
+**Generating policies from role rules.** `compileRlsPolicies(rules, options)` produces
+`{ [model]: policies }` from the same rules tree `createRoleBasedPermissions` reads:
+
+```ts
+import { compileRlsPolicies } from "@azerothian/utilize/permissions";
+
+const policies = compileRlsPolicies(rules, {
+  dbRole: (appRole) => `app_${appRole}`,
+  settings: { id: "app.user_id", tenantId: "app.tenant_id" },
+});
+// Merge into definitions: Task.options.rls.policies = policies.Task;
+```
+
+Insert `WITH CHECK` carries the full rule, relationship hops included. A brand-new row has no
+related rows pointing at it yet, so a hop through its children doesn't match, and creating a row
+that is visible only through a child the same mutation creates (a user together with their
+membership) is refused under RLS, where the engine on SQLite allows it. The `deletedAt` column is
+never emitted into a policy (soft delete stays a global filter applied by the engine).
+
+**Policies that follow relationships into RLS tables.** A policy's subquery is itself subject to
+the RLS of every table it reads. A rule that reads its own table (a `Membership` visible to the
+members of its group) or a pair of tables whose rules read each other (`Group` via `memberships`,
+`Membership` via `group`) is then infinite recursion, which Postgres refuses. So when a policy
+follows a relationship into a table with RLS, `sync()` runs that hop in a generated function
+(`gqlize_rls_<hash>`, `SECURITY DEFINER`, `search_path` pinned with `pg_temp` last, `EXECUTE`
+granted only to the roles of the policies that call it) and the policy asks whether the row's key
+is in the set it returns. Inside the hop the related tables' own policies don't apply, which is
+also how the engine's quantifiers behave, so both sides answer the same question. The function's
+owner must bypass RLS: set the adapter's `rls.bypassRole` to a role with `BYPASSRLS` (the role
+running `sync()` must be a member of it), or `sync()` runs as a superuser. Otherwise `sync()` (and
+the `rls:sql` script) refuses with an error rather than installing policies that would quietly
+match nothing. Unused hop functions are dropped.
+
+**Reconciliation.** `Ormize.sync()` calls `adapter.syncRowSecurity()` after the tables exist.
+One transaction with `pg_advisory_xact_lock`. Each policy is hashed; unchanged policies issue no
+DDL. Stale managed policies are dropped. `new Ormize({ rls: { manageRoles: true } })` creates
+`NOLOGIN` roles that don't already exist.
+
+**CLI.** `gqlize rls:sql` prints the same DDL as idempotent `DO` blocks, from definitions alone —
+no database connection. Use it to generate a migration file.
+
+**Soft delete rule.** No policy may filter on the `deletedAt` column, unless it does so through the
+adapter's soft-delete flag. `compileRlsPolicies` never emits it, and `syncRowSecurity` warns when a
+hand-written filter-vocabulary policy mentions it (raw `sql` policies can't be inspected). See RFC
+§6.8 for why: a SELECT policy that hides deleted rows makes every soft delete fail and restore,
+hard delete and `deleted: INCLUDE/ONLY` quietly do nothing.
+
+If the database itself must hide deleted rows (other clients, raw SQL), set
+`rls.softDeleteFlag: "app.include_deleted"` on the adapter and write the policy against it:
+
+```ts
+see: {
+  for: "select", to: "app_member",
+  using: sql`"ownerId" = (SELECT nullif(current_setting('app.user_id', true), ''))
+    AND ("deletedAt" IS NULL OR current_setting('app.include_deleted', true) = 'on')`,
+},
+```
+
+The adapter sets the flag to `on` for the rest of the request's RLS transaction before the first
+soft delete, restore or hard delete of a paranoid model and the first read of deleted rows. So
+everything after it in that transaction, nested writes and raw SQL included, can see deleted rows;
+the engine's own soft-delete filter still hides them from what it issues. `syncRowSecurity` doesn't
+warn about `deletedAt` when the flag is set.
+
+The `sql` tag takes no interpolated values and throws if given any: a policy is DDL, and per-request
+values go through `rls.setting()`.
+
+**Operational notes.** Two roles: `sync()` needs the table owner (DDL), and the app should run
+requests as a different role. `force: true` keeps the policies applying to app traffic when one
+connection does both. Policy changes take `ACCESS EXCLUSIVE` on the table. Index what policy
+subqueries filter on.
+
+### Runtime enforcement (Phase 3b)
+
+The adapter applies per-request settings and role on every transaction it opens:
+
+```ts
+new SequelizeAdapter({
+  rls: {
+    settings: (ctx) => ({
+      "app.user_id": ctx.user.id,
+      "app.group_ids": ctx.user.groupIds,   // arrays comma-joined
+    }),
+    role: (ctx) => `app_${ctx.user.role}`,
+    bypassRole: "app_system",               // optional
+    enforce: "database",                     // default; "both" keeps engine scope too
+  },
+}, connectionConfig);
+```
+
+**How it works.** When a transaction opens on this adapter, the adapter runs
+`SELECT set_config($1, $2, true)` for each setting (bound values, never interpolated)
+and `SET LOCAL ROLE "role"`. Both revert at COMMIT/ROLLBACK; the adapter resets them
+explicitly as defence in depth.
+
+**Enforcement mode.** `enforce: "database"` (the default): the database policy is the row
+rule, and the engine does NOT inject the scope's `where`/`native` for RLS-enabled models.
+Scope `set` on create/update is still applied. `enforce: "both"` keeps both the engine scope
+and the database policy, for deployments that want the layered defence.
+
+**Reads.** The engine automatically wraps a read in a transaction when its root model (or any
+model in its include plan) is RLS-enabled on the adapter. Inside a caller's `orm.transaction`,
+the existing transaction is reused. Non-RLS reads are unchanged.
+
+**No identity.** `role(ctx)` returning `undefined` means no authenticated user. The engine
+refuses the operation as a scope deny (honouring `onScopeMiss`), and never runs under the
+connection's own role. Deployments that serve anonymous reads return an explicit
+`app_anonymous` role and give it the policies it should have.
+
+**Fail closed.** Database enforcement (skipping the engine scope) only takes effect when the
+operation runs on a transaction the model's own adapter opened with the request's settings and
+role applied, and for the same identity it was opened with. A transaction you open yourself, one
+opened without a request context, another adapter's, or one reused after the principal changed
+keeps the engine scope: enforcement is "both", never "neither".
+
+**Class methods.** `orm.resolveClassMethod` (which gqlize, nestize and temporalize all call) runs
+a class method on an RLS model inside a transaction opened with the request's settings and role,
+and hands it over as `context.transaction`; with no identity it throws `ScopeDeniedError`.
+- A **raw-SQL** class method runs its statement on that transaction, so the policy filters it. On an
+  RLS model it needs no `:scope…` parameter and no `scopeAware` / `unscoped` declaration.
+- A **function** class method must pass `context.transaction` to what it queries
+  (`this.findAll({ transaction: context.transaction })`). The engine can't make it, and a query that
+  ignores it runs as the connection's own role, so these still declare `scopeAware` / `unscoped`.
+- A method declared **`unscoped`** runs on a transaction under `bypassRole` when one is configured
+  (it still receives the request's context). Without `bypassRole` it runs as the request and the
+  policies apply: it sees less, not more.
+
+Called straight off the model (`db.models.Task.rawTitles(args, ctx)`), none of this happens.
+
+**System work.** `orm.asSystem(fn)` runs work with no request behind it (a migration, a cron job):
+
+```ts
+await orm.asSystem(async(system) => {
+  const { models } = await orm.resolveFindAll("Task", null, {}, system);
+});
+```
+
+The `system` context has no row scope in the engine, and an RLS adapter runs it under
+`bypassRole` with no settings. `asSystem` throws before running `fn` if an adapter with RLS models
+has no `bypassRole`. Global filters still apply (`withoutFilters` lifts them). The context is
+marked with a private symbol, so nothing a request sends can pass for it.
+
+**Instance methods** go through `orm.resolveInstanceMethod` (gqlize's and nestize's instance-method
+routes call it) and behave like function class methods: on an RLS model they run in the request's
+RLS transaction, handed over as `context.transaction`, under `bypassRole` when declared `unscoped`,
+and refused with no identity. They still declare `scopeAware` / `unscoped`.
+
+**`extend` fields** run their resolver through `orm.runRequest(context, fn)` when any RLS model is
+registered: one coordinated transaction for the request, so every engine call the resolver makes
+with its `context` shares one transaction per RLS adapter, opened with the request's settings and
+role. Direct model use inside it still needs the declaration.
+
+**`onScopeMiss`** behaves as it does without RLS. The engine still asks the scope predicate on an RLS
+model, leaves the filtering to the policy, and honours an outright deny (`false`): reads return
+nothing, writes follow `onScopeMiss`. A row the policy hides is, as with the engine, just not there.
+
+**Read cache.** RLS reads are cached. The key includes the request's role and settings on every RLS
+model the read touches, and the tags include every model each policy's relationship filters read
+(for a raw `sql` policy, which can't be inspected, every model on the adapter), so a write to a
+table the policy reads invalidates the read. Reads inside a transaction you opened stay uncached.
+
+**Errors.** A `WITH CHECK` violation (Postgres `42501`) surfaces as `ScopeEscapeError`, the same
+error the engine's post-write re-check throws (both `ScopeDeniedError` and `ScopeEscapeError` are
+exported from `@azerothian/ormize`).
+A `42501` on a soft-delete or restore is reported as a configuration error pointing at
+RFC §6.8.
+
+**Build-time checks.** An RLS-enabled model on an adapter with no `rls` config is an error. An
+RLS-enabled model with no policies is a warning (every row is denied).
 
 ---
 

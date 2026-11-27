@@ -1,6 +1,6 @@
 import deepmerge from "deepmerge";
 
-import { PERMISSION_KEYS } from "./gate";
+import { PERMISSION_KEYS, ScopeConfigurationError } from "./gate";
 import type { Permission, PortableWhere, ScopeOperation, ScopePredicate } from "./gate";
 import type { RequestContext } from "./types/index";
 
@@ -215,12 +215,31 @@ const SCOPE_OPERATION_SET = new Set(SCOPE_OPERATION_KEYS);
 type ScopeSugarRef = string | { field: string; from?: string };
 
 /**
+ * A `via` leaf in the scope rules: a dot-separated relationship path from the
+ * scoped model, with a `match` filter at the innermost hop. Values beginning
+ * with `$principal.` are read from the principal at resolution time.
+ *
+ * Example: `{ via: "memberships.group.memberships", match: { userId: "$principal.id", role: "manager" } }`
+ *
+ * Compiled into a `__via` marker in the portable where; the engine resolves it
+ * into proper quantifier nesting against the association graph (single-valued
+ * hops become `is`, many-valued become `some`). This keeps `permissions.ts`
+ * free of association knowledge.
+ */
+type ScopeViaLeaf = {
+  via: string;
+  match: { [field: string]: unknown };
+};
+
+/**
  * One compiled scope condition.
  *
  * `own` matches a field against the principal's id; `group` matches a field
  * against a *list* on the principal; `tenant` is `own` with a different default
  * principal key, kept separate because it reads better in a rules tree and
  * because it is the case that most often wants `set` on a create.
+ * `via` follows a relationship path and applies a match filter at the end.
+ * `not` inverts a leaf — a denying branch under `not` still denies (never widens).
  */
 type ScopeSugarLeaf =
   | RuleDecision
@@ -228,8 +247,10 @@ type ScopeSugarLeaf =
   | { own: ScopeSugarRef }
   | { tenant: ScopeSugarRef }
   | { group: ScopeSugarRef }
+  | ScopeViaLeaf
   | { any: ScopeSugarLeaf[] }
-  | { all: ScopeSugarLeaf[] };
+  | { all: ScopeSugarLeaf[] }
+  | { not: ScopeSugarLeaf };
 
 /** A model's scope rules: one leaf for everything, or a leaf per operation. */
 type ScopeRuleNode =
@@ -375,7 +396,68 @@ function compileLeaf(leaf: ScopeSugarLeaf, principal: Principal | undefined, ope
     }
     return Object.keys(out).length > 0 ? out : undefined;
   }
+  if ("not" in leaf) {
+    // On a create, `own`/`tenant` compile to a `set` (force the value), which
+    // has nothing to negate. "Not your own" on a create still means the row
+    // must not carry your id, so negate the filter form a read would use.
+    // Dropping it instead silently widened every `not` on a create.
+    const inner = compileLeaf(leaf.not, principal, operation === "create" ? "read" : operation);
+    // A denying branch under `not` still denies — `not` can never widen a
+    // scope through a missing principal value or an explicit deny.
+    if (inner === false) {
+      return false;
+    }
+    if (inner === undefined) {
+      // `not(undefined)` is `not(no opinion)` = no opinion. An unscoped leaf
+      // inverted is still unscoped — there is nothing to negate.
+      return undefined;
+    }
+    if (!inner.where) {
+      // `not` only makes sense over a filter, not a bare `set`. A `set`-only
+      // scope under `not` has nothing to invert.
+      return undefined;
+    }
+    return { where: { not: inner.where } };
+  }
+  if ("via" in leaf) {
+    return compileViaLeaf(leaf, principal, operation);
+  }
   return undefined;
+}
+
+/**
+ * Compile a `via` leaf into a `__via` marker in the portable where.
+ *
+ * Values beginning with `$principal.` are resolved from the principal here;
+ * a missing principal value is a deny (consistent with `own` and `group`).
+ * The engine later resolves the `__via` marker into proper quantifier nesting
+ * against the association graph.
+ */
+function compileViaLeaf(
+  leaf: ScopeViaLeaf, principal: Principal | undefined, _operation: ScopeOperation,
+): LeafResult {
+  const path = leaf.via.split(".");
+  if (path.length === 0 || path.some((p) => !p)) {
+    return undefined;
+  }
+  // Resolve $principal.X references in the match filter.
+  const resolvedMatch: { [field: string]: unknown } = {};
+  for (const [field, value] of Object.entries(leaf.match)) {
+    if (typeof value === "string" && value.startsWith("$principal.")) {
+      const principalKey = value.slice("$principal.".length);
+      const principalValue = principal?.[principalKey];
+      if (principalValue === undefined || principalValue === null) {
+        // Missing principal value = deny, consistent with `own` and `group`.
+        return false;
+      }
+      resolvedMatch[field] = { eq: principalValue };
+    } else {
+      // Literal value: wrap in `eq` for the portable filter.
+      resolvedMatch[field] = { eq: value };
+    }
+  }
+  // Emit the __via marker. The engine resolves it into quantifier nesting.
+  return { where: { __via: { path, match: resolvedMatch } } };
 }
 
 function leafForOperation(node: ScopeRuleNode, operation: ScopeOperation): ScopeSugarLeaf | undefined {
@@ -607,3 +689,240 @@ export default function createRoleBasedPermissions(
 export const ROLE_BASED_GATES = Object.keys(ONE_ARG_GATES)
   .concat(Object.keys(TWO_ARG_GATES))
   .concat(["scope"]);
+
+// --- compileRlsPolicies (RFC §6.3) ---
+
+import type { RlsPolicyDeclaration, RlsSetting } from "./types/definitions";
+
+/**
+ * Options for `compileRlsPolicies`.
+ */
+export interface CompileRlsPoliciesOptions {
+  /** Map an app role name to a database role name. */
+  dbRole: (appRole: string) => string;
+  /**
+   * Map principal keys to setting names. `$principal.id` in the rules becomes
+   * `rls.setting(settings.id)` in the policy.
+   */
+  settings: { [principalKey: string]: string };
+  /**
+   * Map principal keys to their Postgres types. Defaults to `"uuid"` for
+   * scalar values and `"uuid[]"` for arrays.
+   */
+  settingTypes?: { [principalKey: string]: string };
+}
+
+/**
+ * Compile role-based scope rules into RLS policy declarations (RFC §6.3).
+ *
+ * Reads the same `rules` tree as `createRoleBasedPermissions` and produces
+ * `{ [model]: { [policyName]: RlsPolicyDeclaration } }` from the scope
+ * sub-language. `read` → `for: "select"`, `write`/`create`/`update`/`delete` →
+ * separate policies per command. `deny` emits no policy (Postgres denies when
+ * no matching policy exists). `none`/`allow` emits `using: true` (see
+ * everything).
+ *
+ * Insert `WITH CHECK` carries the full rule, quantifiers included.
+ *
+ * Never emits the model's deletedAt column (§6.8).
+ */
+export function compileRlsPolicies(
+  rules: RoleRules,
+  options: CompileRlsPoliciesOptions,
+): { [model: string]: { [policyName: string]: RlsPolicyDeclaration } } {
+  const result: { [model: string]: { [policyName: string]: RlsPolicyDeclaration } } = {};
+
+  for (const [role, roleRules] of Object.entries(rules)) {
+    if (typeof roleRules !== "object" || roleRules === null) {
+      continue; // bare "deny"/"allow" — no scope rules
+    }
+    const scopeRules = (roleRules).scope;
+    if (!scopeRules || typeof scopeRules !== "object") {
+      continue;
+    }
+    const dbRole = options.dbRole(role);
+
+    for (const [model, node] of Object.entries(scopeRules)) {
+      if (!result[model]) {
+        result[model] = {};
+      }
+
+      // Compile read (SELECT) and write (INSERT/UPDATE/DELETE) policies
+      const readLeaf = leafForOperation(node, "read");
+      const writeLeaf = leafForOperation(node, "create") ?? leafForOperation(node, "update") ?? leafForOperation(node, "delete");
+      const createLeaf = leafForOperation(node, "create");
+      const updateLeaf = leafForOperation(node, "update");
+      const deleteLeaf = leafForOperation(node, "delete");
+
+      // SELECT policy
+      if (readLeaf !== undefined && readLeaf !== "deny") {
+        const policyName = `${role}_read`;
+        const using = compileLeafToRlsWhere(readLeaf, options);
+        if (using !== undefined) {
+          result[model][policyName] = {
+            for: "select",
+            to: dbRole,
+            using,
+          };
+        }
+      }
+
+      // INSERT policy (WITH CHECK only). The full rule, quantifiers included:
+      // a brand-new row has no related rows pointing at it yet, so a
+      // child-first quantifier simply doesn't match, and dropping it instead
+      // would widen any `all` (or `not`) it sits in.
+      const insertLeaf = createLeaf ?? writeLeaf;
+      if (insertLeaf !== undefined && insertLeaf !== "deny") {
+        const policyName = `${role}_insert`;
+        const withCheck = compileLeafToRlsWhere(insertLeaf, options);
+        if (withCheck !== undefined) {
+          result[model][policyName] = {
+            for: "insert",
+            to: dbRole,
+            withCheck,
+          };
+        }
+      }
+
+      // UPDATE policy
+      const updLeaf = updateLeaf ?? writeLeaf;
+      if (updLeaf !== undefined && updLeaf !== "deny") {
+        const policyName = `${role}_update`;
+        const using = compileLeafToRlsWhere(updLeaf, options);
+        if (using !== undefined) {
+          result[model][policyName] = {
+            for: "update",
+            to: dbRole,
+            using,
+          };
+        }
+      }
+
+      // DELETE policy
+      const delLeaf = deleteLeaf ?? writeLeaf;
+      if (delLeaf !== undefined && delLeaf !== "deny") {
+        const policyName = `${role}_delete`;
+        const using = compileLeafToRlsWhere(delLeaf, options);
+        if (using !== undefined) {
+          result[model][policyName] = {
+            for: "delete",
+            to: dbRole,
+            using,
+          };
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Compile a scope sugar leaf into a PortableWhere suitable for an RLS policy.
+ * Setting references (`$principal.X`) become `rls.setting(…)` markers.
+ */
+function compileLeafToRlsWhere(
+  leaf: ScopeSugarLeaf,
+  options: CompileRlsPoliciesOptions,
+): PortableWhere | undefined {
+  if (leaf === "none" || leaf === "allow") {
+    // Everything visible: `USING (TRUE)`. A SQL fragment, which the policy
+    // compiler emits verbatim wherever it appears (alone or as a branch).
+    return { __sqlFragment: true, text: "TRUE" };
+  }
+  if (leaf === "deny") {
+    return undefined;
+  }
+  if (!leaf || typeof leaf !== "object") {
+    return undefined;
+  }
+
+  if ("own" in leaf) {
+    const ref = refOf(leaf.own, "id");
+    return { [ref.field]: { eq: makeSetting(ref.from, options) } };
+  }
+  if ("tenant" in leaf) {
+    const ref = refOf(leaf.tenant, "tenantId");
+    return { [ref.field]: { eq: makeSetting(ref.from, options) } };
+  }
+  if ("group" in leaf) {
+    const ref = refOf(leaf.group, "groupIds");
+    return { [ref.field]: { in: makeSetting(ref.from, options, true) } };
+  }
+  if ("via" in leaf) {
+    return compileViaToRlsWhere(leaf, options);
+  }
+  if ("any" in leaf) {
+    const branches = leaf.any
+      .map((entry) => compileLeafToRlsWhere(entry, options))
+      .filter(Boolean) as PortableWhere[];
+    if (branches.length === 0) {
+      return undefined;
+    }
+    if (branches.length === 1) {
+      return branches[0];
+    }
+    return { or: branches };
+  }
+  if ("all" in leaf) {
+    const branches = leaf.all
+      .map((entry) => compileLeafToRlsWhere(entry, options))
+      .filter(Boolean) as PortableWhere[];
+    if (branches.length === 0) {
+      return undefined;
+    }
+    if (branches.length === 1) {
+      return branches[0];
+    }
+    return { and: branches };
+  }
+  if ("not" in leaf) {
+    const inner = compileLeafToRlsWhere(leaf.not, options);
+    if (!inner) {
+      return undefined;
+    }
+    return { not: inner };
+  }
+
+  return undefined;
+}
+
+/**
+ * Compile a `via` leaf into the same `__via` marker the engine's sugar emits,
+ * with the match filter's `$principal.X` values as `rls.setting(…)` markers.
+ * Which quantifier each hop takes (`is` for belongsTo/hasOne, `some` for
+ * hasMany/belongsToMany) depends on the association graph, which only the
+ * adapter's policy compiler has, so it resolves the marker there.
+ */
+function compileViaToRlsWhere(
+  leaf: ScopeViaLeaf,
+  options: CompileRlsPoliciesOptions,
+): PortableWhere {
+  const path = leaf.via.split(".");
+  const match: PortableWhere = {};
+  for (const [field, value] of Object.entries(leaf.match)) {
+    if (typeof value === "string" && value.startsWith("$principal.")) {
+      const principalKey = value.slice("$principal.".length);
+      match[field] = { eq: makeSetting(principalKey, options) };
+    } else {
+      match[field] = { eq: value };
+    }
+  }
+  return { __via: { path, match } };
+}
+
+function makeSetting(
+  principalKey: string,
+  options: CompileRlsPoliciesOptions,
+  isArray = false,
+): RlsSetting {
+  const settingName = options.settings[principalKey];
+  if (!settingName) {
+    throw new ScopeConfigurationError(
+      `compileRlsPolicies: principal key '${principalKey}' has no entry in 'settings'. ` +
+      `Provide settings.${principalKey} = "app.${principalKey}" or similar.`,
+    );
+  }
+  const explicitType = options.settingTypes?.[principalKey];
+  const type = explicitType || (isArray ? "uuid[]" : "uuid");
+  return { __rlsSetting: true, name: settingName, type };
+}

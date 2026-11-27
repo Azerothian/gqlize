@@ -48,6 +48,7 @@ export interface QueryOptionsHost {
     where: AdapterWhere | undefined,
     whereOperators: WhereOperators | undefined,
     options: AdapterQueryOptions,
+    defName?: string,
   ): Promise<AdapterWhere>;
   /**
    * The model's soft-delete column, or `undefined` when it does not soft-delete.
@@ -223,7 +224,7 @@ export async function processIncludeStatement(
           model: TargetModel,
           required: inc.required,
           as: relName,
-          where: await host.processFilterArgument(inc.where || {}, whereOperators, options),
+          where: await host.processFilterArgument(inc.where || {}, whereOperators, options, targetDefName),
         } as SequelizeInclude;
         // Per include node: a root `paranoid: false` does not reach an
         // eager-loaded join, so a parent fetched with deleted rows included
@@ -332,7 +333,7 @@ export async function processListArgsToOptions(
   // Always bound the page size — an absent first/last must not mean "no limit".
   const limit = clampPageSize(args.first != null ? args.first : args.last);
   const where = args.where
-    ? await host.processFilterArgument(args.where, whereOperators, defaultOptions)
+    ? await host.processFilterArgument(args.where, whereOperators, defaultOptions, defName)
     : undefined;
 
   let order: SequelizeOrder[] = args.orderBy || [];

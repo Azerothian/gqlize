@@ -112,7 +112,9 @@ describe("csv export", () => {
     expect(listFields((await build()).schema)).toContain("csv");
     expect(listFields((await build(true, {queryCsv: (m) => m !== "CsvTask"})).schema)).not.toContain("csv");
     expect(listFields((await build(true, undefined, {csv: false})).schema)).not.toContain("csv");
-  });
+    // Four full builds (adapter, sync, schema), the first on a cold PGlite:
+    // well inside 30 s alone, but not on a loaded CI runner.
+  }, 60000);
 
   it("writes every readable column, ids as global ids and NULL as \\N", async() => {
     const {schema, models} = await build();

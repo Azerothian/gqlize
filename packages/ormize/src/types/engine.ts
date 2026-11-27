@@ -99,6 +99,11 @@ export interface AdapterRoutingHost {
   /** Throw or stay quiet when a scope denies a write outright, per `onScopeMiss`. */
   scopeMiss(defName: string, operation: ScopeOperation): void;
   /**
+   * The model's global filters (RFC §5) that apply to `operation`, AND-ed, less
+   * any lifted by `withoutFilters`. `undefined` when none apply.
+   */
+  globalFilters(defName: string, operation: ScopeOperation): PortableWhere | undefined;
+  /**
    * A model's scope for one operation, translated into *its own* adapter's
    * vocabulary and ANDed onto `where`. `false` when the scope denies outright:
    * there is no adapter-native "match nothing" to hand back, so the caller

@@ -3,9 +3,12 @@
 //
 // Free functions over explicit host interfaces (see `ResolutionHost`).
 
-import { whereOperatorsFor, expandOrderBy } from "@azerothian/utilize/exposed-methods";
+import { store, getStore } from "../context";
+import { whereOperatorsFor, expandOrderBy, definitionMethods } from "@azerothian/utilize/exposed-methods";
+import { createSystemContext } from "@azerothian/utilize/system-context";
 import { clampPageSize } from "@azerothian/utilize/utils/page-size";
 import { completeIncludePlan, toIncludeLevels } from "@azerothian/utilize/utils/include-plan";
+import { mergeScopeWhere, scopeDispositionOf } from "@azerothian/utilize/gate";
 import { applyScopeWhere } from "../scope";
 import { scopeIncludePlan } from "../scope";
 import { joinScope } from "../cross-adapter";
@@ -22,7 +25,11 @@ import Events from "../events";
 import type { HookHost } from "./hooks";
 import { runHook, applyEagerAfterFind } from "./hooks";
 import type { ScopeHost } from "./scope-bridge";
-import { resolveRowScope, reassertRowScope, withScopeFor } from "./scope-bridge";
+import {
+  resolveRowScope, reassertRowScope, withScopeFor, embedThroughScopes,
+  applyGlobalFilters, isRlsEnabled,
+} from "./scope-bridge";
+import { scopeMiss as _scopeMiss, ScopeDeniedError, inheritScopeMemo } from "../scope";
 import type { ReadCacheHost } from "./read-cache-bridge";
 import { cachedCount, cachedFindAll } from "./read-cache-bridge";
 
@@ -34,6 +41,37 @@ export interface ResolutionHost extends HookHost, ScopeHost, ReadCacheHost {
   host: MutationHost;
   defsAdapters: { [name: string]: string };
   optionsForAdapter<T extends AdapterQueryOptions | undefined>(fromDefName: string, toDefName: string, options: T): Promise<T>;
+  /** Open (or join) a transaction for the adapter behind `defName`. */
+  withTransaction<T>(defName: string, context: RequestContext, fn: (ctx: RequestContext) => Promise<T>): Promise<T>;
+}
+
+// ---------------------------------------------------------------------------
+// RLS read-wrap helpers (RFC §6.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `defName` or any model in `include` is RLS-enabled on its adapter.
+ * Used to decide whether a read needs an engine-owned transaction.
+ */
+function anyModelRlsEnabled(self: ResolutionHost, defName: string, include: IncludeMap[] | undefined): boolean {
+  if (isRlsEnabled(self, defName)) {
+    return true;
+  }
+  if (!include) {
+    return false;
+  }
+  for (const level of include) {
+    for (const relName of Object.keys(level)) {
+      const descriptor = level[relName];
+      if (isRlsEnabled(self, descriptor.target)) {
+        return true;
+      }
+      if (descriptor.include && anyModelRlsEnabled(self, descriptor.target, descriptor.include)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +244,18 @@ async function resolveCrossAdapterRelationship(self: ResolutionHost, defName: st
   return resolveFindAll(self, defName, source, args, targetContext, selection, scope);
 }
 
-export async function resolveManyRelationship(self: ResolutionHost, defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) {
+export async function resolveManyRelationship(self: ResolutionHost, defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection): Promise<{total: number; models: AdapterRow[]}> {
+  // RFC §6.5: wrap in a transaction if the target model is RLS-enabled.
+  if (!context?.transaction && isRlsEnabled(self, defName)) {
+    const adapter = self.getModelAdapter(defName);
+    const role = adapter.resolveRlsRole?.(context);
+    if (role === undefined) {
+      _scopeMiss(defName, "read", self.onScopeMiss);
+      return { total: 0, models: [] };
+    }
+    return self.withTransaction(defName, context, (ctx) =>
+      resolveManyRelationship(self, defName, association, source, args, ctx, selection));
+  }
   assertThroughArgs(association, args, selection);
   if (isThroughRead(association)) {
     // Join rows first, then targets — on every adapter, cross-adapter included
@@ -234,8 +283,12 @@ export async function resolveManyRelationship(self: ResolutionHost, defName: str
   // downstream needs the caller to see the rewrite — everything that consumes
   // it is handed `a` explicitly.
   let a = args;
+  // Global filters (RFC §5): merged before scope, same order as resolveFindAll.
+  a = {...a, where: applyGlobalFilters(a.where as PortableWhere | undefined, self, defName, "read")};
   if (rowScope?.where) {
-    a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, rowScope)};
+    const embeddedWhere = await embedThroughScopes(self, defName, rowScope.where, context);
+    const embeddedScope = embeddedWhere !== rowScope.where ? { ...rowScope, where: embeddedWhere } : rowScope;
+    a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, embeddedScope)};
   }
   // A nested connection's own `include` argument goes to the adapter's
   // per-parent query: normalised as at the root, and a through-mode relation in
@@ -296,7 +349,17 @@ export async function resolveManyRelationship(self: ResolutionHost, defName: str
   return result;
 }
 
-export async function resolveSingleRelationship(self: ResolutionHost, defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection) {
+export async function resolveSingleRelationship(self: ResolutionHost, defName: string, association: Association, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection): Promise<AdapterRow | null> {
+  // RFC §6.5: wrap in a transaction if the target model is RLS-enabled.
+  if (!context?.transaction && isRlsEnabled(self, defName)) {
+    const adapter = self.getModelAdapter(defName);
+    const role = adapter.resolveRlsRole?.(context);
+    if (role === undefined) {
+      return null;
+    }
+    return self.withTransaction(defName, context, (ctx) =>
+      resolveSingleRelationship(self, defName, association, source, args, ctx, selection));
+  }
   if (association.crossAdapter) {
     // `countOnly` is inferred from a connection's selection set; a singular
     // relation has no `edges`, so the inference misreads it. It always wants
@@ -311,7 +374,9 @@ export async function resolveSingleRelationship(self: ResolutionHost, defName: s
   }
   const adapter = self.getModelAdapter(defName);
   const options = createResolveContext(context, selection, source);
-  if (rowScope?.where) {
+  // Global filters (RFC §5) + scope, merged the same way as the many branch.
+  const gf = applyGlobalFilters(undefined, self, defName, "read");
+  if (gf || rowScope?.where) {
     // A singular relationship never reads `args.where` — the accessor is called
     // with the options bag alone — so the scope goes there, already translated
     // into the backend's vocabulary. The eager branch ignores the bag entirely
@@ -319,11 +384,19 @@ export async function resolveSingleRelationship(self: ResolutionHost, defName: s
     //
     // Written in place, and not a caller's object: `createResolveContext`
     // builds a fresh bag on every call.
-    options.where = await adapter.processFilterArgument(
-      applyScopeWhere(options.where as PortableWhere | undefined, rowScope),
-      whereOperatorsFor(self.getDefinition(defName)),
-      options,
-    );
+    let merged: PortableWhere | undefined = gf;
+    if (rowScope?.where) {
+      merged = applyScopeWhere(merged, rowScope);
+    }
+    if (merged) {
+      const embedded = await embedThroughScopes(self, defName, merged, context);
+      options.where = await adapter.processFilterArgument(
+        embedded,
+        whereOperatorsFor(self.getDefinition(defName)),
+        options,
+        defName,
+      );
+    }
   }
   // afterFind for JOIN-eager single relations is fired by resolveFindAll's post-pass.
   return adapter.resolveSingleRelationship(defName, association, source, {args, selection, context, options});
@@ -333,9 +406,45 @@ export async function resolveSingleRelationship(self: ResolutionHost, defName: s
 // resolveClassMethod
 // ---------------------------------------------------------------------------
 
+/** Whether `defName`'s adapter can run system work (it has an `rls.bypassRole`). */
+function hasBypassRole(self: ResolutionHost, defName: string, system: RequestContext): boolean {
+  try {
+    return self.getModelAdapter(defName).resolveRlsRole?.(system) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveClassMethod(self: ResolutionHost, defName: string, methodName: string, args: unknown, context: RequestContext,
   before?: (args: unknown, context: RequestContext) => unknown,
-  after?: (result: unknown, context: RequestContext) => unknown) {
+  after?: (result: unknown, context: RequestContext) => unknown): Promise<unknown> {
+  // RFC §6.5: a class method on an RLS model runs inside a transaction opened
+  // with the request's settings and role, handed to it as `context.transaction`.
+  // A raw-SQL method runs its statement on it; a function method passes it to
+  // whatever it queries. Re-entered once inside the transaction.
+  if (!context?.transaction && isRlsEnabled(self, defName)) {
+    // A method declared `unscoped` says it means to see past the row rules, so
+    // it runs under the adapter's `bypassRole` when there is one, still handed
+    // the request's own context (an engine call it makes with that context
+    // keeps the engine scope: the transaction's identity isn't the request's).
+    // With no bypass role it runs as the request, and sees less, not more.
+    const declared = definitionMethods(self.getDefinition(defName), "classMethods")[methodName];
+    const system = createSystemContext();
+    if (scopeDispositionOf(declared) === "unscoped" && hasBypassRole(self, defName, system)) {
+      return self.withTransaction(defName, system, (systemCtx) => resolveClassMethod(
+        self, defName, methodName, args,
+        inheritScopeMemo(context, Object.assign({}, context, { transaction: systemCtx.transaction })),
+        before, after,
+      ));
+    }
+    if (self.getModelAdapter(defName).resolveRlsRole?.(context) === undefined) {
+      // No identity: refuse rather than run under the connection's own role.
+      // A method has no "empty" result shape to fall back on.
+      throw new ScopeDeniedError(defName, "read");
+    }
+    return self.withTransaction(defName, context, (ctx) =>
+      resolveClassMethod(self, defName, methodName, args, ctx, before, after));
+  }
   const Model = self.getModelAdapter(defName).getModel(defName);
   context = withScopeFor(self, context);
   if(before) {
@@ -348,6 +457,34 @@ export async function resolveClassMethod(self: ResolutionHost, defName: string, 
   return result;
 }
 
+/**
+ * Run an instance method on `row`, under RLS the way {@link resolveClassMethod}
+ * runs a class method: inside the request's RLS transaction, handed over as
+ * `context.transaction` (or under `bypassRole` for an `unscoped` method), and
+ * refused with no identity. `implementation` is the function to run with the
+ * row as `this`: the row's own method, or the definition's for a plain row.
+ */
+export async function resolveInstanceMethod(self: ResolutionHost, defName: string, row: unknown, methodName: string,
+  implementation: (this: unknown, args: unknown, context: RequestContext) => unknown,
+  args: unknown, context: RequestContext): Promise<unknown> {
+  if (!context?.transaction && isRlsEnabled(self, defName)) {
+    const declared = definitionMethods(self.getDefinition(defName), "instanceMethods")[methodName];
+    const system = createSystemContext();
+    if (scopeDispositionOf(declared) === "unscoped" && hasBypassRole(self, defName, system)) {
+      return self.withTransaction(defName, system, (systemCtx) => resolveInstanceMethod(
+        self, defName, row, methodName, implementation, args,
+        inheritScopeMemo(context, Object.assign({}, context, { transaction: systemCtx.transaction })),
+      ));
+    }
+    if (self.getModelAdapter(defName).resolveRlsRole?.(context) === undefined) {
+      throw new ScopeDeniedError(defName, "read");
+    }
+    return self.withTransaction(defName, context, (ctx) =>
+      resolveInstanceMethod(self, defName, row, methodName, implementation, args, ctx));
+  }
+  return implementation.call(row, args, withScopeFor(self, context));
+}
+
 // ---------------------------------------------------------------------------
 // resolveFindAll — the main list resolver
 // ---------------------------------------------------------------------------
@@ -357,7 +494,39 @@ export async function resolveClassMethod(self: ResolutionHost, defName: string, 
  * query on top of the caller's `where`. Used to scope a cross-adapter
  * relationship to its join key.
  */
-export async function resolveFindAll(self: ResolutionHost, defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection, scope?: {field: string, value: unknown}) {
+export async function resolveFindAll(self: ResolutionHost, defName: string, source: AdapterRow, args: FindAllArgs, context: RequestContext, selection?: Selection, scope?: {field: string, value: unknown}): Promise<{total: number; models: AdapterRow[]}> {
+  // RFC §6.5: wrap reads in an engine-owned transaction when the root model or
+  // any model in the include plan is RLS-enabled on its adapter. Without the
+  // transaction, Postgres has no settings and the connection role (often a
+  // superuser or the table owner) would see every row.
+  if (!context?.transaction) {
+    // Gather the include plan to check for RLS models in it.
+    let tempArgs = args;
+    if (selection?.include && !tempArgs.include) {
+      tempArgs = {...tempArgs, include: selection.include};
+    }
+    const rawInclude = tempArgs.include !== undefined
+      ? completeIncludePlan(toIncludeLevels(tempArgs.include), defName, (n) => self.getAssociations(n)) as IncludeMap[]
+      : undefined;
+    if (anyModelRlsEnabled(self, defName, rawInclude)) {
+      // No identity → deny (RFC §6.5 "No identity").
+      const adapter = self.getModelAdapter(defName);
+      const role = adapter.resolveRlsRole?.(context);
+      if (role === undefined) {
+        _scopeMiss(defName, "read", self.onScopeMiss);
+        return { total: 0, models: [] };
+      }
+      // Re-enter inside a transaction. The second call sees context.transaction
+      // and falls through. A transaction opened here, with no coordinator
+      // around it, holds this read and nothing else, so it is marked for the
+      // read cache (see `OrmizeStore.readWrap`).
+      const reenter = () => self.withTransaction(defName, context, (ctx) =>
+        resolveFindAll(self, defName, source, args, ctx, selection, scope));
+      const current = getStore();
+      return current?.transaction ? reenter() : store.run({ ...(current || {}), readWrapPending: true }, reenter);
+    }
+  }
+
   const definition = self.getDefinition(defName);
   const adapter = self.getModelAdapter(defName);
   const options = createResolveContext(context, selection, source);
@@ -383,7 +552,26 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   // place its model's scope can be applied.
   const scopedInclude = await scopeIncludePlan(
     a.include as IncludeMap[] | undefined,
-    (targetName) => resolveRowScope(self, targetName, "read", context),
+    async (targetName) => {
+      const resolved = await resolveRowScope(self, targetName, "read", context);
+      // Global filters for the eager target, merged alongside its scope.
+      const gf = applyGlobalFilters(undefined, self, targetName, "read");
+      if (resolved === false) {
+        return resolved;
+      }
+      const scopeWhere = resolved?.where;
+      const combinedWhere = gf
+        ? (scopeWhere ? mergeScopeWhere(gf, scopeWhere) : gf)
+        : scopeWhere;
+      if (!combinedWhere) {
+        return resolved;
+      }
+      // Embed through-scopes so quantifiers on btm relationships carry the
+      // join model's read scope into the adapter's processFilterArgument.
+      const embedded = await embedThroughScopes(self, targetName, combinedWhere, context);
+      const combined = resolved ? { ...resolved, where: embedded } : { where: embedded };
+      return combined;
+    },
     // "No rows", in the include's own vocabulary: the target's key `in []`.
     // Lets a `required` relation whose model is denied outright still filter
     // its parent rather than vanish from the plan.
@@ -404,6 +592,9 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
   }
   a = required;
   a = expandComputedOrder(self, defName, a, {context, info: selection?.raw});
+  // Global filters (RFC §5), merged while the filter is still in the caller's
+  // vocabulary. Order: clientWhere AND globalFilters AND scope.
+  a = {...a, where: applyGlobalFilters(a.where as PortableWhere | undefined, self, defName, "read")};
   // Row-level scope, merged while the filter is still in the caller's
   // vocabulary. That is also what gives the count the same filter, since
   // `processListArgsToOptions` derives `countOptions` from these args — a
@@ -418,7 +609,9 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
     return { total: 0, models: [] };
   }
   if (rowScope?.where) {
-    a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, rowScope)};
+    const embeddedWhere = await embedThroughScopes(self, defName, rowScope.where, context);
+    const embeddedScope = embeddedWhere !== rowScope.where ? { ...rowScope, where: embeddedWhere } : rowScope;
+    a = {...a, where: applyScopeWhere(a.where as PortableWhere | undefined, embeddedScope)};
   }
   const offset = cursorOffset(args);
   const {getOptions, countOptions} = await adapter.processListArgsToOptions(defName, {
@@ -448,7 +641,7 @@ export async function resolveFindAll(self: ResolutionHost, defName: string, sour
       // hook are exactly the ones whose hook rewrites `where`.
       await reassertRowScope(
         self, adapter, defName, rowScope.where, whereOperatorsFor(definition), options,
-        [getOptions, countOptions],
+        [getOptions, countOptions], context,
       );
     }
   }

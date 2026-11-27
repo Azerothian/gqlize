@@ -35,13 +35,26 @@ import type { GqlizeOptions } from "../../types";
 
 export default function createNodeInterface(dbInstance: GQLManager, options?: GqlizeOptions) {
   const nodeTypeMapper = new NodeTypeMapper();
+  const fetcher = idFetcher(dbInstance, nodeTypeMapper, options);
   const nodeObjects = nodeDefinitions(
-    idFetcher(dbInstance, nodeTypeMapper, options),
+    (id, context, info) => fetcher(String(id), context, info),
     typeResolver(nodeTypeMapper)
   );
+  // graphql-relay's `node` resolver hands the fetcher only `id`, so the
+  // `deleted` argument (RFC §5.4, added in `graphql/index.ts` when a model
+  // qualifies) is read here from the resolver's own coerced `args`. That covers
+  // a literal and a variable alike; reading the AST by hand did not, because
+  // graphql 17's `info.variableValues` is no longer a plain name → value map.
+  // `plural` (`nodes`) is untouched and has no `deleted`.
+  const nodeField: typeof nodeObjects.nodeField = {
+    ...nodeObjects.nodeField,
+    resolve: (_obj, args: { id: string; deleted?: string }, context, info) =>
+      fetcher(String(args.id), context, info, args.deleted),
+  };
 
   return {
     nodeTypeMapper,
     ...nodeObjects,
+    nodeField,
   };
 }

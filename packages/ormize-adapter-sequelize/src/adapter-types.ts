@@ -54,6 +54,49 @@ export type NativeAssociationInternals = NativeAssociation & {
 };
 
 /**
+ * Per-request RLS configuration on the Postgres adapter (RFC §6.5).
+ *
+ * `settings` and `role` are read from the request context, which comes from the
+ * server's own auth (GraphQL context, nestize `req`, temporalize activity
+ * context). They must never be built from client-supplied arguments.
+ */
+export type AdapterRlsConfig = {
+  /**
+   * Map request context to Postgres session settings. Each key is a setting
+   * name (`"app.user_id"`), each value is the value to `set_config`. Arrays
+   * are comma-joined.
+   */
+  settings: (ctx: import("@azerothian/utilize/types/primitives").RequestContext) => { [name: string]: string | number | boolean | (string | number)[] };
+  /**
+   * Map request context to the Postgres role to `SET LOCAL ROLE`. Returning
+   * `undefined` means "no identity" — the engine refuses the request rather
+   * than running under the connection's own role (which owns the tables).
+   */
+  role: (ctx: import("@azerothian/utilize/types/primitives").RequestContext) => string | undefined;
+  /**
+   * A role that bypasses RLS (must own the tables or have BYPASSRLS). Used by
+   * `unscoped` surfaces and `orm.asSystem`. When absent, `unscoped` runs
+   * under the request role and `asSystem` throws.
+   */
+  bypassRole?: string;
+  /**
+   * `"database"` (default): the database policy is the row rule; the engine
+   * does not inject the scope's filter. `"both"`: the engine also merges the
+   * scope, so the rule is enforced twice.
+   */
+  enforce?: "database" | "both";
+  /**
+   * A Postgres setting name the adapter sets to `'on'`, for the rest of the
+   * request's RLS transaction, before the first soft delete, restore or hard
+   * delete of a paranoid model and the first read of deleted rows (`deleted:
+   * INCLUDE/ONLY`). Left unset otherwise. Lets a SELECT policy hide deleted
+   * rows as `("deletedAt" IS NULL OR current_setting('<flag>', true) = 'on')`
+   * without breaking those operations (RFC §6.8).
+   */
+  softDeleteFlag?: string;
+};
+
+/**
  * This adapter's own options — the first constructor argument. Closed, so a
  * misspelled key is a compile error rather than a setting that silently does
  * nothing; everything Sequelize itself understands belongs in the *second*
@@ -87,6 +130,12 @@ export type SequelizeAdapterOptions = {
   disableInlineCount?: boolean;
   /** Opt in to the regex where-operators — see the ReDoS note in `createQueryConfig`. */
   enableRegexpOperators?: boolean;
+  /**
+   * Per-request Postgres row-level security configuration (RFC §6.5). When set,
+   * every transaction this adapter opens applies `set_config` for the settings
+   * and `SET LOCAL ROLE` for the role, then resets both in `finally`.
+   */
+  rls?: AdapterRlsConfig;
 };
 
 /**

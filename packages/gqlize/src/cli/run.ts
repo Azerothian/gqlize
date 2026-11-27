@@ -50,6 +50,8 @@ export async function run(argv: string[], io: RunIO = {}): Promise<number> {
         return await (await import("./commands/print")).default(resolved, args, out);
       case "check":
         return await (await import("./commands/check")).default(resolved, args, out, err);
+      case "rls:sql":
+        return await (await import("./commands/rls-sql")).default(resolved, args, out);
     }
   } catch (e) {
     if (e instanceof UsageError) {

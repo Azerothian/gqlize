@@ -5,10 +5,15 @@
 
 import { whereOperatorsFor } from "@azerothian/utilize/exposed-methods";
 import type { Permission, PortableWhere, ResolvedScope, ScopeOperation } from "@azerothian/utilize/gate";
+import {
+  resolveViaMarkers, excludeRowsFromQuantifiers, collectQuantifierTargets, parseQuantifier, LOGICAL_OPERATORS,
+  ScopeConfigurationError, THROUGH_SCOPE_KEY, mergeScopeWhere,
+} from "@azerothian/utilize/gate";
 import { applyScopeWhere, scopeFor, scopeMiss, markSystemQuery } from "../scope";
 import type { ScopeMissBehaviour } from "../scope";
 import { ScopeDeniedError, ScopeEscapeError } from "../scope";
 import { filterMerger } from "../cross-adapter";
+import { resolveGlobalFilters } from "./global-filters";
 import type { OrmAdapter, AdapterQueryOptions, AdapterWhere, RequestContext } from "@azerothian/utilize/types/index";
 import type { Definition } from "../types";
 import type { MutationHost } from "../types/engine";
@@ -40,9 +45,73 @@ export interface ScopeHost {
  * filter (and, for writes, the values) to apply. Memoised per request inside
  * {@link scopeFor} — a nested selection would otherwise re-run the predicate
  * once per parent row.
+ *
+ * After basic scope resolution, this resolves any `__via` markers the scope
+ * sugar emitted into proper quantifier nesting using the association graph,
+ * and checks that no quantifier crosses adapter boundaries.
+ *
+ * **RFC §6.6**: on a database-enforced RLS model, the scope predicate is NOT
+ * called for `read` or `delete` — the database policy replaces it. For
+ * `create`/`update` the predicate IS called, but only the `set` half is used
+ * (the `where` is stripped).
  */
-export function resolveRowScope(self: ScopeHost, defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope> {
-  return scopeFor(self.permission, defName, operation, context);
+export async function resolveRowScope(self: ScopeHost, defName: string, operation: ScopeOperation, context: RequestContext): Promise<ResolvedScope> {
+  const dbEnforced = isDatabaseEnforced(self, defName, context?.transaction, context);
+  const resolved = await scopeFor(self.permission, defName, operation, context);
+  if (dbEnforced && (operation === "read" || operation === "delete")) {
+    // The database policy does the filtering; the engine injects nothing. An
+    // outright deny is still honoured, so it reaches `onScopeMiss` exactly as
+    // it does without RLS (and a policy laxer than the predicate can't turn
+    // a "no rows at all" into rows).
+    return resolved === false ? false : undefined;
+  }
+  if (resolved === undefined || resolved === false) {
+    return resolved;
+  }
+  // For database-enforced models on create/update, keep only `set` — drop
+  // the `where` half, which the policy already enforces.
+  if (dbEnforced) {
+    if (resolved.set) {
+      return { set: resolved.set };
+    }
+    return undefined;
+  }
+  if (!resolved.where) {
+    return resolved;
+  }
+  // Resolve __via markers into proper quantifier nesting.
+  const associationInfo = (model: string, relName: string): { associationType: string; target: string } | undefined => {
+    if (!self.defs[model]) {
+      return undefined;
+    }
+    const assocs = self.host.getAssociations(model);
+    const assoc = assocs[relName];
+    if (!assoc) {
+      return undefined;
+    }
+    return { associationType: assoc.associationType, target: assoc.target };
+  };
+  const resolvedWhere = resolveViaMarkers(resolved.where, defName, associationInfo);
+  // Validate that no quantifier crosses adapter boundaries.
+  const associations = (model: string) => {
+    if (!self.defs[model]) {
+      return {};
+    }
+    return self.host.getAssociations(model);
+  };
+  const targets = collectQuantifierTargets(resolvedWhere, defName, associations);
+  const sourceAdapter = self.defsAdapters[defName];
+  for (const target of targets) {
+    const targetAdapter = self.defsAdapters[target];
+    if (targetAdapter !== undefined && targetAdapter !== sourceAdapter) {
+      throw new ScopeConfigurationError(
+        `A relationship quantifier in the scope for '${defName}' reaches '${target}', ` +
+        `which lives on a different adapter ('${targetAdapter}' vs '${sourceAdapter}'). ` +
+        "One query cannot reach another database.",
+      );
+    }
+  }
+  return { ...resolved, where: resolvedWhere };
 }
 
 /**
@@ -59,6 +128,7 @@ export async function reassertRowScope(
   adapter: OrmAdapter, defName: string, where: PortableWhere,
   whereOperators: ReturnType<typeof whereOperatorsFor>, options: AdapterQueryOptions,
   targets: (AdapterQueryOptions | undefined)[],
+  context?: RequestContext,
 ) {
   if (!adapter.andFilterStatements) {
     throw new Error(
@@ -67,7 +137,12 @@ export async function reassertRowScope(
       "that could have rewritten the filter. Implement andFilterStatements, or drop the hook.",
     );
   }
-  const native = await adapter.processFilterArgument(where, whereOperators, options);
+  // Also reassert global filters: a `before` hook may have rewritten the
+  // filter, dropping them too.
+  const gf = resolveModelGlobalFilters(self, defName, "read");
+  const combined = gf ? mergeScopeWhere(where, gf) : where;
+  const embedded = context ? await embedThroughScopes(self, defName, combined, context) : combined;
+  const native = await adapter.processFilterArgument(embedded, whereOperators, options, defName);
   for (const target of targets) {
     if (target) {
       // In place on purpose. These are the adapter's own options bags, built
@@ -89,17 +164,31 @@ export async function scopeNativeWhere(
   self: ScopeHost,
   defName: string, operation: ScopeOperation, context: RequestContext,
   where: AdapterWhere | undefined, options: AdapterQueryOptions | undefined,
+  excludeCreated?: { pk: string; ids: unknown[] },
 ): Promise<AdapterWhere | undefined | false> {
   const resolved = await resolveRowScope(self, defName, operation, context);
   if (resolved === false) {
     return false;
   }
-  if (!resolved?.where) {
+  // Global filters (RFC §5), merged alongside scope in native vocabulary.
+  const gf = resolveModelGlobalFilters(self, defName, operation);
+  const scopeWhere = resolved?.where;
+  let combined = gf
+    ? (scopeWhere ? mergeScopeWhere(gf, scopeWhere) : gf)
+    : scopeWhere;
+  if (!combined) {
     return where;
   }
+  if (excludeCreated) {
+    combined = excludeRowsFromQuantifiers(combined, defName, { model: defName, ...excludeCreated }, (model, rel) => {
+      const assoc = self.defs[model] ? self.host.getAssociations(model)[rel] : undefined;
+      return assoc ? { target: assoc.target } : undefined;
+    });
+  }
   const adapter = self.getModelAdapter(defName);
+  const embedded = await embedThroughScopes(self, defName, combined, context);
   const native = await adapter.processFilterArgument(
-    resolved.where, whereOperatorsFor(self.getDefinition(defName)), options || {},
+    embedded, whereOperatorsFor(self.getDefinition(defName)), options || {}, defName,
   );
   if (!where) {
     return native;
@@ -129,15 +218,35 @@ export async function scopedWriteWhere(
   defName: string, operation: ScopeOperation, context: RequestContext,
   userWhere: PortableWhere | undefined,
 ): Promise<PortableWhere | undefined | false> {
-  const own = await resolveRowScope(self, defName, operation, context);
+  let own = await resolveRowScope(self, defName, operation, context);
   if (own === false) {
     return false;
   }
-  const read = await resolveRowScope(self, defName, "read", context);
+  let read = await resolveRowScope(self, defName, "read", context);
   if (read === false) {
     return false;
   }
-  return applyScopeWhere(applyScopeWhere(userWhere, read), own);
+  // Embed through-scopes so quantifiers on btm relationships carry the join
+  // model's read scope when the merged where reaches processFilterArgument.
+  if (own?.where) {
+    const embedded = await embedThroughScopes(self, defName, own.where, context);
+    if (embedded !== own.where) {
+      own = { ...own, where: embedded };
+    }
+  }
+  if (read?.where) {
+    const embedded = await embedThroughScopes(self, defName, read.where, context);
+    if (embedded !== read.where) {
+      read = { ...read, where: embedded };
+    }
+  }
+  // Composition order: clientWhere AND globalFilters AND scope.
+  let merged = userWhere;
+  const gf = resolveModelGlobalFilters(self, defName, operation);
+  if (gf) {
+    merged = mergeScopeWhere(merged, gf);
+  }
+  return applyScopeWhere(applyScopeWhere(merged, read), own);
 }
 
 /**
@@ -164,16 +273,28 @@ export async function assertRowsInScope(
   if (rows.length === 0) {
     return;
   }
+  // RFC §6.6: on a database-enforced RLS model, WITH CHECK replaces the
+  // post-write re-check. A violation surfaces as Postgres error 42501, which
+  // the error mapper translates to ScopeEscapeError.
+  if (isDatabaseEnforced(self, defName, options?.transaction, context)) {
+    return;
+  }
   // The pair the write ran under, asked again. An update reached an existing
   // row, and reaching one is a read, so it answers to both halves. A create
   // reached nothing — and a principal allowed to add rows to a model it may
   // not read back is a legitimate arrangement that asking the read scope here
   // would quietly ban.
+  const adapter = self.getModelAdapter(defName);
+  const [pk] = adapter.getPrimaryKeyNameForModel(defName);
+  const ids = rows.map((r) => adapter.getValueFromInstance(r, pk));
   let where = operation === "create"
     ? undefined
     : await scopeNativeWhere(self, defName, "read", context, undefined, options);
   if (where !== false) {
-    where = await scopeNativeWhere(self, defName, operation, context, where, options);
+    // A created row is judged against the rows that existed before it, never
+    // against itself (see `excludeRowsFromQuantifiers`).
+    where = await scopeNativeWhere(self, defName, operation, context, where, options,
+      operation === "create" ? { pk, ids } : undefined);
   }
   if (where === false) {
     // Not reachable from today's call sites — every one of them refuses an
@@ -188,9 +309,6 @@ export async function assertRowsInScope(
     // mutation on every unscoped deployment in exchange for no answer.
     return;
   }
-  const adapter = self.getModelAdapter(defName);
-  const [pk] = adapter.getPrimaryKeyNameForModel(defName);
-  const ids = rows.map((r) => adapter.getValueFromInstance(r, pk));
   const found = await adapter.findAll(defName, markSystemQuery({
     ...(options?.transaction !== undefined ? {transaction: options.transaction} : {}),
     where: filterMerger(self.host, defName)(pk, ids, true, where),
@@ -202,7 +320,7 @@ export async function assertRowsInScope(
 }
 
 /**
- * Hand a request context the resolved scope, for the surfaces §12 names.
+ * Hand a request context the resolved scope, for the surfaces S12 names.
  *
  * A `scopeAware` method has claimed it will apply the filter itself, and this
  * is where it gets one. Backed by the same per-request memo every other call
@@ -227,6 +345,175 @@ export function withScopeFor<T>(self: ScopeHost, context: T): T {
     enumerable: false, writable: false, configurable: true,
   });
   return context;
+}
+
+// ---------------------------------------------------------------------------
+// Through-scope embedding
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk a scope's portable where and, for each `belongsToMany` quantifier
+ * whose association has a registered `throughModel`, resolve the join model's
+ * read scope and embed it under the `__throughScope` key alongside the
+ * quantifier key. The adapter reads it in the subquery compiler.
+ *
+ * Through-scopes that themselves contain quantifiers are embedded recursively
+ * (they will be compiled by the adapter's relationship-filter compiler).
+ *
+ * This runs in the engine, where scope resolution and the association graph
+ * are available, so the adapter never needs either.
+ */
+export async function embedThroughScopes(
+  self: ScopeHost,
+  defName: string,
+  where: PortableWhere | undefined,
+  context: RequestContext,
+): Promise<PortableWhere | undefined> {
+  if (!where || typeof where !== "object") {
+    return where;
+  }
+  const associations = self.defs[defName] ? self.host.getAssociations(defName) : {};
+  const result: PortableWhere = {};
+  let changed = false;
+  for (const key of Object.keys(where)) {
+    const lower = key.toLowerCase();
+    if (LOGICAL_OPERATORS.has(lower)) {
+      const branch = where[key];
+      if (Array.isArray(branch)) {
+        const mapped = await Promise.all(
+          branch.map((b) => embedThroughScopes(self, defName, b as PortableWhere, context)),
+        );
+        if (mapped.some((m, i) => m !== branch[i])) {
+          changed = true;
+        }
+        result[lower] = mapped;
+      } else {
+        const mapped = await embedThroughScopes(self, defName, branch as PortableWhere, context);
+        if (mapped !== branch) {
+          changed = true;
+        }
+        result[lower] = mapped;
+      }
+      continue;
+    }
+    const quantifier = parseQuantifier(where[key]);
+    const association = associations[key];
+    if (quantifier && association) {
+      // Recurse into the inner filter for nested quantifiers on the target model.
+      const innerEmbedded = await embedThroughScopes(self, association.target, quantifier.inner, context);
+      if (association.associationType === "belongsToMany" && association.throughModel && association.through) {
+        // Resolve the join model's read scope.
+        const joinModel = association.through;
+        const throughResolved = await resolveRowScope(self, joinModel, "read", context);
+        let throughWhere: PortableWhere | false | undefined;
+        if (throughResolved === false) {
+          // A denying through-scope means no link qualifies. Carried as
+          // `false`, which the adapter writes as a contradiction; a made-up
+          // column here would turn "nothing qualifies" into a SQL error.
+          throughWhere = false;
+        } else if (throughResolved && throughResolved.where) {
+          // The through-scope may itself contain quantifiers; embed their
+          // through-scopes recursively.
+          throughWhere = await embedThroughScopes(self, joinModel, throughResolved.where, context);
+        }
+        const quantifierValue: PortableWhere = { [quantifier.quantifier]: innerEmbedded || {} };
+        if (throughWhere !== undefined) {
+          quantifierValue[THROUGH_SCOPE_KEY] = throughWhere;
+        }
+        // Carry forward any existing __throughScope from an outer embedding.
+        if (quantifier.throughScope !== undefined && throughWhere === undefined) {
+          quantifierValue[THROUGH_SCOPE_KEY] = quantifier.throughScope;
+        }
+        result[key] = quantifierValue;
+        changed = true;
+      } else if (innerEmbedded !== quantifier.inner) {
+        result[key] = { [quantifier.quantifier]: innerEmbedded || {} };
+        if (quantifier.throughScope !== undefined) {
+          (result[key] as PortableWhere)[THROUGH_SCOPE_KEY] = quantifier.throughScope;
+        }
+        changed = true;
+      } else {
+        result[key] = where[key];
+      }
+      continue;
+    }
+    result[key] = where[key];
+  }
+  return changed ? result : where;
+}
+
+// ---------------------------------------------------------------------------
+// Global filter merging
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the global filters for one model and operation. `undefined` when no
+ * filter applies (the common case for models without `options.filters`).
+ *
+ * This is a pure function over the definition and the current
+ * `AsyncLocalStorage` bypass, so it needs no `context` and no memo.
+ */
+export function resolveModelGlobalFilters(self: ScopeHost, defName: string, operation: ScopeOperation): PortableWhere | undefined {
+  const def = self.defs[defName];
+  return resolveGlobalFilters(def, operation);
+}
+
+/**
+ * Merge global filters into a portable where clause.  Called at every read and
+ * write chokepoint between the client where and the scope merge.
+ *
+ * Order: `clientWhere AND globalFilters AND scope` (the AND is commutative,
+ * but the order is fixed for a stable read-cache fingerprint).
+ */
+export function applyGlobalFilters(
+  where: PortableWhere | undefined,
+  self: ScopeHost,
+  defName: string,
+  operation: ScopeOperation,
+): PortableWhere | undefined {
+  const gf = resolveModelGlobalFilters(self, defName, operation);
+  if (!gf) {
+    return where;
+  }
+  return mergeScopeWhere(where, gf);
+}
+
+// ---------------------------------------------------------------------------
+// Database enforcement helper (RFC §6.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `defName` is database-enforced under RLS: the model has `rls.enabled`
+ * on an adapter with `rls` configured and `enforce: "database"`. The ONE helper
+ * every enforcement site reads.
+ *
+ * **Fail-closed**: returns `false` (keeping the engine scope) unless the
+ * operation is running inside a transaction (`transactionActive`). Without a
+ * transaction the adapter has not applied `set_config` / `SET LOCAL ROLE`, so
+ * the query would run under the connection's own role with no settings — which
+ * bypasses RLS on a superuser, table-owner-without-FORCE, or BYPASSRLS role.
+ * Skipping the engine scope without a transaction is "neither", never "database".
+ */
+export function isDatabaseEnforced(self: ScopeHost, defName: string, transaction?: unknown, context?: RequestContext): boolean {
+  if (!transaction) {
+    return false;
+  }
+  const adapterName = self.defsAdapters[defName];
+  const adapter = adapterName ? self.adapters[adapterName] : undefined;
+  // The adapter answers for its own handles only, so a transaction opened
+  // without an identity, or by another adapter, keeps the engine's scope.
+  return adapter?.isDatabaseEnforced?.(defName, transaction, context) ?? false;
+}
+
+/**
+ * Whether `defName` is RLS-enabled on its adapter: the model has `rls.enabled`
+ * and the adapter has an `rls` config. Used to decide whether a read needs
+ * a transaction wrapping and whether the cache key includes the RLS identity.
+ */
+export function isRlsEnabled(self: ScopeHost, defName: string): boolean {
+  const adapterName = self.defsAdapters[defName];
+  const adapter = adapterName ? self.adapters[adapterName] : undefined;
+  return adapter?.isRlsEnabled?.(defName) ?? false;
 }
 
 // Re-export the symbols the class needs without reaching into scope.ts itself.

@@ -49,8 +49,12 @@ export function buildInstanceMethodResolver(
         );
       }
     }
+    // Through the engine, which on an RLS model runs it in the request's RLS
+    // transaction (handed over as `context.transaction`).
     let result = typeof implementation === "function"
-      ? await implementation.apply(row, [args, context])
+      ? await ctx.instance.resolveInstanceMethod(
+        defName, row, methodName, implementation as (this: unknown, a: unknown, c: RequestContext) => unknown, args, context,
+      )
       : undefined;
     if (output) {
       result = await output(result, { source: row, args, context, info, modelDefinition: definition });

@@ -651,7 +651,11 @@ export class NestizeService {
     if (typeof instanceMethod !== "function") {
       throw new NotFoundException(`Unknown method '${method}' on ${name}`);
     }
-    const result = await instanceMethod.call(row, args, { req });
+    // Through the engine: on an RLS model it runs in the request's RLS
+    // transaction, handed over as `context.transaction`.
+    const result = await this.orm.resolveInstanceMethod(
+      name, row, method, instanceMethod as (this: unknown, a: unknown, c: unknown) => unknown, args, { req },
+    );
     return guards.toPlain(result);
   }
 }

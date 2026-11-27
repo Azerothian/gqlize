@@ -150,6 +150,19 @@ export interface OrmAdapter {
   reset(options?: AdapterQueryOptions): Promise<void>;
   initialise(options?: InitialiseOptions): Promise<void>;
   sync(options?: AdapterQueryOptions): Promise<void>;
+  /**
+   * Optional: reconcile Postgres row-level security policies after `sync()`.
+   * Called by `Ormize.sync()` right after the adapter's own `sync()`.
+   * Non-Postgres adapters omit this.
+   *
+   * @param definitions - all model definitions registered against this adapter
+   * @param options - `{ manageRoles }` from the ormize instance's RLS config
+   * @returns the SQL statements that were executed
+   */
+  syncRowSecurity?(
+    definitions: { [name: string]: Definition },
+    options?: { manageRoles?: boolean },
+  ): Promise<string[]>;
   hasInlineCountFeature(): boolean;
   findAll(defName: string, options: AdapterQueryOptions): Promise<AdapterRow[]>;
   /** Row count carried alongside the rows by backends that support it (`hasInlineCountFeature`). */
@@ -171,8 +184,18 @@ export interface OrmAdapter {
    */
   restoreRows?(defName: string, snapshot: unknown[], options: AdapterQueryOptions): AdapterRow[];
   count(defName: string, options: AdapterQueryOptions): Promise<number>;
-  /** `where` may be absent — an operation with no filter — which every adapter reads as "match everything". */
-  processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): AdapterWhere | Promise<AdapterWhere>;
+  /**
+   * `where` may be absent — an operation with no filter — which every adapter
+   * reads as "match everything".
+   *
+   * `defName` is optional: when present and the where contains a relationship
+   * quantifier on one of that model's associations, adapters that support them
+   * compile the quantifier to their native form. Adapters that cannot express
+   * quantifiers (Valkey, MikroORM) throw `ScopeConfigurationError` when they
+   * see one on an association. The parameter replaced the earlier symbol-stamp
+   * mechanism which was fragile across where-clause clones and merges.
+   */
+  processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions, defName?: string): AdapterWhere | Promise<AdapterWhere>;
   /**
    * Optional: merge a single equality (or, for array values, membership) filter
    * into an already-processed `where`, returning the combined adapter-native
@@ -192,6 +215,23 @@ export interface OrmAdapter {
    * ormize refuses the query rather than running it unscoped.
    */
   andFilterStatements?(a: AdapterWhere | undefined, b: AdapterWhere | undefined): AdapterWhere | undefined;
+  /**
+   * Optional: compile relationship quantifiers (`some`, `none`, `every`, `is`,
+   * `isNot`) in a `PortableWhere` into the adapter's native form. Called by the
+   * engine when a scope contains quantifiers. Adapters that cannot express
+   * quantifiers (Valkey, MikroORM) throw `ScopeConfigurationError`.
+   *
+   * @param modelName - the model the where belongs to
+   * @param where - portable filter that may contain quantifier keys
+   * @param options - the query options
+   * @param scopeForThrough - optional: returns the read scope for a registered
+   *   join model, so it can be applied inside the subquery
+   */
+  compileRelationshipFilter?(
+    modelName: string,
+    where: { [key: string]: unknown },
+    options: AdapterQueryOptions,
+  ): Promise<AdapterWhere>;
   /**
    * Optional: install an extra instance method on an already-defined model. Used
    * to attach cross-adapter relationship accessors to adapters whose "model" is a
@@ -234,8 +274,37 @@ export interface OrmAdapter {
    * (`orm.transaction`): the coordinator begins one per adapter and commits/rolls
    * back them together. `handle` is the adapter-native transaction token that is
    * threaded onto each operation's options.
+   *
+   * `context` is the request context for the current operation. An adapter with
+   * RLS configured uses it to apply per-request settings and role (RFC §6.5).
    */
-  beginTransaction?(): Promise<AdapterTransaction>;
+  beginTransaction?(context?: import("./primitives").RequestContext): Promise<AdapterTransaction>;
+  /**
+   * Optional: whether this model is database-enforced under RLS — i.e. the
+   * model has `rls.enabled`, the adapter has an `rls` config, and `enforce` is
+   * `"database"` (not `"both"`). The ONE helper every enforcement site reads
+   * (RFC §6.6).
+   */
+  isDatabaseEnforced?(defName: string, transaction?: unknown, context?: import("./primitives").RequestContext): boolean;
+  /**
+   * Optional: whether this model is RLS-enabled on this adapter — i.e. the
+   * model has `rls.enabled` and the adapter has an `rls` config. Used to decide
+   * whether a read needs a transaction wrapping (RFC §6.5) and whether the
+   * cache key includes the RLS identity.
+   */
+  isRlsEnabled?(defName: string): boolean;
+  /**
+   * Optional: resolve the database role for a request context. Returns the
+   * role name, or `undefined` when no identity is available. The engine calls
+   * this BEFORE opening a transaction; `undefined` → refuse as a scope deny
+   * (RFC §6.5 "No identity").
+   */
+  resolveRlsRole?(context: import("./primitives").RequestContext): string | undefined;
+  /**
+   * Optional: resolve the RLS settings for a request context. Returns the
+   * settings map. Used by the read-cache key augmentation (RFC §6.5).
+   */
+  resolveRlsSettings?(context: import("./primitives").RequestContext): { [name: string]: string | number | boolean | (string | number)[] } | undefined;
   /** Read: classify an adapter-native type into an abstract `DataTypeDescriptor`. */
   mapDataType(nativeType: NativeDataType): DataTypeDescriptor;
   /** Write: convert an abstract type token/descriptor back to an adapter-native type. */

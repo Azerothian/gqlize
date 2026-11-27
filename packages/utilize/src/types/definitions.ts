@@ -276,6 +276,20 @@ export interface DefinitionOptions {
    * for this model, falling back to per-relation resolution. Defaults to enabled.
    */
   autoInclude?: boolean;
+  /**
+   * Global filters (RFC §5.1). Each key is a filter name; its value declares a
+   * static `PortableWhere` and optionally which operations it applies to (default
+   * all three: `read`, `update`, `delete`). A global filter is the same for every
+   * caller, so `where` must not reference the principal — anything caller-dependent
+   * belongs in `scope`.
+   */
+  filters?: { [name: string]: import("../gate").GlobalFilterDeclaration };
+  /**
+   * Postgres row-level security (RFC §6.1). Declares RLS policies on the table.
+   * Non-Postgres adapters ignore this. A table with `enabled: true` and no policies
+   * denies every row (legal but warned at build).
+   */
+  rls?: RlsOptions;
   instanceMethods?: {
     [name: string]: DefinitionMethod;
   }
@@ -347,3 +361,65 @@ export type HookMap = {
 // Forward import — Relationship is defined in relationships.ts but needed here
 // for Definition.relationships.
 import type { Relationship } from "./relationships";
+
+// --- Row-level security types (RFC §6.1) ---
+
+/** Marker for a Postgres session setting reference inside a policy. */
+export interface RlsSetting {
+  readonly __rlsSetting: true;
+  readonly name: string;
+  readonly type: string;
+}
+
+/** Marker for a raw SQL fragment inside a policy. */
+export interface RlsSqlFragment {
+  readonly __sqlFragment: true;
+  readonly text: string;
+}
+
+/** Type guard for an `RlsSetting` marker. */
+export function isRlsSetting(value: unknown): value is RlsSetting {
+  return value !== null && typeof value === "object" && (value as RlsSetting).__rlsSetting === true;
+}
+
+/** Type guard for a `RlsSqlFragment` marker. */
+export function isRlsSqlFragment(value: unknown): value is RlsSqlFragment {
+  return value !== null && typeof value === "object" && (value as RlsSqlFragment).__sqlFragment === true;
+}
+
+/** A policy command: `all`, `select`, `insert`, `update` or `delete`. */
+export type RlsPolicyCommand = "all" | "select" | "insert" | "update" | "delete";
+
+/**
+ * One RLS policy declaration on a model. The policy name in Postgres is
+ * `<table>_<key>`, where `key` is the object key under `options.rls.policies`.
+ */
+export interface RlsPolicyDeclaration {
+  /** `permissive` (OR-ed) or `restrictive` (AND-ed). Default `"permissive"`. */
+  as?: "permissive" | "restrictive";
+  /** Which command this policy applies to. Default `"all"`. */
+  for?: RlsPolicyCommand;
+  /** Database role name(s). Default `"public"`. */
+  to?: string | string[];
+  /** Which existing rows are visible. A `PortableWhere` or a `SqlFragment`. */
+  using?: import("../gate").PortableWhere | RlsSqlFragment;
+  /** Which new rows may be written. Defaults to `using` for all/insert/update. */
+  withCheck?: import("../gate").PortableWhere | RlsSqlFragment;
+}
+
+/**
+ * Row-level security options on a model definition (RFC §6.1).
+ * Non-Postgres adapters ignore this entirely.
+ */
+export interface RlsOptions {
+  /** Enable RLS on the table. Default `false`. */
+  enabled?: boolean;
+  /**
+   * Force RLS so the table owner is also subject to policies. Default `true`.
+   * Without this, the owner role (usually the connection role) bypasses every
+   * policy.
+   */
+  force?: boolean;
+  /** Named policies. The key becomes part of the Postgres policy name. */
+  policies?: { [name: string]: RlsPolicyDeclaration };
+}

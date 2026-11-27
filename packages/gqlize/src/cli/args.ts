@@ -12,7 +12,7 @@ export class UsageError extends Error {
   }
 }
 
-export type Command = "build" | "print" | "check";
+export type Command = "build" | "print" | "check" | "rls:sql";
 
 export interface ParsedArgs {
   command: Command;
@@ -53,7 +53,7 @@ const OPTIONS = {
   "no-strict": {type: "boolean", default: false},
 } as const;
 
-const COMMANDS: Command[] = ["build", "print", "check"];
+const COMMANDS: Command[] = ["build", "print", "check", "rls:sql"];
 
 export function parseCliArgs(argv: string[]): ParsedArgs {
   // npm and pnpm forward their own `--` separator into the script's argv, so
@@ -116,6 +116,7 @@ Usage
   gqlize build [options]     build the schema artifact(s)
   gqlize print [options]     print the schema as SDL
   gqlize check [options]     compare an artifact against the live definitions
+  gqlize rls:sql [options]   print idempotent RLS DDL from definitions (no DB)
 
 Common
   -c, --config <path>        config file (default: nearest gqlize.config.{ts,mts,mjs,js,cjs},

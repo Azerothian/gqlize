@@ -571,6 +571,24 @@ export type PortableWhere = { [key: string]: unknown };
 /** Which operation a scope is being resolved for. */
 export type ScopeOperation = "read" | "create" | "update" | "delete";
 
+/** Operations a global filter may be applied to. `create` is never valid. */
+export type GlobalFilterOperation = "read" | "update" | "delete";
+
+/**
+ * A model-level global filter (RFC §5.1). The same for every caller — anything
+ * caller-dependent belongs in `scope`.
+ */
+export interface GlobalFilterDeclaration {
+  /** A `PortableWhere`, including Phase 1 quantifiers. Must not reference the principal. */
+  where: PortableWhere;
+  /**
+   * Which operations the filter applies to.  Defaults to all three (`read`,
+   * `update`, `delete`).  `create` has no existing rows to filter and is never
+   * listed — including it in the array is a validation error.
+   */
+  operations?: GlobalFilterOperation[];
+}
+
 /**
  * What a {@link ScopePredicate} may return.
  *
@@ -715,6 +733,307 @@ export function scopeDispositionOf(value: unknown): ScopeDisposition {
  * same set) so the two cannot drift apart.
  */
 export const LOGICAL_OPERATORS: ReadonlySet<string> = new Set(["and", "or", "not"]);
+
+// ---------------------------------------------------------------------------
+// Relationship quantifiers (Phase 1 of the row-security RFC)
+// ---------------------------------------------------------------------------
+
+/**
+ * Quantifier keys for many-valued relationships (`hasMany`, `belongsToMany`).
+ *
+ * `some`: at least one related row matches.
+ * `none`: no related row matches.
+ * `every`: every related row matches (vacuously true when there are none).
+ */
+export const MANY_QUANTIFIERS: ReadonlySet<string> = new Set(["some", "none", "every"]);
+
+/**
+ * Quantifier keys for single-valued relationships (`belongsTo`, `hasOne`).
+ *
+ * `is`: the related row exists and matches.
+ * `isNot`: the related row is absent or does not match.
+ */
+export const SINGLE_QUANTIFIERS: ReadonlySet<string> = new Set(["is", "isNot"]);
+
+/**
+ * Every quantifier key, used to detect relationship filters in a
+ * `PortableWhere`. A key in a where-clause whose value is an object with
+ * exactly one of these is a relationship quantifier rather than a field
+ * condition.
+ */
+export const ALL_QUANTIFIERS: ReadonlySet<string> = new Set([
+  ...MANY_QUANTIFIERS, ...SINGLE_QUANTIFIERS,
+]);
+
+/**
+ * Detect whether a value under a key in a `PortableWhere` is a relationship
+ * quantifier clause (e.g. `{some: {...}}` or `{is: {...}}`).
+ *
+ * Returns the quantifier name and inner filter, or `undefined` if the value
+ * is not a quantifier.
+ */
+/**
+ * Reserved key the engine embeds in a quantifier node to carry the read scope
+ * of a registered join model for a `belongsToMany` association. Clients can
+ * never send it (`assertFilterAllowed` / `isFieldExposed` refuse relationship
+ * keys), and the adapter reads it in the subquery compiler to filter the join
+ * table. Placed alongside the quantifier key (e.g.
+ * `{some: {...inner}, __throughScope: {...joinScopeWhere}}`).
+ */
+export const THROUGH_SCOPE_KEY = "__throughScope";
+
+export function parseQuantifier(
+  value: unknown,
+): { quantifier: string; inner: PortableWhere; throughScope?: PortableWhere | false } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const keys = Object.keys(value);
+  // Allow one quantifier key, optionally accompanied by `__throughScope`.
+  if (keys.length < 1 || keys.length > 2) {
+    return undefined;
+  }
+  const quantifierKeys = keys.filter((k) => ALL_QUANTIFIERS.has(k));
+  if (quantifierKeys.length !== 1) {
+    return undefined;
+  }
+  const otherKeys = keys.filter((k) => !ALL_QUANTIFIERS.has(k));
+  if (otherKeys.length > 0 && otherKeys[0] !== THROUGH_SCOPE_KEY) {
+    return undefined;
+  }
+  const key = quantifierKeys[0];
+  const inner = (value as { [k: string]: unknown })[key];
+  // The inner filter must be an object (possibly empty) — a bare `true` or
+  // string is not a filter.
+  if (inner !== null && inner !== undefined && typeof inner === "object" && !Array.isArray(inner)) {
+    const throughScope = (value as { [k: string]: unknown })[THROUGH_SCOPE_KEY];
+    // `false` is the join model's scope denying outright: no link qualifies.
+    const ts = throughScope === false
+      ? false
+      : (throughScope && typeof throughScope === "object" && !Array.isArray(throughScope))
+        ? throughScope as PortableWhere : undefined;
+    return { quantifier: key, inner: inner as PortableWhere, throughScope: ts };
+  }
+  return undefined;
+}
+
+/**
+ * Walk a `PortableWhere` and collect every model a relationship quantifier
+ * reaches, so the read cache can tag its reads and the cross-adapter check
+ * can refuse quantifiers that cross datastores.
+ *
+ * `associations` resolves a (model, relationshipName) pair to the target model
+ * and its own associations. Returns the set of all target models found.
+ */
+/**
+ * The `__via` marker emitted by the `via` scope sugar in `permissions.ts`.
+ *
+ * Present in a `PortableWhere` only as a scope result, never from client input.
+ * The engine resolves it into proper quantifier nesting using the association
+ * graph before the where reaches an adapter.
+ */
+export type ViaMarker = {
+  path: string[];
+  match: PortableWhere;
+};
+
+/**
+ * Whether a value in a `PortableWhere` is a `__via` marker.
+ */
+export function isViaMarker(value: unknown): value is ViaMarker {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const v = value as { path?: unknown; match?: unknown };
+  return Array.isArray(v.path) && v.path.length > 0
+    && typeof v.match === "object" && v.match !== null;
+}
+
+/**
+ * Resolve all `__via` markers in a `PortableWhere` into proper quantifier
+ * nesting using the association graph.
+ *
+ * Each hop in a `via` path becomes `is` (for belongsTo/hasOne) or `some`
+ * (for hasMany/belongsToMany), determined by the association's type. The
+ * innermost match filter is placed at the end of the chain.
+ *
+ * `associationType` returns the association type string for a (model, relName)
+ * pair, or undefined if the relationship doesn't exist. Throws
+ * `ScopeConfigurationError` if a `via` path names a relationship that doesn't
+ * exist.
+ */
+export function resolveViaMarkers(
+  where: PortableWhere | undefined,
+  model: string,
+  associationInfo: (defName: string, relName: string) => { associationType: string; target: string } | undefined,
+): PortableWhere | undefined {
+  if (!where || typeof where !== "object") {
+    return where;
+  }
+  const result: PortableWhere = {};
+  for (const key of Object.keys(where)) {
+    const lower = key.toLowerCase();
+    if (LOGICAL_OPERATORS.has(lower)) {
+      const branch = where[key];
+      if (Array.isArray(branch)) {
+        result[lower] = branch.map(
+          (entry) => resolveViaMarkers(entry as PortableWhere, model, associationInfo),
+        );
+      } else {
+        result[lower] = resolveViaMarkers(branch as PortableWhere, model, associationInfo);
+      }
+      continue;
+    }
+    if (key === "__via" && isViaMarker(where[key])) {
+      const via = where[key];
+      const resolved = resolveViaPath(via.path, via.match, model, associationInfo);
+      // Merge the resolved quantifier into the result. It is a single key-value
+      // pair: { relName: { some/is: ... } }
+      Object.assign(result, resolved);
+      continue;
+    }
+    // Not a via marker — check if the value contains nested via markers (in a
+    // quantifier's inner filter).
+    const quantifier = parseQuantifier(where[key]);
+    if (quantifier) {
+      const assoc = associationInfo(model, key);
+      if (assoc) {
+        const resolvedInner = resolveViaMarkers(quantifier.inner, assoc.target, associationInfo);
+        result[key] = { [quantifier.quantifier]: resolvedInner || {} };
+        continue;
+      }
+    }
+    result[key] = where[key];
+  }
+  return result;
+}
+
+/**
+ * Keep rows a write just created out of every relationship quantifier that
+ * ranges over their own model, so the post-create re-check judges them against
+ * the rows that existed before them.
+ *
+ * Without this a created row can vouch for itself: a `Membership` write scope of
+ * "you manage this group" (`group.memberships.some({userId: me, role:
+ * "manager"})`) is satisfied by the very membership being created when it says
+ * `role: "manager"`. Postgres evaluates an insert's `WITH CHECK` before the row
+ * is visible, so this is also what keeps the engine and an RLS policy in
+ * agreement. Rows created by *other* writes of the same mutation (a nested
+ * create, linked after) still count, which RFC §4.5's ordering relies on.
+ *
+ * `some`/`is`/`none`/`isNot` add `pk notIn ids` to the inner filter; `every`
+ * has to narrow its range instead of its condition, so it ORs `pk in ids` in.
+ */
+export function excludeRowsFromQuantifiers(
+  where: PortableWhere,
+  model: string,
+  excluded: { model: string; pk: string; ids: unknown[] },
+  associationInfo: (defName: string, relName: string) => { target: string } | undefined,
+): PortableWhere {
+  const result: PortableWhere = {};
+  for (const key of Object.keys(where)) {
+    const lower = key.toLowerCase();
+    const value = where[key];
+    if (LOGICAL_OPERATORS.has(lower)) {
+      result[key] = Array.isArray(value)
+        ? value.map((entry) => excludeRowsFromQuantifiers(entry as PortableWhere, model, excluded, associationInfo))
+        : excludeRowsFromQuantifiers(value as PortableWhere, model, excluded, associationInfo);
+      continue;
+    }
+    const quantifier = parseQuantifier(value);
+    const assoc = quantifier ? associationInfo(model, key) : undefined;
+    if (!quantifier || !assoc) {
+      result[key] = value;
+      continue;
+    }
+    let inner = excludeRowsFromQuantifiers(quantifier.inner || {}, assoc.target, excluded, associationInfo);
+    if (assoc.target === excluded.model) {
+      const hasInner = Object.keys(inner).length > 0;
+      if (quantifier.quantifier === "every") {
+        inner = hasInner ? { or: [inner, { [excluded.pk]: { in: excluded.ids } }] } : inner;
+      } else {
+        const notSelf = { [excluded.pk]: { notIn: excluded.ids } };
+        inner = hasInner ? { and: [inner, notSelf] } : notSelf;
+      }
+    }
+    result[key] = { ...(value as object), [quantifier.quantifier]: inner };
+  }
+  return result;
+}
+
+/**
+ * Build the nested quantifier chain for a single `via` path.
+ */
+function resolveViaPath(
+  path: string[],
+  match: PortableWhere,
+  model: string,
+  associationInfo: (defName: string, relName: string) => { associationType: string; target: string } | undefined,
+): PortableWhere {
+  if (path.length === 0) {
+    return match;
+  }
+  const [relName, ...rest] = path;
+  const assoc = associationInfo(model, relName);
+  if (!assoc) {
+    throw new ScopeConfigurationError(
+      `via path: relationship '${relName}' does not exist on model '${model}'.`,
+    );
+  }
+  const isSingleValued = assoc.associationType === "belongsTo" || assoc.associationType === "hasOne";
+  const quantifier = isSingleValued ? "is" : "some";
+  const inner = rest.length === 0
+    ? match
+    : resolveViaPath(rest, match, assoc.target, associationInfo);
+  return { [relName]: { [quantifier]: inner } };
+}
+
+/**
+ * Walk a `PortableWhere` and collect every model a relationship quantifier
+ * reaches, so the read cache can tag its reads and the cross-adapter check
+ * can refuse quantifiers that cross datastores.
+ *
+ * `associations` resolves a (model, relationshipName) pair to the target model
+ * and its own associations. Returns the set of all target models found.
+ */
+export function collectQuantifierTargets(
+  where: PortableWhere | undefined,
+  model: string,
+  associations: (defName: string) => { [relName: string]: { target: string; through?: string } },
+  targets?: Set<string>,
+): Set<string> {
+  targets = targets || new Set<string>();
+  if (!where || typeof where !== "object") {
+    return targets;
+  }
+  for (const key of Object.keys(where)) {
+    const lower = key.toLowerCase();
+    if (LOGICAL_OPERATORS.has(lower)) {
+      const branch = where[key];
+      if (Array.isArray(branch)) {
+        for (const entry of branch) {
+          collectQuantifierTargets(entry as PortableWhere, model, associations, targets);
+        }
+      } else {
+        collectQuantifierTargets(branch as PortableWhere, model, associations, targets);
+      }
+      continue;
+    }
+    const quantifier = parseQuantifier(where[key]);
+    if (quantifier) {
+      const assoc = associations(model)[key];
+      if (assoc) {
+        targets.add(assoc.target);
+        if (assoc.through) {
+          targets.add(assoc.through);
+        }
+        // Recurse into the inner filter to find nested quantifiers.
+        collectQuantifierTargets(quantifier.inner, assoc.target, associations, targets);
+      }
+    }
+  }
+  return targets;
+}
 
 /**
  * Rewrite `AND` / `Or` / `NOT` to lowercase throughout a portable filter.

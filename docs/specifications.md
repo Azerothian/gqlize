@@ -261,6 +261,7 @@ Consumer-facing (`packages/ormize/src/manager.ts`):
   cannot create it, so it must be declared in `define` by hand. See
   [guide §11](guide.md#11-multiple-data-sources).
 - `sync(options?)` / `reset(options?)` — delegate to adapters.
+- `asSystem(fn)` — runs `fn(systemContext)` for work with no request (RFC §6.5): no engine row scope, and RLS adapters use their `rls.bypassRole` with no settings. Throws before running `fn` if an adapter with RLS models has no `bypassRole`. Global filters still apply. The context is marked with a private symbol from `@azerothian/utilize/system-context`.
 - Hook registration: `addHook`, `addHookObject`, `unshiftHook`, `unshiftHookObject`, `createHook`.
 - Introspection: `getModel(s)`, `getDefinition(s)`, `hasDefinition`, `getFields`, `getAssociations`, `getGlobalKeys`.
 
@@ -268,7 +269,9 @@ Internal resolution methods invoked by generated resolvers:
 
 - `resolveFindAll` — list query resolver (cursor→offset, `adapter.processListArgsToOptions` → `adapter.findAll` + count, fires `before` with `Events.QUERY`). Backward pagination (`before`/`last`) computes offset as `max(0, cursor.index - pageSize)` and clamps the limit to `min(pageSize, cursor.index)`. `last` without a cursor counts first and offsets from the end.
 - `resolveSingleRelationship` / `resolveManyRelationship` — relationship resolvers. The same backward-pagination semantics apply to nested connections.
-- `resolveClassMethod` — invokes `Model[methodName](args, context)` with optional before/after.
+- `resolveInstanceMethod(defName, row, methodName, implementation, args, context)` — runs an instance method with `row` as `this`; on an RLS model, in the request's RLS transaction like `resolveClassMethod`. gqlize's and nestize's instance-method routes call it.
+- `runRequest(context, fn)` — runs `fn` (an `extend` field's resolver) in one coordinated transaction when any RLS model is registered, so its engine calls share one RLS transaction per adapter.
+- `resolveClassMethod` — invokes `Model[methodName](args, context)` with optional before/after. On an RLS model (RFC §6.5) it first opens a transaction with the request's settings and role and passes it as `context.transaction` (raw-SQL methods run their statement on it); no identity throws `ScopeDeniedError`; a method declared `unscoped` runs under the adapter's `rls.bypassRole` when one is configured.
 - `processCreate` / `processUpdate` / `processDelete` — mutation executors; run `processInputs`, translate global IDs (`replaceIdDeep`), fire the matching `Events.MUTATION_*` hook, delegate to adapter functions, then `processRelationshipMutation`.
 - `processRelationshipMutation` — the nested-mutation engine (see §5).
 - `csvLimits(defName)` / `processCsv(defName, operation, request, context, selection?)` — CSV uploads:
@@ -403,6 +406,8 @@ example is `packages/gqlize/__tests__/helper/models/task.ts`.
 | `cache` | This model's part in the read cache (§3). `false` keeps every read of it out. `{ttl}` overrides the cache-wide TTL, and also opts in a model that has its own find/count hooks. |
 | `queries` | **Sequelize adapter only.** Raw create/drop DDL registered against the definition (`{ [name]: { create, drop } }`, each a string or a thunk). `initialise()` replays every `create`, and `reset()` replays the `drop`s then the `create`s. This is the adapter's only I/O in `initialise()`, which is why `initialise({ddl: false})` — the offline schema build — turns it off. |
 | `options` | Adapter-specific options passed through to the data source (Sequelize: `tableName`, `paranoid`, `indexes`, `hooks`, …). Also `autoInclude: false` to opt this model out of root-level eager resolution (see §5). |
+| `options.filters` | Global filters (RFC §5). Each key is a filter name; its value declares a static `PortableWhere` and optionally which of `read` / `update` / `delete` it applies to (default all three). A global filter is the same for every caller (it must not reference the principal — anything caller-dependent belongs in `scope`). The engine AND-s applicable filters into every read and write chokepoint alongside the scope: root lists, `total`, `node(id:)`, eager and lazy relationship fields, through reads, the `required` filter path, and `update`/`delete`/`select` write paths. Server-side bypass: `orm.withoutFilters(["name"], fn)` via `AsyncLocalStorage`. `initialise` compiles every filter through its adapter and throws `ScopeConfigurationError` for one the adapter can't express or one whose relationship filter reaches another adapter. See §7 for the `queryDeleted` gate on the built-in soft-delete filter. |
+| `options.rls` | Postgres row-level security (RFC §6). `enabled: true` runs `ENABLE ROW LEVEL SECURITY` on the table in `sync()`. `force: true` (the default) runs `FORCE ROW LEVEL SECURITY` so the table owner is also subject to policies. `policies` is a keyed map of policy declarations: each has `as` (`"permissive"` or `"restrictive"`), `for` (`"all"`, `"select"`, `"insert"`, `"update"`, `"delete"`), `to` (role name or array), `using` (a `PortableWhere` or `sql` tagged template), and `withCheck` (defaults to `using` for all/insert/update). Policy name in Postgres: `<tableName>_<key>`. Non-Postgres adapters ignore this. `rls.setting(name, type)` and the `sql` tag are imported from `@azerothian/ormize/rls`. See also `compileRlsPolicies` in `@azerothian/utilize/permissions` for generating policies from role-based scope rules. A policy may use relationship quantifiers and `via`; a hop into a table that itself has RLS compiles to a generated `SECURITY DEFINER` function (`gqlize_rls_<hash>`, owned by the adapter's `rls.bypassRole` or the syncing role, which must bypass RLS; `sync()` refuses otherwise), so self-referencing and mutually referencing policies don't recurse. A SELECT policy may hide soft-deleted rows only through the adapter's `rls.softDeleteFlag` (RFC §6.8). The `sql` tag throws on interpolated values. |
 
 ### Example (trimmed from `task.ts`)
 
@@ -611,7 +616,9 @@ query naming it fails GraphQL validation rather than at resolution.
 each fetch, join and count independently, so the value is carried onto the root options, every
 include entry, and both count paths (`countOptions` and the count-only bag) — otherwise `total`
 and `edges` answer from different row sets. Single-valued relationship fields
-(`belongsTo`/`hasOne`) and `node(id:)` are not covered (§13).
+(`belongsTo`/`hasOne`) and `node(id:)` also carry the `deleted` argument (RFC §5.4), gated by
+`permission.queryDeleted` on the target model (singular fields) or any visible soft-deleting model
+(`node`).
 
 ### Deprecation
 
@@ -1146,7 +1153,7 @@ than a decision, and it is consulted per request rather than per schema.
 | `queryCsv(defName, options)` | CSV export: the `csv` field on the model's root list connection and nestize's `GET /:resource/_csv`, *in addition to* `query` and the field gates. Only consulted for a model with CSV on (§5). |
 | `mutationCreateInput` / `mutationUpdateInput` (defName, fieldName, options) | Individual input fields. |
 | `field(defName, fieldName, options)` | Individual output fields. |
-| `queryDeleted(defName, options)` | The `deleted` argument on a soft-deleting model's list fields and include input — i.e. whether this caller may read soft-deleted rows at all. Row-level visibility is still `scope`'s: a caller allowed deleted rows sees only the deleted rows inside their scope. |
+| `queryDeleted(defName, options)` | The `deleted` argument on a soft-deleting model's list fields, include input, singular relationship fields (`belongsTo`/`hasOne`) and `node(id:)` — i.e. whether this caller may read soft-deleted rows at all. Row-level visibility is still `scope`'s: a caller allowed deleted rows sees only the deleted rows inside their scope. |
 | `relationship(defName, relName, targetName, options)` | Relationship fields. |
 | `queryClassMethods` / `mutationClassMethods` | Exposed class methods. |
 | `queryInstanceMethods` | Exposed instance-method query fields — and, with them, the `orderBy` enum values and `where` fields those methods contribute (sortability and filterability each leak a denied field's value). |
@@ -1212,6 +1219,61 @@ and `all` combinators, and a `read` / `write` split with per-operation override;
 read from the request context by a `principal` option defaulting to
 `context.user` / `context.principal` / `context.req.user`. A reader that finds nothing is a deny, as
 is a `group` leaf whose principal belongs to no groups.
+
+### Relationship quantifiers in scope
+
+A `PortableWhere` returned by `scope` (or emitted by the role-based sugar) may contain relationship
+quantifiers: a relationship name as key, with a quantifier object as value.
+
+| Relationship | Quantifiers | Meaning |
+| --- | --- | --- |
+| `hasMany`, `belongsToMany` | `some: Where` | At least one related row matches. |
+| | `none: Where` | No related row matches. |
+| | `every: Where` | Every related row matches (vacuously true when there are none). |
+| `belongsTo`, `hasOne` | `is: Where` | The related row exists and matches. |
+| | `isNot: Where` | The related row is absent or does not match. |
+
+Quantifiers nest, and the inner `Where` is the related model's vocabulary. An empty inner filter
+means "any related row": `{ tags: { some: {} } }` is "has at least one tag".
+
+**Adapter support.** The Sequelize adapter compiles quantifiers to correlated `EXISTS` / `NOT EXISTS`
+subqueries (identifiers quoted, values escaped). The Valkey and MikroORM adapters throw
+`ScopeConfigurationError`. A quantifier over a relationship whose target lives on a different adapter
+is also a `ScopeConfigurationError`.
+
+**Client-facing surfaces.** Quantifiers are **not** in the generated GraphQL `where` input, the nestize
+REST where, or the temporalize activity inputs. `assertFilterAllowed` in `guards.ts` rejects any
+quantifier key a client sends. Only scope results, global filters, and direct engine callers may use
+them.
+
+**Writes.** The post-write re-check runs after the mutation's nested relationship writes (at the end
+of `mutationEntry`, inside the same transaction), so creating a row together with a relationship that
+satisfies a quantifier scope succeeds, and one that doesn't is refused and rolled back. A created row
+never counts as evidence for itself: in a create's re-check, every quantifier that ranges over the
+created row's own model leaves out the rows that create wrote (`excludeRowsFromQuantifiers` in
+`utilize/src/gate.ts`). Otherwise a `Membership` whose write scope is "you manage this group" would be
+satisfied by the membership being created when it says `role: "manager"`. Postgres evaluates an
+insert's `WITH CHECK` before the row is visible, so this is also what an RLS policy answers.
+
+**Cache.** The read-cache tags include every model a quantifier reaches, so a write to the related
+model invalidates cached reads filtered through it.
+
+### `via` leaf and `not` combinator
+
+The role-based sugar adds two leaves:
+
+- `via: "a.b.c"` with a `match` filter: a dot-separated relationship path from the scoped model.
+  Every hop except the last becomes `some` (hasMany/belongsToMany) or `is` (belongsTo/hasOne),
+  and `match` is the innermost filter. A value beginning with `$principal.` is read from the principal;
+  a missing principal value is a deny.
+- `not: <leaf>`: inverts a scope leaf. A denying branch under `not` still denies (never widens a scope
+  through a missing value). On a create, the inverted leaf is the filter a read would use: `own` and
+  `tenant` compile to a `set` on a create, which has nothing to negate, so `{ not: { own: "userId" } }`
+  on a create is "the row's `userId` is not yours", checked by the post-write re-check.
+
+The `via` leaf compiles to a `__via` marker in the portable where; the engine resolves it into proper
+quantifier nesting using the association graph. See `packages/utilize/src/permissions.ts` and
+`packages/ormize/src/engine/scope-bridge.ts`.
 
 Two rules keys feed more than one callback: `extensions` is accepted as a synonym for both
 `queryExtension` and `mutationExtension`, and `mutationCreateInput` / `mutationUpdateInput`
@@ -1340,6 +1402,26 @@ contract groups into:
   say) omits them, and gqlize then generates neither the `deleted` argument nor `restore`. The
   same `softDeletes` also appears on the type-mapping host, which is where the `deleted` argument
   is decided.
+- **Row-level security (optional):** `syncRowSecurity(definitions, options?)` reconciles Postgres
+  RLS policies from model definitions after `sync()`. Called by `Ormize.sync()` right after the
+  adapter's own `sync()`. One transaction with `pg_advisory_xact_lock` for serialisation. Creates,
+  alters, or drop+creates policies based on a SHA-256 hash of the generated SQL, stored in a
+  `COMMENT ON POLICY`. Stale managed policies are removed. Tables are marked as gqlize-managed
+  by a `<table>__gqlize_rls_marker` policy that is `AS RESTRICTIVE … USING (TRUE)`, so it filters
+  nothing. It must stay restrictive: permissive policies are ORed, and a permissive `TRUE` would
+  open the table to every role. Sync replaces a permissive marker if it finds one. When no
+  definition declares `rls`, sync still runs if any marker exists, so dropping `rls` from the last
+  model disables what gqlize enabled. Non-Postgres adapters omit this method.
+- **RLS runtime (optional):** `beginTransaction(context?)` accepts a request context. An adapter
+  with an `rls` config uses it to run `set_config` for each setting and `SET LOCAL ROLE` before
+  returning the transaction handle. Both are reset in the commit/rollback wrappers. Setting
+  values are bound parameters (`set_config($1, $2, true)`), never interpolated. Role names are
+  double-quoted identifiers validated against a strict pattern. `isDatabaseEnforced(defName)`
+  returns `true` when the model has `rls.enabled`, the adapter has `rls` configured, and
+  `enforce` is `"database"`. `isRlsEnabled(defName)` returns `true` when the model has
+  `rls.enabled` and the adapter has `rls` configured. These two methods are what the engine reads
+  to decide whether to skip the scope merge, the scope hooks, the post-write re-check, and the
+  scope audit for a model (RFC §6.6).
 
 ### Sequelize adapter highlights
 
@@ -1491,6 +1573,9 @@ each with its own subpath export:
   importing `@azerothian/gqlize` resolves to through `module-sync`. Running the CLI from `cjs/`
   would give it a second copy of module state, such as the build registry `gqlize check` reads. SWC preserves the leading `#!/usr/bin/env node` verbatim, so
   no post-processing step is needed.
+- **`gqlize rls:sql`:** prints idempotent DDL (DO blocks checking catalogs) for all RLS policies
+  declared in model definitions, without opening a database connection. The output mirrors
+  `syncRowSecurity()`'s create/alter/drop+create logic and can be piped into a migration file.
 - **Publishing:** per-package `pnpm build` → `publish/` → `package:npm` / `package:yalc`.
 - **CI:** `.github/workflows/` — `ci.yml` (Install → Typecheck → Lint → Build → Test → **Schema
   drift**, the last being `pnpm --filter @azerothian/example-gqlize-basic schema:check`, which
@@ -1550,11 +1635,9 @@ behaviour.
   `create`/`update`/`add`/`set`/`remove`/`delete`/`restore`/`select` keys are legitimately
   combinable in one mutation. A genuine fit would be a new "look this row up by exactly one of id
   or unique key" input — a feature, not a conversion.
-- **Soft delete on single-valued relationships and `node`.** `deleted` reaches list fields and
-  nested connections (§5); `belongsTo`/`hasOne` fields take only a `required` argument
-  (`create-related-fields.ts`), so a soft-deleted single-relation target reads as `null`, and
-  `node(id:)` does not resolve a deleted row. `update` and `delete` likewise keep their implicit
-  live-rows-only predicate — restore first, then write.
+- **Row-level security (Phase 3).** Postgres RLS policies on the definition, reconciled by
+  `sync()`, enforced per request with `set_config` + `SET LOCAL ROLE`. Proposed in
+  [`rfc-row-security.md`](rfc-row-security.md) §6.
 - Middleware/caching options.
 - Additional adapters (Elasticsearch, HTTP GraphQL Relay).
 - Cross-adapter **writes**, and batching of cross-adapter reads by foreign key.

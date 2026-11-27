@@ -3,6 +3,8 @@
 // model-creation, introspection, relationships, id-translation, reads, writes,
 // and query-options — keeping this file a thin routing layer.
 
+import { installSoftDeleteFlag } from "./rls/soft-delete-flag";
+import { isSystemContext } from "@azerothian/utilize/system-context";
 import {
   ModelAttributes,
   ModelCtor,
@@ -85,6 +87,15 @@ import {
 export type * from "./types/query";
 import { replaceWhereOperators, normalizeWhereForDialect } from "./utils/where-ops";
 import { fixNestedThroughJoin, keepNestedJoinsOutOfSubQuery } from "./utils/nested-subquery";
+import { compileRelationshipFilters } from "./relationship-filters";
+import { parseQuantifier, LOGICAL_OPERATORS } from "@azerothian/utilize/gate";
+import type { PortableWhere } from "@azerothian/utilize/gate";
+import type { Association as UtilAssociation } from "@azerothian/utilize/types/index";
+import {
+  buildCompilerHost, syncRowSecurity as syncRowSecurityImpl,
+  generateRlsSql, extractRlsModels,
+} from "./rls/sync-row-security";
+import type { RlsSyncOptions } from "./rls/sync-row-security";
 
 // Re-export types that were declared in this file and are part of the public surface.
 export type { SequelizeAdapterOptions, SequelizeConnection, AuthoredAttributes } from "./adapter-types";
@@ -135,7 +146,39 @@ import {
 } from "./writes";
 import { rowFields, isEmptyWhere, mergeFilterStatement as mergeFilterStatementImpl } from "./row-helpers";
 
-import type { SequelizeAdapterOptions, SequelizeConnection } from "./adapter-types";
+import type { SequelizeAdapterOptions, SequelizeConnection, AdapterRlsConfig } from "./adapter-types";
+
+/** Postgres role name pattern — same strictness as the setting name pattern in `rls.ts`. */
+const RLS_ROLE_PATTERN = /^[a-z_][a-z0-9_]*$/i;
+/** Postgres setting name pattern — matches `rls.ts`'s `SETTING_NAME_PATTERN`. */
+const RLS_SETTING_NAME_PATTERN = /^[a-z_][a-z0-9_.]*$/i;
+
+/** Validate an RLS runtime config at construction time. */
+function validateRlsConfig(rls: AdapterRlsConfig): void {
+  if (typeof rls.settings !== "function") {
+    throw new Error("SequelizeAdapter rls.settings must be a function (ctx) => {[name]: value}.");
+  }
+  if (typeof rls.role !== "function") {
+    throw new Error("SequelizeAdapter rls.role must be a function (ctx) => string | undefined.");
+  }
+  if (rls.bypassRole !== undefined && !RLS_ROLE_PATTERN.test(rls.bypassRole)) {
+    throw new Error(
+      `SequelizeAdapter rls.bypassRole: invalid role name '${rls.bypassRole}'. ` +
+      "Role names must match [a-z_][a-z0-9_]*.",
+    );
+  }
+  if (rls.enforce !== undefined && rls.enforce !== "database" && rls.enforce !== "both") {
+    throw new Error(
+      `SequelizeAdapter rls.enforce must be "database" or "both", got '${String(rls.enforce)}'.`,
+    );
+  }
+  if (rls.softDeleteFlag !== undefined && !RLS_SETTING_NAME_PATTERN.test(rls.softDeleteFlag)) {
+    throw new Error(
+      `SequelizeAdapter rls.softDeleteFlag: invalid setting name '${rls.softDeleteFlag}'. ` +
+      "Names must match [a-z_][a-z0-9_.]*.",
+    );
+  }
+}
 
 export default class SequelizeAdapter implements GqlizeAdapter {
   adapterName: string;
@@ -185,6 +228,14 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       create: "",
     };
     this.meta = {};
+    // Validate the RLS runtime config (RFC §6.5) at construction time.
+    if (this.options.rls) {
+      validateRlsConfig(this.options.rls);
+      if (this.options.rls.softDeleteFlag) {
+        installSoftDeleteFlag(this.sequelize, this.options.rls.softDeleteFlag,
+          (transaction) => !!transaction && typeof transaction === "object" && this.rlsTransactions.has(transaction));
+      }
+    }
   }
   /**
    * Replay the raw DDL that definitions registered through `definition.queries`.
@@ -213,6 +264,57 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       await this.getORM().query(this.startup.create);
     }
   };
+
+  /**
+   * Reconcile RLS policies against the database (RFC §6.4). Called by
+   * `Ormize.sync()` right after this adapter's own `sync()`. Only runs on
+   * Postgres; on other dialects it is a no-op.
+   *
+   * @param definitions - all model definitions registered against this adapter
+   * @param options - `{ manageRoles }` from `new Ormize({ rls: { manageRoles } })`
+   * @returns the SQL statements that were executed (for test assertions)
+   */
+  syncRowSecurity = async (
+    definitions: { [name: string]: Definition },
+    options?: RlsSyncOptions,
+  ): Promise<string[]> => {
+    if (this.sequelize.getDialect() !== "postgres") {
+      return [];
+    }
+    const [[{ schema }]] = await this.sequelize.query("SELECT current_schema() AS schema") as [[{ schema: string }], unknown];
+    const host = buildCompilerHost(this.sequelize, definitions, {
+      schema: (this.sequelize as unknown as { options: { schema?: string } }).options.schema ?? schema,
+      functionOwner: this.options.rls?.bypassRole,
+      softDeleteFlag: this.options.rls?.softDeleteFlag,
+    });
+    const models = extractRlsModels(host);
+    if (models.length === 0) {
+      // Nothing declares RLS. Skip the transaction only if nothing is left to
+      // undo either: removing `rls` from the last model must still disable
+      // what an earlier sync enabled, so look for gqlize's table marker first.
+      const [marked] = await this.sequelize.query(
+        "SELECT 1 FROM pg_policy WHERE polname LIKE '%\\_\\_gqlize\\_rls\\_marker' LIMIT 1",
+      );
+      if (marked.length === 0) {
+        return [];
+      }
+    }
+    return syncRowSecurityImpl(host, models, options);
+  };
+
+  /**
+   * Generate idempotent DDL for all RLS policies from definitions alone, no
+   * DB connection. Used by `gqlize rls:sql`.
+   */
+  generateRlsSql = (
+    definitions: { [name: string]: Definition },
+    options?: RlsSyncOptions,
+  ): string => {
+    const host = buildCompilerHost(this.sequelize, definitions, { functionOwner: this.options.rls?.bypassRole });
+    const models = extractRlsModels(host);
+    return generateRlsSql(host, models, options);
+  };
+
   getORM = () => {
     return this.sequelize;
   };
@@ -230,15 +332,187 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * is committed/rolled back explicitly by the cross-adapter coordinator. The
    * `handle` is a Sequelize `Transaction`, threaded onto operation options as
    * `{ transaction }`.
+   *
+   * When an `rls` config is set and `context` is provided, the transaction
+   * begins with `set_config` for each setting and `SET LOCAL ROLE` (RFC §6.5).
+   * Both are reset in the commit/rollback wrappers as defence in depth.
    */
-  beginTransaction = async (): Promise<AdapterTransaction> => {
+  beginTransaction = async (context?: import("@azerothian/utilize/types/primitives").RequestContext): Promise<AdapterTransaction> => {
     const t = await this.sequelize.transaction();
+    const rlsCfg = this.options.rls;
+    if (rlsCfg && context && this.sequelize.getDialect() === "postgres") {
+      if (await this._applyRlsSettings(t, context, rlsCfg)) {
+        const identity = this.rlsIdentity(context);
+        if (identity !== undefined) {
+          this.rlsTransactions.set(t, identity);
+        }
+      }
+    }
+    const resetRls = rlsCfg && context && this.sequelize.getDialect() === "postgres";
     return {
       handle: t,
-      commit: () => t.commit(),
-      rollback: () => t.rollback(),
+      commit: async () => {
+        // Defence in depth: settings and LOCAL ROLE are transaction-scoped and
+        // revert at COMMIT, but we reset explicitly in case the pool reuses the
+        // connection before the commit propagates.
+        if (resetRls) {
+          await this._resetRlsSettings(t, rlsCfg).catch(() => { /* best effort */ });
+        }
+        return t.commit();
+      },
+      rollback: async () => {
+        if (resetRls) {
+          await this._resetRlsSettings(t, rlsCfg).catch(() => { /* best effort */ });
+        }
+        return t.rollback();
+      },
     };
   };
+
+  /**
+   * Apply per-request RLS settings and role onto a just-opened transaction.
+   * Setting values are always bound via `set_config($1, $2, true)` —
+   * never interpolated — and role names are double-quoted identifiers.
+   */
+  /**
+   * The role a context runs under: the configured `role(ctx)`, or for
+   * `orm.asSystem` work the `bypassRole` (refused when none is configured,
+   * never the connection's own role).
+   */
+  private rlsRoleFor = (context: import("@azerothian/utilize/types/primitives").RequestContext): string | undefined => {
+    const cfg = this.options.rls;
+    if (!cfg) {
+      return undefined;
+    }
+    if (isSystemContext(context)) {
+      if (!cfg.bypassRole) {
+        throw new Error("orm.asSystem needs the adapter's rls.bypassRole: system work on an RLS adapter runs under it.");
+      }
+      return cfg.bypassRole;
+    }
+    return cfg.role(context);
+  };
+
+  /** The settings a context sets: none for system work, which has no principal. */
+  private rlsSettingsFor = (context: import("@azerothian/utilize/types/primitives").RequestContext): ReturnType<AdapterRlsConfig["settings"]> => {
+    const cfg = this.options.rls;
+    if (!cfg || isSystemContext(context)) {
+      return {};
+    }
+    return cfg.settings(context);
+  };
+
+  /**
+   * Transactions this adapter opened with a request's settings applied and its
+   * role switched. Only an operation running on one of these may leave row
+   * filtering to the database (see {@link isDatabaseEnforced}); any other
+   * transaction, whether opened without a context, by another adapter, or by
+   * the caller, has no identity in it, so the engine keeps its own scope.
+   */
+  private rlsTransactions = new WeakMap<object, string>();
+
+  /** The identity a transaction was opened with: its role and settings. */
+  private rlsIdentity = (context: import("@azerothian/utilize/types/primitives").RequestContext): string | undefined => {
+    const cfg = this.options.rls;
+    if (!cfg) {
+      return undefined;
+    }
+    const role = this.rlsRoleFor(context);
+    if (role === undefined) {
+      return undefined;
+    }
+    const settings = this.rlsSettingsFor(context);
+    return JSON.stringify([role, Object.keys(settings).sort().map((k) => [k, settings[k]])]);
+  };
+
+  /** Returns whether a role was switched, i.e. whether the transaction carries an identity. */
+  private _applyRlsSettings = async (
+    t: AdapterTransactionHandle,
+    context: import("@azerothian/utilize/types/primitives").RequestContext,
+    rlsCfg: AdapterRlsConfig,
+  ): Promise<boolean> => {
+    const settings = this.rlsSettingsFor(context);
+    // Validate setting names at runtime (matches the build-time pattern).
+    for (const name of Object.keys(settings)) {
+      if (!RLS_SETTING_NAME_PATTERN.test(name)) {
+        throw new Error(
+          `RLS setting name '${name}' is invalid. Names must match [a-z_][a-z0-9_.]*.`,
+        );
+      }
+    }
+    // Apply settings via bound parameters: one set_config per setting.
+    for (const [name, rawValue] of Object.entries(settings)) {
+      const value = Array.isArray(rawValue) ? rawValue.join(",") : String(rawValue);
+      await this.sequelize.query(
+        `SELECT set_config($1, $2, true)`,
+        { bind: [name, value], transaction: t as import("sequelize").Transaction },
+      );
+    }
+    // Set the role. The role name is validated against the identifier pattern
+    // and double-quoted so injection through it is impossible.
+    const role = this.rlsRoleFor(context);
+    if (role !== undefined) {
+      if (!RLS_ROLE_PATTERN.test(role)) {
+        throw new Error(
+          `RLS role name '${role}' is invalid. Role names must match [a-z_][a-z0-9_]*.`,
+        );
+      }
+      await this.sequelize.query(
+        `SET LOCAL ROLE "${role}"`,
+        { transaction: t as import("sequelize").Transaction },
+      );
+      return true;
+    }
+    return false;
+  };
+
+  /**
+   * Reset settings and role before the connection returns to the pool.
+   * Both are transaction-scoped (`true` / `LOCAL`), so this is defence in depth.
+   */
+  private _resetRlsSettings = async (
+    t: AdapterTransactionHandle,
+    rlsCfg: AdapterRlsConfig,
+  ): Promise<void> => {
+    // RESET ROLE reverts SET LOCAL ROLE.
+    await this.sequelize.query(
+      "RESET ROLE",
+      { transaction: t as import("sequelize").Transaction },
+    ).catch(() => { /* best effort */ });
+    // Reset each setting to empty.
+    const dummyCtx = {} as import("@azerothian/utilize/types/primitives").RequestContext;
+    try {
+      const settings = rlsCfg.settings(dummyCtx);
+      for (const name of Object.keys(settings)) {
+        await this.sequelize.query(
+          `SELECT set_config($1, '', true)`,
+          { bind: [name], transaction: t as import("sequelize").Transaction },
+        ).catch(() => { /* best effort */ });
+      }
+    } catch {
+      // The settings function may throw with a dummy context; that's fine since
+      // the transaction is about to end anyway.
+    }
+  };
+  /**
+   * Resolve the database role for a request context. The engine calls this
+   * before opening a transaction; `undefined` → no identity → refuse.
+   */
+  resolveRlsRole = (context: import("@azerothian/utilize/types/primitives").RequestContext): string | undefined => {
+    return this.rlsRoleFor(context);
+  };
+
+  /**
+   * Resolve the RLS settings for a request context. Used by the read-cache
+   * key augmentation.
+   */
+  resolveRlsSettings = (context: import("@azerothian/utilize/types/primitives").RequestContext): { [name: string]: string | number | boolean | (string | number)[] } | undefined => {
+    if (!this.options.rls) {
+      return undefined;
+    }
+    return this.rlsSettingsFor(context);
+  };
+
   // `OrmAdapter.addInstanceFunction` declares `fn` with this exact permissive
   // signature (an arbitrary user-authored function), so narrowing it here would
   // reject implementations the published contract still promises to accept.
@@ -311,6 +585,52 @@ export default class SequelizeAdapter implements GqlizeAdapter {
    * than an error on this backend.
    */
   enforcesRowScope = true;
+
+  /**
+   * Whether `defName` is RLS-enabled on this adapter: the model has
+   * `rls.enabled` and this adapter has an `rls` runtime config.
+   */
+  isRlsEnabled = (defName: string): boolean => {
+    if (!this.options.rls) {
+      return false;
+    }
+    const model = this.getModel(defName) as SequelizeModelClass | undefined;
+    const def = model?.definition;
+    return def?.options?.rls?.enabled === true;
+  };
+
+  /**
+   * Whether `defName` is database-enforced under RLS: RLS-enabled AND
+   * `enforce` is `"database"` (the default, not `"both"`). The ONE helper
+   * every enforcement site reads (RFC §6.6).
+   */
+  isDatabaseEnforced = (
+    defName: string, transaction?: unknown,
+    context?: import("@azerothian/utilize/types/primitives").RequestContext,
+  ): boolean => {
+    // Only on a transaction this adapter opened with an identity applied.
+    // Anything else (no transaction, a bare `orm.transaction`, another
+    // adapter's handle) keeps the engine's scope: fail closed.
+    if (!transaction || typeof transaction !== "object") {
+      return false;
+    }
+    const opened = this.rlsTransactions.get(transaction);
+    if (opened === undefined) {
+      return false;
+    }
+    // A request whose identity differs from the one the transaction was opened
+    // with (a principal switched mid-transaction) would be filtered by the
+    // database as the first principal, so the engine keeps its own scope.
+    if (context !== undefined && this.rlsIdentity(context) !== opened) {
+      return false;
+    }
+    if (!this.isRlsEnabled(defName)) {
+      return false;
+    }
+    const enforce = this.options.rls?.enforce ?? "database";
+    return enforce === "database";
+  };
+
   /**
    * Sequelize-instance hooks go on the Sequelize object itself. Routing them
    * through `sequelize.define` — which accepts the names without complaint —
@@ -527,16 +847,45 @@ export default class SequelizeAdapter implements GqlizeAdapter {
       this, defName, includeStatements, order, options, parentRelsForOrder, runHook,
     );
   }
-  async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions): Promise<AdapterWhere> {
+  async processFilterArgument(where: AdapterWhere | undefined, whereOperators: WhereOperators | undefined, options: AdapterQueryOptions, defName?: string): Promise<AdapterWhere> {
     // Dialect-aware normalisation: rewrites iLike → like on SQLite (where LIKE
     // is already case-insensitive) and rejects postgres-only operators on
-    // non-postgres dialects with a clear message.
+    // non-postgres dialects with a clear message. Applied to every where,
+    // including those with quantifiers.
     const normalized = normalizeWhereForDialect(where || {}, this.sequelize.getDialect());
+    // When `defName` is given, check for relationship quantifiers in the where.
+    // The engine passes it from every call site so the adapter can compile
+    // quantifiers without symbol stamps on the where object.
+    if (defName) {
+      const associations = this.getAssociations(defName);
+      if (hasQuantifierOnAssociation(normalized, associations)) {
+        const compiled = await compileRelationshipFilters(
+          this, defName, normalized, options,
+        );
+        if (whereOperators) {
+          return replaceDefWhereOperators(compiled, whereOperators, options);
+        }
+        return compiled;
+      }
+    }
     const w = replaceWhereOperators(normalized);
     if (whereOperators) {
       return replaceDefWhereOperators(w, whereOperators, options);
     }
     return w;
+  }
+  /**
+   * Compile relationship quantifiers in a `PortableWhere` into correlated
+   * `EXISTS` / `NOT EXISTS` subqueries, then run the result through
+   * `processFilterArgument` for the remaining field-level operators.
+   *
+   * Called by the engine when a scope's `where` contains quantifier keys.
+   * The model name is needed to look up associations.
+   */
+  async compileRelationshipFilter(
+    modelName: string, where: PortableWhere, options: AdapterQueryOptions,
+  ): Promise<AdapterWhere> {
+    return compileRelationshipFilters(this, modelName, where, options);
   }
   getAllArgsToReplaceId() {
     return ["where", "include"];
@@ -701,6 +1050,38 @@ export function mergeFilterStatement(
   originalWhere?: AdapterWhere
 ): AdapterWhere {
   return mergeFilterStatementImpl(fieldName, value, match, originalWhere);
+}
+
+/**
+ * Walk a portable where and return true if any key is a relationship quantifier
+ * on one of the given associations. Used by `processFilterArgument` to decide
+ * whether to invoke the relationship-filter compiler.
+ */
+function hasQuantifierOnAssociation(
+  where: AdapterWhere | undefined,
+  associations: { [relName: string]: UtilAssociation },
+): boolean {
+  if (!where || typeof where !== "object") {
+    return false;
+  }
+  for (const key of Object.keys(where)) {
+    const lower = key.toLowerCase();
+    if (LOGICAL_OPERATORS.has(lower)) {
+      const branch = where[key] as AdapterWhere | AdapterWhere[];
+      if (Array.isArray(branch)) {
+        if (branch.some((b) => hasQuantifierOnAssociation(b, associations))) {
+          return true;
+        }
+      } else if (hasQuantifierOnAssociation(branch, associations)) {
+        return true;
+      }
+      continue;
+    }
+    if (parseQuantifier(where[key]) && associations[key]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Typed-models API (definition typesystem). See ./types/orm.

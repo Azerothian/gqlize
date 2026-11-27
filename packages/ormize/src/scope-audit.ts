@@ -95,8 +95,16 @@ function auditEntry(defName: string, kind: ScopeSurfaceKind, name: string, value
  * ask it, so it asks the answerable question instead — is a row-level scope
  * configured at all — and makes every surface declare itself. A model the
  * predicate never scopes says so in one word, once.
+ *
+ * `rls`: the model has Postgres RLS on its adapter (RFC §6.5). A raw-SQL
+ * class method there runs its statement on the request's RLS transaction
+ * (`resolveClassMethod` opens it), so the policy filters it and it needs no
+ * `:scope…` parameter or declaration. Function methods and instance methods
+ * still declare themselves: the engine hands them the transaction on
+ * `context.transaction`, but cannot make them use it, and a query that ignores
+ * it runs as the connection's own role.
  */
-export function auditDefinitionScopeSurfaces(defName: string, def: Definition): ScopeSurfaceFinding[] {
+export function auditDefinitionScopeSurfaces(defName: string, def: Definition, rls?: boolean): ScopeSurfaceFinding[] {
   const findings: ScopeSurfaceFinding[] = [];
   const classMethods = definitionMethods(def, "classMethods");
   for (const name of Object.keys(classMethods)) {
@@ -104,6 +112,9 @@ export function auditDefinitionScopeSurfaces(defName: string, def: Definition): 
     // A descriptor rather than a function is the raw-SQL form — the same branch
     // `installClassMethods` takes, kept in step with it deliberately.
     const kind: ScopeSurfaceKind = typeof value === "function" ? "classMethod" : "sqlClassMethod";
+    if (rls && kind === "sqlClassMethod" && scopeDispositionOf(value) !== "conflict") {
+      continue;
+    }
     const finding = auditEntry(defName, kind, name, value);
     if (finding) {
       findings.push(finding);

@@ -86,6 +86,8 @@ export default class GqlizeBinding {
   asInstance: AnyOrmize["asInstance"] = (...a) => this.orm.asInstance(...a);
   isTypeOf: AnyOrmize["isTypeOf"] = (...a) => this.orm.isTypeOf(...a);
   resolveClassMethod: AnyOrmize["resolveClassMethod"] = (...a) => this.orm.resolveClassMethod(...a);
+  resolveInstanceMethod: AnyOrmize["resolveInstanceMethod"] = (...a) => this.orm.resolveInstanceMethod(...a);
+  runRequest: AnyOrmize["runRequest"] = (...a) => this.orm.runRequest(...a);
   auditExtendSurfaces: AnyOrmize["auditExtendSurfaces"] = (...a) => this.orm.auditExtendSurfaces(...a);
   applyEagerAfterFind: AnyOrmize["applyEagerAfterFind"] = (...a) => this.orm.applyEagerAfterFind(...a);
   runHook: AnyOrmize["runHook"] = (...a) => this.orm.runHook(...a);

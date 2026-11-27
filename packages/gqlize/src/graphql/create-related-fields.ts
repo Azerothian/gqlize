@@ -1,9 +1,11 @@
 import createListObject, { type ListObjectExtras } from "./create-list-object";
 import {capitalize} from "@azerothian/utilize/utils/word";
 import { deprecationFor, isRelationshipAllowed, isThroughMode } from "@azerothian/utilize";
+import { isQueryDeletedAllowed } from "@azerothian/utilize/gate";
+import { GQLTDeletedFilter } from "@azerothian/graphql-types";
 import { SchemaCache, GqlFieldMap, GqlizeOptions, Definition, Association } from '../types';
 import GQLManager from '../manager';
-import { GraphQLBoolean, type GraphQLOutputType } from "graphql";
+import { GraphQLBoolean, type GraphQLOutputType, type GraphQLFieldConfigArgumentMap } from "graphql";
 import { bindField } from "./resolvers/bind";
 
 /**
@@ -57,17 +59,25 @@ export default function createRelatedFieldsFunc(
           }
           switch (association.associationType) {
             case "hasOne":
-            case "belongsTo":
+            case "belongsTo": {
+              const singleArgs: GraphQLFieldConfigArgumentMap = {
+                required: {
+                  type: GraphQLBoolean,
+                  description: "When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.",
+                },
+              };
+              // RFC §5.4: `deleted` on singular relations, gated by queryDeleted.
+              if (instance.softDeletes(association.target) && isQueryDeletedAllowed(options.permission, association.target)) {
+                singleArgs.deleted = {
+                  type: GQLTDeletedFilter,
+                  description: "Whether soft-deleted rows are excluded (the default), included, or returned on their own",
+                };
+              }
               f[relName] = bindField({
                 type: targetObject,
                 description: ((definition.comments || {}).fields || {})[relName],
                 deprecationReason: deprecationFor(definition, "fields", relName),
-                args: {
-                  required: {
-                    type: GraphQLBoolean,
-                    description: "When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.",
-                  },
-                },
+                args: singleArgs,
               }, {
                 kind: "singleRelationship",
                 defName,
@@ -75,6 +85,7 @@ export default function createRelatedFieldsFunc(
                 targetDefName: association.target,
               }, { instance, options });
               break;
+            }
             default: {
               // `createManyObject` returns nothing for a target definition with
               // no `name`, which cannot become a list field. Guarded rather than

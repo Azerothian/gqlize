@@ -11,7 +11,9 @@ export { warnDefinitionInstanceHooks, createHook, createInstanceHook,
 export type { HookHost } from "./hooks";
 
 export { resolveRowScope, reassertRowScope, scopeNativeWhere, scopedWriteWhere,
-  assertRowsInScope, withScopeFor, scopeMiss, ScopeDeniedError, ScopeEscapeError } from "./scope-bridge";
+  assertRowsInScope, resolveModelGlobalFilters, withScopeFor, scopeMiss,
+  isDatabaseEnforced, isRlsEnabled,
+  ScopeDeniedError, ScopeEscapeError } from "./scope-bridge";
 export type { ScopeHost } from "./scope-bridge";
 
 export { tagRelation, writeFootprint, readTags, cachedCount, cachedFindAll } from "./read-cache-bridge";
@@ -22,7 +24,7 @@ export { validateRelationship, validateCrossAdapterKeys, buildCrossAdapterAssoci
 export type { RelationshipHost } from "./relationships";
 
 export { countableFrom, createResolveContext, cursorOffset, expandComputedOrder,
-  resolveClassMethod, resolveManyRelationship, resolveSingleRelationship,
+  resolveClassMethod, resolveInstanceMethod, resolveManyRelationship, resolveSingleRelationship,
   resolveFindAll } from "./resolution";
 export type { ResolutionHost } from "./resolution";
 
@@ -40,3 +42,6 @@ export type { CsvHost, CsvOperation, CsvRequest, CsvRowArgs, CsvRowCells } from 
 
 export { transaction, runWithContext, getContext, withTransaction } from "./transactions";
 export type { TransactionHost } from "./transactions";
+
+export { validateFilters, withoutFilters, bypassedFilterNames,
+  resolveGlobalFilters, filterBypassCacheKey } from "./global-filters";

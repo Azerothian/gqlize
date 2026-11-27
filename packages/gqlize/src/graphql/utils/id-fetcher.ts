@@ -26,6 +26,7 @@ SOFTWARE.
 // https://github.com/mickhansen/graphql-sequelize/blob/master/src/relay.js
 import type { GraphQLResolveInfo } from "graphql";
 import { isModelAllowed } from "@azerothian/utilize";
+import { isQueryDeletedAllowed } from "@azerothian/utilize/gate";
 import { defaultIdCodec } from "../../codecs/id";
 import { processAfter } from "./after";
 import Events from "../../events";
@@ -51,7 +52,7 @@ export default function idFetcher(
   nodeTypeMapper: NodeTypeMapper,
   options: GqlizeOptions | undefined,
 ) {
-  return async(globalId: string, context: RequestContext, info: GraphQLResolveInfo) => {
+  return async(globalId: string, context: RequestContext, info: GraphQLResolveInfo, deleted?: string) => {
     if (globalId === null || globalId === undefined) {
       return null;
     }
@@ -112,10 +113,16 @@ export default function idFetcher(
     // the prefix), so it reaches the datastore untouched. `info` is intentionally
     // omitted so the interface-level selection does not restrict which columns
     // are loaded.
+    // RFC §5.4: pass the `deleted` argument through so node(id:) can find
+    // soft-deleted rows when queryDeleted allows it. The arg is gated per-model
+    // at resolution time: the schema has the arg if *any* model qualifies, but
+    // only models whose queryDeleted is allowed honour it.
+    const effectiveDeleted = deleted && instance.softDeletes(type)
+      && isQueryDeletedAllowed(options?.permission, type) ? deleted : undefined;
     const { models } = await instance.resolveFindAll(
       type,
       null,
-      { where: { [pkName]: decoded.id }, first: 1 },
+      { where: { [pkName]: decoded.id }, first: 1, ...(effectiveDeleted ? { deleted: effectiveDeleted } : {}) },
       context,
       undefined,
     );

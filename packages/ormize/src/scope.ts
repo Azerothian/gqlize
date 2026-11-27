@@ -9,6 +9,7 @@
 // permission bag is also read by gqlize at schema build, where none of this
 // applies.
 
+import { isSystemContext } from "@azerothian/utilize/system-context";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   mergeScopeWhere, resolveScope,
@@ -84,6 +85,40 @@ export function markSystemQuery<T>(options: T): T {
     });
   }
   return options;
+}
+
+/**
+ * Enumerable variant of {@link SYSTEM_QUERY} for operations that go through
+ * Sequelize accessors. The accessor spreads the options internally, which
+ * drops non-enumerable properties. This marker is enumerable so it survives
+ * the spread.
+ *
+ * Used only for the linking call inside `applyCreate`: the target row was
+ * just created by this mutation and the accessor's UPDATE sets the foreign
+ * key that makes the row satisfy the scope. The scope hooks would reject the
+ * UPDATE because the row doesn't satisfy the quantifier yet. The post-write
+ * `assertRowsInScope` at the end of `mutationEntry` verifies the final
+ * state; this bypass only prevents the chicken-and-egg rejection.
+ */
+// A module-local `Symbol`, not `Symbol.for`: the global registry would let any
+// code in the process mint the same key and switch enforcement off, which is
+// the forgery {@link SYSTEM_QUERY} is a plain `Symbol` to rule out. Enumerable
+// symbol keys survive an object spread, so this one still rides through the
+// accessor's internal copies.
+const SCOPE_BYPASS = Symbol("ormize.scopeBypass");
+
+/** Mark an options bag so scope hooks stand aside. Survives Sequelize spreads. */
+export function markScopeBypass<T>(options: T): T {
+  if (options && typeof options === "object") {
+    (options as { [SCOPE_BYPASS]?: boolean })[SCOPE_BYPASS] = true;
+  }
+  return options;
+}
+
+/** Whether an options bag carries {@link SCOPE_BYPASS}. */
+export function isScopeBypass(options: unknown): boolean {
+  return Boolean(options) && typeof options === "object"
+    && (options as { [SCOPE_BYPASS]?: boolean })[SCOPE_BYPASS] === true;
 }
 
 /** Whether an options bag carries {@link SYSTEM_QUERY}. */
@@ -228,6 +263,11 @@ export function scopeFor(
   context: RequestContext,
 ): Promise<ResolvedScope> {
   if (typeof permission?.scope !== "function") {
+    return Promise.resolve(undefined);
+  }
+  if (isSystemContext(context)) {
+    // `orm.asSystem`: no request, so no principal to scope by. Global filters
+    // (soft delete) still apply; they aren't a scope.
     return Promise.resolve(undefined);
   }
   if (resolvingScope()) {

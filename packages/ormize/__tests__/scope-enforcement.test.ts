@@ -345,7 +345,7 @@ describe("ormize - row-level scope, the adapter hooks (§13)", () => {
     const { models } = await db.resolveFindAll("Folder", null, {
       include: [{ docs: { associationType: "hasMany" } }],
     }, ctx(3));
-    const folder = models[0] as unknown as { docs?: NamedRow[] };
+    const folder = models[0] as { docs?: NamedRow[] };
     expect(folder.docs).toBeDefined();
     expect(folder.docs).toEqual([]);
   });
@@ -454,7 +454,7 @@ describe("ormize - row-level scope, the adapter hooks (§13)", () => {
       // predicate. The memo holds the *promise*, so an unguarded re-entry would
       // await the promise it is itself producing and never return.
       const { models } = await orm.db.resolveFindAll("Doc", null, {}, context);
-      seenByPredicate = (models as unknown[]).length;
+      seenByPredicate = models.length;
       return { where: { ownerId: { eq: 1 } } };
     };
     orm.db = await buildOrm({ scope });

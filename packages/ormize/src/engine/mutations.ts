@@ -6,7 +6,7 @@
 import waterfall from "@azerothian/utilize/utils/waterfall";
 import { isMutationInstanceMethodAllowed, isStructurallyWritable } from "@azerothian/utilize/gate";
 import { whereOperatorsFor, definitionMethods, mutationInstanceMethods } from "@azerothian/utilize/exposed-methods";
-import { ScopeDeniedError } from "../scope";
+import { ScopeDeniedError, ScopeEscapeError } from "../scope";
 import { applyRelationshipMutations } from "../relationship-mutations";
 import Events from "../events";
 import type {
@@ -22,10 +22,42 @@ import type {
 
 import type { HookHost } from "./hooks";
 import type { ScopeHost } from "./scope-bridge";
-import { resolveRowScope, scopedWriteWhere, assertRowsInScope, scopeMiss as scopeMissFn } from "./scope-bridge";
+import { claimCreateDeferral } from "./create-deferral";
+import { resolveRowScope, scopedWriteWhere, assertRowsInScope, scopeMiss as scopeMissFn, embedThroughScopes } from "./scope-bridge";
 import type { ReadCacheHost } from "./read-cache-bridge";
 import { writeFootprint } from "./read-cache-bridge";
 import { createResolveContext } from "./resolution";
+
+// ---------------------------------------------------------------------------
+// Postgres RLS error mapping (RFC §6.5)
+// ---------------------------------------------------------------------------
+
+/** Whether an error is a Postgres 42501 (RLS policy violation). */
+function isRlsViolation(err: unknown): boolean {
+  const dbErr = err as { original?: { code?: string }; parent?: { code?: string } };
+  return (dbErr.original?.code ?? dbErr.parent?.code) === "42501";
+}
+
+/**
+ * Map a Postgres `42501` to the appropriate ormize error.
+ *
+ * - On a soft delete / restore / hard delete of a soft-deleted row:
+ *   a configuration error pointing at RFC §6.8 (the user has a SELECT policy
+ *   that hides deleted rows, which breaks these operations).
+ * - Otherwise: `ScopeEscapeError` — the write violated a WITH CHECK policy.
+ */
+function mapRlsViolation(err: unknown, defName: string, operation: ScopeOperation, isSoftDeleteOp?: boolean): never {
+  if (isSoftDeleteOp) {
+    throw new Error(
+      `RLS policy violation on '${defName}' during a soft-delete operation. ` +
+      "A SELECT policy is hiding soft-deleted rows, which prevents soft delete, " +
+      "restore and hard delete from working. See RFC §6.8: either remove " +
+      "deletedAt from the policy, or configure rls.softDeleteFlag so the " +
+      "engine can lift the filter for these operations.",
+    );
+  }
+  throw new ScopeEscapeError(defName, operation);
+}
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -67,6 +99,8 @@ export function mutationEntry<T>(
     idTargets: GlobalKeyTargets;
     translateFilter: NonNullable<Selection["translateFilter"]>;
   }) => Promise<T>,
+  /** Hint for the RLS error mapper: is this a soft-delete operation? */
+  softDeleteHint?: boolean,
 ): Promise<T> {
   return self.withTransaction(defName, context, async(context: RequestContext) => {
     try {
@@ -78,6 +112,13 @@ export function mutationEntry<T>(
         idTargets: self.getGlobalKeyTargets(defName),
         translateFilter: selection?.translateFilter || (<W,>(w: W) => w),
       });
+    } catch (err) {
+      // RFC §6.5: map Postgres 42501 (RLS policy violation) to the
+      // appropriate ormize error.
+      if (isRlsViolation(err)) {
+        mapRlsViolation(err, defName, "update", softDeleteHint);
+      }
+      throw err;
     } finally {
       // Also on a throw: a mutation that wrote some rows and then failed may
       // have committed them on an adapter with no transaction to roll back.
@@ -310,6 +351,8 @@ export async function processCreate(
   defName: string, source: AdapterRow, args: { input: MutationInputTree; apply?: MutationApply },
   context: RequestContext, selection?: Selection,
 ): Promise<AdapterRow[]> {
+  // Taken before anything nested runs; see `./create-deferral`.
+  const deferral = claimCreateDeferral();
   return mutationEntry(self, defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
     const processCreateFn = adapter.getCreateFunction(defName);
     if (await resolveRowScope(self, defName, "create", context) === false) {
@@ -337,7 +380,16 @@ export async function processCreate(
         // but `definition.before`, `override.input` and the nested `add`/`set`
         // verbs all run after it — the last of those re-points a foreign key
         // nobody named. Cheaper to look than to reason about the ordering.
-        await assertRowsInScope(self, defName, "create", context, [result], createResolveContext(context, selection, source));
+        // A nested create under a parent can only satisfy a scope that follows
+        // its link once the parent's accessor has made that link, so the
+        // caller that is about to link it runs this check afterwards.
+        const row = result;
+        const check = () => assertRowsInScope(self, defName, "create", context, [row], createResolveContext(context, selection, source));
+        if (deferral) {
+          deferral.checks.push(check);
+        } else {
+          await check();
+        }
         return [result];
       }
     }
@@ -436,7 +488,8 @@ export async function processSelect(
       scopeMissFn(defName, "update", self.onScopeMiss);
       return [];
     }
-    const where = await adapter.processFilterArgument(scoped, whereOperatorsFor(definition), options);
+    const embedded = await embedThroughScopes(self, defName, scoped, context);
+    const where = await adapter.processFilterArgument(embedded, whereOperatorsFor(definition), options, defName);
     const results = await adapter.findAll(defName, Object.assign({where, limit: args.limit}, options));
     await waterfall(results, async(r: AdapterRow) => {
       await processRelationshipMutation(self, defName, r, args.input, context, selection);
@@ -450,6 +503,8 @@ export async function processDelete(
   defName: string, source: AdapterRow, args: MutationFilter,
   context: RequestContext, selection?: Selection,
 ): Promise<AdapterRow[]> {
+  // RFC §6.8: soft deletes are flagged for the RLS error mapper.
+  const isSoftDelete = self.getModelAdapter(defName).softDeletes?.(defName) ?? false;
   return mutationEntry(self, defName, context, selection, async({context, adapter, definition, globalKeys, idTargets, translateFilter}) => {
     const processDeleteFn = adapter.getDeleteFunction(defName, whereOperatorsFor(definition));
     const scoped = await scopedWriteWhere(self, defName, "delete", context, translateFilter(args, globalKeys, idTargets));
@@ -463,7 +518,7 @@ export async function processDelete(
       makeDefinitionBeforeHook(definition, args, context, selection, Events.MUTATION_DELETE),
       identityRow,
     );
-  });
+  }, isSoftDelete);
 }
 
 /**
@@ -504,5 +559,5 @@ export async function processRestore(
     // them where it found them.
     await assertRowsInScope(self, defName, "update", context, results, createResolveContext(context, selection, source));
     return results;
-  });
+  }, true /* restore is always a soft-delete operation for the RLS error mapper */);
 }

@@ -20,6 +20,9 @@ const POSTGRES_SUITES = [
   '<rootDir>/__tests__/replace-id-in-where.test.ts',
   '<rootDir>/__tests__/sequelize.test.ts',
   '<rootDir>/__tests__/sequelize-query.test.ts',
+  '<rootDir>/__tests__/rls-sync.test.ts',
+  '<rootDir>/__tests__/rls-runtime.test.ts',
+  '<rootDir>/__tests__/rls-hop-functions.test.ts',
 ];
 
 /** @type {import('jest').Config} */

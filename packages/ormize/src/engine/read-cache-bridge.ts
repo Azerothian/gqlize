@@ -12,6 +12,9 @@ import type ReadCache from "../read-cache";
 import type { CachedRead } from "../read-cache";
 import { encode as encodeCached, decode as decodeCached } from "../read-cache/codec";
 import type { Association } from "@azerothian/utilize/types/index";
+import { collectQuantifierTargets, resolveViaMarkers } from "@azerothian/utilize/gate";
+import { isRlsSqlFragment } from "@azerothian/utilize/types/definitions";
+import type { PortableWhere } from "@azerothian/utilize/gate";
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -65,11 +68,12 @@ export function writeFootprint(self: ReadCacheHost, defName: string): string[] {
 
 /**
  * Every model a read touches: the root, each eager-loaded target and its join
- * model from the portable plan, and any model class in the native options'
- * `include`. The native walk covers includes a `before` hook added after the
- * plan was built.
+ * model from the portable plan, any model class in the native options'
+ * `include`, and every model a relationship quantifier reaches in the where.
+ * The native walk covers includes a `before` hook added after the plan was
+ * built.
  */
-export function readTags(self: ReadCacheHost, defName: string, plan: IncludeMap[] | undefined, nativeOptions: AdapterQueryOptions): string[] {
+export function readTags(self: ReadCacheHost, defName: string, plan: IncludeMap[] | undefined, nativeOptions: AdapterQueryOptions, scopeWhere?: PortableWhere): string[] {
   const tags = new Set([defName]);
   const walkPlan = (parent: string, maps: IncludeMap[] | undefined) => {
     for (const map of maps || []) {
@@ -101,16 +105,73 @@ export function readTags(self: ReadCacheHost, defName: string, plan: IncludeMap[
     }
   };
   walkNative(defName, nativeOptions.include);
+  // An RLS policy filters in the database, out of sight of the options above,
+  // and its relationship hops read other tables: a read of `User` under a
+  // policy through `memberships` changes when a membership does.
+  for (const model of [...tags]) {
+    for (const reached of rlsPolicyReach(self, model)) {
+      tags.add(reached);
+    }
+  }
+  // Walk the scope where for relationship quantifier targets: a write to a
+  // model reached by a quantifier must invalidate reads filtered through it.
+  if (scopeWhere) {
+    const quantifierTargets = collectQuantifierTargets(
+      scopeWhere, defName,
+      (model) => {
+        if (!self.defs[model]) {
+          return {};
+        }
+        const assocs = self.getAssociations(model);
+        return assocs;
+      },
+    );
+    for (const target of quantifierTargets) {
+      tags.add(target);
+    }
+  }
   return [...tags];
+}
+
+/**
+ * The models an RLS-enabled model's policies read. A raw `sql` policy can't be
+ * inspected, so it reaches every model on the same adapter.
+ */
+function rlsPolicyReach(self: ReadCacheHost, defName: string): string[] {
+  const def = self.defs[defName];
+  if (!def?.options?.rls?.enabled || !self.getModelAdapter(defName).isRlsEnabled?.(defName)) {
+    return [];
+  }
+  const adapter = self.getModelAdapter(defName);
+  const reached = new Set<string>();
+  const associations = (model: string) => (self.defs[model] ? self.getAssociations(model) : {});
+  for (const policy of Object.values(def.options.rls.policies || {})) {
+    for (const expr of [policy.using, policy.withCheck]) {
+      if (!expr) {
+        continue;
+      }
+      if (isRlsSqlFragment(expr)) {
+        return Object.keys(self.defs).filter((model) => self.getModelAdapter(model) === adapter);
+      }
+      const resolved = resolveViaMarkers(expr, defName, (model, rel) => {
+        const assoc = associations(model)[rel];
+        return assoc ? { associationType: assoc.associationType, target: assoc.target } : undefined;
+      });
+      for (const target of collectQuantifierTargets(resolved || {}, defName, associations)) {
+        reached.add(target);
+      }
+    }
+  }
+  return [...reached];
 }
 
 // ---------------------------------------------------------------------------
 // Cache-through wrappers
 // ---------------------------------------------------------------------------
 
-function cachedReadDescriptor(self: ReadCacheHost, defName: string, operation: CachedRead["operation"], context: RequestContext, plan: IncludeMap[] | undefined, options: AdapterQueryOptions): CachedRead {
+function cachedReadDescriptor(self: ReadCacheHost, defName: string, operation: CachedRead["operation"], context: RequestContext, plan: IncludeMap[] | undefined, options: AdapterQueryOptions, scopeWhere?: PortableWhere): CachedRead {
   const own = self.defs[defName]?.cache;
-  return {defName, operation, context, options, tags: readTags(self, defName, plan, options), ttl: own ? own.ttl : undefined};
+  return {defName, operation, context, options, tags: readTags(self, defName, plan, options, scopeWhere), ttl: own ? own.ttl : undefined};
 }
 
 /**

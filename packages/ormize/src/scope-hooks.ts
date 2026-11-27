@@ -22,8 +22,17 @@ import type {
 } from "@azerothian/utilize/types/index";
 import { isScopeSeen, markScopeSeen, type ScopeOperation } from "@azerothian/utilize/gate";
 import { filterMerger, writable } from "./cross-adapter";
-import { ScopeDeniedError, isSystemQuery, resolvingScope } from "./scope";
+import { ScopeDeniedError, isSystemQuery, isScopeBypass, resolvingScope } from "./scope";
 import type { AdapterRoutingHost } from "./types/engine";
+
+/**
+ * Whether `defName` is database-enforced under RLS, checked via the adapter.
+ * RFC §6.6: scope hooks are skipped for database-enforced models.
+ */
+function isDbEnforced(host: AdapterRoutingHost, defName: string, transaction: unknown): boolean {
+  const adapter = host.getModelAdapter(defName);
+  return adapter.isDatabaseEnforced?.(defName, transaction) ?? false;
+}
 
 /**
  * A hook in the shape `createHook` calls a global one: the model's name, then
@@ -96,7 +105,7 @@ function requestOf(options: unknown): { context: RequestContext } | undefined {
  * memo); or there is no request at all.
  */
 function enforceFor(options: unknown): { context: RequestContext } | undefined {
-  if (resolvingScope() || isSystemQuery(options)) {
+  if (resolvingScope() || isSystemQuery(options) || isScopeBypass(options)) {
     return undefined;
   }
   return requestOf(options);
@@ -187,6 +196,12 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       if (!request || !options) {
         return options;
       }
+      // RFC §6.6: scope hooks are skipped for database-enforced RLS models,
+      // but ONLY when inside a transaction (settings applied). Without a
+      // transaction, keep the scope (fail closed).
+      if (isDbEnforced(host, defName, options?.transaction)) {
+        return options;
+      }
       // In place, by contract, and deliberately not copy-on-write: this is a
       // sequelize `beforeFind`-family hook, and sequelize executes the very
       // object it hands in while later hooks re-read it — `runHooks` discards
@@ -234,6 +249,11 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
       markScopeSeen(options);
       const request = enforceFor(options);
       if (!request || !row) {
+        return row;
+      }
+      // RFC §6.6: skip for database-enforced RLS models, but only inside
+      // a transaction (fail closed).
+      if (isDbEnforced(host, defName, options?.transaction)) {
         return row;
       }
       if (!await writable(host, defName, host.getModelAdapter(defName), row, operation, options, hookName === "beforeRestore")) {
@@ -306,17 +326,24 @@ export function buildScopeHooks(host: AdapterRoutingHost): {[hookName: string]: 
  */
 export function buildScopeInstanceHooks(
   isDefinition: (name: string) => boolean,
+  isDbEnforcedModel?: (name: string, transaction: unknown) => boolean,
 ): {[hookName: string]: (...args: unknown[]) => unknown} {
   return {
     beforeQuery: (options: unknown) => {
-      if (isScopeSeen(options) || resolvingScope() || isSystemQuery(options)) {
+      if (isScopeSeen(options) || resolvingScope() || isSystemQuery(options) || isScopeBypass(options)) {
         return;
       }
-      const bag = options as { model?: { name?: string } } | undefined;
+      const bag = options as { model?: { name?: string }; transaction?: unknown } | undefined;
       const defName = bag?.model?.name;
       if (!defName || !isDefinition(defName)) {
         // No model, or one this orm does not own. DDL, a `describeTable`, a
         // migration — nothing a row-level scope has an opinion about.
+        return;
+      }
+      // RFC §6.6: a statement on a database-enforced model is the policy's to
+      // filter, but only when it runs on a transaction the adapter opened with
+      // a request's settings and role; anything else is still refused here.
+      if (isDbEnforcedModel?.(defName, bag?.transaction)) {
         return;
       }
       throw new ScopeDeniedError(defName, "read");

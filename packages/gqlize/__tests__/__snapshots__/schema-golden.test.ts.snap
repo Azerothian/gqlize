@@ -680,6 +680,11 @@ type RootQuery {
   node(
     """The ID of an object"""
     id: ID!
+
+    """
+    Whether soft-deleted rows are excluded (the default), included, or returned on their own
+    """
+    deleted: GQLTDeletedFilter
   ): Node
   models: QueryModels
   classMethods: QueryClassMethods
@@ -689,6 +694,18 @@ type RootQuery {
 interface Node {
   """The id of the object."""
   id: ID!
+}
+
+"""How soft-deleted rows are treated by a read"""
+enum GQLTDeletedFilter {
+  """Only live rows (the default)"""
+  EXCLUDE
+
+  """Live and soft-deleted rows together"""
+  INCLUDE
+
+  """Only soft-deleted rows — a trash view"""
+  ONLY
 }
 
 type QueryModels {
@@ -2582,6 +2599,11 @@ type Memo implements Node {
     When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
     """
     required: Boolean
+
+    """
+    Whether soft-deleted rows are excluded (the default), included, or returned on their own
+    """
+    deleted: GQLTDeletedFilter
   ): Memo
 }
 
@@ -2824,18 +2846,6 @@ input GQLTMemoIncluderepliesObject {
   deleted: GQLTDeletedFilter
   orderBy: [MemoOrderBy]
   include: [GQLTMemoIncludeObject]
-}
-
-"""How soft-deleted rows are treated by a read"""
-enum GQLTDeletedFilter {
-  """Only live rows (the default)"""
-  EXCLUDE
-
-  """Live and soft-deleted rows together"""
-  INCLUDE
-
-  """Only soft-deleted rows — a trash view"""
-  ONLY
 }
 
 input GQLTMemoIncludeparentObject {
@@ -4946,6 +4956,11 @@ type RootQuery {
   node(
     """The ID of an object"""
     id: ID!
+
+    """
+    Whether soft-deleted rows are excluded (the default), included, or returned on their own
+    """
+    deleted: GQLTDeletedFilter
   ): Node
   models: QueryModels
   classMethods: QueryClassMethods
@@ -4955,6 +4970,18 @@ type RootQuery {
 interface Node {
   """The id of the object."""
   id: ID!
+}
+
+"""How soft-deleted rows are treated by a read"""
+enum GQLTDeletedFilter {
+  """Only live rows (the default)"""
+  EXCLUDE
+
+  """Live and soft-deleted rows together"""
+  INCLUDE
+
+  """Only soft-deleted rows — a trash view"""
+  ONLY
 }
 
 type QueryModels {
@@ -6488,6 +6515,11 @@ type Memo implements Node {
     When true, the relation is eager-loaded as an INNER JOIN so parents without a matching related row are excluded.
     """
     required: Boolean
+
+    """
+    Whether soft-deleted rows are excluded (the default), included, or returned on their own
+    """
+    deleted: GQLTDeletedFilter
   ): Memo
 }
 
@@ -6730,18 +6762,6 @@ input GQLTMemoIncluderepliesObject {
   deleted: GQLTDeletedFilter
   orderBy: [MemoOrderBy]
   include: [GQLTMemoIncludeObject]
-}
-
-"""How soft-deleted rows are treated by a read"""
-enum GQLTDeletedFilter {
-  """Only live rows (the default)"""
-  EXCLUDE
-
-  """Live and soft-deleted rows together"""
-  INCLUDE
-
-  """Only soft-deleted rows — a trash view"""
-  ONLY
 }
 
 input GQLTMemoIncludeparentObject {

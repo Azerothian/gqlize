@@ -39,7 +39,8 @@ export async function transaction<T = unknown>(orm: Ormize, fn: (tx: OrmizeTrans
     return fn(current.transaction);
   }
   const coordinator = new OrmizeTransaction(orm);
-  return store.run({ ...(current || {}), transaction: coordinator }, async () => {
+  const readWrap = current?.readWrapPending ? coordinator : undefined;
+  return store.run({ ...(current || {}), transaction: coordinator, readWrap, readWrapPending: false }, async () => {
     try {
       const result = await fn(coordinator);
       await coordinator.commit();
@@ -79,7 +80,7 @@ export async function withTransaction<T>(self: TransactionHost, orm: Ormize, def
   const adapterName = self.defsAdapters[defName];
   const active = getStore()?.transaction;
   if (active) {
-    const handle = await active.handleFor(adapterName);
+    const handle = await active.handleFor(adapterName, context);
     return fn(inheritScopeMemo(context, Object.assign({}, context, { transaction: handle })));
   }
   if (context && context.transaction) {

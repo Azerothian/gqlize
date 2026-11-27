@@ -100,4 +100,10 @@ export type GqlizeOptions = {
    * `permission.mutationCsv`.
    */
   csv?: boolean | CsvOptions
+  /**
+   * Row-level security options for the ormize instance (RFC §6.4).
+   * `manageRoles: true` causes `sync()` to create any database roles named in
+   * policies that don't already exist. Off by default.
+   */
+  rls?: { manageRoles?: boolean }
 }

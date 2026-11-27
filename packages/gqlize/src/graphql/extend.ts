@@ -41,7 +41,16 @@ export async function applyExtendFields(
         return o;
       }
     }
-    o[k] = bindField(extendFields[k], {kind: "extend", target, key: k}, ctx);
+    const bound = bindField(extendFields[k], {kind: "extend", target, key: k}, ctx);
+    const resolve = (bound as {resolve?: (...a: unknown[]) => unknown}).resolve;
+    if (typeof resolve === "function") {
+      // One request, one coordinated transaction when RLS models exist, so the
+      // engine calls the resolver makes share a transaction per RLS adapter
+      // carrying the request's settings and role (RFC §6.5).
+      (bound as {resolve?: unknown}).resolve = (source: unknown, args: unknown, context: unknown, info: unknown) =>
+        ctx.instance.runRequest(context, () => resolve(source, args, context, info));
+    }
+    o[k] = bound;
     if (ledger) {
       ledger.extendFields[target].push(k);
     }
